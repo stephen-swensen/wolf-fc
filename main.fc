@@ -676,6 +676,13 @@ let main = (args: str[]) ->
     sdl2.set_logical_size(ren, screen_w, screen_h)
     sdl2.show_cursor(0)
 
+    // Nearest-neighbor scaling — critical for pixel-exact software rendering.
+    // Must be set BEFORE creating the texture (texture properties are set at
+    // creation time). Without this SDL defaults to bilinear filtering, which
+    // causes shimmer/flickering and blurred edges when the 320x200 framebuffer
+    // is scaled up to the window.
+    sdl2.set_hint(c"SDL_RENDER_SCALE_QUALITY", c"nearest")
+
     // Create streaming texture for software framebuffer (320x200 game content).
     let tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
         sdl2.tex_streaming, screen_w, screen_h)
