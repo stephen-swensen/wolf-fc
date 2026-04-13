@@ -256,23 +256,24 @@ let draw_sprite_col = (vs: vswap_file*, pal: uint32[],
     loop
         let endy_raw = (int32) bytes.u16(vs->raw, off)
         if endy_raw == 0 then break
-        let newstart = (int64) bytes.u16(vs->raw, off + 2)
+        let newstart = (int64) (int16) bytes.u16(vs->raw, off + 2)
         let starty_raw = (int32) bytes.u16(vs->raw, off + 4)
         off = off + 6
         let row_start = starty_raw / 2
         let row_end = endy_raw / 2
-        // Map source run to screen rows; iterate screen rows to fill gaps.
-        let scr_y0 = row_start * sprite_h / 64 + upper
-        let scr_y1 = row_end * sprite_h / 64 + upper
-        for sy in scr_y0..scr_y1
-            if sy >= 0 && sy < view_h then
-                // Reverse-map screen row to source row, clamped to run bounds.
-                let mut src_row = (sy - upper) * 64 / sprite_h
-                if src_row < row_start then src_row = row_start
-                if src_row >= row_end then src_row = row_end - 1
-                let pix = vs->raw[base + newstart + (int64) src_row]
+        // Iterate source rows; fill the screen rows each covers (wolf4sdl approach).
+        for row in row_start..row_end
+            let sy0 = row * sprite_h / 64 + upper
+            let sy1 = (row + 1) * sprite_h / 64 + upper
+            if sy0 != sy1 && sy1 > 0 then
+                let pix = vs->raw[base + newstart + (int64) row]
                 let color = pal[(int32) pix]
-                fb[(int64) sy * 320 + (int64) screen_x] = color
+                let mut sy = if sy0 < 0 then 0 else sy0
+                let ey = if sy1 > view_h then view_h else sy1
+                loop
+                    if sy >= ey then break
+                    fb[(int64) sy * 320 + (int64) screen_x] = color
+                    sy = sy + 1
 
 // Render all visible sprites (sorted far to near).
 let render_sprites = (g: game*, vs: vswap_file*, pal: uint32[]) ->
