@@ -1,0 +1,25 @@
+# Compiler binary
+fc
+
+# Object files
+*.o
+
+# Default C compiler output
+a.out
+
+# Generated C from test runs
+tests/cases/**/*.c
+
+# Scratch Dir
+scratch*/
+
+# Editor/IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
