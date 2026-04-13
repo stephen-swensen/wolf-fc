@@ -225,6 +225,7 @@ let sort_sprites = (g: game*) ->
         sprites[j + 1] = key
 
 // Draw one sprite column from compressed VSWAP data.
+// Iterates over screen rows (not source rows) to avoid gaps when scaled up.
 let draw_sprite_col = (vs: vswap_file*, pal: uint32[],
                        page: int32, sprite_col: int32,
                        screen_x: int32, sprite_h: int32) ->
@@ -246,12 +247,17 @@ let draw_sprite_col = (vs: vswap_file*, pal: uint32[],
         off = off + 6
         let row_start = starty_raw / 2
         let row_end = endy_raw / 2
-        for row in row_start..row_end
-            let screen_y = row * sprite_h / 64 + upper
-            if screen_y >= 0 && screen_y < view_h then
-                let pix = vs->raw[base + newstart + (int64) row]
-                let color = pal[(int32) pix]
-                fb[(int64) screen_y * 320 + (int64) screen_x] = color
+        // Map source rows to screen rows and iterate screen rows to fill gaps.
+        let scr_y0 = row_start * sprite_h / 64 + upper
+        let scr_y1 = row_end * sprite_h / 64 + upper
+        for sy in scr_y0..scr_y1
+            if sy >= 0 && sy < view_h then
+                // Reverse-map screen row to source row
+                let src_row = (sy - upper) * 64 / sprite_h
+                if src_row >= row_start && src_row < row_end then
+                    let pix = vs->raw[base + newstart + (int64) src_row]
+                    let color = pal[(int32) pix]
+                    fb[(int64) sy * 320 + (int64) screen_x] = color
 
 // Render all visible sprites (sorted far to near).
 let render_sprites = (g: game*, vs: vswap_file*, pal: uint32[]) ->
@@ -659,7 +665,7 @@ let main = (args: str[]) ->
 
     // Create window resizable and maximize immediately (like face-invaders).
     // F11 toggles fake fullscreen at runtime.
-    let flags = sdl2.window_shown | sdl2.window_allow_highdpi | sdl2.window_resizable
+    let flags = sdl2.window_shown | sdl2.window_resizable
     let win = sdl2.create_window(c"Wolf-FC",
         sdl2.pos_centered, sdl2.pos_centered, 960, 720, flags)
     sdl2.maximize_window(win)
