@@ -24,7 +24,8 @@ import math from std::
 // ============================================================
 
 let screen_w = 320
-let screen_h = 200
+let screen_h = 240     // 4:3 native — avoids non-integer aspect correction
+let view_h = 192       // 3D viewport height (HUD takes bottom 48px)
 let map_size = 64
 let tex_size = 64
 let tile_area = 107    // first non-solid tile (area floors)
@@ -92,8 +93,8 @@ struct game =
 // 0 = empty, 1-63 = wall tile, 90-101 = door.
 let tilemap = alloc(uint8[4096] {})!
 
-// Framebuffer for software rendering (320 x 200 ARGB8888).
-let fb = alloc(uint32[64000] {})!
+// Framebuffer for software rendering (320 x 240 ARGB8888).
+let fb = alloc(uint32[76800] {})!
 
 // Z-buffer: perpendicular wall distance per column (for sprite clipping).
 let zbuf = alloc(float64[320] {})!
@@ -236,7 +237,6 @@ let draw_sprite_col = (vs: vswap_file*, pal: uint32[],
     if sprite_col < left_pix || sprite_col > right_pix then return
     let col_idx = sprite_col - left_pix
     let data_off = (int64) bytes.u16(vs->raw, base + 4 + (int64) col_idx * 2)
-    let view_h = 160
     let upper = view_h / 2 - sprite_h / 2
     let mut off = base + data_off
     loop
@@ -270,7 +270,7 @@ let render_sprites = (g: game*, vs: vswap_file*, pal: uint32[]) ->
         let ty = inv_det * (g->plane_x * sy - g->plane_y * sx)
         if ty <= 0.1 then continue    // behind camera
         let scr_x = (int32) ((float64) (screen_w / 2) * (1.0 + tx / ty))
-        let spr_h = (int32) (160.0 / ty)
+        let spr_h = (int32) ((float64) view_h / ty)
         if spr_h < 1 then continue
         let half = spr_h / 2
         let draw_x0 = scr_x - half
@@ -289,7 +289,7 @@ let render_sprites = (g: game*, vs: vswap_file*, pal: uint32[]) ->
 let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
     // Fill ceiling and floor with per-level colors.
     let ceil_idx = if g->level_num < 60 then ceil_table[g->level_num] else 0x1D
-    let view_h = 160    // HUD takes bottom 40 pixels
+    // view_h is the global constant (192)
     let ceil_color = pal[ceil_idx]
     let floor_color = pal[0x19]
     let half = view_h / 2
@@ -605,8 +605,8 @@ let draw_label = (x: int32, y: int32, label: const str, color: uint32) ->
                     fb[(int64) py * 320 + (int64) px] = color
 
 let render_hud = (g: game*) ->
-    // Dark bar at the bottom (y = 160..200)
-    let bar_top = 160
+    // Dark bar at the bottom (y = 192..240)
+    let bar_top = view_h
     let bar_color = 0xFF400000u32    // dark red
     let text_color = 0xFFFFFFFFu32   // white
     for y in bar_top..screen_h
@@ -643,10 +643,10 @@ let render_hud = (g: game*) ->
 // Save framebuffer as PPM image for debugging.
 let save_ppm = (path: const str) ->
     let f = io.open(path, "wb")!
-    io.write("P6\n320 200\n255\n", f)
+    io.write("P6\n320 240\n255\n", f)
     let mut row = alloc(uint8[960] {})!
     defer free(row)
-    for y in 0..200
+    for y in 0..screen_h
         for x in 0..320
             let c = fb[(int64) y * 320 + (int64) x]
             row[(int64) x * 3] = (uint8) ((c >> 16) & 0xFFu32)
@@ -660,6 +660,9 @@ let save_ppm = (path: const str) ->
 // ============================================================
 
 let main = (args: str[]) ->
+    // Tell Windows not to apply DPI scaling to our window (blurs pixels).
+    sdl2.set_hint(c"SDL_WINDOWS_DPI_AWARENESS", c"system")
+
     // Initialize SDL2
     sdl2.init(sdl2.init_video | sdl2.init_audio)
 
@@ -673,15 +676,13 @@ let main = (args: str[]) ->
 
     let ren = sdl2.create_renderer(win, -1,
         sdl2.renderer_accel | sdl2.renderer_vsync)
+    // Use logical size for automatic integer-scaled letterboxing.
+    // 320x240 = 4:3 scales cleanly to 960x720, 1280x960, etc.
     sdl2.set_logical_size(ren, screen_w, screen_h)
     sdl2.show_cursor(0)
 
-    // Nearest-neighbor scaling — critical for pixel-exact software rendering.
-    // Must be set BEFORE creating the texture (texture properties are set at
-    // creation time). Without this SDL defaults to bilinear filtering, which
-    // causes shimmer/flickering and blurred edges when the 320x200 framebuffer
-    // is scaled up to the window.
-    sdl2.set_hint(c"SDL_RENDER_SCALE_QUALITY", c"nearest")
+    // Nearest-neighbor — must be set BEFORE creating the texture.
+    sdl2.set_hint(c"SDL_RENDER_SCALE_QUALITY", c"0")
 
     // Create streaming texture for software framebuffer (320x200 game content).
     let tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
