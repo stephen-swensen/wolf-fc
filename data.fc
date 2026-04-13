@@ -1,0 +1,309 @@
+// Wolf-FC data loading — palette, VSWAP pages, map decompression.
+
+namespace wolf_data::
+
+// ============================================================
+// Little-endian binary readers
+// ============================================================
+
+module bytes =
+    let u16 = (buf: uint8[], off: int64) ->
+        (uint16) buf[off] | ((uint16) buf[off + 1] << 8)
+
+    let u32 = (buf: uint8[], off: int64) ->
+        (uint32) buf[off] | ((uint32) buf[off + 1] << 8) |
+            ((uint32) buf[off + 2] << 16) | ((uint32) buf[off + 3] << 24)
+
+    let i32 = (buf: uint8[], off: int64) ->
+        (int32) u32(buf, off)
+
+// ============================================================
+// Wolf3D 256-color VGA palette
+// ============================================================
+
+module palette =
+    // Build and return a 256-entry ARGB8888 palette from Wolf3D's 6-bit VGA data.
+    // Caller owns the returned slice.
+    let init = () ->
+        // Raw 6-bit VGA palette from Wolf3D (wolfpal.inc).
+        // 256 entries x 3 channels = 768 values, range 0-63.
+        let raw = int32[768] {
+            0,0,0, 0,0,42, 0,42,0, 0,42,42, 42,0,0,
+            42,0,42, 42,21,0, 42,42,42, 21,21,21, 21,21,63,
+            21,63,21, 21,63,63, 63,21,21, 63,21,63, 63,63,21,
+            63,63,63, 59,59,59, 55,55,55, 52,52,52, 48,48,48,
+            45,45,45, 42,42,42, 38,38,38, 35,35,35, 31,31,31,
+            28,28,28, 25,25,25, 21,21,21, 18,18,18, 14,14,14,
+            11,11,11, 8,8,8, 63,0,0, 59,0,0, 56,0,0,
+            53,0,0, 50,0,0, 47,0,0, 44,0,0, 41,0,0,
+            38,0,0, 34,0,0, 31,0,0, 28,0,0, 25,0,0,
+            22,0,0, 19,0,0, 16,0,0, 63,54,54, 63,46,46,
+            63,39,39, 63,31,31, 63,23,23, 63,16,16, 63,8,8,
+            63,0,0, 63,42,23, 63,38,16, 63,34,8, 63,30,0,
+            57,27,0, 51,24,0, 45,21,0, 39,19,0, 63,63,54,
+            63,63,46, 63,63,39, 63,63,31, 63,62,23, 63,61,16,
+            63,61,8, 63,61,0, 57,54,0, 51,49,0, 45,43,0,
+            39,39,0, 33,33,0, 28,27,0, 22,21,0, 16,16,0,
+            52,63,23, 49,63,16, 45,63,8, 40,63,0, 36,57,0,
+            32,51,0, 29,45,0, 24,39,0, 54,63,54, 47,63,46,
+            39,63,39, 32,63,31, 24,63,23, 16,63,16, 8,63,8,
+            0,63,0, 0,63,0, 0,59,0, 0,56,0, 0,53,0,
+            1,50,0, 1,47,0, 1,44,0, 1,41,0, 1,38,0,
+            1,34,0, 1,31,0, 1,28,0, 1,25,0, 1,22,0,
+            1,19,0, 1,16,0, 54,63,63, 46,63,63, 39,63,63,
+            31,63,62, 23,63,63, 16,63,63, 8,63,63, 0,63,63,
+            0,57,57, 0,51,51, 0,45,45, 0,39,39, 0,33,33,
+            0,28,28, 0,22,22, 0,16,16, 23,47,63, 16,44,63,
+            8,42,63, 0,39,63, 0,35,57, 0,31,51, 0,27,45,
+            0,23,39, 54,54,63, 46,47,63, 39,39,63, 31,32,63,
+            23,24,63, 16,16,63, 8,9,63, 0,1,63, 0,0,63,
+            0,0,59, 0,0,56, 0,0,53, 0,0,50, 0,0,47,
+            0,0,44, 0,0,41, 0,0,38, 0,0,34, 0,0,31,
+            0,0,28, 0,0,25, 0,0,22, 0,0,19, 0,0,16,
+            10,10,10, 63,56,13, 63,53,9, 63,51,6, 63,48,2,
+            63,45,0, 45,8,63, 42,0,63, 38,0,57, 32,0,51,
+            29,0,45, 24,0,39, 20,0,33, 17,0,28, 13,0,22,
+            10,0,16, 63,54,63, 63,46,63, 63,39,63, 63,31,63,
+            63,23,63, 63,16,63, 63,8,63, 63,0,63, 56,0,57,
+            50,0,51, 45,0,45, 39,0,39, 33,0,33, 27,0,28,
+            22,0,22, 16,0,16, 63,58,55, 63,56,52, 63,54,49,
+            63,53,47, 63,51,44, 63,49,41, 63,47,39, 63,46,36,
+            63,44,32, 63,41,28, 63,39,24, 60,37,23, 58,35,22,
+            55,34,21, 52,32,20, 50,31,19, 47,30,18, 45,28,17,
+            42,26,16, 40,25,15, 39,24,14, 36,23,13, 34,22,12,
+            32,20,11, 29,19,10, 27,18,9, 23,16,8, 21,15,7,
+            18,14,6, 16,12,6, 14,11,5, 10,8,3, 24,0,25,
+            0,25,25, 0,24,24, 0,0,7, 0,0,11, 12,9,4,
+            18,0,18, 20,0,20, 0,0,13, 7,7,7, 19,19,19,
+            23,23,23, 16,16,16, 12,12,12, 13,13,13, 54,61,61,
+            46,58,58, 39,55,55, 29,50,50, 18,48,48, 8,45,45,
+            8,44,44, 0,41,41, 0,38,38, 0,35,35, 0,33,33,
+            0,31,31, 0,30,30, 0,29,29, 0,28,28, 0,27,27,
+            38,0,34
+        }
+        let pal = alloc(uint32[256] {})!
+        for i in 0..256
+            let ri = (int64) i * 3
+            let rv = (uint32) raw[ri] * 255u32 / 63u32
+            let gv = (uint32) raw[ri + 1] * 255u32 / 63u32
+            let bv = (uint32) raw[ri + 2] * 255u32 / 63u32
+            pal[i] = 0xFF000000u32 | (rv << 16) | (gv << 8) | bv
+        pal
+
+    // Darken a color by halving each RGB component (used for side shading).
+    let darken = (c: uint32) ->
+        let r = (c >> 16) & 0xFFu32
+        let g = (c >> 8) & 0xFFu32
+        let b = c & 0xFFu32
+        0xFF000000u32 | ((r >> 1) << 16) | ((g >> 1) << 8) | (b >> 1)
+
+// ============================================================
+// VSWAP.WL6 — page manager for wall textures, sprites, sounds
+// ============================================================
+
+module vswap =
+    import io from std::
+
+    struct vswap_file =
+        raw: uint8[]
+        num_chunks: int32
+        sprite_start: int32
+        sound_start: int32
+
+    let load = (path: const str) ->
+        let f = io.open(path, "rb")!
+        io.seek(f, 0i64, io.seek_end)
+        let size = io.tell(f)
+        io.seek(f, 0i64, io.seek_set)
+        let raw = alloc(uint8[size] {})!
+        io.read(raw, size, f)
+        io.close(f)
+        let nc = (int32) bytes.u16(raw, 0i64)
+        let ss = (int32) bytes.u16(raw, 2i64)
+        let snd = (int32) bytes.u16(raw, 4i64)
+        alloc(vswap_file { raw = raw, num_chunks = nc,
+            sprite_start = ss, sound_start = snd })!
+
+    // File offset of a page.
+    let page_offset = (vs: vswap_file*, page: int32) ->
+        (int64) bytes.u32(vs->raw, 6i64 + (int64) page * 4)
+
+    // Wall texture pixel (column-major 64x64). Returns palette index.
+    let wall_pixel = (vs: vswap_file*, tex_page: int32, col: int32, row: int32) ->
+        let off = page_offset(vs, tex_page)
+        vs->raw[off + (int64) col * 64 + (int64) row]
+
+// ============================================================
+// Map loading — MAPHEAD + GAMEMAPS, Carmack + RLEW decompression
+// ============================================================
+
+module maps =
+    import io from std::
+
+    struct level =
+        walls: uint16[]
+        objects: uint16[]
+        width: int32
+        height: int32
+
+    // Read an entire file into a heap-allocated byte slice.
+    let load_file = (path: const str) ->
+        let f = io.open(path, "rb")!
+        io.seek(f, 0i64, io.seek_end)
+        let size = io.tell(f)
+        io.seek(f, 0i64, io.seek_set)
+        let buf = alloc(uint8[size] {})!
+        io.read(buf, size, f)
+        io.close(f)
+        buf
+
+    // Carmack decompression: byte source -> word output.
+    // byte_len is the expanded output size in bytes.
+    let carmack_expand = (src: uint8[], s_start: int64,
+                          dest: uint16[], byte_len: int32) ->
+        let near_tag = 0xA7u8
+        let far_tag = 0xA8u8
+        let mut s = s_start
+        let mut d = 0i64
+        let mut remaining = (int64) byte_len / 2
+        loop
+            if remaining <= 0 then break
+            let lo = src[s]
+            let hi = src[s + 1]
+            s = s + 2
+            if hi == near_tag then
+                let count = (int64) lo
+                if count == 0 then
+                    dest[d] = (uint16) src[s] | ((uint16) near_tag << 8)
+                    s = s + 1
+                    d = d + 1
+                    remaining = remaining - 1
+                else
+                    let offset = (int64) src[s]
+                    s = s + 1
+                    let cp = d - offset
+                    for i in 0..count
+                        dest[d + i] = dest[cp + i]
+                    d = d + count
+                    remaining = remaining - count
+            else if hi == far_tag then
+                let count = (int64) lo
+                if count == 0 then
+                    dest[d] = (uint16) src[s] | ((uint16) far_tag << 8)
+                    s = s + 1
+                    d = d + 1
+                    remaining = remaining - 1
+                else
+                    let cp = (int64) bytes.u16(src, s)
+                    s = s + 2
+                    for i in 0..count
+                        dest[d + i] = dest[cp + i]
+                    d = d + count
+                    remaining = remaining - count
+            else
+                dest[d] = (uint16) lo | ((uint16) hi << 8)
+                d = d + 1
+                remaining = remaining - 1
+        return
+
+    // RLEW decompression: word source (starting at s_off) -> word output.
+    let rlew_expand = (src: uint16[], s_off: int64,
+                       dest: uint16[], tag: uint16) ->
+        let mut s = s_off
+        let mut d = 0i64
+        loop
+            if d >= dest.len then break
+            let val = src[s]
+            s = s + 1
+            if val == tag then
+                let count = (int64) src[s]
+                s = s + 1
+                let fill = src[s]
+                s = s + 1
+                for i in 0..count
+                    dest[d + i] = fill
+                d = d + count
+            else
+                dest[d] = val
+                d = d + 1
+        return
+
+    // Load and decompress a single level from MAPHEAD + GAMEMAPS.
+    let load = (maphead_path: const str, gamemaps_path: const str,
+                map_num: int32) ->
+        let mh = load_file(maphead_path)
+        defer free(mh)
+        let gm = load_file(gamemaps_path)
+        defer free(gm)
+
+        let rlew_tag = bytes.u16(mh, 0i64)
+        let map_off = (int64) bytes.i32(mh, 2i64 + (int64) map_num * 4)
+
+        // Map header: 3 plane offsets (int32), 3 plane lengths (uint16),
+        //             width (uint16), height (uint16), name (16 bytes).
+        let p0_off = (int64) bytes.i32(gm, map_off)
+        let p1_off = (int64) bytes.i32(gm, map_off + 4)
+        let w = (int32) bytes.u16(gm, map_off + 18)
+        let h = (int32) bytes.u16(gm, map_off + 20)
+        let area = (int64) w * (int64) h
+
+        // Decompress plane 0 (walls).
+        let exp0 = (int32) bytes.u16(gm, p0_off)
+        let carm0 = alloc(uint16[(int64) exp0 / 2 + 1] {})!
+        carmack_expand(gm, p0_off + 2, carm0, exp0)
+        let walls = alloc(uint16[area] {})!
+        rlew_expand(carm0, 1i64, walls, rlew_tag)
+        free(carm0)
+
+        // Decompress plane 1 (objects / spawns).
+        let exp1 = (int32) bytes.u16(gm, p1_off)
+        let carm1 = alloc(uint16[(int64) exp1 / 2 + 1] {})!
+        carmack_expand(gm, p1_off + 2, carm1, exp1)
+        let objects = alloc(uint16[area] {})!
+        rlew_expand(carm1, 1i64, objects, rlew_tag)
+        free(carm1)
+
+        alloc(level { walls = walls, objects = objects,
+            width = w, height = h })!
+
+// ============================================================
+// Audio data — AUDIOHED + AUDIOT chunk manager
+// ============================================================
+
+module audio =
+    import io from std::
+
+    struct audio_data =
+        raw: uint8[]         // entire AUDIOT file
+        offsets: uint8[]     // entire AUDIOHED file
+        num_chunks: int32
+
+    let load = (hed_path: const str, dat_path: const str) ->
+        let hf = io.open(hed_path, "rb")!
+        io.seek(hf, 0i64, io.seek_end)
+        let hed_size = io.tell(hf)
+        io.seek(hf, 0i64, io.seek_set)
+        let hed = alloc(uint8[hed_size] {})!
+        io.read(hed, hed_size, hf)
+        io.close(hf)
+        let df = io.open(dat_path, "rb")!
+        io.seek(df, 0i64, io.seek_end)
+        let dat_size = io.tell(df)
+        io.seek(df, 0i64, io.seek_set)
+        let dat = alloc(uint8[dat_size] {})!
+        io.read(dat, dat_size, df)
+        io.close(df)
+        let nc = (int32) (hed_size / 4)
+        alloc(audio_data { raw = dat, offsets = hed, num_chunks = nc })!
+
+    // Get offset and length of an audio chunk.
+    // Returns (offset, length). Length is from next chunk offset minus this one.
+    let chunk_offset = (ad: audio_data*, chunk: int32) ->
+        bytes.u32(ad->offsets, (int64) chunk * 4)
+
+    let chunk_length = (ad: audio_data*, chunk: int32) ->
+        let off = (int64) chunk_offset(ad, chunk)
+        let next_off = if chunk + 1 < ad->num_chunks then
+            (int64) chunk_offset(ad, chunk + 1)
+        else (int64) ad->raw.len
+        (int32) (next_off - off)

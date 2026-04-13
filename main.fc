@@ -1,0 +1,806 @@
+// Wolf-FC — a Wolfenstein 3D clone written in FC using SDL2.
+// Classic 320x200 raycasting engine with textured walls, scaled to window.
+
+import sdl2 from sdl2::
+import sdl_event from sdl2::sdl2
+import audio_spec from sdl2::sdl2
+import palette from wolf_data::
+import vswap from wolf_data::
+import maps from wolf_data::
+import bytes from wolf_data::
+import vswap_file from wolf_data::vswap
+import level from wolf_data::maps
+import audio from wolf_data::
+import audio_data from wolf_data::audio
+import opl2 from opl2::
+import chip from opl2::opl2
+import io from std::
+import sys from std::
+import math from std::
+
+// ============================================================
+// Constants
+// ============================================================
+
+let screen_w = 320
+let screen_h = 200
+let map_size = 64
+let tex_size = 64
+let tile_area = 107    // first non-solid tile (area floors)
+
+let move_speed = 3.5    // tiles/sec at walk
+let run_mult = 2.0
+let turn_speed = 2.5    // rad/sec at walk
+let fov_factor = 0.66   // tan(33 deg) for ~66 deg FOV
+
+// Per-level ceiling palette indices (6 episodes x 10 levels = 60).
+let ceil_table = int32[60] {
+    0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0xBF,
+    0x4E,0x4E,0x4E,0x1D,0x8D,0x4E,0x1D,0x2D,0x1D,0x8D,
+    0x1D,0x1D,0x1D,0x1D,0x1D,0x2D,0xDD,0x1D,0x1D,0x98,
+    0x1D,0x9D,0x2D,0xDD,0xDD,0x9D,0x2D,0x4D,0x1D,0xDD,
+    0x7D,0x1D,0x2D,0x2D,0xDD,0xD7,0x1D,0x1D,0x1D,0x2D,
+    0x1D,0x1D,0x1D,0x1D,0xDD,0xDD,0x7D,0xDD,0xDD,0xDD
+}
+
+// ============================================================
+// Game state
+// ============================================================
+
+struct game =
+    // Camera / player
+    pos_x: float64
+    pos_y: float64
+    dir_x: float64
+    dir_y: float64
+    plane_x: float64
+    plane_y: float64
+
+    // Input
+    key_up: bool
+    key_down: bool
+    key_left: bool
+    key_right: bool
+    key_shift: bool
+    key_alt: bool
+    key_ctrl: bool
+    key_space: bool
+
+    // Game
+    health: int32
+    ammo: int32
+    score: int32
+    lives: int32
+    level_num: int32
+
+// Tilemap: 64*64, column-major — tilemap[x * 64 + y].
+// 0 = empty, 1-63 = wall tile, 90-101 = door.
+let tilemap = alloc(uint8[4096] {})!
+
+// Framebuffer for software rendering (320 x 200 ARGB8888).
+let fb = alloc(uint32[64000] {})!
+
+// Z-buffer: perpendicular wall distance per column (for sprite clipping).
+let zbuf = alloc(float64[320] {})!
+
+// ============================================================
+// Sprites (static objects like barrels, lamps, items)
+// ============================================================
+
+struct sprite_obj =
+    x: float64
+    y: float64
+    shape_page: int32    // VSWAP page index
+    dist: float64        // squared distance to player (for sorting)
+
+let max_sprites = 400
+let sprites = alloc(sprite_obj[400] {})!
+let mut num_sprites = 0
+
+// ============================================================
+// Setup helpers
+// ============================================================
+
+// Build the tilemap from level plane 0 data.
+// Wall tiles 1-63 stored as-is. Door tiles 90-101 stored as-is.
+// Everything else is 0 (empty).
+let build_tilemap = (lv: level*) ->
+    for y in 0..map_size
+        for x in 0..map_size
+            let tile = (int32) lv->walls[(int64) y * 64 + (int64) x]
+            let idx = (int64) x * 64 + (int64) y
+            if tile >= 1 && tile <= 63 then
+                tilemap[idx] = (uint8) tile
+            else if tile >= 90 && tile <= 101 then
+                tilemap[idx] = (uint8) tile
+            else
+                tilemap[idx] = 0u8
+    return
+
+// Check if a tile is solid (wall or closed door).
+let tile_solid = (x: int32, y: int32) ->
+    if x < 0 || x >= map_size || y < 0 || y >= map_size then true
+    else
+        let t = (int32) tilemap[(int64) x * 64 + (int64) y]
+        t != 0
+
+// Try to open a door at the given tile position.
+// Returns true if a door was opened.
+let try_open_door = (x: int32, y: int32) ->
+    if x < 0 || x >= map_size || y < 0 || y >= map_size then false
+    else
+        let t = (int32) tilemap[(int64) x * 64 + (int64) y]
+        if t >= 90 && t <= 101 then
+            tilemap[(int64) x * 64 + (int64) y] = 0u8
+            true
+        else false
+
+// Find player start position and facing from level plane 1.
+// Tile values 19-22 = player facing N/E/S/W.
+let find_player_start = (lv: level*, g: game*) ->
+    for y in 0..map_size
+        for x in 0..map_size
+            let obj = (int32) lv->objects[(int64) y * 64 + (int64) x]
+            if obj >= 19 && obj <= 22 then
+                g->pos_x = (float64) x + 0.5
+                g->pos_y = (float64) y + 0.5
+                let facing = obj - 19
+                // 0=N, 1=E, 2=S, 3=W
+                if facing == 0 then
+                    g->dir_x = 0.0
+                    g->dir_y = -1.0
+                    g->plane_x = fov_factor
+                    g->plane_y = 0.0
+                if facing == 1 then
+                    g->dir_x = 1.0
+                    g->dir_y = 0.0
+                    g->plane_x = 0.0
+                    g->plane_y = fov_factor
+                if facing == 2 then
+                    g->dir_x = 0.0
+                    g->dir_y = 1.0
+                    g->plane_x = 0.0 - fov_factor
+                    g->plane_y = 0.0
+                if facing == 3 then
+                    g->dir_x = -1.0
+                    g->dir_y = 0.0
+                    g->plane_x = 0.0
+                    g->plane_y = 0.0 - fov_factor
+                return
+    // Fallback if no spawn found
+    g->pos_x = 1.5
+    g->pos_y = 1.5
+    g->dir_x = 1.0
+    g->dir_y = 0.0
+    g->plane_x = 0.0
+    g->plane_y = fov_factor
+    return
+
+// Populate sprite list from level plane 1 data.
+// Tile values 23-72 are static objects. Shape = 2 + (tile - 23).
+let spawn_sprites = (lv: level*, sprite_start: int32) ->
+    num_sprites = 0
+    for y in 0..map_size
+        for x in 0..map_size
+            let obj = (int32) lv->objects[(int64) y * 64 + (int64) x]
+            if obj >= 23 && obj <= 72 && num_sprites < max_sprites then
+                let shape = 2 + obj - 23
+                let page = sprite_start + shape
+                sprites[num_sprites] = sprite_obj {
+                    x = (float64) x + 0.5,
+                    y = (float64) y + 0.5,
+                    shape_page = page,
+                    dist = 0.0
+                }
+                num_sprites = num_sprites + 1
+    return
+
+// Sort sprites by distance (farthest first) using insertion sort.
+let sort_sprites = (g: game*) ->
+    for i in 0..num_sprites
+        let dx = sprites[i].x - g->pos_x
+        let dy = sprites[i].y - g->pos_y
+        sprites[i].dist = dx * dx + dy * dy
+    // Insertion sort descending by dist.
+    for i in 1..num_sprites
+        let key = sprites[i]
+        let mut j = i - 1
+        loop
+            if j < 0 then break
+            if sprites[j].dist >= key.dist then break
+            sprites[j + 1] = sprites[j]
+            j = j - 1
+        sprites[j + 1] = key
+    return
+
+// Draw one sprite column from compressed VSWAP data.
+let draw_sprite_col = (vs: vswap_file*, pal: uint32[],
+                       page: int32, sprite_col: int32,
+                       screen_x: int32, sprite_h: int32) ->
+    let base = vswap.page_offset(vs, page)
+    if base == 0 then return    // sparse page
+    let left_pix = (int32) bytes.u16(vs->raw, base)
+    let right_pix = (int32) bytes.u16(vs->raw, base + 2)
+    if sprite_col < left_pix || sprite_col > right_pix then return
+    let col_idx = sprite_col - left_pix
+    let data_off = (int64) bytes.u16(vs->raw, base + 4 + (int64) col_idx * 2)
+    let view_h = 160
+    let upper = view_h / 2 - sprite_h / 2
+    let mut off = base + data_off
+    loop
+        let endy_raw = (int32) bytes.u16(vs->raw, off)
+        if endy_raw == 0 then break
+        let newstart = (int64) bytes.u16(vs->raw, off + 2)
+        let starty_raw = (int32) bytes.u16(vs->raw, off + 4)
+        off = off + 6
+        let row_start = starty_raw / 2
+        let row_end = endy_raw / 2
+        for row in row_start..row_end
+            let screen_y = row * sprite_h / 64 + upper
+            if screen_y >= 0 && screen_y < view_h then
+                let pix = vs->raw[base + newstart + (int64) row]
+                let color = pal[(int32) pix]
+                fb[(int64) screen_y * 320 + (int64) screen_x] = color
+    return
+
+// Render all visible sprites (sorted far to near).
+let render_sprites = (g: game*, vs: vswap_file*, pal: uint32[]) ->
+    sort_sprites(g)
+    let inv_det = 1.0 / (g->plane_x * g->dir_y - g->dir_x * g->plane_y)
+    for i in 0..num_sprites
+        let sx = sprites[i].x - g->pos_x
+        let sy = sprites[i].y - g->pos_y
+        let tx = inv_det * (g->dir_y * sx - g->dir_x * sy)
+        let ty = inv_det * (g->plane_x * sy - g->plane_y * sx)
+        if ty <= 0.1 then continue    // behind camera
+        let scr_x = (int32) ((float64) (screen_w / 2) * (1.0 + tx / ty))
+        let spr_h = (int32) (160.0 / ty)
+        if spr_h < 1 then continue
+        let half = spr_h / 2
+        let draw_x0 = scr_x - half
+        let draw_x1 = scr_x + half
+        for stripe in draw_x0..draw_x1
+            if stripe >= 0 && stripe < screen_w then
+                if ty < zbuf[stripe] then
+                    let tex_col = (stripe - draw_x0) * 64 / spr_h
+                    draw_sprite_col(vs, pal, sprites[i].shape_page,
+                        tex_col, stripe, spr_h)
+    return
+
+// ============================================================
+// Raycaster — one frame
+// ============================================================
+
+let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
+    // Fill ceiling and floor with per-level colors.
+    let ceil_idx = if g->level_num < 60 then ceil_table[g->level_num] else 0x1D
+    let view_h = 160    // HUD takes bottom 40 pixels
+    let ceil_color = pal[ceil_idx]
+    let floor_color = pal[0x19]
+    let half = view_h / 2
+    for y in 0..half
+        for x in 0..screen_w
+            fb[(int64) y * 320 + (int64) x] = ceil_color
+    for y in half..view_h
+        for x in 0..screen_w
+            fb[(int64) y * 320 + (int64) x] = floor_color
+
+    // Reset z-buffer.
+    for i in 0..screen_w
+        zbuf[i] = 1000000.0
+
+    // Cast one ray per screen column.
+    for col in 0..screen_w
+        // Camera-space X: -1.0 (left) to +1.0 (right)
+        let cam_x = 2.0 * (float64) col / (float64) screen_w - 1.0
+
+        // Ray direction
+        let ray_dx = g->dir_x + g->plane_x * cam_x
+        let ray_dy = g->dir_y + g->plane_y * cam_x
+
+        // Current map cell
+        let mut map_x = (int32) g->pos_x
+        let mut map_y = (int32) g->pos_y
+
+        // Length of ray from one grid line to the next
+        let delta_x = if ray_dx == 0.0 then 1000000.0
+            else math.abs(1.0 / ray_dx)
+        let delta_y = if ray_dy == 0.0 then 1000000.0
+            else math.abs(1.0 / ray_dy)
+
+        // Step direction and initial side-dist
+        let mut step_x = 0
+        let mut step_y = 0
+        let mut side_x = 0.0
+        let mut side_y = 0.0
+
+        if ray_dx < 0.0 then
+            step_x = -1
+            side_x = (g->pos_x - (float64) map_x) * delta_x
+        else
+            step_x = 1
+            side_x = ((float64) map_x + 1.0 - g->pos_x) * delta_x
+        if ray_dy < 0.0 then
+            step_y = -1
+            side_y = (g->pos_y - (float64) map_y) * delta_y
+        else
+            step_y = 1
+            side_y = ((float64) map_y + 1.0 - g->pos_y) * delta_y
+
+        // DDA loop
+        let mut hit = false
+        let mut side = 0    // 0 = vertical wall (X step), 1 = horizontal wall (Y step)
+        loop
+            if hit then break
+            if side_x < side_y then
+                side_x = side_x + delta_x
+                map_x = map_x + step_x
+                side = 0
+            else
+                side_y = side_y + delta_y
+                map_y = map_y + step_y
+                side = 1
+            // Bounds check
+            if map_x < 0 || map_x >= map_size || map_y < 0 || map_y >= map_size then
+                hit = true
+            else
+                let tile = (int32) tilemap[(int64) map_x * 64 + (int64) map_y]
+                if tile > 0 then hit = true
+
+        // Get tile value at hit position
+        let tile_val = if map_x >= 0 && map_x < map_size && map_y >= 0 && map_y < map_size then
+            (int32) tilemap[(int64) map_x * 64 + (int64) map_y]
+        else 1    // default wall if out of bounds
+
+        if tile_val == 0 then continue    // no wall hit (edge of map)
+
+        // Perpendicular distance (avoids fisheye)
+        let perp_dist = if side == 0 then
+            side_x - delta_x
+        else
+            side_y - delta_y
+
+        if perp_dist <= 0.001 then continue    // too close, skip
+        zbuf[(int64) col] = perp_dist
+
+        // Wall column height on screen
+        let line_h = (int32) ((float64) view_h / perp_dist)
+        let mut draw_start = view_h / 2 - line_h / 2
+        let mut draw_end = view_h / 2 + line_h / 2
+        if draw_start < 0 then draw_start = 0
+        if draw_end >= view_h then draw_end = view_h - 1
+
+        // Texture X coordinate (where on the wall face did the ray hit?)
+        let mut wall_x = if side == 0 then
+            g->pos_y + perp_dist * ray_dy
+        else
+            g->pos_x + perp_dist * ray_dx
+        wall_x = wall_x - math.floor(wall_x)
+
+        let mut tex_x = (int32) (wall_x * 64.0)
+        if tex_x < 0 then tex_x = 0
+        if tex_x > 63 then tex_x = 63
+
+        // Flip texture X for correct orientation on some faces
+        if side == 0 && ray_dx > 0.0 then tex_x = 63 - tex_x
+        if side == 1 && ray_dy < 0.0 then tex_x = 63 - tex_x
+
+        // Determine texture page.
+        let door_wall = vs->sprite_start - 8
+        let mut tex_page = 0
+        if tile_val >= 90 && tile_val <= 101 then
+            // Door texture. Even tiles = vertical doors, odd = horizontal.
+            let is_vert_door = tile_val % 2 == 0
+            let lock_type = if is_vert_door then (tile_val - 90) / 2
+                else (tile_val - 91) / 2
+            if lock_type == 0 || lock_type == 3 then
+                tex_page = if is_vert_door then door_wall + 1 else door_wall
+            else if lock_type == 4 || lock_type == 5 then
+                tex_page = if is_vert_door then door_wall + 5 else door_wall + 4
+            else
+                tex_page = if is_vert_door then door_wall + 7 else door_wall + 6
+        else
+            // Normal wall: horiz = (t-1)*2, vert = (t-1)*2+1
+            tex_page = if side == 1 then (tile_val - 1) * 2
+                else (tile_val - 1) * 2 + 1
+
+        // Clamp texture page to valid range
+        let max_page = vs->sprite_start - 1
+        if tex_page < 0 || tex_page > max_page then tex_page = 0
+
+        // Draw the wall column
+        let step_v = 64.0 / (float64) line_h
+        let mut tex_pos = (float64) (draw_start - view_h / 2 + line_h / 2) * step_v
+
+        for y in draw_start..(draw_end + 1)
+            let mut tex_y = (int32) tex_pos
+            if tex_y < 0 then tex_y = 0
+            if tex_y > 63 then tex_y = 63
+            tex_pos = tex_pos + step_v
+
+            let pix = vswap.wall_pixel(vs, tex_page, tex_x, tex_y)
+            let mut color = pal[(int32) pix]
+            // Darken one side for depth cue
+            if side == 1 then color = palette.darken(color)
+            fb[(int64) y * 320 + (int64) col] = color
+
+    return
+
+// ============================================================
+// Player movement (classic Wolf3D: arrows turn/move, alt=strafe)
+// ============================================================
+
+// Try to move to (nx, ny), handling collision per-axis.
+let try_move = (g: game*, dx: float64, dy: float64) ->
+    let nx = g->pos_x + dx
+    let ny = g->pos_y + dy
+    if !tile_solid((int32) nx, (int32) g->pos_y) then g->pos_x = nx
+    if !tile_solid((int32) g->pos_x, (int32) ny) then g->pos_y = ny
+    return
+
+let rotate_camera = (g: game*, angle: float64) ->
+    let c = math.cos(angle)
+    let s = math.sin(angle)
+    let od = g->dir_x
+    g->dir_x = od * c + g->dir_y * s
+    g->dir_y = od * (0.0 - s) + g->dir_y * c
+    let op = g->plane_x
+    g->plane_x = op * c + g->plane_y * s
+    g->plane_y = op * (0.0 - s) + g->plane_y * c
+    return
+
+let update_player = (g: game*, dt: float64) ->
+    let spd = move_speed * dt * (if g->key_shift then run_mult else 1.0)
+    let rot = turn_speed * dt * (if g->key_shift then run_mult else 1.0)
+
+    if g->key_up then try_move(g, g->dir_x * spd, g->dir_y * spd)
+    if g->key_down then try_move(g, 0.0 - g->dir_x * spd, 0.0 - g->dir_y * spd)
+
+    if g->key_alt then
+        if g->key_left then try_move(g, 0.0 - g->plane_x * spd, 0.0 - g->plane_y * spd)
+        if g->key_right then try_move(g, g->plane_x * spd, g->plane_y * spd)
+    else
+        if g->key_left then rotate_camera(g, rot)
+        if g->key_right then rotate_camera(g, 0.0 - rot)
+
+    // Open doors with space
+    if g->key_space then
+        let fx = (int32) (g->pos_x + g->dir_x)
+        let fy = (int32) (g->pos_y + g->dir_y)
+        try_open_door(fx, fy)
+        g->key_space = false
+
+    return
+
+// ============================================================
+// Music — IMF playback via OPL2 emulator
+// ============================================================
+
+let sample_rate = 44100
+let imf_rate = 700        // IMF ticks per second
+
+struct music_state =
+    data: uint8[]          // raw AUDIOT file (IMF data within it)
+    pos: int64             // current byte position in data
+    start_pos: int64       // start of current music track
+    seq_len: int64         // total sequence length in bytes
+    remaining: int64       // remaining bytes in current playback
+    tick_accum: float64    // fractional tick accumulator
+    time_count: int32      // current IMF time counter
+    hack_time: int32       // time of next IMF command
+
+// File-level OPL2 chip (kept separate to avoid cross-namespace struct issues).
+let mut opl_chip = default(chip*?)
+
+let music_init = (ad: audio_data*, chunk: int32) ->
+    let off = (int64) audio.chunk_offset(ad, chunk)
+    let len = (int64) audio.chunk_length(ad, chunk)
+    let first_word = (int64) bytes.u16(ad->raw, off)
+    let mut data_off = off
+    let mut data_len = len
+    if first_word != 0 then
+        data_len = first_word
+        data_off = off + 2
+    opl_chip = some(opl2.init((float64) sample_rate))
+    alloc(music_state {
+        data = ad->raw, pos = data_off, start_pos = data_off,
+        seq_len = data_len, remaining = data_len,
+        tick_accum = 0.0, time_count = 0, hack_time = 0
+    })!
+
+// Generate audio samples into a buffer.
+let music_fill = (ms: music_state*, buf: int16[], count: int32) ->
+    let samples_per_tick = (float64) sample_rate / (float64) imf_rate
+    for i in 0..count
+        buf[i] = opl2.sample(opl_chip!)
+        ms->tick_accum = ms->tick_accum + 1.0
+        if ms->tick_accum >= samples_per_tick then
+            ms->tick_accum = ms->tick_accum - samples_per_tick
+            // Process IMF commands for this tick
+            loop
+                if ms->remaining <= 0 then
+                    // Loop music
+                    ms->pos = ms->start_pos
+                    ms->remaining = ms->seq_len
+                    ms->time_count = 0
+                    ms->hack_time = 0
+                    break
+                if ms->hack_time > ms->time_count then break
+                let reg = (int32) ms->data[ms->pos]
+                let val = (int32) ms->data[ms->pos + 1]
+                let delay = (int32) bytes.u16(ms->data, ms->pos + 2)
+                opl2.write(opl_chip!, reg, val)
+                ms->pos = ms->pos + 4
+                ms->remaining = ms->remaining - 4
+                ms->hack_time = ms->time_count + delay
+            ms->time_count = ms->time_count + 1
+    return
+
+// ============================================================
+// HUD — simple status bar at screen bottom
+// ============================================================
+
+// 3x5 pixel font for HUD digits (packed into int32: 5 rows of 3 bits).
+let digit_glyph = (ch: int32) ->
+    if ch == 0 then 7 | (5 << 3) | (5 << 6) | (5 << 9) | (7 << 12)
+    else if ch == 1 then 2 | (6 << 3) | (2 << 6) | (2 << 9) | (7 << 12)
+    else if ch == 2 then 7 | (1 << 3) | (7 << 6) | (4 << 9) | (7 << 12)
+    else if ch == 3 then 7 | (1 << 3) | (7 << 6) | (1 << 9) | (7 << 12)
+    else if ch == 4 then 5 | (5 << 3) | (7 << 6) | (1 << 9) | (1 << 12)
+    else if ch == 5 then 7 | (4 << 3) | (7 << 6) | (1 << 9) | (7 << 12)
+    else if ch == 6 then 7 | (4 << 3) | (7 << 6) | (5 << 9) | (7 << 12)
+    else if ch == 7 then 7 | (1 << 3) | (1 << 6) | (1 << 9) | (1 << 12)
+    else if ch == 8 then 7 | (5 << 3) | (7 << 6) | (5 << 9) | (7 << 12)
+    else 7 | (5 << 3) | (7 << 6) | (1 << 9) | (7 << 12)
+
+let draw_digit = (x: int32, y: int32, d: int32, color: uint32, scale: int32) ->
+    let g = digit_glyph(d)
+    for row in 0..5
+        let bits = (g >> (row * 3)) & 7
+        for col in 0..3
+            if (bits >> (2 - col)) & 1 != 0 then
+                for sy in 0..scale
+                    for sx in 0..scale
+                        let px = x + col * scale + sx
+                        let py = y + row * scale + sy
+                        if px >= 0 && px < screen_w && py >= 0 && py < screen_h then
+                            fb[(int64) py * 320 + (int64) px] = color
+    return
+
+let draw_number = (x: int32, y: int32, num: int32, color: uint32, scale: int32) ->
+    let mut n = num
+    if n < 0 then n = 0
+    let mut digits = int32[8] { 0, 0, 0, 0, 0, 0, 0, 0 }
+    let mut count = 0
+    if n == 0 then
+        digits[0] = 0
+        count = 1
+    else
+        loop
+            if n == 0 then break
+            if count >= 8 then break
+            digits[count] = n % 10
+            n = n / 10
+            count = count + 1
+    // Draw right-to-left (digits are stored reversed)
+    for i in 0..count
+        let dx = x - (i * (3 * scale + scale))
+        draw_digit(dx, y, digits[i], color, scale)
+    return
+
+let draw_label = (x: int32, y: int32, label: const str, color: uint32) ->
+    // Simple 1-pixel text (just draw a colored bar for the label area)
+    for i in 0..(int32) label.len
+        for row in 0..5
+            for col in 0..3
+                let px = x + i * 4 + col
+                let py = y + row
+                if px >= 0 && px < screen_w && py >= 0 && py < screen_h then
+                    fb[(int64) py * 320 + (int64) px] = color
+    return
+
+let render_hud = (g: game*) ->
+    // Dark bar at the bottom (y = 160..200)
+    let bar_top = 160
+    let bar_color = 0xFF400000u32    // dark red
+    let text_color = 0xFFFFFFFFu32   // white
+    for y in bar_top..screen_h
+        for x in 0..screen_w
+            fb[(int64) y * 320 + (int64) x] = bar_color
+
+    // Draw separator line
+    for x in 0..screen_w
+        fb[(int64) bar_top * 320 + (int64) x] = 0xFF808080u32
+
+    // Health: right-aligned at x=80
+    draw_number(76, bar_top + 8, g->health, text_color, 2)
+    // Ammo: right-aligned at x=160
+    draw_number(156, bar_top + 8, g->ammo, text_color, 2)
+    // Score: right-aligned at x=280
+    draw_number(276, bar_top + 8, g->score, text_color, 2)
+    // Lives: right-aligned at x=310
+    draw_number(310, bar_top + 24, g->lives, text_color, 2)
+
+    // Labels (small colored rectangles as placeholders)
+    // "HP" at x=10
+    for y in (bar_top + 10)..(bar_top + 14)
+        for x in 10..22
+            fb[(int64) y * 320 + (int64) x] = 0xFF00FF00u32
+    // "AMMO" at x=90
+    for y in (bar_top + 10)..(bar_top + 14)
+        for x in 90..114
+            fb[(int64) y * 320 + (int64) x] = 0xFFFFFF00u32
+    // "SCORE" at x=170
+    for y in (bar_top + 10)..(bar_top + 14)
+        for x in 170..200
+            fb[(int64) y * 320 + (int64) x] = 0xFFFF8000u32
+    return
+
+// Save framebuffer as PPM image for debugging.
+let save_ppm = (path: const str) ->
+    let f = io.open(path, "wb")!
+    io.write("P6\n320 200\n255\n", f)
+    let mut row = alloc(uint8[960] {})!
+    defer free(row)
+    for y in 0..200
+        for x in 0..320
+            let c = fb[(int64) y * 320 + (int64) x]
+            row[(int64) x * 3] = (uint8) ((c >> 16) & 0xFFu32)
+            row[(int64) x * 3 + 1] = (uint8) ((c >> 8) & 0xFFu32)
+            row[(int64) x * 3 + 2] = (uint8) (c & 0xFFu32)
+        io.write(row, f)
+    io.close(f)
+    return
+
+// ============================================================
+// Entry point
+// ============================================================
+
+let main = (args: str[]) ->
+    // Initialize SDL2
+    sdl2.init(sdl2.init_video | sdl2.init_audio)
+
+    let win = sdl2.create_window(c"Wolf-FC",
+        sdl2.pos_centered, sdl2.pos_centered,
+        960, 600,
+        sdl2.window_shown | sdl2.window_resizable)
+    let ren = sdl2.create_renderer(win, -1,
+        sdl2.renderer_accel | sdl2.renderer_vsync)
+    sdl2.set_logical_size(ren, screen_w, screen_h)
+    sdl2.show_cursor(0)
+
+    // Create streaming texture for software framebuffer
+    let tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
+        sdl2.tex_streaming, screen_w, screen_h)
+
+    // Load game data
+    io.write("Loading palette...\n", stdout)
+    let pal = palette.init()
+
+    io.write("Loading VSWAP.WL6...\n", stdout)
+    let vs = vswap.load("data/VSWAP.WL6")
+    io.write("  chunks=%d{vs->num_chunks}, sprites@%d{vs->sprite_start}, sounds@%d{vs->sound_start}\n", stdout)
+
+    io.write("Loading audio...\n", stdout)
+    let ad = audio.load("data/AUDIOHED.WL6", "data/AUDIOT.WL6")
+    io.write("  audio chunks=%d{ad->num_chunks}\n", stdout)
+
+    io.write("Loading level 0...\n", stdout)
+    let lv = maps.load("data/MAPHEAD.WL6", "data/GAMEMAPS.WL6", 0)
+    io.write("  map %d{lv->width}x%d{lv->height}\n", stdout)
+
+    // Build tilemap, spawn sprites, find player start
+    build_tilemap(lv)
+    spawn_sprites(lv, vs->sprite_start)
+
+    let mut g = game {
+        pos_x = 1.5, pos_y = 1.5,
+        dir_x = 1.0, dir_y = 0.0,
+        plane_x = 0.0, plane_y = fov_factor,
+        key_up = false, key_down = false,
+        key_left = false, key_right = false,
+        key_shift = false, key_alt = false,
+        key_ctrl = false, key_space = false,
+        health = 100, ammo = 8, score = 0, lives = 3,
+        level_num = 0
+    }
+    find_player_start(lv, &g)
+    io.write("  player at (%4.1f{g.pos_x}, %4.1f{g.pos_y})\n", stdout)
+
+    // Set up audio device and start music.
+    // Wolf3D: LASTSOUND=87, STARTMUSIC=3*87=261. Level 0 music = chunk 261.
+    let mut spec = audio_spec {
+        freq = sample_rate, format = sdl2.audio_s16sys,
+        channels = 1u8, silence = 0u8, samples = 1024u16,
+        padding = 0u16, size = 0u32, callback = (any*) 0, userdata = (any*) 0
+    }
+    let mut obtained = default(audio_spec)
+    let audio_dev = sdl2.open_audio((any*) 0, 0, &spec, &obtained, 0)
+    let music_chunk = 261    // STARTMUSIC + 0 (first music track)
+    let mut ms = if audio_dev > 0u32 && music_chunk < ad->num_chunks then
+        sdl2.pause_audio(audio_dev, 0)
+        some(music_init(ad, music_chunk))
+    else default(music_state*?)
+    let music_buf = alloc(int16[2048] {})!
+
+    // Screenshot mode: render one frame, save PPM, exit
+    let mut screenshot_mode = false
+    if args.len > 1i64 then
+        if args[1] == "--screenshot" then screenshot_mode = true
+    if screenshot_mode then
+        render_walls(&g, vs, pal)
+        render_sprites(&g, vs, pal)
+        render_hud(&g)
+        save_ppm("screenshot.ppm")
+        io.write("Saved screenshot.ppm\n", stdout)
+        sdl2.destroy_texture(tex)
+        sdl2.destroy_renderer(ren)
+        sdl2.destroy_window(win)
+        sdl2.quit()
+        return 0
+
+    // Game loop
+    let mut running = true
+    let mut last_ticks = sdl2.get_ticks()
+    let mut event = default(sdl_event)
+
+    loop
+        if !running then break
+
+        // Delta time
+        let now = sdl2.get_ticks()
+        let mut dt = (float64) (now - last_ticks) / 1000.0
+        last_ticks = now
+        if dt > 0.1 then dt = 0.1    // clamp large spikes
+
+        // Poll events
+        loop
+            if sdl2.poll_event(&event) == 0 then break
+            let t = (int32) event.type
+            if t == sdl2.quit_event then running = false
+            if t == sdl2.keydown_event then
+                let k = event.key.keysym.sym
+                if k == sdl2.key_up then g.key_up = true
+                if k == sdl2.key_down then g.key_down = true
+                if k == sdl2.key_left then g.key_left = true
+                if k == sdl2.key_right then g.key_right = true
+                if k == sdl2.key_lshift then g.key_shift = true
+                if k == sdl2.key_lalt then g.key_alt = true
+                if k == sdl2.key_space then g.key_space = true
+                if k == sdl2.key_escape then running = false
+            if t == sdl2.keyup_event then
+                let k = event.key.keysym.sym
+                if k == sdl2.key_up then g.key_up = false
+                if k == sdl2.key_down then g.key_down = false
+                if k == sdl2.key_left then g.key_left = false
+                if k == sdl2.key_right then g.key_right = false
+                if k == sdl2.key_lshift then g.key_shift = false
+                if k == sdl2.key_lalt then g.key_alt = false
+
+        // Update
+        update_player(&g, dt)
+
+        // Render
+        render_walls(&g, vs, pal)
+        render_sprites(&g, vs, pal)
+        render_hud(&g)
+
+        // Generate and queue music audio
+        if ms.is_some then
+            music_fill(ms!, music_buf, 1024)
+            sdl2.queue_audio(audio_dev, (any*) music_buf.ptr, 2048u32)
+            void()
+
+        // Upload framebuffer to texture and display
+        sdl2.update_texture(tex, (any*) 0, (any*) fb.ptr, screen_w * 4)
+        sdl2.clear(ren)
+        sdl2.render_copy(ren, tex, (any*) 0, (any*) 0)
+        sdl2.present(ren)
+
+    // Cleanup
+    if audio_dev > 0u32 then sdl2.close_audio(audio_dev)
+    sdl2.destroy_texture(tex)
+    sdl2.destroy_renderer(ren)
+    sdl2.destroy_window(win)
+    sdl2.quit()
+    0
