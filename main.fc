@@ -4,6 +4,7 @@
 import sdl2 from sdl2::
 import sdl_event from sdl2::sdl2
 import audio_spec from sdl2::sdl2
+import rect from sdl2::sdl2
 import palette from wolf_data::
 import vswap from wolf_data::
 import maps from wolf_data::
@@ -41,6 +42,20 @@ let ceil_table = int32[60] {
     0x1D,0x9D,0x2D,0xDD,0xDD,0x9D,0x2D,0x4D,0x1D,0xDD,
     0x7D,0x1D,0x2D,0x2D,0xDD,0xD7,0x1D,0x1D,0x1D,0x2D,
     0x1D,0x1D,0x1D,0x1D,0xDD,0xDD,0x7D,0xDD,0xDD,0xDD
+}
+
+// Per-level music: songs[episode * 10 + level] = music enum index.
+// STARTMUSIC = 261. Chunk = 261 + songs[i].
+// GETTHEM=3, SEARCHN=11, POW=9, SUSPENSE=12, WARMARCH=2, CORNER=0,
+// NAZI_OMI=8, PREGNANT=18, GOINGAFT=17, HEADACHE=4, DUNGEON=1,
+// INTROCW3=6, NAZI_RAP=20, TWELFTH=22, ZEROHOUR=21, ULTIMATE=19, PACMAN=26
+let songs = int32[60] {
+    3,11,9,12,3,11,9,12, 2,0,
+    8,18,17,4,8,18,4,17, 2,1,
+    6,20,22,21,6,20,22,21, 19,26,
+    3,11,9,12,3,11,9,12, 2,0,
+    8,18,17,4,8,18,4,17, 2,1,
+    6,20,22,21,6,20,22,21, 19,26
 }
 
 // ============================================================
@@ -642,16 +657,20 @@ let main = (args: str[]) ->
     // Initialize SDL2
     sdl2.init(sdl2.init_video | sdl2.init_audio)
 
+    // Create window resizable and maximize immediately (like face-invaders).
+    // F11 toggles fake fullscreen at runtime.
+    let flags = sdl2.window_shown | sdl2.window_allow_highdpi | sdl2.window_resizable
     let win = sdl2.create_window(c"Wolf-FC",
-        sdl2.pos_centered, sdl2.pos_centered,
-        960, 600,
-        sdl2.window_shown | sdl2.window_resizable)
+        sdl2.pos_centered, sdl2.pos_centered, 960, 720, flags)
+    sdl2.maximize_window(win)
+    let mut fullscreen = false
+
     let ren = sdl2.create_renderer(win, -1,
         sdl2.renderer_accel | sdl2.renderer_vsync)
     sdl2.set_logical_size(ren, screen_w, screen_h)
     sdl2.show_cursor(0)
 
-    // Create streaming texture for software framebuffer
+    // Create streaming texture for software framebuffer (320x200 game content).
     let tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
         sdl2.tex_streaming, screen_w, screen_h)
 
@@ -698,7 +717,8 @@ let main = (args: str[]) ->
     }
     let mut obtained = default(audio_spec)
     let audio_dev = sdl2.open_audio((any*) 0, 0, &spec, &obtained, 0)
-    let music_chunk = 261    // STARTMUSIC + 0 (first music track)
+    let start_music = 261    // STARTMUSIC = 3 * LASTSOUND = 3 * 87
+    let music_chunk = start_music + songs[g.level_num]
     let mut ms = if audio_dev > 0u32 && music_chunk < ad->num_chunks then
         sdl2.pause_audio(audio_dev, 0)
         some(music_init(ad, music_chunk))
@@ -750,6 +770,19 @@ let main = (args: str[]) ->
                 if k == sdl2.key_lalt then g.key_alt = true
                 if k == sdl2.key_space then g.key_space = true
                 if k == sdl2.key_escape then running = false
+                if k == sdl2.key_f11 then
+                    fullscreen = !fullscreen
+                    if fullscreen then
+                        let mut db = rect { x = 0, y = 0, w = 0, h = 0 }
+                        sdl2.get_display_bounds(0, &db)
+                        sdl2.set_bordered(win, 0)
+                        sdl2.set_window_position(win, db.x, db.y)
+                        sdl2.set_window_size(win, db.w, db.h)
+                    else
+                        sdl2.set_bordered(win, 1)
+                        sdl2.restore_window(win)
+                        sdl2.maximize_window(win)
+                    sdl2.set_logical_size(ren, screen_w, screen_h)
             if t == sdl2.keyup_event then
                 let k = event.key.keysym.sym
                 if k == sdl2.key_up then g.key_up = false
@@ -773,7 +806,7 @@ let main = (args: str[]) ->
             sdl2.queue_audio(audio_dev, (any*) music_buf.ptr, 2048u32)
             void()
 
-        // Upload framebuffer to texture and display
+        // Upload framebuffer to texture and display.
         sdl2.update_texture(tex, (any*) 0, (any*) fb.ptr, screen_w * 4)
         sdl2.clear(ren)
         sdl2.render_copy(ren, tex, (any*) 0, (any*) 0)
