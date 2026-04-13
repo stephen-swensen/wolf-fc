@@ -23,9 +23,12 @@ import math from std::
 // Constants
 // ============================================================
 
-let screen_w = 320
-let screen_h = 240     // 4:3 native — avoids non-integer aspect correction
-let view_h = 192       // 3D viewport height (HUD takes bottom 48px)
+let game_w = 320       // internal game resolution
+let game_h = 200
+let screen_w = 640     // display resolution (2x scale)
+let screen_h = 400
+let actual_h = 480     // 4:3 corrected height (6 * screen_h / 5)
+let view_h = 160       // 3D viewport height in game coords (HUD takes bottom 40)
 let map_size = 64
 let tex_size = 64
 let tile_area = 107    // first non-solid tile (area floors)
@@ -93,8 +96,11 @@ struct game =
 // 0 = empty, 1-63 = wall tile, 90-101 = door.
 let tilemap = alloc(uint8[4096] {})!
 
-// Framebuffer for software rendering (320 x 240 ARGB8888).
-let fb = alloc(uint32[76800] {})!
+// Framebuffer for software rendering (320 x 200 game pixels).
+let fb = alloc(uint32[64000] {})!
+
+// Display buffer (640 x 400) — 2x upscale of fb for the SDL texture.
+let dbuf = alloc(uint32[256000] {})!
 
 // Z-buffer: perpendicular wall distance per column (for sprite clipping).
 let zbuf = alloc(float64[320] {})!
@@ -117,10 +123,11 @@ let mut num_sprites = 0
 // Setup helpers
 // ============================================================
 
-// Build the tilemap from level plane 0 data.
-// Wall tiles 1-63 stored as-is. Door tiles 90-101 stored as-is.
-// Everything else is 0 (empty).
-let build_tilemap = (lv: level*) ->
+// Tilemap encoding:
+//   0        = empty
+//   1-63     = wall (texture index)
+//   90-101   = door (even=vertical, odd=horizontal)
+let build_tilemap = (lv: level*, sprite_start: int32) ->
     for y in 0..map_size
         for x in 0..map_size
             let tile = (int32) lv->walls[(int64) y * 64 + (int64) x]
@@ -132,12 +139,19 @@ let build_tilemap = (lv: level*) ->
             else
                 tilemap[idx] = 0u8
 
-// Check if a tile is solid (wall or closed door).
+// Check if a tile is solid (wall, door-side wall, or closed door).
 let tile_solid = (x: int32, y: int32) ->
     if x < 0 || x >= map_size || y < 0 || y >= map_size then true
     else
         let t = (int32) tilemap[(int64) x * 64 + (int64) y]
-        t != 0
+        t != 0 && (t < 90 || t > 101)    // walls block, doors handled separately
+
+// Check if tile is a door (for collision — doors block until opened).
+let tile_is_door = (x: int32, y: int32) ->
+    if x < 0 || x >= map_size || y < 0 || y >= map_size then false
+    else
+        let t = (int32) tilemap[(int64) x * 64 + (int64) y]
+        t >= 90 && t <= 101
 
 // Try to open a door at the given tile position.
 // Returns true if a door was opened.
@@ -247,17 +261,18 @@ let draw_sprite_col = (vs: vswap_file*, pal: uint32[],
         off = off + 6
         let row_start = starty_raw / 2
         let row_end = endy_raw / 2
-        // Map source rows to screen rows and iterate screen rows to fill gaps.
+        // Map source run to screen rows; iterate screen rows to fill gaps.
         let scr_y0 = row_start * sprite_h / 64 + upper
         let scr_y1 = row_end * sprite_h / 64 + upper
         for sy in scr_y0..scr_y1
             if sy >= 0 && sy < view_h then
-                // Reverse-map screen row to source row
-                let src_row = (sy - upper) * 64 / sprite_h
-                if src_row >= row_start && src_row < row_end then
-                    let pix = vs->raw[base + newstart + (int64) src_row]
-                    let color = pal[(int32) pix]
-                    fb[(int64) sy * 320 + (int64) screen_x] = color
+                // Reverse-map screen row to source row, clamped to run bounds.
+                let mut src_row = (sy - upper) * 64 / sprite_h
+                if src_row < row_start then src_row = row_start
+                if src_row >= row_end then src_row = row_end - 1
+                let pix = vs->raw[base + newstart + (int64) src_row]
+                let color = pal[(int32) pix]
+                fb[(int64) sy * 320 + (int64) screen_x] = color
 
 // Render all visible sprites (sorted far to near).
 let render_sprites = (g: game*, vs: vswap_file*, pal: uint32[]) ->
@@ -269,14 +284,14 @@ let render_sprites = (g: game*, vs: vswap_file*, pal: uint32[]) ->
         let tx = inv_det * (g->dir_y * sx - g->dir_x * sy)
         let ty = inv_det * (g->plane_x * sy - g->plane_y * sx)
         if ty <= 0.1 then continue    // behind camera
-        let scr_x = (int32) ((float64) (screen_w / 2) * (1.0 + tx / ty))
+        let scr_x = (int32) ((float64) (game_w / 2) * (1.0 + tx / ty))
         let spr_h = (int32) ((float64) view_h / ty)
         if spr_h < 1 then continue
         let half = spr_h / 2
         let draw_x0 = scr_x - half
         let draw_x1 = scr_x + half
         for stripe in draw_x0..draw_x1
-            if stripe >= 0 && stripe < screen_w then
+            if stripe >= 0 && stripe < game_w then
                 if ty < zbuf[stripe] then
                     let tex_col = (stripe - draw_x0) * 64 / spr_h
                     draw_sprite_col(vs, pal, sprites[i].shape_page,
@@ -294,20 +309,20 @@ let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
     let floor_color = pal[0x19]
     let half = view_h / 2
     for y in 0..half
-        for x in 0..screen_w
+        for x in 0..game_w
             fb[(int64) y * 320 + (int64) x] = ceil_color
     for y in half..view_h
-        for x in 0..screen_w
+        for x in 0..game_w
             fb[(int64) y * 320 + (int64) x] = floor_color
 
     // Reset z-buffer.
-    for i in 0..screen_w
+    for i in 0..game_w
         zbuf[i] = 1000000.0
 
     // Cast one ray per screen column.
-    for col in 0..screen_w
+    for col in 0..game_w
         // Camera-space X: -1.0 (left) to +1.0 (right)
-        let cam_x = 2.0 * (float64) col / (float64) screen_w - 1.0
+        let cam_x = 2.0 * (float64) col / (float64) game_w - 1.0
 
         // Ray direction
         let ray_dx = g->dir_x + g->plane_x * cam_x
@@ -355,7 +370,6 @@ let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
                 side_y = side_y + delta_y
                 map_y = map_y + step_y
                 side = 1
-            // Bounds check
             if map_x < 0 || map_x >= map_size || map_y < 0 || map_y >= map_size then
                 hit = true
             else
@@ -365,17 +379,15 @@ let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
         // Get tile value at hit position
         let tile_val = if map_x >= 0 && map_x < map_size && map_y >= 0 && map_y < map_size then
             (int32) tilemap[(int64) map_x * 64 + (int64) map_y]
-        else 1    // default wall if out of bounds
+        else 1
 
-        if tile_val == 0 then continue    // no wall hit (edge of map)
+        if tile_val == 0 then continue
 
         // Perpendicular distance (avoids fisheye)
-        let perp_dist = if side == 0 then
-            side_x - delta_x
-        else
-            side_y - delta_y
+        let perp_dist = if side == 0 then side_x - delta_x
+            else side_y - delta_y
 
-        if perp_dist <= 0.001 then continue    // too close, skip
+        if perp_dist <= 0.001 then continue
         zbuf[(int64) col] = perp_dist
 
         // Wall column height on screen
@@ -385,7 +397,7 @@ let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
         if draw_start < 0 then draw_start = 0
         if draw_end >= view_h then draw_end = view_h - 1
 
-        // Texture X coordinate (where on the wall face did the ray hit?)
+        // Texture X coordinate
         let mut wall_x = if side == 0 then
             g->pos_y + perp_dist * ray_dy
         else
@@ -396,7 +408,6 @@ let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
         if tex_x < 0 then tex_x = 0
         if tex_x > 63 then tex_x = 63
 
-        // Flip texture X for correct orientation on some faces
         if side == 0 && ray_dx > 0.0 then tex_x = 63 - tex_x
         if side == 1 && ray_dy < 0.0 then tex_x = 63 - tex_x
 
@@ -404,7 +415,7 @@ let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
         let door_wall = vs->sprite_start - 8
         let mut tex_page = 0
         if tile_val >= 90 && tile_val <= 101 then
-            // Door texture. Even tiles = vertical doors, odd = horizontal.
+            // Door texture
             let is_vert_door = tile_val % 2 == 0
             let lock_type = if is_vert_door then (tile_val - 90) / 2
                 else (tile_val - 91) / 2
@@ -419,7 +430,6 @@ let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
             tex_page = if side == 1 then (tile_val - 1) * 2
                 else (tile_val - 1) * 2 + 1
 
-        // Clamp texture page to valid range
         let max_page = vs->sprite_start - 1
         if tex_page < 0 || tex_page > max_page then tex_page = 0
 
@@ -447,8 +457,12 @@ let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
 let try_move = (g: game*, dx: float64, dy: float64) ->
     let nx = g->pos_x + dx
     let ny = g->pos_y + dy
-    if !tile_solid((int32) nx, (int32) g->pos_y) then g->pos_x = nx
-    if !tile_solid((int32) g->pos_x, (int32) ny) then g->pos_y = ny
+    let bx = (int32) nx
+    let by = (int32) g->pos_y
+    if !tile_solid(bx, by) && !tile_is_door(bx, by) then g->pos_x = nx
+    let bx2 = (int32) g->pos_x
+    let by2 = (int32) ny
+    if !tile_solid(bx2, by2) && !tile_is_door(bx2, by2) then g->pos_y = ny
 
 let rotate_camera = (g: game*, angle: float64) ->
     let c = math.cos(angle)
@@ -571,7 +585,7 @@ let draw_digit = (x: int32, y: int32, d: int32, color: uint32, scale: int32) ->
                     for sx in 0..scale
                         let px = x + col * scale + sx
                         let py = y + row * scale + sy
-                        if px >= 0 && px < screen_w && py >= 0 && py < screen_h then
+                        if px >= 0 && px < game_w && py >= 0 && py < game_h then
                             fb[(int64) py * 320 + (int64) px] = color
 
 let draw_number = (x: int32, y: int32, num: int32, color: uint32, scale: int32) ->
@@ -601,20 +615,20 @@ let draw_label = (x: int32, y: int32, label: const str, color: uint32) ->
             for col in 0..3
                 let px = x + i * 4 + col
                 let py = y + row
-                if px >= 0 && px < screen_w && py >= 0 && py < screen_h then
+                if px >= 0 && px < game_w && py >= 0 && py < game_h then
                     fb[(int64) py * 320 + (int64) px] = color
 
 let render_hud = (g: game*) ->
-    // Dark bar at the bottom (y = 192..240)
+    // Dark bar at the bottom (y = 160..200)
     let bar_top = view_h
     let bar_color = 0xFF400000u32    // dark red
     let text_color = 0xFFFFFFFFu32   // white
-    for y in bar_top..screen_h
-        for x in 0..screen_w
+    for y in bar_top..game_h
+        for x in 0..game_w
             fb[(int64) y * 320 + (int64) x] = bar_color
 
     // Draw separator line
-    for x in 0..screen_w
+    for x in 0..game_w
         fb[(int64) bar_top * 320 + (int64) x] = 0xFF808080u32
 
     // Health: right-aligned at x=80
@@ -640,13 +654,26 @@ let render_hud = (g: game*) ->
         for x in 170..200
             fb[(int64) y * 320 + (int64) x] = 0xFFFF8000u32
 
+// Upscale fb (320x200) to dbuf (640x400) with nearest-neighbor 2x.
+let upscale_2x = () ->
+    for y in 0..game_h
+        for x in 0..game_w
+            let c = fb[(int64) y * (int64) game_w + (int64) x]
+            let dx = (int64) x * 2
+            let dy = (int64) y * 2
+            let sw = (int64) screen_w
+            dbuf[dy * sw + dx] = c
+            dbuf[dy * sw + dx + 1] = c
+            dbuf[(dy + 1) * sw + dx] = c
+            dbuf[(dy + 1) * sw + dx + 1] = c
+
 // Save framebuffer as PPM image for debugging.
 let save_ppm = (path: const str) ->
     let f = io.open(path, "wb")!
-    io.write("P6\n320 240\n255\n", f)
+    io.write("P6\n320 200\n255\n", f)
     let mut row = alloc(uint8[960] {})!
     defer free(row)
-    for y in 0..screen_h
+    for y in 0..200
         for x in 0..320
             let c = fb[(int64) y * 320 + (int64) x]
             row[(int64) x * 3] = (uint8) ((c >> 16) & 0xFFu32)
@@ -668,23 +695,23 @@ let main = (args: str[]) ->
 
     // Create window resizable and maximize immediately (like face-invaders).
     // F11 toggles fake fullscreen at runtime.
-    let flags = sdl2.window_shown | sdl2.window_resizable
+    // Window: resizable, maximized on start. F11 toggles fullscreen.
+    let flags = sdl2.window_shown | sdl2.window_resizable | sdl2.window_allow_highdpi
     let win = sdl2.create_window(c"Wolf-FC",
-        sdl2.pos_centered, sdl2.pos_centered, 960, 720, flags)
+        sdl2.pos_centered, sdl2.pos_centered, screen_w, actual_h, flags)
     sdl2.maximize_window(win)
     let mut fullscreen = false
 
-    let ren = sdl2.create_renderer(win, -1,
-        sdl2.renderer_accel | sdl2.renderer_vsync)
-    // Use logical size for automatic integer-scaled letterboxing.
-    // 320x240 = 4:3 scales cleanly to 960x720, 1280x960, etc.
-    sdl2.set_logical_size(ren, screen_w, screen_h)
+    // Renderer with vsync (matching wolf4sdl approach).
+    let ren = sdl2.create_renderer(win, -1, sdl2.renderer_vsync)
+    // 4:3 aspect correction: 640x400 content displayed at 640x480 logical.
+    sdl2.set_logical_size(ren, screen_w, actual_h)
     sdl2.show_cursor(0)
 
-    // Nearest-neighbor — must be set BEFORE creating the texture.
-    sdl2.set_hint(c"SDL_RENDER_SCALE_QUALITY", c"0")
+    // Nearest-neighbor scaling — must be set BEFORE creating the texture.
+    sdl2.set_hint(c"SDL_RENDER_SCALE_QUALITY", c"nearest")
 
-    // Create streaming texture for software framebuffer (320x200 game content).
+    // Streaming texture at 640x400 (2x upscaled game content).
     let tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
         sdl2.tex_streaming, screen_w, screen_h)
 
@@ -705,7 +732,7 @@ let main = (args: str[]) ->
     io.write("  map %d{lv->width}x%d{lv->height}\n", stdout)
 
     // Build tilemap, spawn sprites, find player start
-    build_tilemap(lv)
+    build_tilemap(lv, vs->sprite_start)
     spawn_sprites(lv, vs->sprite_start)
 
     let mut g = game {
@@ -796,7 +823,7 @@ let main = (args: str[]) ->
                         sdl2.set_bordered(win, 1)
                         sdl2.restore_window(win)
                         sdl2.maximize_window(win)
-                    sdl2.set_logical_size(ren, screen_w, screen_h)
+                    sdl2.set_logical_size(ren, screen_w, actual_h)
             if t == sdl2.keyup_event then
                 let k = event.key.keysym.sym
                 if k == sdl2.key_up then g.key_up = false
@@ -821,7 +848,9 @@ let main = (args: str[]) ->
             void()
 
         // Upload framebuffer to texture and display.
-        sdl2.update_texture(tex, (any*) 0, (any*) fb.ptr, screen_w * 4)
+        // Upscale 320x200 → 640x400, upload, and present.
+        upscale_2x()
+        sdl2.update_texture(tex, (any*) 0, (any*) dbuf.ptr, screen_w * 4)
         sdl2.clear(ren)
         sdl2.render_copy(ren, tex, (any*) 0, (any*) 0)
         sdl2.present(ren)
