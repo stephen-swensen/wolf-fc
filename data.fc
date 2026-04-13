@@ -204,7 +204,6 @@ module maps =
                 dest[d] = (uint16) lo | ((uint16) hi << 8)
                 d = d + 1
                 remaining = remaining - 1
-        return
 
     // RLEW decompression: word source (starting at s_off) -> word output.
     let rlew_expand = (src: uint16[], s_off: int64,
@@ -226,7 +225,6 @@ module maps =
             else
                 dest[d] = val
                 d = d + 1
-        return
 
     // Load and decompress a single level from MAPHEAD + GAMEMAPS.
     let load = (maphead_path: const str, gamemaps_path: const str,

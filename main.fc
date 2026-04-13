@@ -115,7 +115,6 @@ let build_tilemap = (lv: level*) ->
                 tilemap[idx] = (uint8) tile
             else
                 tilemap[idx] = 0u8
-    return
 
 // Check if a tile is solid (wall or closed door).
 let tile_solid = (x: int32, y: int32) ->
@@ -174,7 +173,6 @@ let find_player_start = (lv: level*, g: game*) ->
     g->dir_y = 0.0
     g->plane_x = 0.0
     g->plane_y = fov_factor
-    return
 
 // Populate sprite list from level plane 1 data.
 // Tile values 23-72 are static objects. Shape = 2 + (tile - 23).
@@ -193,7 +191,6 @@ let spawn_sprites = (lv: level*, sprite_start: int32) ->
                     dist = 0.0
                 }
                 num_sprites = num_sprites + 1
-    return
 
 // Sort sprites by distance (farthest first) using insertion sort.
 let sort_sprites = (g: game*) ->
@@ -211,7 +208,6 @@ let sort_sprites = (g: game*) ->
             sprites[j + 1] = sprites[j]
             j = j - 1
         sprites[j + 1] = key
-    return
 
 // Draw one sprite column from compressed VSWAP data.
 let draw_sprite_col = (vs: vswap_file*, pal: uint32[],
@@ -241,7 +237,6 @@ let draw_sprite_col = (vs: vswap_file*, pal: uint32[],
                 let pix = vs->raw[base + newstart + (int64) row]
                 let color = pal[(int32) pix]
                 fb[(int64) screen_y * 320 + (int64) screen_x] = color
-    return
 
 // Render all visible sprites (sorted far to near).
 let render_sprites = (g: game*, vs: vswap_file*, pal: uint32[]) ->
@@ -265,7 +260,6 @@ let render_sprites = (g: game*, vs: vswap_file*, pal: uint32[]) ->
                     let tex_col = (stripe - draw_x0) * 64 / spr_h
                     draw_sprite_col(vs, pal, sprites[i].shape_page,
                         tex_col, stripe, spr_h)
-    return
 
 // ============================================================
 // Raycaster — one frame
@@ -424,8 +418,6 @@ let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
             if side == 1 then color = palette.darken(color)
             fb[(int64) y * 320 + (int64) col] = color
 
-    return
-
 // ============================================================
 // Player movement (classic Wolf3D: arrows turn/move, alt=strafe)
 // ============================================================
@@ -436,7 +428,6 @@ let try_move = (g: game*, dx: float64, dy: float64) ->
     let ny = g->pos_y + dy
     if !tile_solid((int32) nx, (int32) g->pos_y) then g->pos_x = nx
     if !tile_solid((int32) g->pos_x, (int32) ny) then g->pos_y = ny
-    return
 
 let rotate_camera = (g: game*, angle: float64) ->
     let c = math.cos(angle)
@@ -447,7 +438,6 @@ let rotate_camera = (g: game*, angle: float64) ->
     let op = g->plane_x
     g->plane_x = op * c + g->plane_y * s
     g->plane_y = op * (0.0 - s) + g->plane_y * c
-    return
 
 let update_player = (g: game*, dt: float64) ->
     let spd = move_speed * dt * (if g->key_shift then run_mult else 1.0)
@@ -469,8 +459,6 @@ let update_player = (g: game*, dt: float64) ->
         let fy = (int32) (g->pos_y + g->dir_y)
         try_open_door(fx, fy)
         g->key_space = false
-
-    return
 
 // ============================================================
 // Music — IMF playback via OPL2 emulator
@@ -534,7 +522,6 @@ let music_fill = (ms: music_state*, buf: int16[], count: int32) ->
                 ms->remaining = ms->remaining - 4
                 ms->hack_time = ms->time_count + delay
             ms->time_count = ms->time_count + 1
-    return
 
 // ============================================================
 // HUD — simple status bar at screen bottom
@@ -565,7 +552,6 @@ let draw_digit = (x: int32, y: int32, d: int32, color: uint32, scale: int32) ->
                         let py = y + row * scale + sy
                         if px >= 0 && px < screen_w && py >= 0 && py < screen_h then
                             fb[(int64) py * 320 + (int64) px] = color
-    return
 
 let draw_number = (x: int32, y: int32, num: int32, color: uint32, scale: int32) ->
     let mut n = num
@@ -586,7 +572,6 @@ let draw_number = (x: int32, y: int32, num: int32, color: uint32, scale: int32) 
     for i in 0..count
         let dx = x - (i * (3 * scale + scale))
         draw_digit(dx, y, digits[i], color, scale)
-    return
 
 let draw_label = (x: int32, y: int32, label: const str, color: uint32) ->
     // Simple 1-pixel text (just draw a colored bar for the label area)
@@ -597,7 +582,6 @@ let draw_label = (x: int32, y: int32, label: const str, color: uint32) ->
                 let py = y + row
                 if px >= 0 && px < screen_w && py >= 0 && py < screen_h then
                     fb[(int64) py * 320 + (int64) px] = color
-    return
 
 let render_hud = (g: game*) ->
     // Dark bar at the bottom (y = 160..200)
@@ -634,7 +618,6 @@ let render_hud = (g: game*) ->
     for y in (bar_top + 10)..(bar_top + 14)
         for x in 170..200
             fb[(int64) y * 320 + (int64) x] = 0xFFFF8000u32
-    return
 
 // Save framebuffer as PPM image for debugging.
 let save_ppm = (path: const str) ->
@@ -650,7 +633,6 @@ let save_ppm = (path: const str) ->
             row[(int64) x * 3 + 2] = (uint8) (c & 0xFFu32)
         io.write(row, f)
     io.close(f)
-    return
 
 // ============================================================
 // Entry point
