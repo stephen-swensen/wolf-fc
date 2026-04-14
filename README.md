@@ -129,9 +129,9 @@ The project is organized into two FC source files plus shared SDL2/OPL2 bindings
   - Classic Wolf3D movement and controls
   - Game loop with delta-time physics
 
-- **Shared modules** (from `fc-lang/demos/shared/`)
-  - `sdl2.fc` — SDL2 C bindings
-  - `opl2.fc` — OPL2 FM synthesis emulator for IMF music
+- **`sdl2.fc`** — SDL2 C bindings (originally from `fc-lang/demos/shared/`, now vendored here so wolf-fc depends only on the FC compiler and stdlib)
+- **`opl2.fc`** — OPL2 FM synthesis emulator for IMF music and AdLib SFX (also vendored)
+- **`png.fc`** — Pure-FC PNG writer used for screenshots
 
 ## License
 

@@ -1,0 +1,126 @@
+// AdLib sound-effect playback for id-Software games (Wolf3D / Spear of
+// Destiny / Blake Stone). Parses an AdLibSound chunk from AUDIOT and drives
+// an OPL2 chip to reproduce the sound. One voice (channel 0) is used for
+// the effect; the caller owns the chip and the sound data bytes.
+//
+// AdLibSound chunk layout (little-endian):
+//   offset 0..3   : uint32 length          -- number of note-data bytes
+//   offset 4..5   : uint16 priority         -- preempt priority (unused here)
+//   offset 6..21  : 16-byte Instrument block (11 meaningful + 5 padding)
+//   offset 22     : uint8  block            -- octave for the F-number (0..7)
+//   offset 23+    : length bytes of data    -- one byte per 140 Hz tick;
+//                                             zero = key-off, else F-num low
+//
+// Instrument fields (offsets within the 16-byte block):
+//   0 mChar    1 cChar    2 mScale   3 cScale
+//   4 mAttack  5 cAttack  6 mSus     7 cSus
+//   8 mWave    9 cWave   10 nConn   11..15 padding
+
+namespace adlib::
+
+module adlib =
+    import opl2 from opl2::
+
+    // Wolf3D note-advance rate. Each byte of data fires once per tick.
+    let tick_rate = 140
+
+    // Parsed AdLibSound header. `bytes` is a non-owning reference back into
+    // the AUDIOT buffer; do not free it through this struct.
+    struct sfx_data =
+        bytes: uint8[]
+        data_off: int64
+        data_len: int64
+        m_char: int32
+        c_char: int32
+        m_scale: int32
+        c_scale: int32
+        m_atk: int32
+        c_atk: int32
+        m_sus: int32
+        c_sus: int32
+        m_wave: int32
+        c_wave: int32
+        n_conn: int32
+        block: int32
+
+    // Parse an AdLibSound chunk starting at `offset` in `bytes`.
+    let parse = (bytes: uint8[], offset: int64) ->
+        let len = (int64) ((uint32) bytes[offset] |
+                           ((uint32) bytes[offset + 1] << 8) |
+                           ((uint32) bytes[offset + 2] << 16) |
+                           ((uint32) bytes[offset + 3] << 24))
+        sfx_data {
+            bytes = bytes,
+            data_off = offset + 23,
+            data_len = len,
+            m_char  = (int32) bytes[offset + 6],
+            c_char  = (int32) bytes[offset + 7],
+            m_scale = (int32) bytes[offset + 8],
+            c_scale = (int32) bytes[offset + 9],
+            m_atk   = (int32) bytes[offset + 10],
+            c_atk   = (int32) bytes[offset + 11],
+            m_sus   = (int32) bytes[offset + 12],
+            c_sus   = (int32) bytes[offset + 13],
+            m_wave  = (int32) bytes[offset + 14],
+            c_wave  = (int32) bytes[offset + 15],
+            n_conn  = (int32) bytes[offset + 16],
+            block   = (int32) bytes[offset + 22]
+        }
+
+    // Per-sound playback state. The chip pointer lives outside this struct
+    // (passed to play/fill) because FC currently can't emit a cross-namespace
+    // type as a struct field — see fc-lang/spec/TODO.md.
+    struct sfx_state =
+        active: bool
+        data: uint8[]
+        data_end: int64
+        pos: int64
+        block: int32
+        tick_accum: float64
+
+    // Allocate and return a fresh, silent sfx_state.
+    let init = () ->
+        alloc(sfx_state {
+            active = false, data = default(uint8[]),
+            data_end = 0, pos = 0, block = 0, tick_accum = 0.0
+        })!
+
+    // Start (or restart) playback of `s` on channel 0 of `chip`. Any
+    // in-progress sound is silenced before the new one begins.
+    let play = (st: sfx_state*, chip: opl2.chip*, s: sfx_data) ->
+        opl2.note_off(chip, 0)
+        opl2.load_instrument(chip, 0,
+            s.m_char, s.c_char, s.m_scale, s.c_scale,
+            s.m_atk, s.c_atk, s.m_sus, s.c_sus,
+            s.m_wave, s.c_wave, s.n_conn)
+        st->data = s.bytes
+        st->data_end = s.data_off + s.data_len
+        st->pos = s.data_off
+        st->block = s.block
+        st->active = true
+        st->tick_accum = 0.0
+
+    // Generate `count` samples from `chip`, advance note data at 140 Hz
+    // while active, and mix into `buf` with saturation. Call once per audio
+    // fill cycle alongside music_fill / digi mix.
+    let fill = (st: sfx_state*, chip: opl2.chip*,
+                buf: int16[], count: int32, sample_rate: int32) ->
+        let samples_per_tick = (float64) sample_rate / (float64) tick_rate
+        for i in 0..count
+            let s = opl2.sample(chip)
+            let mixed = (int32) buf[i] + (int32) s
+            buf[i] = if mixed > 32767 then 32767i16
+                else if mixed < -32768 then -32768i16
+                else (int16) mixed
+            if st->active then
+                st->tick_accum = st->tick_accum + 1.0
+                if st->tick_accum >= samples_per_tick then
+                    st->tick_accum = st->tick_accum - samples_per_tick
+                    if st->pos >= st->data_end then
+                        opl2.note_off(chip, 0)
+                        st->active = false
+                    else
+                        let b = (int32) st->data[st->pos]
+                        st->pos = st->pos + 1
+                        if b == 0 then opl2.note_off(chip, 0)
+                        else opl2.note_on(chip, 0, st->block, b)

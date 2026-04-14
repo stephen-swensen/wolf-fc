@@ -6,24 +6,24 @@ Wolf-FC is a Wolfenstein 3D clone written in FC, intended as a demo of the FC la
 
 ## Sibling Repositories
 
-- **`../fc-lang/`** — The FC compiler, stdlib, and shared SDL2/OPL2 bindings. **Read `../fc-lang/CLAUDE.md` for the full FC language reference** (syntax, type system, module system, C interop, naming conventions, etc.). Key paths:
+- **`../fc-lang/`** — The FC compiler and stdlib. **Read `../fc-lang/CLAUDE.md` for the full FC language reference** (syntax, type system, module system, C interop, naming conventions, etc.). Key paths:
   - `../fc-lang/fc` — compiler binary
   - `../fc-lang/stdlib/` — standard library (io, math, sys, text, random, data)
-  - `../fc-lang/demos/shared/sdl2.fc` — SDL2 bindings (namespace `sdl2::`)
-  - `../fc-lang/demos/shared/opl2.fc` — OPL2 FM synth emulator (namespace `opl2::`)
   - `../fc-lang/spec/examples.fc` — runnable FC quick reference
+
+  Wolf-fc depends only on the compiler and stdlib. The SDL2 and OPL2 bindings, originally copied from `fc-lang/demos/shared/`, are now vendored into this repo (`sdl2.fc`, `opl2.fc`) so wolf-fc can evolve them independently of the shared demo copies.
 - **`../wolf4sdl/`** — C reference implementation of Wolf3D (SDL2 port). Consult for data format details and rendering correctness, but **don't copy code** (GPL). Key files listed in TODO.md.
 
 ## Build & Run
 
 - **`./run.sh`** — Compile FC → C → binary, then run. Requires `../fc-lang/` and `libsdl2-dev`.
-- **`./run.sh` then pass `--screenshot`** — Renders one frame to `screenshot.ppm` and exits (for debugging without display).
-- **`--test <cmd> ...`** — Headless scripted-play mode (see below). No SDL window, no audio device. Use this for automated verification.
+- **`./run.sh --test <cmd> ...`** — Headless scripted-play mode (see below). No SDL window, no audio device. Use this for automated verification.
+- Press **`s`** in interactive mode to take a screenshot to `~/.wolf-fc/screenshots/ss_NNN.png`. See README.md.
 - Data files must be in `data/*.WL6` (not committed — users supply their own from a legitimate Wolf3D copy).
 
 ## Headless Test Mode (`--test`)
 
-**Purpose**: run the game engine without a window or audio so gameplay logic can be verified deterministically from a shell script. Used heavily for regression testing, since rendering verification is harder without it (PPM files work but are awkward).
+**Purpose**: run the game engine without a window or audio so gameplay logic can be verified deterministically from a shell script. Used heavily for regression testing; `ss:path.png` during a test script writes a PNG of the current frame with game-state metadata embedded in a tEXt chunk.
 
 **Entry point**: `run_test_cmd` in `main.fc` dispatches each CLI arg to a command handler. After `--test`, args are processed left-to-right with a fixed `dt = 1.0 / 35.0` per simulated tick. The test mode skips SDL init entirely — data loads, game state initializes, commands run, then the program exits.
 
@@ -56,34 +56,28 @@ The `goto:X,Y` command is deliberately NOT a full tick — it just teleports and
 
 ### Rendering in test mode
 
-`ss:FILE` renders a frame to `fb[]` and writes it as PPM. The render path mirrors the interactive loop:
-
-```fc
-render_walls(g, vs, pal)
-render_sprites(g, vs, pal)
-render_weapon(g)
-render_hud(g)
-save_ppm(arg[3i64..arg.len])
-```
-
-If you add a new render layer, add it here too (same "single source of truth" discipline as `tick`).
+`ss:FILE.png` calls `render_frame(g, vs, pal)` (the single-source-of-truth render path also used by the interactive loop and 's' key) and then `save_png` with game-state metadata. If you add a new render layer, add it to `render_frame` — nowhere else.
 
 ### Useful patterns for verification
 
 - **State checks after time-passing commands**: `fwd:20 state` prints position, health, etc. Grep the output.
-- **Pixel sampling from screenshots**: the PPM is raw RGB after a short header. Python with the `struct` module can read specific pixels in ~10 lines — faster than installing an image viewer and more precise for automated checks.
+- **Pixel sampling from screenshots**: the Read tool can open PNGs directly. For per-pixel regression checks, Python with `struct` + `zlib` can decode pixel data in ~15 lines.
 - **Level-0 coordinates**: player spawn is `(29.5, 57.5)` facing east. Known landmarks: door at `(32, 57)`, elevator switch at `(25, 46)`, push-wall at `(10, 13)`, first-aid at `(29, 24)`, cross at `(7, 14)`.
 
 ## Source Files
 
-- **`data.fc`** (~307 lines) — `namespace wolf_data::` — Data loading subsystem:
+- **`sdl2.fc`** — `namespace sdl2::` — C-interop bindings for SDL2 (window, renderer, texture, event, audio). Vendored from `fc-lang/demos/shared/`.
+- **`opl2.fc`** — `namespace opl2::` — YM3812 (OPL2) FM synth emulator. Vendored from `fc-lang/demos/shared/`; used for both IMF music and AdLib sound effects.
+- **`png.fc`** — `namespace png::` — Pure-FC PNG writer (CRC-32, Adler-32, deflate stored blocks, optional tEXt metadata). Used for screenshots.
+
+- **`data.fc`** — `namespace wolf_data::` — Data loading subsystem:
   - `module bytes` — Little-endian uint16/uint32/int32 readers
   - `module palette` — `init()` returns heap-allocated 256-entry ARGB palette from hardcoded 6-bit VGA data
   - `module vswap` — Loads VSWAP.WL6, provides `wall_pixel()` accessor
   - `module maps` — Loads MAPHEAD+GAMEMAPS with Carmack + RLEW decompression
   - `module audio` — Loads AUDIOHED+AUDIOT, provides chunk offset/length accessors
 
-- **`main.fc`** (~865 lines) — Game engine, all in one file (no namespace):
+- **`main.fc`** — Game engine, all in one file (no namespace):
   - Constants (game_w=320, game_h=200, screen_w=640, screen_h=400, actual_h=480, view_h=160)
   - `struct game` — player state (position, direction, camera plane, input, health/ammo/score)
   - `struct sprite_obj` — static objects (position, VSWAP page, distance)

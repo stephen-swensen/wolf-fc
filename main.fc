@@ -16,6 +16,9 @@ import audio_data from wolf_data::audio
 import png from png::
 import opl2 from opl2::
 import chip from opl2::opl2
+import adlib from adlib::
+import sfx_data from adlib::adlib
+import sfx_state from adlib::adlib
 import io from std::
 import sys from std::
 import math from std::
@@ -877,24 +880,63 @@ let update_doors = (g: game*, dt: float64) ->
 // Global VSWAP pointer for sound playback (set during init).
 let mut g_vs = default(vswap_file*?)
 
-// Digi-pack indices into the sound info table at the last VSWAP page.
-// Do NOT use sound-enum values here: Wolf3D's sound enums (e.g. OPENDOORSND=18)
-// are mapped to a smaller digi-pack index via wolf4sdl's wolfdigimap[] — that
-// mapping (and not all sound enums have digitized versions; pickup/treasure
-// sounds only exist as AdLib in Wolf3D). Indices below are for Wolf3D only;
-// Spear of Destiny has a different mapping.
-let snd_none       = -1    // sentinel: no digitized version in Wolf3D
-let snd_close_door = 2
-let snd_open_door  = 3
+// Global AUDIOT pointer — needed to load AdLib SFX chunks on demand.
+let mut g_ad = default(audio_data*?)
+
+// AdLib SFX state (cross-namespace chip* can't live in a struct field in
+// current FC, so the chip is a separate file-level global; see spec/TODO.md).
+// Both are initialized during audio setup in main.
+let mut adlib_sfx_chip = default(opl2.chip*?)
+let mut adlib_sfx = default(sfx_state*?)
+
+// Sound IDs used by wolf-fc. Each is an index into snd_digi / snd_adlib_enum,
+// NOT a Wolf3D sound-enum value or a digi-pack index. Playback prefers the
+// digi-pack version when present (matches original Wolf3D Sound Blaster mode)
+// and falls back to the AdLib chunk from AUDIOT otherwise.
+let snd_open_door  = 0
+let snd_close_door = 1
+let snd_atk_pistol = 2
+let snd_atk_knife  = 3
 let snd_atk_mg     = 4
-let snd_atk_pistol = 5
-let snd_atk_gat    = 6
-let snd_pain       = 14    // TAKEDAMAGESND
-let snd_push_wall  = 15
-let snd_get_key    = -1
-let snd_get_ammo   = -1
-let snd_treasure   = -1
-let snd_atk_knife  = -1
+let snd_atk_gat    = 5
+let snd_get_key    = 6
+let snd_get_ammo   = 7
+let snd_treasure   = 8
+let snd_pain       = 9
+let snd_push_wall  = 10
+let snd_count      = 11
+
+// Digi-pack index for each snd_* (-1 = no digitized version). The mapping
+// comes from wolf4sdl's wolfdigimap[] for Wolf3D; Spear of Destiny differs.
+let snd_digi = int32[11] {
+     3,   // open_door    (OPENDOORSND  -> digi 3)
+     2,   // close_door   (CLOSEDOORSND -> digi 2)
+     5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
+    -1,   // atk_knife    (no digi in Wolf3D)
+     4,   // atk_mg       (ATKMACHINEGUNSND -> digi 4)
+     6,   // atk_gat      (ATKGATLINGSND -> digi 6)
+    -1,   // get_key      (no digi)
+    -1,   // get_ammo     (no digi)
+    -1,   // treasure     (no digi)
+    14,   // pain         (TAKEDAMAGESND -> digi 14)
+    15    // push_wall    (PUSHWALLSND  -> digi 15)
+}
+
+// AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this). -1 to
+// disable. Enum values taken from wolf4sdl's audiowl6.h.
+let snd_adlib_enum = int32[11] {
+    18,   // open_door    (OPENDOORSND)
+    19,   // close_door   (CLOSEDOORSND)
+    24,   // atk_pistol   (ATKPISTOLSND)
+    23,   // atk_knife    (ATKKNIFESND)
+    26,   // atk_mg       (ATKMACHINEGUNSND)
+    11,   // atk_gat      (ATKGATLINGSND)
+    12,   // get_key      (GETKEYSND)
+    31,   // get_ammo     (GETAMMOSND)
+    35,   // treasure     (BONUS1SND)
+    16,   // pain         (TAKEDAMAGESND)
+    46    // push_wall    (PUSHWALLSND)
+}
 
 struct active_sound =
     data: uint8[]        // raw 8-bit unsigned PCM @ 7042 Hz
@@ -944,10 +986,25 @@ let play_sound = (vs: vswap_file*, sound_num: int32) ->
         playing = true
     }
 
-// Play a sound using the global VSWAP pointer.
-// sound_num is a digi-pack index; snd_none (-1) is a no-op.
-let trigger_sound = (sound_num: int32) ->
-    if sound_num >= 0 && g_vs.is_some then play_sound(g_vs!, sound_num)
+// Play a sound by wolf-fc sound ID (one of snd_open_door, etc.). Prefers
+// the digitized version (richer audio, matches original Sound Blaster mode)
+// and falls back to the AdLib version loaded from AUDIOT on demand.
+let trigger_sound = (sound_id: int32) ->
+    if sound_id < 0 || sound_id >= snd_count then return
+    let digi = snd_digi[sound_id]
+    if digi >= 0 && g_vs.is_some then
+        play_sound(g_vs!, digi)
+    else
+        let enum_val = snd_adlib_enum[sound_id]
+        if enum_val >= 0 && g_ad.is_some && adlib_sfx_chip.is_some then
+            let ad = g_ad!
+            let chunk = 87 + enum_val   // STARTADLIBSOUNDS = LASTSOUND = 87
+            if chunk >= 0 && chunk < ad->num_chunks then
+                let off = (int64) audio.chunk_offset(ad, chunk)
+                let len = audio.chunk_length(ad, chunk)
+                if len >= 23 && adlib_sfx.is_some then
+                    let s = adlib.parse(ad->raw, off)
+                    adlib.play(adlib_sfx!, adlib_sfx_chip!, s)
 
 // Mix active sound effects into an int16 audio buffer.
 // Called after music_fill to overlay sound effects.
@@ -1446,6 +1503,7 @@ let main = (args: str[]) ->
 
     io.write("Loading audio...\n", stdout)
     let ad = audio.load("data/AUDIOHED.WL6", "data/AUDIOT.WL6")
+    g_ad = some(ad)
     io.write("  audio chunks=%d{ad->num_chunks}\n", stdout)
 
     io.write("Loading level 0...\n", stdout)
@@ -1520,6 +1578,12 @@ let main = (args: str[]) ->
     else default(music_state*?)
     let music_buf = alloc(int16[2048] {})!
     let mut music_on = ms.is_some
+
+    // Dedicated OPL2 chip + state for AdLib SFX (separate from the music
+    // chip so effects don't disrupt the music's register state).
+    if audio_dev > 0u32 then
+        adlib_sfx_chip = some(opl2.init((float64) sample_rate))
+        adlib_sfx = some(adlib.init())
 
     // Fresh screenshot directory each session — user copies any they want to keep.
     clear_screenshots()
@@ -1619,12 +1683,14 @@ let main = (args: str[]) ->
         render_weapon(&g)
         render_hud(&g)
 
-        // Generate and queue audio (music + sound effects)
+        // Generate and queue audio: music -> AdLib SFX -> digi SFX -> SDL.
         if ms.is_some && music_on then
             music_fill(ms!, music_buf, 1024)
         else
             for si in 0..1024
                 music_buf[si] = 0i16
+        if adlib_sfx_chip.is_some && adlib_sfx.is_some then
+            adlib.fill(adlib_sfx!, adlib_sfx_chip!, music_buf, 1024, sample_rate)
         mix_sounds(music_buf, 1024)
         if audio_dev > 0u32 then
             sdl2.queue_audio(audio_dev, (any*) music_buf.ptr, 2048u32)
