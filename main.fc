@@ -15,6 +15,7 @@ import audio from wolf_data::
 import audio_data from wolf_data::audio
 import png from png::
 import opl2 from opl2::
+import chip from opl2::opl2
 import io from std::
 import sys from std::
 import math from std::
@@ -962,6 +963,9 @@ struct music_state =
     time_count: int32      // current IMF time counter
     hack_time: int32       // time of next IMF command
 
+// The OPL2 chip is a file-level global rather than a music_state field
+// because FC currently can't emit cross-namespace types (opl2::opl2::chip)
+// in struct-field position — see fc-lang/spec/TODO.md.
 let mut opl_chip = default(opl2.chip*?)
 
 let music_init = (ad: audio_data*, chunk: int32) ->
