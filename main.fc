@@ -15,7 +15,6 @@ import audio from wolf_data::
 import audio_data from wolf_data::audio
 import png from png::
 import opl2 from opl2::
-import chip from opl2::opl2
 import io from std::
 import sys from std::
 import math from std::
@@ -963,8 +962,7 @@ struct music_state =
     time_count: int32      // current IMF time counter
     hack_time: int32       // time of next IMF command
 
-// File-level OPL2 chip (kept separate to avoid cross-namespace struct issues).
-let mut opl_chip = default(chip*?)
+let mut opl_chip = default(opl2.chip*?)
 
 let music_init = (ad: audio_data*, chunk: int32) ->
     let off = (int64) audio.chunk_offset(ad, chunk)
