@@ -2,8 +2,6 @@
 // Written from scratch based on the publicly documented Yamaha YM3812 spec.
 // Simplified envelope and phase model — not bit-accurate but sounds recognizable.
 
-namespace opl2::
-
 module opl2 =
     import math from std::
 
@@ -227,3 +225,32 @@ module opl2 =
     // Key-off on a channel (clears the keyon bit; triggers release envelope).
     let note_off = (c: chip*, channel: int32) ->
         write(c, 176 + channel, 0)
+
+    // Generic tick-driven audio producer. Emits `count` samples from `chip`
+    // mixed additively into `buf` (saturating). The `tick_accum` counter is
+    // advanced per sample; whenever it crosses `sample_rate / tick_rate`
+    // samples, `advance` is invoked once to let the caller process one
+    // tick's worth of events (register writes, note changes, end-of-sound…).
+    //
+    // Callers own the tick_accum field on their player struct and pass its
+    // address; the closure captures a pointer to whatever driver state it
+    // needs to mutate.
+    //
+    // Used by both the IMF music driver (700 Hz) and the AdLib SFX driver
+    // (140 Hz). Each supplies its own event-decode closure.
+    let fill_ticked = (c: chip*,
+                       buf: int16[], count: int32,
+                       sample_rate: int32, tick_rate: int32,
+                       tick_accum: float64*,
+                       advance: () -> void) ->
+        let samples_per_tick = (float64) sample_rate / (float64) tick_rate
+        for i in 0..count
+            let s = sample(c)
+            let m = (int32) buf[i] + (int32) s
+            buf[i] = if m > 32767 then 32767i16
+                else if m < -32768 then -32768i16
+                else (int16) m
+            *tick_accum = *tick_accum + 1.0
+            if *tick_accum >= samples_per_tick then
+                *tick_accum = *tick_accum - samples_per_tick
+                advance()

@@ -16,10 +16,7 @@
 //   4 mAttack  5 cAttack  6 mSus     7 cSus
 //   8 mWave    9 cWave   10 nConn   11..15 padding
 
-namespace adlib::
-
 module adlib =
-    import opl2 from opl2::
 
     // Wolf3D note-advance rate. Each byte of data fires once per tick.
     let tick_rate = 140
@@ -101,26 +98,23 @@ module adlib =
         st->active = true
         st->tick_accum = 0.0
 
-    // Generate `count` samples from the chip, advance note data at 140 Hz
-    // while active, and mix into `buf` with saturation. Call once per audio
-    // fill cycle alongside music_fill / digi mix.
+    // Per-tick advance: consumes one byte of note data, keying on/off.
+    // Inactive state is a no-op so the chip can finish its release envelope
+    // after the sound ends without the tick counter matter.
+    let advance_tick = (st: sfx_state*) ->
+        if !st->active then return
+        if st->pos >= st->data_end then
+            opl2.note_off(st->chip, 0)
+            st->active = false
+        else
+            let b = (int32) st->data[st->pos]
+            st->pos = st->pos + 1
+            if b == 0 then opl2.note_off(st->chip, 0)
+            else opl2.note_on(st->chip, 0, st->block, b)
+
+    // Mix `count` samples into `buf` from the chip while driving note data
+    // at 140 Hz. Delegates the sample/tick loop to opl2.fill_ticked.
     let fill = (st: sfx_state*, buf: int16[], count: int32, sample_rate: int32) ->
-        let samples_per_tick = (float64) sample_rate / (float64) tick_rate
-        for i in 0..count
-            let s = opl2.sample(st->chip)
-            let mixed = (int32) buf[i] + (int32) s
-            buf[i] = if mixed > 32767 then 32767i16
-                else if mixed < -32768 then -32768i16
-                else (int16) mixed
-            if st->active then
-                st->tick_accum = st->tick_accum + 1.0
-                if st->tick_accum >= samples_per_tick then
-                    st->tick_accum = st->tick_accum - samples_per_tick
-                    if st->pos >= st->data_end then
-                        opl2.note_off(st->chip, 0)
-                        st->active = false
-                    else
-                        let b = (int32) st->data[st->pos]
-                        st->pos = st->pos + 1
-                        if b == 0 then opl2.note_off(st->chip, 0)
-                        else opl2.note_on(st->chip, 0, st->block, b)
+        opl2.fill_ticked(st->chip, buf, count, sample_rate, tick_rate,
+            &st->tick_accum,
+            () -> advance_tick(st))

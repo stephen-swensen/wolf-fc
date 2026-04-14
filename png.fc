@@ -4,8 +4,6 @@
 // metadata chunk. Color type 2 means every output pixel takes 3 bytes
 // (R, G, B) — alpha bytes from the input ARGB framebuffer are dropped.
 
-namespace png::
-
 module png =
     import io from std::
 

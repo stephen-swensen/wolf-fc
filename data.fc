@@ -1,7 +1,5 @@
 // Wolf-FC data loading — palette, VSWAP pages, map decompression.
 
-namespace wolf_data::
-
 // ============================================================
 // Little-endian binary readers
 // ============================================================

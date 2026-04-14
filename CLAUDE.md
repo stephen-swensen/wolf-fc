@@ -66,29 +66,35 @@ The `goto:X,Y` command is deliberately NOT a full tick — it just teleports and
 
 ## Source Files
 
-- **`sdl2.fc`** — `namespace sdl2::` — C-interop bindings for SDL2 (window, renderer, texture, event, audio). Vendored from `fc-lang/demos/shared/`.
-- **`opl2.fc`** — `namespace opl2::` — YM3812 (OPL2) FM synth emulator. Vendored from `fc-lang/demos/shared/`; used for both IMF music and AdLib sound effects.
-- **`png.fc`** — `namespace png::` — Pure-FC PNG writer (CRC-32, Adler-32, deflate stored blocks, optional tEXt metadata). Used for screenshots.
+All project modules are declared at the top level (no namespaces), so they're accessible from anywhere by qualified name with no imports required. Only stdlib (`std::`) imports are needed in `main.fc`.
 
-- **`data.fc`** — `namespace wolf_data::` — Data loading subsystem:
+- **`sdl2.fc`** (`module sdl2`) — C-interop bindings for SDL2 (window, renderer, texture, event, audio). Vendored from `fc-lang/demos/shared/`.
+- **`png.fc`** (`module png`) — Pure-FC PNG writer (CRC-32, Adler-32, deflate stored blocks, optional tEXt metadata). Used for screenshots.
+- **`opl2.fc`** (`module opl2`) — YM3812 FM synth emulator (`chip`, `init`, `write`, `sample`) plus AdLib helpers (`load_instrument`, `note_on`, `note_off`). The generic `fill_ticked(chip, buf, count, sample_rate, tick_rate, &tick_accum, advance_closure)` runner factors out the sample/tick loop used by both IMF and AdLib drivers.
+- **`imf.fc`** (`module imf`) — IMF music format driver. Events are `[reg, val, delay_lo, delay_hi]` quads clocked at 700 Hz; the player loops the track at end.
+- **`adlib.fc`** (`module adlib`) — id-Software AdLib sound-effect format driver. Parses a header (instrument + 1-byte-per-tick note data), keys a single voice on channel 0 at 140 Hz, stops when the note stream ends.
+- **`data.fc`** — Wolf3D data loading, five top-level modules:
   - `module bytes` — Little-endian uint16/uint32/int32 readers
   - `module palette` — `init()` returns heap-allocated 256-entry ARGB palette from hardcoded 6-bit VGA data
   - `module vswap` — Loads VSWAP.WL6, provides `wall_pixel()` accessor
   - `module maps` — Loads MAPHEAD+GAMEMAPS with Carmack + RLEW decompression
   - `module audio` — Loads AUDIOHED+AUDIOT, provides chunk offset/length accessors
 
-- **`main.fc`** — Game engine, all in one file (no namespace):
-  - Constants (game_w=320, game_h=200, screen_w=640, screen_h=400, actual_h=480, view_h=160)
+The IMF music driver and AdLib SFX driver are parallel in shape: each owns its own OPL2 chip, exposes a `player` state struct, and a `fill(p, buf, count, sample_rate)` that mixes additively with saturation.
+
+- **`main.fc`** — Game engine, no namespace:
+  - Constants (game_w=320, game_h=200, screen_w=640, screen_h=400, actual_h=480, view_h=160, sample_rate=44100)
   - `struct game` — player state (position, direction, camera plane, input, health/ammo/score)
   - `struct sprite_obj` — static objects (position, VSWAP page, distance)
+  - `struct audio_ctx` — `{vs, ad, sfx}` bundle threaded through `tick()` and update functions so `trigger_sound` / pickup / door code can fire sounds without globals
   - Tilemap builder + sprite spawner from level data
   - DDA raycaster (`render_walls`) writing to 320x200 `fb` framebuffer
   - Sprite renderer (`render_sprites`) with compressed t_compshape decoding
-  - IMF music sequencer (`music_fill`) driving `opl2.sample()` via SDL2 audio queue
+  - Audio output path: zero buffer → `imf.fill` (music) → `adlib.fill` (SFX) → `mix_sounds` (digi PCM) → SDL queue (back-pressured via `queued_audio_size`)
   - HUD renderer with 3x5 bitmap digit font
   - `upscale_2x` — pixel-doubles 320x200 → 640x400 for the SDL texture
   - Display pipeline: 640x400 texture + `SDL_RenderSetLogicalSize(640, 480)` for 4:3 (matching wolf4sdl)
-  - Classic Wolf3D input (arrows, alt-strafe, shift-run, space-open, F11-fullscreen, Esc-quit)
+  - Classic Wolf3D input (arrows, alt-strafe, shift-run, space-open, ctrl-fire, F11-fullscreen, s-screenshot, m-music toggle, 1-4 weapon select, Esc-quit)
 
 ## Key Data Formats
 
