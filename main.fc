@@ -866,14 +866,24 @@ let update_doors = (g: game*, dt: float64) ->
 // Global VSWAP pointer for sound playback (set during init).
 let mut g_vs = default(vswap_file*?)
 
-// Sound effect indices (from the digi map in last VSWAP page)
-let snd_open_door = 18
-let snd_close_door = 19
-let snd_get_key = 12
-let snd_get_ammo = 35
-let snd_treasure = 39
-let snd_atk_pistol = 24
-let snd_atk_knife = 34
+// Digi-pack indices into the sound info table at the last VSWAP page.
+// Do NOT use sound-enum values here: Wolf3D's sound enums (e.g. OPENDOORSND=18)
+// are mapped to a smaller digi-pack index via wolf4sdl's wolfdigimap[] — that
+// mapping (and not all sound enums have digitized versions; pickup/treasure
+// sounds only exist as AdLib in Wolf3D). Indices below are for Wolf3D only;
+// Spear of Destiny has a different mapping.
+let snd_none       = -1    // sentinel: no digitized version in Wolf3D
+let snd_close_door = 2
+let snd_open_door  = 3
+let snd_atk_mg     = 4
+let snd_atk_pistol = 5
+let snd_atk_gat    = 6
+let snd_pain       = 14    // TAKEDAMAGESND
+let snd_push_wall  = 15
+let snd_get_key    = -1
+let snd_get_ammo   = -1
+let snd_treasure   = -1
+let snd_atk_knife  = -1
 
 struct active_sound =
     data: uint8[]        // raw 8-bit unsigned PCM @ 7042 Hz
@@ -924,8 +934,9 @@ let play_sound = (vs: vswap_file*, sound_num: int32) ->
     }
 
 // Play a sound using the global VSWAP pointer.
+// sound_num is a digi-pack index; snd_none (-1) is a no-op.
 let trigger_sound = (sound_num: int32) ->
-    if g_vs.is_some then play_sound(g_vs!, sound_num)
+    if sound_num >= 0 && g_vs.is_some then play_sound(g_vs!, sound_num)
 
 // Mix active sound effects into an int16 audio buffer.
 // Called after music_fill to overlay sound effects.
