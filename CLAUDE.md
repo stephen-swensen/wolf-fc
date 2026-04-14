@@ -112,7 +112,7 @@ If you add a new render layer, add it here too (same "single source of truth" di
 
 - **Display pipeline**: Must match wolf4sdl: render at 320x200, upscale 2x to 640x400, SDL_RenderSetLogicalSize(640,480) for 4:3. Set SDL_HINT_RENDER_SCALE_QUALITY="nearest" BEFORE SDL_CreateTexture.
 - **Sprite newstart is signed**: Read as `(int64) (int16) bytes.u16(...)`. Negative values reach back into header area for pixel data.
-- **Doors are incomplete**: Currently rendered as full-tile walls. Proper Wolf3D doors render at tile midpoint with animated open/close. See TODO.md.
+- **Doors must block rays from their perpendicular side, too**: A vertical door only renders its midpoint for rays entering via X-step; a horizontal door only for Y-step. But a ray entering via the *wrong* side (e.g. Y-step into a vertical door, which happens when geometry allows the ray to approach the door tile from its N/S edge) must still be blocked — otherwise it leaks through the door tile and hits whatever is beyond, causing "door-side texture bleed" onto far walls when the door is closed. The raycaster sets a `door_side_hit` flag in this case and renders the door tile with the DOORWALL+2/+3 (track-side) texture.
 - **Shimmer at 320x200 is inherent**: Even the Steam/DOSBox version has some. It's a raycaster artifact.
 - **Don't add trailing `return`** at end of void FC functions when the last expression is already void.
 - **`from` is a keyword in FC** — cannot use as variable name.

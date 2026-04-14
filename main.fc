@@ -13,6 +13,7 @@ import vswap_file from wolf_data::vswap
 import level from wolf_data::maps
 import audio from wolf_data::
 import audio_data from wolf_data::audio
+import png from wolf_data::
 import opl2 from opl2::
 import chip from opl2::opl2
 import io from std::
@@ -482,6 +483,7 @@ let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
         let mut door_hit_num = 0
         let mut door_perp = 0.0    // perpendicular dist to door midpoint
         let mut door_tex_frac = 0.0 // door texture coordinate (0..1)
+        let mut door_side_hit = false  // entered door tile from perpendicular side
         loop
             if hit then break
             if side_x < side_y then
@@ -512,14 +514,26 @@ let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
                             let wm = if side == 0 then
                                 g->pos_y + perp_mid * ray_dy
                             else g->pos_x + perp_mid * ray_dx
-                            let fr = wm - math.floor(wm)
-                            if fr >= dp then
-                                // Door blocks the ray
-                                hit = true
-                                is_door_hit = true
-                                door_hit_num = dn
-                                door_perp = perp_mid
-                                door_tex_frac = fr - dp
+                            // Verify the ray actually intersects the door surface
+                            // WITHIN this tile — otherwise the ray exits the tile
+                            // before reaching the midpoint and must not register a hit.
+                            let wm_tile = (int32) math.floor(wm)
+                            let in_tile = if side == 0 then wm_tile == map_y
+                                else wm_tile == map_x
+                            if in_tile then
+                                let fr = wm - math.floor(wm)
+                                if fr >= dp then
+                                    // Door blocks the ray
+                                    hit = true
+                                    is_door_hit = true
+                                    door_hit_num = dn
+                                    door_perp = perp_mid
+                                    door_tex_frac = fr - dp
+                    else
+                        // Ray entered door tile from perpendicular side —
+                        // this is the side of the door track; block with door-side texture.
+                        hit = true
+                        door_side_hit = true
 
         // Get tile value at hit position
         let tile_val = if map_x >= 0 && map_x < map_size && map_y >= 0 && map_y < map_size then
@@ -563,7 +577,7 @@ let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
             else
                 tex_page = if is_vert then door_wall + 7 else door_wall + 6
         else
-            // Regular wall texture
+            // Regular wall (or door-side) texture — standard wall intersection math.
             let mut wall_x = if side == 0 then
                 g->pos_y + perp_dist * ray_dy
             else
@@ -574,19 +588,25 @@ let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
             if tex_x > 63 then tex_x = 63
             if side == 0 && ray_dx > 0.0 then tex_x = 63 - tex_x
             if side == 1 && ray_dy < 0.0 then tex_x = 63 - tex_x
-            // Check if adjacent tile is a door — use door-side texture
-            let adj_x = if side == 0 then map_x - step_x else map_x
-            let adj_y = if side == 1 then map_y - step_y else map_y
-            let mut use_doorside = false
-            if adj_x >= 0 && adj_x < map_size && adj_y >= 0 && adj_y < map_size then
-                let adj_t = (int32) tilemap[(int64) adj_x * 64 + (int64) adj_y]
-                if adj_t >= 128 then use_doorside = true
-            if use_doorside then
+            if door_side_hit then
+                // Ray entered door tile perpendicular to its surface —
+                // show the door-track side texture.
                 tex_page = if side == 1 then door_wall + 2 else door_wall + 3
             else
-                // Normal wall: horiz = (t-1)*2, vert = (t-1)*2+1
-                tex_page = if side == 1 then (tile_val - 1) * 2
-                    else (tile_val - 1) * 2 + 1
+                // Check if adjacent tile is a door (ray passed through an
+                // open door into this wall) — use door-side texture there too.
+                let adj_x = if side == 0 then map_x - step_x else map_x
+                let adj_y = if side == 1 then map_y - step_y else map_y
+                let mut use_doorside = false
+                if adj_x >= 0 && adj_x < map_size && adj_y >= 0 && adj_y < map_size then
+                    let adj_t = (int32) tilemap[(int64) adj_x * 64 + (int64) adj_y]
+                    if adj_t >= 128 then use_doorside = true
+                if use_doorside then
+                    tex_page = if side == 1 then door_wall + 2 else door_wall + 3
+                else
+                    // Normal wall: horiz = (t-1)*2, vert = (t-1)*2+1
+                    tex_page = if side == 1 then (tile_val - 1) * 2
+                        else (tile_val - 1) * 2 + 1
 
         let max_page = vs->sprite_start - 1
         if tex_page < 0 || tex_page > max_page then tex_page = 0
@@ -1246,20 +1266,51 @@ let upscale_2x = () ->
             dbuf[(dy + 1) * sw + dx] = c
             dbuf[(dy + 1) * sw + dx + 1] = c
 
-// Save framebuffer as PPM image for debugging.
-let save_ppm = (path: const str) ->
-    let f = io.open(path, "wb")!
-    io.write("P6\n320 200\n255\n", f)
-    let mut row = alloc(uint8[960] {})!
-    defer free(row)
-    for y in 0..200
-        for x in 0..320
-            let c = fb[(int64) y * 320 + (int64) x]
-            row[(int64) x * 3] = (uint8) ((c >> 16) & 0xFFu32)
-            row[(int64) x * 3 + 1] = (uint8) ((c >> 8) & 0xFFu32)
-            row[(int64) x * 3 + 2] = (uint8) (c & 0xFFu32)
-        io.write(row, f)
-    io.close(f)
+// ============================================================
+// Screenshots — saved as PNG with game-state metadata in a tEXt chunk.
+// Interactive 's' key cycles through 100 slots under ~/.wolf-fc/screenshots/.
+// Test mode writes to a caller-supplied path.
+// ============================================================
+
+let screenshot_max_slots = 100
+let mut screenshot_slot = 0
+
+// Render the full game frame to fb (used before saving a screenshot).
+let render_frame = (g: game*, vs: vswap_file*, pal: uint32[]) ->
+    render_walls(g, vs, pal)
+    render_sprites(g, vs, pal)
+    render_weapon(g)
+    render_hud(g)
+
+// Save the current fb as a PNG at `path` with game-state metadata embedded
+// as a tEXt chunk (one field per line, grep-able).
+let save_png = (path: const str, g: game*) ->
+    let gk = if g->has_gold_key then 1 else 0
+    let sk = if g->has_silver_key then 1 else 0
+    let meta = alloc("level=%d{g->level_num + 1}\npos=(%7.3f{g->pos_x}, %7.3f{g->pos_y})\ndir=(%7.4f{g->dir_x}, %7.4f{g->dir_y})\nhealth=%d{g->health}\nammo=%d{g->ammo}\nscore=%d{g->score}\nlives=%d{g->lives}\nweapon=%d{g->weapon}\nkeys=gold:%d{gk},silver:%d{sk}")!
+    defer free(meta)
+    png.write(path, fb, game_w, game_h, meta)
+
+// Take an interactive screenshot: renders, picks the next rotating slot in
+// ~/.wolf-fc/screenshots/, and writes a PNG. Prints the path to stdout.
+let take_screenshot = (g: game*, vs: vswap_file*, pal: uint32[]) ->
+    let home_opt = sys.home_dir()
+    if home_opt.is_none then
+        io.write("[screenshot] HOME not set; skipping\n", stdout)
+        void()
+    else
+        let home = home_opt!
+        let base_dir = "%s{home}/.wolf-fc"
+        let ss_dir = "%s{home}/.wolf-fc/screenshots"
+        io.mkdir(base_dir)
+        io.mkdir(ss_dir)
+        let slot = screenshot_slot
+        screenshot_slot = (screenshot_slot + 1) % screenshot_max_slots
+        let path = "%s{home}/.wolf-fc/screenshots/ss_%03d{slot}.png"
+        render_frame(g, vs, pal)
+        save_png(path, g)
+        io.write("[screenshot] saved %s{path}\n", stdout)
+        void()
 
 // ============================================================
 // Headless test mode — scripted commands for automated testing
@@ -1319,11 +1370,8 @@ let run_test_cmd = (arg: const str, g: game*, vs: vswap_file*,
         for j in 0..n
             tick(g, dt)
     else if text.starts_with(arg, "ss:") then
-        render_walls(g, vs, pal)
-        render_sprites(g, vs, pal)
-        render_weapon(g)
-        render_hud(g)
-        save_ppm(arg[3..arg.len])
+        render_frame(g, vs, pal)
+        save_png(arg[3..arg.len], g)
         io.write("Saved %s{arg[3..arg.len]}\n", stdout)
         void()
     else if arg == "state" then
@@ -1380,16 +1428,6 @@ let main = (args: str[]) ->
     }
     find_player_start(lv, &g)
     io.write("  player at (%4.1f{g.pos_x}, %4.1f{g.pos_y})\n", stdout)
-
-    // Screenshot mode: render one frame, save PPM, exit (no SDL needed)
-    if args.len > 1 && args[1] == "--screenshot" then
-        render_walls(&g, vs, pal)
-        render_sprites(&g, vs, pal)
-        render_weapon(&g)
-        render_hud(&g)
-        save_ppm("screenshot.ppm")
-        io.write("Saved screenshot.ppm\n", stdout)
-        return 0
 
     // Test mode: process scripted commands, no SDL needed
     if args.len > 1 && args[1] == "--test" then
@@ -1476,6 +1514,7 @@ let main = (args: str[]) ->
                     music_on = !music_on
                     if !music_on && audio_dev > 0u32 then
                         sdl2.clear_audio(audio_dev)
+                if k == sdl2.key_s then take_screenshot(&g, vs, pal)
                 if k == sdl2.key_f11 then
                     fullscreen = !fullscreen
                     if fullscreen then
