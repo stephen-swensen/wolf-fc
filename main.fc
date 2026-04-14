@@ -1291,19 +1291,40 @@ let save_png = (path: const str, g: game*) ->
     defer free(meta)
     png.write(path, fb, game_w, game_h, meta)
 
+// Clear any screenshot files left over from a previous session so each run
+// starts numbering from 000. Users who want to keep screenshots should copy
+// them elsewhere before starting a new session.
+let clear_screenshots = () ->
+    match sys.home_dir() with
+    | none -> void()
+    | some(home) ->
+        let ss_dir = "%s{home}/.wolf-fc/screenshots"
+        io.mkdir("%s{home}/.wolf-fc")
+        io.mkdir(ss_dir)
+        match io.list_dir(ss_dir) with
+        | none -> void()
+        | some(entries) ->
+            let mut deleted = 0
+            for name in entries
+                if text.starts_with(name, "ss_") && text.ends_with(name, ".png") then
+                    io.remove("%s{ss_dir}/%s{name}")
+                    deleted = deleted + 1
+                free(name)
+            free(entries)
+            if deleted > 0 then
+                io.write("[screenshot] cleared %d{deleted} old file(s) from %s{ss_dir}\n", stdout)
+                void()
+
 // Take an interactive screenshot: renders, picks the next rotating slot in
 // ~/.wolf-fc/screenshots/, and writes a PNG. Prints the path to stdout.
 let take_screenshot = (g: game*, vs: vswap_file*, pal: uint32[]) ->
-    let home_opt = sys.home_dir()
-    if home_opt.is_none then
+    match sys.home_dir() with
+    | none ->
         io.write("[screenshot] HOME not set; skipping\n", stdout)
         void()
-    else
-        let home = home_opt!
-        let base_dir = "%s{home}/.wolf-fc"
-        let ss_dir = "%s{home}/.wolf-fc/screenshots"
-        io.mkdir(base_dir)
-        io.mkdir(ss_dir)
+    | some(home) ->
+        io.mkdir("%s{home}/.wolf-fc")
+        io.mkdir("%s{home}/.wolf-fc/screenshots")
         let slot = screenshot_slot
         screenshot_slot = (screenshot_slot + 1) % screenshot_max_slots
         let path = "%s{home}/.wolf-fc/screenshots/ss_%03d{slot}.png"
@@ -1475,6 +1496,9 @@ let main = (args: str[]) ->
     else default(music_state*?)
     let music_buf = alloc(int16[2048] {})!
     let mut music_on = ms.is_some
+
+    // Fresh screenshot directory each session — user copies any they want to keep.
+    clear_screenshots()
 
     // Game loop
     let mut running = true
