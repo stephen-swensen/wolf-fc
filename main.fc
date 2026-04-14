@@ -13,7 +13,7 @@ import vswap_file from wolf_data::vswap
 import level from wolf_data::maps
 import audio from wolf_data::
 import audio_data from wolf_data::audio
-import png from wolf_data::
+import png from png::
 import opl2 from opl2::
 import chip from opl2::opl2
 import io from std::

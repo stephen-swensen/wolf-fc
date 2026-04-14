@@ -10,7 +10,7 @@ FC_DIR="$WOLF_DIR/../fc-lang"
 make -s -C "$FC_DIR" fc
 
 SRCS="$FC_DIR/demos/shared/sdl2.fc $FC_DIR/demos/shared/opl2.fc \
-      $WOLF_DIR/data.fc $WOLF_DIR/main.fc \
+      $WOLF_DIR/png.fc $WOLF_DIR/data.fc $WOLF_DIR/main.fc \
       $FC_DIR/stdlib/io.fc $FC_DIR/stdlib/text.fc $FC_DIR/stdlib/sys.fc \
       $FC_DIR/stdlib/math.fc $FC_DIR/stdlib/random.fc"
 
