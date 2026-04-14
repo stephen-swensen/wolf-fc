@@ -67,10 +67,10 @@ module adlib =
             block   = (int32) bytes[offset + 22]
         }
 
-    // Per-sound playback state. The chip pointer lives outside this struct
-    // (passed to play/fill) because FC currently can't emit a cross-namespace
-    // type as a struct field — see fc-lang/spec/TODO.md.
+    // Per-sound playback state. Owns its dedicated OPL2 chip so effects
+    // don't disrupt the music chip's register state.
     struct sfx_state =
+        chip: opl2.chip*
         active: bool
         data: uint8[]
         data_end: int64
@@ -78,18 +78,19 @@ module adlib =
         block: int32
         tick_accum: float64
 
-    // Allocate and return a fresh, silent sfx_state.
-    let init = () ->
+    // Allocate a fresh sfx_state with its own OPL2 chip at sample_rate Hz.
+    let init = (sample_rate: float64) ->
         alloc(sfx_state {
+            chip = opl2.init(sample_rate),
             active = false, data = default(uint8[]),
             data_end = 0, pos = 0, block = 0, tick_accum = 0.0
         })!
 
-    // Start (or restart) playback of `s` on channel 0 of `chip`. Any
-    // in-progress sound is silenced before the new one begins.
-    let play = (st: sfx_state*, chip: opl2.chip*, s: sfx_data) ->
-        opl2.note_off(chip, 0)
-        opl2.load_instrument(chip, 0,
+    // Start (or restart) playback of `s` on channel 0. Silences any
+    // in-progress sound first.
+    let play = (st: sfx_state*, s: sfx_data) ->
+        opl2.note_off(st->chip, 0)
+        opl2.load_instrument(st->chip, 0,
             s.m_char, s.c_char, s.m_scale, s.c_scale,
             s.m_atk, s.c_atk, s.m_sus, s.c_sus,
             s.m_wave, s.c_wave, s.n_conn)
@@ -100,14 +101,13 @@ module adlib =
         st->active = true
         st->tick_accum = 0.0
 
-    // Generate `count` samples from `chip`, advance note data at 140 Hz
+    // Generate `count` samples from the chip, advance note data at 140 Hz
     // while active, and mix into `buf` with saturation. Call once per audio
     // fill cycle alongside music_fill / digi mix.
-    let fill = (st: sfx_state*, chip: opl2.chip*,
-                buf: int16[], count: int32, sample_rate: int32) ->
+    let fill = (st: sfx_state*, buf: int16[], count: int32, sample_rate: int32) ->
         let samples_per_tick = (float64) sample_rate / (float64) tick_rate
         for i in 0..count
-            let s = opl2.sample(chip)
+            let s = opl2.sample(st->chip)
             let mixed = (int32) buf[i] + (int32) s
             buf[i] = if mixed > 32767 then 32767i16
                 else if mixed < -32768 then -32768i16
@@ -117,10 +117,10 @@ module adlib =
                 if st->tick_accum >= samples_per_tick then
                     st->tick_accum = st->tick_accum - samples_per_tick
                     if st->pos >= st->data_end then
-                        opl2.note_off(chip, 0)
+                        opl2.note_off(st->chip, 0)
                         st->active = false
                     else
                         let b = (int32) st->data[st->pos]
                         st->pos = st->pos + 1
-                        if b == 0 then opl2.note_off(chip, 0)
-                        else opl2.note_on(chip, 0, st->block, b)
+                        if b == 0 then opl2.note_off(st->chip, 0)
+                        else opl2.note_on(st->chip, 0, st->block, b)

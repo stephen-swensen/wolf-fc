@@ -15,10 +15,7 @@ import audio from wolf_data::
 import audio_data from wolf_data::audio
 import png from png::
 import opl2 from opl2::
-import chip from opl2::opl2
 import adlib from adlib::
-import sfx_data from adlib::adlib
-import sfx_state from adlib::adlib
 import io from std::
 import sys from std::
 import math from std::
@@ -103,6 +100,14 @@ struct game =
     weapon: int32          // 0=knife, 1=pistol, 2=machine gun, 3=chain gun
     fire_timer: float64    // cooldown timer (>0 means firing animation)
     weapon_frame: int32    // animation frame (0=idle, 1-3=firing)
+
+// Sound system handle: loaded-asset refs + AdLib SFX playback state.
+// Allocated in main after data is loaded and threaded through update
+// functions so we don't rely on file-level globals for sound state.
+struct audio_ctx =
+    vs: vswap_file*           // VSWAP — for loading digi sound data
+    ad: audio_data*           // AUDIOT — for loading AdLib sound chunks
+    sfx: adlib.sfx_state*     // AdLib SFX playback (owns its own OPL2 chip)
 
 // Tilemap: 64*64, column-major — tilemap[x * 64 + y].
 // 0 = empty, 1-63 = wall tile, 90-101 = door.
@@ -229,7 +234,7 @@ let door_passable = (x: int32, y: int32) ->
         else doors[t - 128].state == door_open
 
 // Try to open a door at the given tile position.
-let try_open_door = (x: int32, y: int32, g: game*) ->
+let try_open_door = (x: int32, y: int32, g: game*, ac: audio_ctx*) ->
     if x < 0 || x >= map_size || y < 0 || y >= map_size then false
     else
         let t = (int32) tilemap[(int64) x * 64 + (int64) y]
@@ -244,7 +249,7 @@ let try_open_door = (x: int32, y: int32, g: game*) ->
                 else if lock == 2 && !g->has_silver_key then false
                 else
                     doors[dn].state = door_opening
-                    trigger_sound(snd_open_door)
+                    trigger_sound(snd_open_door, ac)
                     true
 
 // Find player start position and facing from level plane 1.
@@ -668,7 +673,7 @@ let rotate_camera = (g: game*, angle: float64) ->
     g->plane_x = op * c + g->plane_y * s
     g->plane_y = op * (0.0 - s) + g->plane_y * c
 
-let update_player = (g: game*, dt: float64) ->
+let update_player = (g: game*, dt: float64, ac: audio_ctx*) ->
     let spd = move_speed * dt * (if g->key_shift then run_mult else 1.0)
     let rot = turn_speed * dt * (if g->key_shift then run_mult else 1.0)
 
@@ -696,14 +701,14 @@ let update_player = (g: game*, dt: float64) ->
         let push_dy = if g->dir_y > 0.5 then 1 else if g->dir_y < -0.5 then -1 else 0
         if push_dx != 0 || push_dy != 0 then
             try_push_wall(fx, fy, push_dx, push_dy)
-        try_open_door(fx, fy, g)
+        try_open_door(fx, fy, g, ac)
         g->key_space = false
 
 // ============================================================
 // Item pickups — walk-over detection
 // ============================================================
 
-let check_pickups = (g: game*) ->
+let check_pickups = (g: game*, ac: audio_ctx*) ->
     let px = (int32) g->pos_x
     let py = (int32) g->pos_y
     for i in 0..num_sprites
@@ -760,11 +765,11 @@ let check_pickups = (g: game*) ->
         // Item was picked up — remove it and play sound
         sprites[i].alive = false
         if it == item_gold_key || it == item_silver_key then
-            trigger_sound(snd_get_key)
+            trigger_sound(snd_get_key, ac)
         else if it == item_clip || it == item_machine_gun || it == item_chain_gun then
-            trigger_sound(snd_get_ammo)
+            trigger_sound(snd_get_ammo, ac)
         else if it >= item_cross then
-            trigger_sound(snd_treasure)
+            trigger_sound(snd_treasure, ac)
         else void()
         // Extra life at 40,000 points
         if g->score >= 40000 && g->score - 40000 < 5000 then
@@ -850,7 +855,7 @@ let update_pushwall = (dt: float64) ->
 // Door animation
 // ============================================================
 
-let update_doors = (g: game*, dt: float64) ->
+let update_doors = (g: game*, dt: float64, ac: audio_ctx*) ->
     for i in 0..num_doors
         if doors[i].state == door_opening then
             door_pos[i] = door_pos[i] + door_speed * dt
@@ -866,7 +871,7 @@ let update_doors = (g: game*, dt: float64) ->
                 let py = (int32) g->pos_y
                 if px != doors[i].tile_x || py != doors[i].tile_y then
                     doors[i].state = door_closing
-                    trigger_sound(snd_close_door)
+                    trigger_sound(snd_close_door, ac)
         else if doors[i].state == door_closing then
             door_pos[i] = door_pos[i] - door_speed * dt
             if door_pos[i] <= 0.0 then
@@ -877,17 +882,6 @@ let update_doors = (g: game*, dt: float64) ->
 // Sound effects — digitized PCM from VSWAP
 // ============================================================
 
-// Global VSWAP pointer for sound playback (set during init).
-let mut g_vs = default(vswap_file*?)
-
-// Global AUDIOT pointer — needed to load AdLib SFX chunks on demand.
-let mut g_ad = default(audio_data*?)
-
-// AdLib SFX state (cross-namespace chip* can't live in a struct field in
-// current FC, so the chip is a separate file-level global; see spec/TODO.md).
-// Both are initialized during audio setup in main.
-let mut adlib_sfx_chip = default(opl2.chip*?)
-let mut adlib_sfx = default(sfx_state*?)
 
 // Sound IDs used by wolf-fc. Each is an index into snd_digi / snd_adlib_enum,
 // NOT a Wolf3D sound-enum value or a digi-pack index. Playback prefers the
@@ -989,22 +983,20 @@ let play_sound = (vs: vswap_file*, sound_num: int32) ->
 // Play a sound by wolf-fc sound ID (one of snd_open_door, etc.). Prefers
 // the digitized version (richer audio, matches original Sound Blaster mode)
 // and falls back to the AdLib version loaded from AUDIOT on demand.
-let trigger_sound = (sound_id: int32) ->
+let trigger_sound = (sound_id: int32, ac: audio_ctx*) ->
     if sound_id < 0 || sound_id >= snd_count then return
     let digi = snd_digi[sound_id]
-    if digi >= 0 && g_vs.is_some then
-        play_sound(g_vs!, digi)
+    if digi >= 0 then
+        play_sound(ac->vs, digi)
     else
         let enum_val = snd_adlib_enum[sound_id]
-        if enum_val >= 0 && g_ad.is_some && adlib_sfx_chip.is_some then
-            let ad = g_ad!
+        if enum_val >= 0 then
             let chunk = 87 + enum_val   // STARTADLIBSOUNDS = LASTSOUND = 87
-            if chunk >= 0 && chunk < ad->num_chunks then
-                let off = (int64) audio.chunk_offset(ad, chunk)
-                let len = audio.chunk_length(ad, chunk)
-                if len >= 23 && adlib_sfx.is_some then
-                    let s = adlib.parse(ad->raw, off)
-                    adlib.play(adlib_sfx!, adlib_sfx_chip!, s)
+            if chunk >= 0 && chunk < ac->ad->num_chunks then
+                let off = (int64) audio.chunk_offset(ac->ad, chunk)
+                let len = audio.chunk_length(ac->ad, chunk)
+                if len >= 23 then
+                    adlib.play(ac->sfx, adlib.parse(ac->ad->raw, off))
 
 // Mix active sound effects into an int16 audio buffer.
 // Called after music_fill to overlay sound effects.
@@ -1033,6 +1025,7 @@ let sample_rate = 44100
 let imf_rate = 700        // IMF ticks per second
 
 struct music_state =
+    chip: opl2.chip*       // OPL2 synth — owned by this music_state
     data: uint8[]          // raw AUDIOT file (IMF data within it)
     pos: int64             // current byte position in data
     start_pos: int64       // start of current music track
@@ -1041,11 +1034,6 @@ struct music_state =
     tick_accum: float64    // fractional tick accumulator
     time_count: int32      // current IMF time counter
     hack_time: int32       // time of next IMF command
-
-// The OPL2 chip is a file-level global rather than a music_state field
-// because FC currently can't emit cross-namespace types (opl2::opl2::chip)
-// in struct-field position — see fc-lang/spec/TODO.md.
-let mut opl_chip = default(opl2.chip*?)
 
 let music_init = (ad: audio_data*, chunk: int32) ->
     let off = (int64) audio.chunk_offset(ad, chunk)
@@ -1056,8 +1044,8 @@ let music_init = (ad: audio_data*, chunk: int32) ->
     if first_word != 0 then
         data_len = first_word
         data_off = off + 2
-    opl_chip = some(opl2.init((float64) sample_rate))
     alloc(music_state {
+        chip = opl2.init((float64) sample_rate),
         data = ad->raw, pos = data_off, start_pos = data_off,
         seq_len = data_len, remaining = data_len,
         tick_accum = 0.0, time_count = 0, hack_time = 0
@@ -1067,7 +1055,7 @@ let music_init = (ad: audio_data*, chunk: int32) ->
 let music_fill = (ms: music_state*, buf: int16[], count: int32) ->
     let samples_per_tick = (float64) sample_rate / (float64) imf_rate
     for i in 0..count
-        buf[i] = opl2.sample(opl_chip!)
+        buf[i] = opl2.sample(ms->chip)
         ms->tick_accum = ms->tick_accum + 1.0
         if ms->tick_accum >= samples_per_tick then
             ms->tick_accum = ms->tick_accum - samples_per_tick
@@ -1084,7 +1072,7 @@ let music_fill = (ms: music_state*, buf: int16[], count: int32) ->
                 let reg = (int32) ms->data[ms->pos]
                 let val = (int32) ms->data[ms->pos + 1]
                 let delay = (int32) bytes.u16(ms->data, ms->pos + 2)
-                opl2.write(opl_chip!, reg, val)
+                opl2.write(ms->chip, reg, val)
                 ms->pos = ms->pos + 4
                 ms->remaining = ms->remaining - 4
                 ms->hack_time = ms->time_count + delay
@@ -1252,7 +1240,7 @@ let render_hud = (g: game*) ->
 // Weapon fire rates (seconds between shots)
 let fire_rate = float64[4] { 0.5, 0.3, 0.15, 0.1 }
 
-let update_weapon = (g: game*, dt: float64) ->
+let update_weapon = (g: game*, dt: float64, ac: audio_ctx*) ->
     if g->fire_timer > 0.0 then
         g->fire_timer = g->fire_timer - dt
         // Advance animation frames
@@ -1270,22 +1258,22 @@ let update_weapon = (g: game*, dt: float64) ->
             // Knife — no ammo needed
             g->fire_timer = fire_rate[0]
             g->weapon_frame = 1
-            trigger_sound(snd_atk_knife)
+            trigger_sound(snd_atk_knife, ac)
         else if g->ammo > 0 then
             g->ammo = g->ammo - 1
             g->fire_timer = fire_rate[g->weapon]
             g->weapon_frame = 1
-            trigger_sound(snd_atk_pistol)
+            trigger_sound(snd_atk_pistol, ac)
 
 // One simulation tick — runs all per-frame game-state updates in order.
 // Used by both the interactive game loop and the headless test mode so
 // they stay in sync. Add new per-frame systems here, not at each caller.
-let tick = (g: game*, dt: float64) ->
-    update_player(g, dt)
-    update_doors(g, dt)
+let tick = (g: game*, dt: float64, ac: audio_ctx*) ->
+    update_player(g, dt, ac)
+    update_doors(g, dt, ac)
     update_pushwall(dt)
-    update_weapon(g, dt)
-    check_pickups(g)
+    update_weapon(g, dt, ac)
+    check_pickups(g, ac)
 
 // Draw procedural weapon sprite (simple geometric shapes).
 let render_weapon = (g: game*) ->
@@ -1418,19 +1406,19 @@ let take_screenshot = (g: game*, vs: vswap_file*, pal: uint32[]) ->
 // Headless test mode — scripted commands for automated testing
 // ============================================================
 
-let run_test_cmd = (arg: const str, g: game*, vs: vswap_file*,
+let run_test_cmd = (arg: const str, g: game*, ac: audio_ctx*,
                     pal: uint32[], dt: float64) ->
     if text.starts_with(arg, "fwd:") then
         let n = text.parse_int32(arg[4..arg.len])!
         g->key_up = true
         for j in 0..n
-            tick(g, dt)
+            tick(g, dt, ac)
         g->key_up = false
     else if text.starts_with(arg, "back:") then
         let n = text.parse_int32(arg[5..arg.len])!
         g->key_down = true
         for j in 0..n
-            tick(g, dt)
+            tick(g, dt, ac)
         g->key_down = false
     else if text.starts_with(arg, "turnr:") then
         let deg = text.parse_int32(arg[6..arg.len])!
@@ -1448,7 +1436,7 @@ let run_test_cmd = (arg: const str, g: game*, vs: vswap_file*,
             g->pos_x = (float64) tx + 0.5
             g->pos_y = (float64) ty + 0.5
         free(coords)
-        check_pickups(g)
+        check_pickups(g, ac)
     else if text.starts_with(arg, "sethp:") then
         g->health = text.parse_int32(arg[6..arg.len])!
     else if arg == "facetile" then
@@ -1465,14 +1453,14 @@ let run_test_cmd = (arg: const str, g: game*, vs: vswap_file*,
         g->has_silver_key = true
     else if arg == "space" then
         g->key_space = true
-        tick(g, dt)
+        tick(g, dt, ac)
         g->key_space = false
     else if text.starts_with(arg, "wait:") then
         let n = text.parse_int32(arg[5..arg.len])!
         for j in 0..n
-            tick(g, dt)
+            tick(g, dt, ac)
     else if text.starts_with(arg, "ss:") then
-        render_frame(g, vs, pal)
+        render_frame(g, ac->vs, pal)
         save_png(arg[3..arg.len], g)
         io.write("Saved %s{arg[3..arg.len]}\n", stdout)
         void()
@@ -1498,12 +1486,10 @@ let main = (args: str[]) ->
 
     io.write("Loading VSWAP.WL6...\n", stdout)
     let vs = vswap.load("data/VSWAP.WL6")
-    g_vs = some(vs)
     io.write("  chunks=%d{vs->num_chunks}, sprites@%d{vs->sprite_start}, sounds@%d{vs->sound_start}\n", stdout)
 
     io.write("Loading audio...\n", stdout)
     let ad = audio.load("data/AUDIOHED.WL6", "data/AUDIOT.WL6")
-    g_ad = some(ad)
     io.write("  audio chunks=%d{ad->num_chunks}\n", stdout)
 
     io.write("Loading level 0...\n", stdout)
@@ -1532,11 +1518,20 @@ let main = (args: str[]) ->
     find_player_start(lv, &g)
     io.write("  player at (%4.1f{g.pos_x}, %4.1f{g.pos_y})\n", stdout)
 
+    // Sound system (valid in all modes; in --test and --screenshot nothing
+    // actually reaches the speakers because SDL audio isn't opened, but
+    // trigger_sound / mix_sounds work over this same ctx either way).
+    let ac = alloc(audio_ctx {
+        vs = vs,
+        ad = ad,
+        sfx = adlib.init((float64) sample_rate)
+    })!
+
     // Test mode: process scripted commands, no SDL needed
     if args.len > 1 && args[1] == "--test" then
         let test_dt = 1.0 / 35.0
         for ti in 2..(int32) args.len
-            run_test_cmd(args[(int64) ti], &g, vs, pal, test_dt)
+            run_test_cmd(args[(int64) ti], &g, ac, pal, test_dt)
         return 0
 
     // Initialize SDL2 (interactive mode only)
@@ -1578,12 +1573,6 @@ let main = (args: str[]) ->
     else default(music_state*?)
     let music_buf = alloc(int16[2048] {})!
     let mut music_on = ms.is_some
-
-    // Dedicated OPL2 chip + state for AdLib SFX (separate from the music
-    // chip so effects don't disrupt the music's register state).
-    if audio_dev > 0u32 then
-        adlib_sfx_chip = some(opl2.init((float64) sample_rate))
-        adlib_sfx = some(adlib.init())
 
     // Fresh screenshot directory each session — user copies any they want to keep.
     clear_screenshots()
@@ -1651,7 +1640,7 @@ let main = (args: str[]) ->
                 if k == sdl2.key_lctrl then g.key_fire = false
 
         // Update
-        tick(&g, dt)
+        tick(&g, dt, ac)
 
         // Level transition
         if g.next_level then
@@ -1697,8 +1686,7 @@ let main = (args: str[]) ->
             else
                 for si in 0..1024
                     music_buf[si] = 0i16
-            if adlib_sfx_chip.is_some && adlib_sfx.is_some then
-                adlib.fill(adlib_sfx!, adlib_sfx_chip!, music_buf, 1024, sample_rate)
+            adlib.fill(ac->sfx, music_buf, 1024, sample_rate)
             mix_sounds(music_buf, 1024)
             sdl2.queue_audio(audio_dev, (any*) music_buf.ptr, 2048u32)
             void()
