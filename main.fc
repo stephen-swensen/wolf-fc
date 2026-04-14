@@ -1684,15 +1684,22 @@ let main = (args: str[]) ->
         render_hud(&g)
 
         // Generate and queue audio: music -> AdLib SFX -> digi SFX -> SDL.
-        if ms.is_some && music_on then
-            music_fill(ms!, music_buf, 1024)
-        else
-            for si in 0..1024
-                music_buf[si] = 0i16
-        if adlib_sfx_chip.is_some && adlib_sfx.is_some then
-            adlib.fill(adlib_sfx!, adlib_sfx_chip!, music_buf, 1024, sample_rate)
-        mix_sounds(music_buf, 1024)
-        if audio_dev > 0u32 then
+        // Back-pressure: each frame produces 1024 samples (~23ms at 44.1 kHz)
+        // but the game loop runs at ~60 FPS (16.7ms), so without limiting we
+        // queue faster than we consume and latency grows unboundedly. Only
+        // top up when SDL's queue has less than ~2 frames worth buffered.
+        let queue_hi_water = 4096u32   // bytes; 2048 samples * 2 bytes = ~46ms
+        let skip_audio = audio_dev == 0u32 ||
+            sdl2.queued_audio_size(audio_dev) >= queue_hi_water
+        if !skip_audio then
+            if ms.is_some && music_on then
+                music_fill(ms!, music_buf, 1024)
+            else
+                for si in 0..1024
+                    music_buf[si] = 0i16
+            if adlib_sfx_chip.is_some && adlib_sfx.is_some then
+                adlib.fill(adlib_sfx!, adlib_sfx_chip!, music_buf, 1024, sample_rate)
+            mix_sounds(music_buf, 1024)
             sdl2.queue_audio(audio_dev, (any*) music_buf.ptr, 2048u32)
             void()
 
