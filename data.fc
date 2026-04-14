@@ -128,6 +128,11 @@ module vswap =
     let page_offset = (vs: vswap_file*, page: int32) ->
         (int64) bytes.u32(vs->raw, 6i64 + (int64) page * 4)
 
+    // Length of a page in bytes.
+    let page_length = (vs: vswap_file*, page: int32) ->
+        let len_off = 6i64 + (int64) vs->num_chunks * 4 + (int64) page * 2
+        (int32) bytes.u16(vs->raw, len_off)
+
     // Wall texture pixel (column-major 64x64). Returns palette index.
     let wall_pixel = (vs: vswap_file*, tex_page: int32, col: int32, row: int32) ->
         let off = page_offset(vs, tex_page)
