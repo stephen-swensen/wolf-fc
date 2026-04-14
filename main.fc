@@ -631,18 +631,29 @@ let render_walls = (g: game*, vs: vswap_file*, pal: uint32[]) ->
 // Player movement (classic Wolf3D: arrows turn/move, alt=strafe)
 // ============================================================
 
+// Player collision radius in tiles. Prevents the player from sliding exactly
+// onto a tile boundary, which would produce a degenerate raycast (side_x or
+// side_y initial = 0, perp_dist ≈ 0) and cause columns to be skipped —
+// visible as "seeing through walls" with only ceiling/floor rendered.
+// Classic Wolf3D uses PLAYERSIZE ≈ 0.35 tiles for the same reason.
+let player_radius = 0.35
+
+// True if the player's bbox at (px, py) overlaps a wall or a closed door.
+let player_blocked = (px: float64, py: float64) ->
+    let xl = (int32) (px - player_radius)
+    let xr = (int32) (px + player_radius)
+    let yl = (int32) (py - player_radius)
+    let yh = (int32) (py + player_radius)
+    let blocks = (tx: int32, ty: int32) ->
+        tile_solid(tx, ty) || (tile_is_door(tx, ty) && !door_passable(tx, ty))
+    blocks(xl, yl) || blocks(xr, yl) || blocks(xl, yh) || blocks(xr, yh)
+
 // Try to move to (nx, ny), handling collision per-axis.
 let try_move = (g: game*, dx: float64, dy: float64) ->
     let nx = g->pos_x + dx
     let ny = g->pos_y + dy
-    let bx = (int32) nx
-    let by = (int32) g->pos_y
-    if !tile_solid(bx, by) && (!tile_is_door(bx, by) || door_passable(bx, by)) then
-        g->pos_x = nx
-    let bx2 = (int32) g->pos_x
-    let by2 = (int32) ny
-    if !tile_solid(bx2, by2) && (!tile_is_door(bx2, by2) || door_passable(bx2, by2)) then
-        g->pos_y = ny
+    if !player_blocked(nx, g->pos_y) then g->pos_x = nx
+    if !player_blocked(g->pos_x, ny) then g->pos_y = ny
 
 let rotate_camera = (g: game*, angle: float64) ->
     let c = math.cos(angle)
