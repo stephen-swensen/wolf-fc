@@ -1176,6 +1176,16 @@ let update_weapon = (g: game*, dt: float64) ->
             g->weapon_frame = 1
             trigger_sound(snd_atk_pistol)
 
+// One simulation tick — runs all per-frame game-state updates in order.
+// Used by both the interactive game loop and the headless test mode so
+// they stay in sync. Add new per-frame systems here, not at each caller.
+let tick = (g: game*, dt: float64) ->
+    update_player(g, dt)
+    update_doors(g, dt)
+    update_pushwall(dt)
+    update_weapon(g, dt)
+    check_pickups(g)
+
 // Draw procedural weapon sprite (simple geometric shapes).
 let render_weapon = (g: game*) ->
     let cx = game_w / 2    // center x = 160
@@ -1258,32 +1268,28 @@ let save_ppm = (path: const str) ->
 let run_test_cmd = (arg: const str, g: game*, vs: vswap_file*,
                     pal: uint32[], dt: float64) ->
     if text.starts_with(arg, "fwd:") then
-        let n = text.parse_int32(arg[4i64..arg.len])!
+        let n = text.parse_int32(arg[4..arg.len])!
         g->key_up = true
         for j in 0..n
-            update_player(g, dt)
-            update_doors(g, dt)
-            check_pickups(g)
+            tick(g, dt)
         g->key_up = false
     else if text.starts_with(arg, "back:") then
-        let n = text.parse_int32(arg[5i64..arg.len])!
+        let n = text.parse_int32(arg[5..arg.len])!
         g->key_down = true
         for j in 0..n
-            update_player(g, dt)
-            update_doors(g, dt)
-            check_pickups(g)
+            tick(g, dt)
         g->key_down = false
     else if text.starts_with(arg, "turnr:") then
-        let deg = text.parse_int32(arg[6i64..arg.len])!
+        let deg = text.parse_int32(arg[6..arg.len])!
         rotate_camera(g, 0.0 - (float64) deg * 3.14159265 / 180.0)
     else if text.starts_with(arg, "turnl:") then
-        let deg = text.parse_int32(arg[6i64..arg.len])!
+        let deg = text.parse_int32(arg[6..arg.len])!
         rotate_camera(g, (float64) deg * 3.14159265 / 180.0)
     else if arg == "run" then
         g->key_shift = !g->key_shift
     else if text.starts_with(arg, "goto:") then
-        let coords = text.split(arg[5i64..arg.len], ",")
-        if coords.len >= 2i64 then
+        let coords = text.split(arg[5..arg.len], ",")
+        if coords.len >= 2 then
             let tx = text.parse_int32(coords[0])!
             let ty = text.parse_int32(coords[1])!
             g->pos_x = (float64) tx + 0.5
@@ -1291,7 +1297,7 @@ let run_test_cmd = (arg: const str, g: game*, vs: vswap_file*,
         free(coords)
         check_pickups(g)
     else if text.starts_with(arg, "sethp:") then
-        g->health = text.parse_int32(arg[6i64..arg.len])!
+        g->health = text.parse_int32(arg[6..arg.len])!
     else if arg == "facetile" then
         let fx = (int32) (g->pos_x + g->dir_x)
         let fy = (int32) (g->pos_y + g->dir_y)
@@ -1306,22 +1312,19 @@ let run_test_cmd = (arg: const str, g: game*, vs: vswap_file*,
         g->has_silver_key = true
     else if arg == "space" then
         g->key_space = true
-        update_player(g, dt)
-        update_doors(g, dt)
-        update_pushwall(dt)
+        tick(g, dt)
         g->key_space = false
     else if text.starts_with(arg, "wait:") then
-        let n = text.parse_int32(arg[5i64..arg.len])!
+        let n = text.parse_int32(arg[5..arg.len])!
         for j in 0..n
-            update_doors(g, dt)
-            update_pushwall(dt)
+            tick(g, dt)
     else if text.starts_with(arg, "ss:") then
         render_walls(g, vs, pal)
         render_sprites(g, vs, pal)
         render_weapon(g)
         render_hud(g)
-        save_ppm(arg[3i64..arg.len])
-        io.write("Saved %s{arg[3i64..arg.len]}\n", stdout)
+        save_ppm(arg[3..arg.len])
+        io.write("Saved %s{arg[3..arg.len]}\n", stdout)
         void()
     else if arg == "state" then
         io.write("pos=(%8.4f{g->pos_x}, %8.4f{g->pos_y}) dir=(%8.4f{g->dir_x}, %8.4f{g->dir_y})\n", stdout)
@@ -1379,7 +1382,7 @@ let main = (args: str[]) ->
     io.write("  player at (%4.1f{g.pos_x}, %4.1f{g.pos_y})\n", stdout)
 
     // Screenshot mode: render one frame, save PPM, exit (no SDL needed)
-    if args.len > 1i64 && args[1] == "--screenshot" then
+    if args.len > 1 && args[1] == "--screenshot" then
         render_walls(&g, vs, pal)
         render_sprites(&g, vs, pal)
         render_weapon(&g)
@@ -1389,7 +1392,7 @@ let main = (args: str[]) ->
         return 0
 
     // Test mode: process scripted commands, no SDL needed
-    if args.len > 1i64 && args[1] == "--test" then
+    if args.len > 1 && args[1] == "--test" then
         let test_dt = 1.0 / 35.0
         for ti in 2..(int32) args.len
             run_test_cmd(args[(int64) ti], &g, vs, pal, test_dt)
@@ -1497,11 +1500,7 @@ let main = (args: str[]) ->
                 if k == sdl2.key_lctrl then g.key_fire = false
 
         // Update
-        update_player(&g, dt)
-        update_doors(&g, dt)
-        update_pushwall(dt)
-        update_weapon(&g, dt)
-        check_pickups(&g)
+        tick(&g, dt)
 
         // Level transition
         if g.next_level then

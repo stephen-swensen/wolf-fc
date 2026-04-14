@@ -46,6 +46,73 @@ Classic Wolfenstein 3D controls:
 | M | Toggle music |
 | Tab | Automap (if implemented) |
 
+## Headless Test Mode
+
+The binary supports a `--test` flag that runs the game engine without opening a window or audio device. Commands are passed as additional arguments and executed left-to-right; each tick-advancing command simulates one frame at a fixed `dt = 1/35s`. This enables scripted, reproducible "play" from the shell — useful for regression testing, verifying gameplay logic, or generating screenshots from specific positions.
+
+### Usage
+
+```bash
+./run.sh --test <command> [<command> ...]
+```
+
+Or run the built binary directly after a normal `./run.sh` to avoid rebuilding:
+
+```bash
+/tmp/wolf-fc-bin --test fwd:20 turnr:90 space wait:30 ss:out.ppm state
+```
+
+Since `run.sh` rebuilds on every invocation, invoking the pre-built binary directly is faster for iterative testing.
+
+### Commands
+
+| Command | Effect |
+|---------|--------|
+| `fwd:N` | Hold forward for N ticks (≈ N/35 seconds) |
+| `back:N` | Hold backward for N ticks |
+| `turnl:N` / `turnr:N` | Turn left / right by N degrees (instant) |
+| `run` | Toggle the shift/run modifier |
+| `space` | Press space once (open door, elevator, push wall) |
+| `wait:N` | Advance N ticks with no input (for door/push-wall animation) |
+| `ss:FILE` | Render current frame and save as PPM to `FILE` |
+| `state` | Print position, direction, health, ammo, score, lives, level, keys |
+| `goto:X,Y` | Teleport player to tile center `(X+0.5, Y+0.5)` and run a pickup check |
+| `sethp:N` | Set health to N (debug) |
+| `givekeys` | Grant gold and silver keys (debug) |
+| `facetile` | Print the tile the player is facing and the `next_level` flag (debug) |
+
+### Examples
+
+Walk forward, open a door, walk through:
+
+```bash
+./wolf-fc-bin --test fwd:15 space wait:40 fwd:20 state
+```
+
+Verify an item pickup (player starts at 100 HP; food only picks up below max):
+
+```bash
+./wolf-fc-bin --test sethp:50 goto:29,51 state
+# → health=60 (food gave +10)
+```
+
+Exercise the elevator switch on E1M1:
+
+```bash
+./wolf-fc-bin --test goto:25,47 turnl:90 space facetile
+# → facing=(25,46) tile=21 next_level=1
+```
+
+Capture a screenshot of an opened door:
+
+```bash
+./wolf-fc-bin --test fwd:15 space wait:40 ss:door.ppm
+```
+
+### Verifying screenshots
+
+Screenshots are saved as binary PPM (P6) files. They can be converted with standard tools (`convert`, `ffmpeg`) or inspected programmatically in Python — the format is a short ASCII header (`P6`, width/height, maxval) followed by raw RGB bytes, so reading specific pixels for regression checks is a few lines of code. See existing tests in session history for examples.
+
 ## Architecture
 
 The project is organized into two FC source files plus shared SDL2/OPL2 bindings from the fc-lang demos:

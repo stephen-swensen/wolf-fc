@@ -18,7 +18,61 @@ Wolf-FC is a Wolfenstein 3D clone written in FC, intended as a demo of the FC la
 
 - **`./run.sh`** — Compile FC → C → binary, then run. Requires `../fc-lang/` and `libsdl2-dev`.
 - **`./run.sh` then pass `--screenshot`** — Renders one frame to `screenshot.ppm` and exits (for debugging without display).
+- **`--test <cmd> ...`** — Headless scripted-play mode (see below). No SDL window, no audio device. Use this for automated verification.
 - Data files must be in `data/*.WL6` (not committed — users supply their own from a legitimate Wolf3D copy).
+
+## Headless Test Mode (`--test`)
+
+**Purpose**: run the game engine without a window or audio so gameplay logic can be verified deterministically from a shell script. Used heavily for regression testing, since rendering verification is harder without it (PPM files work but are awkward).
+
+**Entry point**: `run_test_cmd` in `main.fc` dispatches each CLI arg to a command handler. After `--test`, args are processed left-to-right with a fixed `dt = 1.0 / 35.0` per simulated tick. The test mode skips SDL init entirely — data loads, game state initializes, commands run, then the program exits.
+
+**User-facing command reference lives in `README.md`.** This section covers the internals and how to extend them.
+
+### The `tick()` function
+
+All per-frame game updates go through **one** function:
+
+```fc
+let tick = (g: game*, dt: float64) ->
+    update_player(g, dt)
+    update_doors(g, dt)
+    update_pushwall(dt)
+    update_weapon(g, dt)
+    check_pickups(g)
+```
+
+Both the interactive game loop and every tick-advancing test command (`fwd`, `back`, `space`, `wait`) call `tick(g, dt)`. **When you add a new per-frame system (e.g. enemy AI), add the call inside `tick` — nowhere else.** This keeps the test mode and interactive mode bit-identical in their per-frame simulation. Earlier in the project, `update_doors` and `update_pushwall` were missing from some test commands and caused silent "animation frozen" bugs during scripted play.
+
+The `goto:X,Y` command is deliberately NOT a full tick — it just teleports and calls `check_pickups` once. That's the right behavior: goto is an instant jump, not time passing.
+
+### Adding a new command
+
+1. Add an `else if` branch to `run_test_cmd` (ordered near related commands for readability).
+2. For prefix commands with an argument (e.g. `foo:N`), use `text.starts_with(arg, "foo:")` then `text.parse_int32(arg[4..arg.len])!`. Int literals auto-widen to `int64` in slice indices and comparisons, so `4` works where `int64` is expected — only suffix with `i64` when a binding's type must be `int64` from the start (e.g. `let mut x = 0i64` used in later `int64` arithmetic).
+3. For commands that produce textual output (state dumps, debug prints), end the branch with `void()` — `io.write` returns `int64` and `if/else` chains need matching branch types.
+4. If the command advances time, call `tick(g, dt)`. If it changes state without advancing time (like `sethp`, `givekeys`, `goto`), don't.
+5. Document the command in `README.md`'s Headless Test Mode section.
+
+### Rendering in test mode
+
+`ss:FILE` renders a frame to `fb[]` and writes it as PPM. The render path mirrors the interactive loop:
+
+```fc
+render_walls(g, vs, pal)
+render_sprites(g, vs, pal)
+render_weapon(g)
+render_hud(g)
+save_ppm(arg[3i64..arg.len])
+```
+
+If you add a new render layer, add it here too (same "single source of truth" discipline as `tick`).
+
+### Useful patterns for verification
+
+- **State checks after time-passing commands**: `fwd:20 state` prints position, health, etc. Grep the output.
+- **Pixel sampling from screenshots**: the PPM is raw RGB after a short header. Python with the `struct` module can read specific pixels in ~10 lines — faster than installing an image viewer and more precise for automated checks.
+- **Level-0 coordinates**: player spawn is `(29.5, 57.5)` facing east. Known landmarks: door at `(32, 57)`, elevator switch at `(25, 46)`, push-wall at `(10, 13)`, first-aid at `(29, 24)`, cross at `(7, 14)`.
 
 ## Source Files
 
