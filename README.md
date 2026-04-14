@@ -128,14 +128,16 @@ Wolf-fc depends only on the FC compiler and stdlib (`../fc-lang/`). Every other 
   - `vswap` — VSWAP.WL6 (wall textures, sprites, digitized sounds)
   - `maps` — MAPHEAD/GAMEMAPS with Carmack + RLEW decompression
   - `audio` — AUDIOHED/AUDIOT chunk index for music and AdLib SFX
-- **`opl2.fc`** — YM3812 FM synth emulator: chip state, register writes, sample generation, AdLib instrument helpers, and a generic `fill_ticked` runner that both sound drivers plug into.
-- **`imf.fc`** — IMF music format driver. Owns an OPL2 chip, reads `(reg, val, delay)` quads from AUDIOT chunks at 700 Hz, loops the track at end, mixes samples into the output buffer.
-- **`adlib.fc`** — id-Software AdLib SFX driver. Owns a separate OPL2 chip, parses an instrument + note-byte stream from AUDIOT chunks, plays at 140 Hz on channel 0, mixes additively. Chosen as fallback for sound effects that don't exist in the VSWAP digi pack (pickups, knife, etc.).
+- **`opl2.fc`** — YM3812 FM synth emulator: chip state, register writes, sample generation, AdLib instrument helpers, and a generic `fill_ticked` runner that both OPL2-based drivers plug into. Standalone, not wolf-specific.
+- **`sound.fc`** — Wolf3D sound-format drivers, three top-level modules:
+  - `imf` — IMF music. Owns an OPL2 chip, reads `(reg, val, delay)` quads from AUDIOT chunks at 700 Hz, loops the track at end.
+  - `adlib` — AdLib SFX. Owns a separate OPL2 chip, parses instrument + note-byte chunks, plays at 140 Hz on channel 0. Used as the fallback for sounds that don't have a digitized version.
+  - `digi` — 8-bit PCM from VSWAP. Up to 4 simultaneous slots, nearest-neighbor resampled 7042 Hz → output rate. Preferred over AdLib for sounds that have a digi version (door open/close, pistol, machine gun, pain).
 - **`sdl2.fc`** — SDL2 C bindings (window, renderer, texture, event, audio queue).
 - **`png.fc`** — Pure-FC PNG writer (CRC-32, Adler-32, stored deflate, optional tEXt metadata).
 - **`run.sh`** — build + run wrapper; handles Linux/macOS and MSYS2/MinGW.
 
-The audio pipeline each frame: zero buffer → `imf.fill` (music) → `adlib.fill` (OPL2 SFX) → `mix_sounds` (8-bit digi PCM from VSWAP) → SDL audio queue (back-pressured via `SDL_GetQueuedAudioSize` to keep latency ≤ ~50 ms).
+The audio pipeline each frame: zero buffer → `imf.fill` (music) → `adlib.fill` (AdLib SFX) → `digi.fill` (8-bit PCM) → SDL audio queue (back-pressured via `SDL_GetQueuedAudioSize` to keep latency ≤ ~50 ms).
 
 ## License
 

@@ -94,9 +94,10 @@ struct game =
 // Allocated in main after data is loaded and threaded through update
 // functions so we don't rely on file-level globals for sound state.
 struct audio_ctx =
-    vs: vswap.vswap_file*           // VSWAP — for loading digi sound data
-    ad: audio.audio_data*           // AUDIOT — for loading AdLib sound chunks
-    sfx: adlib.sfx_state*     // AdLib SFX playback (owns its own OPL2 chip)
+    vs: vswap.vswap_file*      // VSWAP — digi sound data + wall/sprite pages
+    ad: audio.audio_data*      // AUDIOT — AdLib SFX chunks + music
+    sfx: adlib.sfx_state*      // AdLib SFX playback (owns its own OPL2 chip)
+    digi: digi.player*         // 8-bit PCM playback (up to 4 slots)
 
 // Tilemap: 64*64, column-major — tilemap[x * 64 + y].
 // 0 = empty, 1-63 = wall tile, 90-101 = door.
@@ -921,62 +922,14 @@ let snd_adlib_enum = int32[11] {
     46    // push_wall    (PUSHWALLSND)
 }
 
-struct active_sound =
-    data: uint8[]        // raw 8-bit unsigned PCM @ 7042 Hz
-    pos: float64         // current playback position in source samples
-    playing: bool
-
-let max_active_sounds = 4
-let active_sounds = alloc(active_sound[4] {})!
-
-// Load a digitized sound from VSWAP using the digi info table.
-let load_digi_sound = (vs: vswap.vswap_file*, sound_num: int32) ->
-    let info_page = vs->num_chunks - 1
-    let info_off = vswap.page_offset(vs, info_page)
-    let start_pg = (int32) bytes.u16(vs->raw, info_off + (int64) sound_num * 4)
-    let snd_len = (int32) bytes.u16(vs->raw, info_off + (int64) sound_num * 4 + 2)
-    if snd_len == 0 then return alloc(uint8[0] {})!
-    let buf = alloc(uint8[(int64) snd_len] {})!
-    let mut written = 0i64
-    let mut pg = vs->sound_start + start_pg
-    loop
-        if written >= (int64) snd_len then break
-        let pg_off = vswap.page_offset(vs, pg)
-        let pg_len = (int64) vswap.page_length(vs, pg)
-        let remain = (int64) snd_len - written
-        let copy_len = if pg_len < remain then pg_len else remain
-        for j in 0..copy_len
-            buf[written + j] = vs->raw[pg_off + j]
-        written = written + copy_len
-        pg = pg + 1
-    buf
-
-// Start playing a sound effect.
-let play_sound = (vs: vswap.vswap_file*, sound_num: int32) ->
-    // Find a free slot (or steal oldest)
-    let mut slot = -1
-    for i in 0..max_active_sounds
-        if !active_sounds[i].playing then
-            slot = i
-            break
-    if slot < 0 then slot = 0    // steal slot 0 if all full
-    // Free previous data if any
-    if active_sounds[slot].data.len > 0 then
-        free(active_sounds[slot].data)
-    active_sounds[slot] = active_sound {
-        data = load_digi_sound(vs, sound_num),
-        pos = 0.0,
-        playing = true
-    }
-
 // Play a sound by wolf-fc sound ID (one of snd_open_door, etc.). Prefers
 // the digitized version (richer audio, matches original Sound Blaster mode)
 // and falls back to the AdLib version loaded from AUDIOT on demand.
 let trigger_sound = (sound_id: int32, ac: audio_ctx*) ->
     if sound_id < 0 || sound_id >= snd_count then return
-    let digi = snd_digi[sound_id]
-    if digi >= 0 then
-        play_sound(ac->vs, digi)
+    let digi_idx = snd_digi[sound_id]
+    if digi_idx >= 0 then
+        digi.play(ac->digi, ac->vs, digi_idx)
     else
         let enum_val = snd_adlib_enum[sound_id]
         if enum_val >= 0 then
@@ -986,25 +939,6 @@ let trigger_sound = (sound_id: int32, ac: audio_ctx*) ->
                 let len = audio.chunk_length(ac->ad, chunk)
                 if len >= 23 then
                     adlib.play(ac->sfx, adlib.parse(ac->ad->raw, off))
-
-// Mix active sound effects into an int16 audio buffer.
-// Called after music_fill to overlay sound effects.
-let mix_sounds = (buf: int16[], count: int32) ->
-    let resample_ratio = 7042.0 / (float64) sample_rate
-    for i in 0..count
-        let mut sample = (int32) buf[i]
-        for s in 0..max_active_sounds
-            if active_sounds[s].playing then
-                let src_pos = (int32) active_sounds[s].pos
-                if src_pos < (int32) active_sounds[s].data.len then
-                    let raw = (int32) active_sounds[s].data[(int64) src_pos] - 128
-                    sample = sample + raw * 128
-                    active_sounds[s].pos = active_sounds[s].pos + resample_ratio
-                else
-                    active_sounds[s].playing = false
-        if sample > 32767 then sample = 32767
-        if sample < -32767 then sample = -32767
-        buf[i] = (int16) sample
 
 // Output sample rate for the SDL audio device (Hz). All driver chips run
 // at this rate.
@@ -1458,11 +1392,12 @@ let main = (args: str[]) ->
 
     // Sound system (valid in all modes; in --test and --screenshot nothing
     // actually reaches the speakers because SDL audio isn't opened, but
-    // trigger_sound / mix_sounds work over this same ctx either way).
+    // trigger_sound / digi.fill work over this same ctx either way).
     let ac = alloc(audio_ctx {
         vs = vs,
         ad = ad,
-        sfx = adlib.init((float64) sample_rate)
+        sfx = adlib.init((float64) sample_rate),
+        digi = digi.init()
     })!
 
     // Test mode: process scripted commands, no SDL needed
@@ -1627,7 +1562,7 @@ let main = (args: str[]) ->
             if ms.is_some && music_on then
                 imf.fill(ms!, music_buf, 1024, sample_rate)
             adlib.fill(ac->sfx, music_buf, 1024, sample_rate)
-            mix_sounds(music_buf, 1024)
+            digi.fill(ac->digi, music_buf, 1024, sample_rate)
             sdl2.queue_audio(audio_dev, (any*) music_buf.ptr, 2048u32)
             void()
 

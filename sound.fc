@@ -1,0 +1,302 @@
+// Wolf-FC sound drivers — the three id-Software sound formats used by
+// Wolfenstein 3D, each consuming bytes from an AUDIOT / VSWAP chunk and
+// mixing audio samples additively (with saturation) into the output buffer.
+//
+// Uniform driver shape:
+//   - owns whatever private state it needs (an OPL2 chip for imf/adlib,
+//     a small array of slots for digi)
+//   - exposes `init(...)` to allocate state
+//   - exposes `fill(player, buf, count, sample_rate)` to produce samples
+//   - drivers that consume data eventfully also expose `play(...)`
+//
+// The generic OPL2 chip emulator lives in `opl2.fc` and is shared by
+// `imf` (music) and `adlib` (SFX). `digi` plays 8-bit PCM straight from
+// VSWAP — no chip involved.
+
+// ============================================================
+// IMF — id Music Format (OPL2 music)
+// ============================================================
+//
+// An IMF stream is a flat sequence of 4-byte events —
+// `[reg, val, delay_lo, delay_hi]` — written straight to an OPL2 chip
+// at a 700 Hz tick rate, with `delay` saying how many ticks to wait
+// before the next event. Owns a dedicated OPL2 chip so it doesn't
+// contend with the SFX chip's registers.
+
+module imf =
+
+    // IMF event-clock rate. The stream's `delay` field is measured in
+    // these ticks; Wolf3D uses 700 Hz.
+    let tick_rate = 700
+
+    struct player =
+        chip: opl2.chip*
+        data: uint8[]           // non-owning reference into the AUDIOT blob
+        pos: int64
+        start_pos: int64        // loop point (start of actual music data)
+        seq_len: int64
+        remaining: int64
+        tick_accum: float64
+        time_count: int32       // current tick counter (for delay comparisons)
+        hack_time: int32        // tick at which the next event fires
+
+    // Build a player over the AUDIOT bytes starting at `offset` with chunk
+    // `length`. Some music chunks prefix the data with a uint16 length
+    // header; we detect that by checking if the first word is non-zero.
+    let init_from_chunk = (bytes: uint8[], offset: int64, length: int64,
+                           sample_rate: float64) ->
+        let first_word = (int64) bytes[offset] |
+                         ((int64) bytes[offset + 1] << 8)
+        let mut d_off = offset
+        let mut d_len = length
+        if first_word != 0 then
+            d_len = first_word
+            d_off = offset + 2
+        alloc(player {
+            chip = opl2.init(sample_rate),
+            data = bytes, pos = d_off, start_pos = d_off,
+            seq_len = d_len, remaining = d_len,
+            tick_accum = 0.0, time_count = 0, hack_time = 0
+        })!
+
+    // Per-tick advance: drain every event whose scheduled fire time has
+    // arrived, then increment the event clock. Loops the track at end.
+    let advance_tick = (p: player*) ->
+        loop
+            if p->remaining <= 0 then
+                p->pos = p->start_pos
+                p->remaining = p->seq_len
+                p->time_count = 0
+                p->hack_time = 0
+                break
+            if p->hack_time > p->time_count then break
+            let reg = (int32) p->data[p->pos]
+            let val = (int32) p->data[p->pos + 1]
+            let delay = (int32) p->data[p->pos + 2] |
+                        ((int32) p->data[p->pos + 3] << 8)
+            opl2.write(p->chip, reg, val)
+            p->pos = p->pos + 4
+            p->remaining = p->remaining - 4
+            p->hack_time = p->time_count + delay
+        p->time_count = p->time_count + 1
+
+    // Mix `count` samples into `buf` from the music chip while stepping
+    // events at 700 Hz. Delegates the sample/tick loop to opl2.fill_ticked.
+    let fill = (p: player*, buf: int16[], count: int32, sample_rate: int32) ->
+        opl2.fill_ticked(p->chip, buf, count, sample_rate, tick_rate,
+            &p->tick_accum,
+            () -> advance_tick(p))
+
+
+// ============================================================
+// AdLib SFX — id-Software AdLib sound-effect format (OPL2, 140 Hz)
+// ============================================================
+//
+// An AdLibSound chunk has a 23-byte header (length, priority, 16-byte
+// instrument, block) followed by one byte per 140 Hz tick — zero means
+// key-off, anything else is the F-number low byte for channel 0.
+// One voice at a time. Owns a dedicated OPL2 chip.
+//
+// AdLibSound chunk layout (little-endian):
+//   offset 0..3   : uint32 length     — number of note-data bytes
+//   offset 4..5   : uint16 priority   — preempt priority (unused here)
+//   offset 6..21  : 16-byte Instrument block (11 meaningful + 5 padding)
+//   offset 22     : uint8  block      — octave for the F-number (0..7)
+//   offset 23+    : length bytes of data
+//
+// Instrument fields (offsets within the 16-byte block):
+//   0 mChar    1 cChar    2 mScale   3 cScale
+//   4 mAttack  5 cAttack  6 mSus     7 cSus
+//   8 mWave    9 cWave   10 nConn   11..15 padding
+
+module adlib =
+
+    let tick_rate = 140
+
+    // Parsed AdLibSound header. `bytes` is a non-owning reference back
+    // into the AUDIOT buffer; do not free it through this struct.
+    struct sfx_data =
+        bytes: uint8[]
+        data_off: int64
+        data_len: int64
+        m_char: int32
+        c_char: int32
+        m_scale: int32
+        c_scale: int32
+        m_atk: int32
+        c_atk: int32
+        m_sus: int32
+        c_sus: int32
+        m_wave: int32
+        c_wave: int32
+        n_conn: int32
+        block: int32
+
+    // Parse an AdLibSound chunk starting at `offset` in `bytes`.
+    let parse = (bytes: uint8[], offset: int64) ->
+        let len = (int64) ((uint32) bytes[offset] |
+                           ((uint32) bytes[offset + 1] << 8) |
+                           ((uint32) bytes[offset + 2] << 16) |
+                           ((uint32) bytes[offset + 3] << 24))
+        sfx_data {
+            bytes = bytes,
+            data_off = offset + 23,
+            data_len = len,
+            m_char  = (int32) bytes[offset + 6],
+            c_char  = (int32) bytes[offset + 7],
+            m_scale = (int32) bytes[offset + 8],
+            c_scale = (int32) bytes[offset + 9],
+            m_atk   = (int32) bytes[offset + 10],
+            c_atk   = (int32) bytes[offset + 11],
+            m_sus   = (int32) bytes[offset + 12],
+            c_sus   = (int32) bytes[offset + 13],
+            m_wave  = (int32) bytes[offset + 14],
+            c_wave  = (int32) bytes[offset + 15],
+            n_conn  = (int32) bytes[offset + 16],
+            block   = (int32) bytes[offset + 22]
+        }
+
+    // Per-sound playback state. Owns a dedicated OPL2 chip so effects
+    // don't disrupt the music chip's register state.
+    struct sfx_state =
+        chip: opl2.chip*
+        active: bool
+        data: uint8[]
+        data_end: int64
+        pos: int64
+        block: int32
+        tick_accum: float64
+
+    // Allocate a fresh sfx_state with its own OPL2 chip at sample_rate Hz.
+    let init = (sample_rate: float64) ->
+        alloc(sfx_state {
+            chip = opl2.init(sample_rate),
+            active = false, data = default(uint8[]),
+            data_end = 0, pos = 0, block = 0, tick_accum = 0.0
+        })!
+
+    // Start (or restart) playback of `s` on channel 0. Silences any
+    // in-progress sound first.
+    let play = (st: sfx_state*, s: sfx_data) ->
+        opl2.note_off(st->chip, 0)
+        opl2.load_instrument(st->chip, 0,
+            s.m_char, s.c_char, s.m_scale, s.c_scale,
+            s.m_atk, s.c_atk, s.m_sus, s.c_sus,
+            s.m_wave, s.c_wave, s.n_conn)
+        st->data = s.bytes
+        st->data_end = s.data_off + s.data_len
+        st->pos = s.data_off
+        st->block = s.block
+        st->active = true
+        st->tick_accum = 0.0
+
+    // Per-tick advance: consume one byte of note data, keying on/off.
+    // Inactive state is a no-op so the chip can finish its release
+    // envelope after the sound ends without the tick counter mattering.
+    let advance_tick = (st: sfx_state*) ->
+        if !st->active then return
+        if st->pos >= st->data_end then
+            opl2.note_off(st->chip, 0)
+            st->active = false
+        else
+            let b = (int32) st->data[st->pos]
+            st->pos = st->pos + 1
+            if b == 0 then opl2.note_off(st->chip, 0)
+            else opl2.note_on(st->chip, 0, st->block, b)
+
+    // Mix `count` samples into `buf` from the chip while driving note
+    // data at 140 Hz. Delegates the sample/tick loop to opl2.fill_ticked.
+    let fill = (st: sfx_state*, buf: int16[], count: int32, sample_rate: int32) ->
+        opl2.fill_ticked(st->chip, buf, count, sample_rate, tick_rate,
+            &st->tick_accum,
+            () -> advance_tick(st))
+
+
+// ============================================================
+// Digi — digitized 8-bit PCM from VSWAP (no OPL2)
+// ============================================================
+//
+// VSWAP's trailing pages are raw 8-bit unsigned PCM recorded at 7042 Hz,
+// indexed via a sound-info table on the very last page. The player holds
+// up to 4 simultaneous slots (matches Wolf3D's Sound Blaster mixing),
+// resamples nearest-neighbor to the output rate, and mixes additively
+// with the OPL2 samples that other drivers already wrote.
+
+module digi =
+
+    let src_rate = 7042.0
+    let max_slots = 4
+
+    struct slot =
+        data: uint8[]        // heap-owned 8-bit unsigned PCM @ 7042 Hz
+        pos: float64         // current source-sample position
+        playing: bool
+
+    struct player =
+        slots: slot[4]
+
+    let init = () ->
+        alloc(player {})!
+
+    // Load a digitized sound from VSWAP using the digi info table on the
+    // last VSWAP page. Returns a newly heap-allocated PCM buffer (caller
+    // owns). `sound_num` is the digi-pack index (0..45 in Wolf3D), NOT
+    // the sound-enum value — see wolf4sdl's wolfdigimap[] for the mapping.
+    let load_sound = (vs: vswap.vswap_file*, sound_num: int32) ->
+        let info_page = vs->num_chunks - 1
+        let info_off = vswap.page_offset(vs, info_page)
+        let start_pg = (int32) bytes.u16(vs->raw, info_off + (int64) sound_num * 4)
+        let snd_len = (int32) bytes.u16(vs->raw, info_off + (int64) sound_num * 4 + 2)
+        if snd_len == 0 then return alloc(uint8[0] {})!
+        let buf = alloc(uint8[(int64) snd_len] {})!
+        let mut written = 0i64
+        let mut pg = vs->sound_start + start_pg
+        loop
+            if written >= (int64) snd_len then break
+            let pg_off = vswap.page_offset(vs, pg)
+            let pg_len = (int64) vswap.page_length(vs, pg)
+            let remain = (int64) snd_len - written
+            let copy_len = if pg_len < remain then pg_len else remain
+            for j in 0..copy_len
+                buf[written + j] = vs->raw[pg_off + j]
+            written = written + copy_len
+            pg = pg + 1
+        buf
+
+    // Start playing `sound_num` on the first free slot, or steal slot 0
+    // if all four are busy. Frees any PCM data previously owned by that
+    // slot before overwriting.
+    let play = (p: player*, vs: vswap.vswap_file*, sound_num: int32) ->
+        let mut idx = -1
+        for i in 0..max_slots
+            if !p->slots[i].playing then
+                idx = i
+                break
+        if idx < 0 then idx = 0   // steal slot 0 if all full
+        if p->slots[idx].data.len > 0 then
+            free(p->slots[idx].data)
+        p->slots[idx] = slot {
+            data = load_sound(vs, sound_num),
+            pos = 0.0,
+            playing = true
+        }
+
+    // Mix up to `max_slots` simultaneous 8-bit sounds into `buf`, resampling
+    // nearest-neighbor from 7042 Hz to `sample_rate`. Marks a slot as not
+    // playing when its source buffer is exhausted.
+    let fill = (p: player*, buf: int16[], count: int32, sample_rate: int32) ->
+        let resample_ratio = src_rate / (float64) sample_rate
+        for i in 0..count
+            let mut sample = (int32) buf[i]
+            for s in 0..max_slots
+                if p->slots[s].playing then
+                    let src_pos = (int32) p->slots[s].pos
+                    if src_pos < (int32) p->slots[s].data.len then
+                        let raw = (int32) p->slots[s].data[(int64) src_pos] - 128
+                        sample = sample + raw * 128
+                        p->slots[s].pos = p->slots[s].pos + resample_ratio
+                    else
+                        p->slots[s].playing = false
+            if sample > 32767 then sample = 32767
+            if sample < -32767 then sample = -32767
+            buf[i] = (int16) sample

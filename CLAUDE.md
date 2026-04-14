@@ -70,9 +70,11 @@ All project modules are declared at the top level (no namespaces), so they're ac
 
 - **`sdl2.fc`** (`module sdl2`) — C-interop bindings for SDL2 (window, renderer, texture, event, audio). Vendored from `fc-lang/demos/shared/`.
 - **`png.fc`** (`module png`) — Pure-FC PNG writer (CRC-32, Adler-32, deflate stored blocks, optional tEXt metadata). Used for screenshots.
-- **`opl2.fc`** (`module opl2`) — YM3812 FM synth emulator (`chip`, `init`, `write`, `sample`) plus AdLib helpers (`load_instrument`, `note_on`, `note_off`). The generic `fill_ticked(chip, buf, count, sample_rate, tick_rate, &tick_accum, advance_closure)` runner factors out the sample/tick loop used by both IMF and AdLib drivers.
-- **`imf.fc`** (`module imf`) — IMF music format driver. Events are `[reg, val, delay_lo, delay_hi]` quads clocked at 700 Hz; the player loops the track at end.
-- **`adlib.fc`** (`module adlib`) — id-Software AdLib sound-effect format driver. Parses a header (instrument + 1-byte-per-tick note data), keys a single voice on channel 0 at 140 Hz, stops when the note stream ends.
+- **`opl2.fc`** (`module opl2`) — YM3812 FM synth emulator (`chip`, `init`, `write`, `sample`) plus AdLib helpers (`load_instrument`, `note_on`, `note_off`). The generic `fill_ticked(chip, buf, count, sample_rate, tick_rate, &tick_accum, advance_closure)` runner factors out the sample/tick loop used by the OPL2-based drivers. Standalone / not wolf-specific.
+- **`sound.fc`** — Wolf3D sound-format drivers, three top-level modules. Each exposes `init(...)` / `fill(p, buf, count, sample_rate)` and mixes additively (saturating) into the output buffer:
+  - `module imf` — IMF music. Owns an OPL2 chip. Events are `[reg, val, delay_lo, delay_hi]` quads at 700 Hz; loops at end of track.
+  - `module adlib` — id-Software AdLib SFX. Owns an OPL2 chip. One voice on channel 0 at 140 Hz; note stream parsed from AUDIOT chunk format.
+  - `module digi` — 8-bit PCM from VSWAP. No chip; up to 4 simultaneous slots, nearest-neighbor resampled 7042 Hz → output rate.
 - **`data.fc`** — Wolf3D data loading, five top-level modules:
   - `module bytes` — Little-endian uint16/uint32/int32 readers
   - `module palette` — `init()` returns heap-allocated 256-entry ARGB palette from hardcoded 6-bit VGA data
@@ -80,17 +82,15 @@ All project modules are declared at the top level (no namespaces), so they're ac
   - `module maps` — Loads MAPHEAD+GAMEMAPS with Carmack + RLEW decompression
   - `module audio` — Loads AUDIOHED+AUDIOT, provides chunk offset/length accessors
 
-The IMF music driver and AdLib SFX driver are parallel in shape: each owns its own OPL2 chip, exposes a `player` state struct, and a `fill(p, buf, count, sample_rate)` that mixes additively with saturation.
-
 - **`main.fc`** — Game engine, no namespace:
   - Constants (game_w=320, game_h=200, screen_w=640, screen_h=400, actual_h=480, view_h=160, sample_rate=44100)
   - `struct game` — player state (position, direction, camera plane, input, health/ammo/score)
   - `struct sprite_obj` — static objects (position, VSWAP page, distance)
-  - `struct audio_ctx` — `{vs, ad, sfx}` bundle threaded through `tick()` and update functions so `trigger_sound` / pickup / door code can fire sounds without globals
+  - `struct audio_ctx` — `{vs, ad, sfx, digi}` bundle threaded through `tick()` and update functions so `trigger_sound` / pickup / door code can fire sounds without globals
   - Tilemap builder + sprite spawner from level data
   - DDA raycaster (`render_walls`) writing to 320x200 `fb` framebuffer
   - Sprite renderer (`render_sprites`) with compressed t_compshape decoding
-  - Audio output path: zero buffer → `imf.fill` (music) → `adlib.fill` (SFX) → `mix_sounds` (digi PCM) → SDL queue (back-pressured via `queued_audio_size`)
+  - Audio output path: zero buffer → `imf.fill` (music) → `adlib.fill` (AdLib SFX) → `digi.fill` (8-bit PCM) → SDL queue (back-pressured via `queued_audio_size`)
   - HUD renderer with 3x5 bitmap digit font
   - `upscale_2x` — pixel-doubles 320x200 → 640x400 for the SDL texture
   - Display pipeline: 640x400 texture + `SDL_RenderSetLogicalSize(640, 480)` for 4:3 (matching wolf4sdl)

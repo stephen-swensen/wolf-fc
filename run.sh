@@ -9,7 +9,7 @@ FC_DIR="$WOLF_DIR/../fc-lang"
 # Build FC compiler if needed
 make -s -C "$FC_DIR" fc
 
-SRCS="$WOLF_DIR/sdl2.fc $WOLF_DIR/opl2.fc $WOLF_DIR/imf.fc $WOLF_DIR/adlib.fc \
+SRCS="$WOLF_DIR/sdl2.fc $WOLF_DIR/opl2.fc $WOLF_DIR/sound.fc \
       $WOLF_DIR/png.fc $WOLF_DIR/data.fc $WOLF_DIR/main.fc \
       $FC_DIR/stdlib/io.fc $FC_DIR/stdlib/text.fc $FC_DIR/stdlib/sys.fc \
       $FC_DIR/stdlib/math.fc $FC_DIR/stdlib/random.fc"
