@@ -121,7 +121,7 @@ Screenshots are PNG files (8-bit RGB, 320×200, uncompressed-deflate) with an op
 
 Wolf-fc depends only on the FC compiler and stdlib (`../fc-lang/`). Every other dependency — SDL2 bindings, the OPL2 emulator, the PNG writer — is vendored into this repo. All project modules are declared at the top level (no namespaces), so they're reachable from any file by qualified name without imports.
 
-- **`main.fc`** — Game engine. DDA raycaster + sprite/weapon/HUD renderer, tick-driven game loop, input handling, player movement with collision radius, item pickups, animated doors, push-walls, weapons, level transitions, screenshot capture. Holds an `audio_ctx` threaded through the update pipeline so any code can trigger a sound without globals.
+- **`main.fc`** — Game engine. DDA raycaster + sprite/weapon/HUD renderer, tick-driven game loop, input handling, player movement with collision radius, item pickups, animated doors, push-walls, weapons, level transitions, screenshot capture. Game state, level data, renderer scratch buffers, and audio pipeline are grouped into a `world` struct (`{g, lv, rc, ac}`); orchestrators take `world*`, narrower functions take just the sub-contexts they touch.
 - **`data.fc`** — Wolf3D asset loading, 5 top-level modules:
   - `bytes` — little-endian uint16/uint32/int32 readers
   - `palette` — 256-entry VGA palette (6-bit → 8-bit ARGB)
