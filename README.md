@@ -145,4 +145,6 @@ The audio pipeline each frame: zero buffer → `imf.fill` (music) → `adlib.fil
 
 ## License
 
-This project is original code written in FC. It reads Wolfenstein 3D data files but contains no code derived from the original game or GPL-licensed ports. The `.WL6` data files are copyrighted by id Software and are not included in this repository.
+The wolf-fc source code is licensed under the **BSD 2-Clause License** — see [`LICENSE`](LICENSE) for the full text. Copyright © 2026 Stephen Swensen.
+
+This project is original code written in FC. It reads Wolfenstein 3D data files but contains no code derived from the original game or GPL-licensed ports. The `.WL6` data files are copyrighted by id Software and are not included in this repository; users must supply their own from a legitimately-obtained copy of Wolfenstein 3D.
