@@ -502,6 +502,16 @@ let render_walls = (lv: level*, rc: render_ctx*, g: game*,
     for i in 0..game_w
         rc->zbuf[i] = 1000000.0
 
+    // Push-wall sub-tile offset. pw_fx/pw_fy are the world-space lower-
+    // left corner of the 1x1 wall AABB during its slide. Constant across
+    // rays in a frame; each ray does its own AABB intersection below.
+    let pw_active = lv->pushwall.active
+    let pw_sub = if pw_active then
+        lv->pushwall.progress - math.floor(lv->pushwall.progress)
+    else 0.0
+    let pw_fx = (float64) lv->pushwall.tile_x + pw_sub * (float64) lv->pushwall.dir_x
+    let pw_fy = (float64) lv->pushwall.tile_y + pw_sub * (float64) lv->pushwall.dir_y
+
     // Cast one ray per screen column.
     for col in 0..game_w
         // Camera-space X: -1.0 (left) to +1.0 (right)
@@ -540,6 +550,42 @@ let render_walls = (lv: level*, rc: render_ctx*, g: game*,
             step_y = 1
             side_y = ((float64) map_y + 1.0 - g->pos_y) * delta_y
 
+        // Ray-vs-AABB hit test for the animating push-wall (if any).
+        // The wall is a 1x1 AABB at world-space (pw_fx, pw_fy), where
+        //   pw_fx = tile_x + sub*dir_x,  pw_fy = tile_y + sub*dir_y
+        // and sub = progress - floor(progress) is the fractional slide offset.
+        // Computed per-ray before the DDA so we can compare distances after.
+        let mut pw_hit = false
+        let mut pw_t = 1000000.0
+        let mut pw_side = 0
+        let mut pw_tex_frac = 0.0
+        if pw_active then
+            let big = 1000000000.0
+            let tiny = 0.000000001
+            let inv_rdx = if math.abs(ray_dx) < tiny then big else 1.0 / ray_dx
+            let inv_rdy = if math.abs(ray_dy) < tiny then big else 1.0 / ray_dy
+            let tx1 = (pw_fx - g->pos_x) * inv_rdx
+            let tx2 = (pw_fx + 1.0 - g->pos_x) * inv_rdx
+            let ty1 = (pw_fy - g->pos_y) * inv_rdy
+            let ty2 = (pw_fy + 1.0 - g->pos_y) * inv_rdy
+            let txmin = if tx1 < tx2 then tx1 else tx2
+            let txmax = if tx1 < tx2 then tx2 else tx1
+            let tymin = if ty1 < ty2 then ty1 else ty2
+            let tymax = if ty1 < ty2 then ty2 else ty1
+            let t_enter = if txmin > tymin then txmin else tymin
+            let t_exit = if txmax < tymax then txmax else tymax
+            if t_enter > 0.001 && t_enter < t_exit then
+                pw_hit = true
+                pw_t = t_enter
+                pw_side = if txmin > tymin then 0 else 1
+                let hx = g->pos_x + t_enter * ray_dx
+                let hy = g->pos_y + t_enter * ray_dy
+                let frac = if pw_side == 0 then hy - pw_fy else hx - pw_fx
+                let mut f = frac
+                if f < 0.0 then f = 0.0
+                if f >= 1.0 then f = 0.99999
+                pw_tex_frac = f
+
         // DDA loop — find wall or door hit
         let mut hit = false
         let mut side = 0           // 0 = X step, 1 = Y step
@@ -560,6 +606,10 @@ let render_walls = (lv: level*, rc: render_ctx*, g: game*,
                 side = 1
             if map_x < 0 || map_x >= map_size || map_y < 0 || map_y >= map_size then
                 hit = true
+            else if pw_active && map_x == lv->pushwall.tile_x && map_y == lv->pushwall.tile_y then
+                // Treat the push-wall's current cell as empty for DDA; the AABB
+                // check above handles the wall at its true fractional position.
+                void()
             else
                 let tile = (int32) lv->tilemap[(int64) map_x * 64 + (int64) map_y]
                 if tile >= 1 && tile <= 63 then
@@ -600,17 +650,28 @@ let render_walls = (lv: level*, rc: render_ctx*, g: game*,
                         door_side_hit = true
 
         // Get tile value at hit position
-        let tile_val = if map_x >= 0 && map_x < map_size && map_y >= 0 && map_y < map_size then
+        let mut tile_val = if map_x >= 0 && map_x < map_size && map_y >= 0 && map_y < map_size then
             (int32) lv->tilemap[(int64) map_x * 64 + (int64) map_y]
         else 1
 
-        if tile_val == 0 && !is_door_hit then continue
-
-        // Perpendicular distance
-        let perp_dist = if is_door_hit then door_perp
+        // Perpendicular distance from the DDA hit.
+        let mut perp_dist = if is_door_hit then door_perp
             else if side == 0 then side_x - delta_x
             else side_y - delta_y
 
+        // If the push-wall AABB is closer than the DDA hit, it wins and
+        // we override the hit metadata so the texture branch below picks
+        // the push-wall texture using its sub-tile intersection.
+        let mut is_pushwall_hit = false
+        if pw_hit && pw_t < perp_dist then
+            is_pushwall_hit = true
+            perp_dist = pw_t
+            side = pw_side
+            is_door_hit = false
+            door_side_hit = false
+            tile_val = (int32) lv->pushwall.orig_tile
+
+        if tile_val == 0 && !is_door_hit && !is_pushwall_hit then continue
         if perp_dist <= 0.001 then continue
         rc->zbuf[(int64) col] = perp_dist
 
@@ -640,6 +701,17 @@ let render_walls = (lv: level*, rc: render_ctx*, g: game*,
                 tex_page = if is_vert then door_wall + 5 else door_wall + 4
             else
                 tex_page = if is_vert then door_wall + 7 else door_wall + 6
+        else if is_pushwall_hit then
+            // Push-wall texture: hit point lives at pw_tex_frac ∈ [0,1) along
+            // the struck face. Same side-flip rules as a regular wall, and
+            // texture pages follow the original tile value.
+            tex_x = (int32) (pw_tex_frac * 64.0)
+            if tex_x < 0 then tex_x = 0
+            if tex_x > 63 then tex_x = 63
+            if side == 0 && ray_dx > 0.0 then tex_x = 63 - tex_x
+            if side == 1 && ray_dy < 0.0 then tex_x = 63 - tex_x
+            tex_page = if side == 1 then (tile_val - 1) * 2
+                else (tile_val - 1) * 2 + 1
         else
             // Regular wall (or door-side) texture — standard wall intersection math.
             let mut wall_x = if side == 0 then
@@ -756,7 +828,8 @@ let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
         let push_dx = if g->dir_x > 0.5 then 1 else if g->dir_x < -0.5 then -1 else 0
         let push_dy = if g->dir_y > 0.5 then 1 else if g->dir_y < -0.5 then -1 else 0
         if push_dx != 0 || push_dy != 0 then
-            try_push_wall(lv, fx, fy, push_dx, push_dy)
+            if try_push_wall(lv, fx, fy, push_dx, push_dy) then
+                trigger_sound(snd_push_wall, ac)
         try_open_door(lv, fx, fy, g, ac)
         g->key_space = false
 
@@ -866,28 +939,40 @@ let try_push_wall = (lv: level*, x: int32, y: int32, dx: int32, dy: int32) ->
                     let t2 = (int32) lv->tilemap[(int64) t2x * 64 + (int64) t2y]
                     if t1 != 0 || t2 != 0 then false
                     else
-                        lv->pushwall = pushwall_state {
-                            active = true, tile_x = x, tile_y = y,
-                            dir_x = dx, dir_y = dy,
-                            progress = 0.0, orig_tile = (uint8) t
-                        }
+                        lv->pushwall.active = true
+                        lv->pushwall.tile_x = x
+                        lv->pushwall.tile_y = y
+                        lv->pushwall.dir_x = dx
+                        lv->pushwall.dir_y = dy
+                        lv->pushwall.progress = 0.0
+                        lv->pushwall.orig_tile = (uint8) t
                         true
 
+// Advance an active push-wall by one simulation step.
+// `progress` runs 0.0 → 2.0 over the full slide (two tiles at pushwall_speed).
+// `tile_x/tile_y` tracks the integer cell the wall is currently "mostly in"
+// and is authoritative for tilemap collision. Each time `progress` crosses an
+// integer threshold, we clear the old tile, advance tile_x/tile_y by the push
+// direction, and stamp the wall's original texture into the new cell.
+// The sub-tile fraction (progress - floor(progress)) is what the raycaster
+// uses to render the wall smoothly sliding between cells.
 let update_pushwall = (lv: level*, dt: float64) ->
     if !lv->pushwall.active then return
     let prev = lv->pushwall.progress
-    lv->pushwall.progress = lv->pushwall.progress + pushwall_speed * dt
-    // When crossing tile boundaries, update tilemap
-    if prev < 1.0 && lv->pushwall.progress >= 1.0 then
-        // Clear original tile, place wall at +1 tile
-        lv->tilemap[(int64) lv->pushwall.tile_x * 64 + (int64) lv->pushwall.tile_y] = 0u8
-        let nx = lv->pushwall.tile_x + lv->pushwall.dir_x
-        let ny = lv->pushwall.tile_y + lv->pushwall.dir_y
-        lv->tilemap[(int64) nx * 64 + (int64) ny] = lv->pushwall.orig_tile
-        lv->pushwall.tile_x = nx
-        lv->pushwall.tile_y = ny
-    if lv->pushwall.progress >= 2.0 then
-        // Done — clear intermediate, place wall at final position
+    let cap = 2.0
+    let mut cur = prev + pushwall_speed * dt
+    if cur > cap then cur = cap
+    lv->pushwall.progress = cur
+    let prev_floor = (int32) math.floor(prev)
+    let cur_floor = (int32) math.floor(cur)
+    if cur_floor > prev_floor then
+        let steps = cur_floor - prev_floor
+        for i in 0..steps
+            lv->tilemap[(int64) lv->pushwall.tile_x * 64 + (int64) lv->pushwall.tile_y] = 0u8
+            lv->pushwall.tile_x = lv->pushwall.tile_x + lv->pushwall.dir_x
+            lv->pushwall.tile_y = lv->pushwall.tile_y + lv->pushwall.dir_y
+            lv->tilemap[(int64) lv->pushwall.tile_x * 64 + (int64) lv->pushwall.tile_y] = lv->pushwall.orig_tile
+    if cur >= cap then
         lv->pushwall.active = false
 
 // ============================================================
