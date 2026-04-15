@@ -47,7 +47,9 @@ module opl2 =
         op_rr: int32[18]
         // Waveform select (reg 0xE0 bits 0..1): 0=sine, 1=half, 2=abs, 3=quarter-pulse
         op_wf: int32[18]
-        // Reg 0x20 flags: AM/VIB are unused (we skip LFO); EGT and KSR are live.
+        // Reg 0x20 flags: AM/VIB tied into the global LFO; EGT and KSR per-op.
+        op_am: bool[18]
+        op_vib: bool[18]
         op_egt: bool[18]
         op_ksr: bool[18]
         // KSL (reg 0x40 bits 6..7): 0=off, 1..3 = scale factors for ksl_table
@@ -73,6 +75,29 @@ module opl2 =
         // when any of those change). Added to env_db + TL_db every sample.
         op_ksl_db: float64[18]
         rate: float64
+        // Log-sin table (256 entries covering the first quadrant of a sine
+        // wave). Stored as attenuation in dB: logsin_db[i] = -20*log10(sin(x))
+        // where x = (i+0.5) * π/512. The other three quadrants are produced by
+        // mirroring the phase index (second quadrant) and flipping the sign
+        // (negative half) in `wave_sample`. This captures OPL2's characteristic
+        // quantization artifacts (256-entry table per quadrant matches the
+        // real chip's resolution) and keeps the per-sample math additive in dB.
+        logsin_db: float64[256]
+        // Gain table for fast dB→linear conversion, covering 0..96 dB in 384
+        // steps of 0.25 dB each. `exp_gain[i] = 10^(-i*0.25/20)`. Replaces
+        // per-sample math.pow(10, ...) in the inner loop.
+        exp_gain: float64[384]
+        // Global LFO state for tremolo (AM) and vibrato (VIB).
+        //   am_phase ticks at ~3.7 Hz, drives per-op amplitude modulation.
+        //   vib_phase ticks at ~6.1 Hz, drives per-op pitch modulation.
+        // Phases are 0..1 and wrap; we read them as triangle/sine values in
+        // the inner loop when an op has the corresponding bit set.
+        lfo_am_phase: float64
+        lfo_vib_phase: float64
+        // Depth bits from reg 0xBD. `dam`: 0 = 1 dB tremolo, 1 = 4.8 dB.
+        //                          `dvb`: 0 = ±7 cents vibrato, 1 = ±14 cents.
+        dam: bool
+        dvb: bool
 
     let init = (sample_rate: float64) ->
         let c = alloc(chip)!
@@ -82,6 +107,18 @@ module opl2 =
             c->op_mult[i] = 1
             c->op_env_db[i] = 48.0    // silent
             c->op_stage[i] = stg_off
+        // Build the log-sin table for the first quadrant [0, π/2). The chip
+        // clamps sin to a small positive minimum (never 0) to avoid infinite
+        // attenuation; we do the same by offsetting i by 0.5.
+        let pi = 3.14159265358979323846
+        for i in 0..256
+            let x = ((float64) i + 0.5) * pi / 512.0
+            let s = math.sin(x)
+            c->logsin_db[i] = 0.0 - 20.0 * math.log10(s)
+        // Build the exp gain table for 0..96 dB in 0.25 dB steps.
+        for i in 0..384
+            let db = (float64) i * 0.25
+            c->exp_gain[i] = math.pow(10.0, 0.0 - db / 20.0)
         c
 
     // Register offset → operator index (channel*2 + op), or -1 if invalid.
@@ -200,7 +237,8 @@ module opl2 =
                 c->op_mult[idx] = val & 15
                 c->op_ksr[idx]  = (val & 16) != 0
                 c->op_egt[idx]  = (val & 32) != 0
-                // AM (128) and VIB (64) bits intentionally ignored — no LFO.
+                c->op_vib[idx]  = (val & 64) != 0
+                c->op_am[idx]   = (val & 128) != 0
                 // KSR affects envelope rates; need to recompute for this op.
                 let ch = idx / 2
                 let ks = key_scale(c->ch_block[ch], c->ch_fnum[ch])
@@ -268,19 +306,51 @@ module opl2 =
         if base == 192 && ci < 9 then
             c->ch_fb[ci] = (val >> 1) & 7
             c->ch_add[ci] = (val & 1) != 0
+        // 0xBD: LFO depths + rhythm mode. We handle DAM (bit 7) and DVB
+        // (bit 6); rhythm mode (bit 5) is ignored since Wolf3D doesn't use
+        // it and implementing it would require dedicated drum-channel logic.
+        if reg == 189 then
+            c->dam = (val & 128) != 0
+            c->dvb = (val & 64) != 0
         return
 
-    // Sample the OPL2 waveform at `phase` ∈ [0,1). Four shapes:
-    //   0 = full sine; 1 = half sine (positive lobe, zero elsewhere);
-    //   2 = absolute sine (both lobes positive); 3 = pulse sine (first
-    //   quarter only).
-    let wave = (phase: float64, wf: int32) ->
-        let p = phase * 6.2831853071795864
-        let s = math.sin(p)
-        if wf == 0 then s
-        else if wf == 1 then if phase < 0.5 then s else 0.0
-        else if wf == 2 then math.abs(s)
-        else if phase < 0.25 then s else 0.0
+    // Fast dB → linear gain via the precomputed exp_gain table (384 entries
+    // spanning 0..96 dB in 0.25 dB steps). Anything above 96 dB is silence.
+    let gain_from_db = (c: chip*, db: float64) ->
+        if db >= 96.0 then 0.0
+        else if db <= 0.0 then c->exp_gain[0]
+        else
+            let i = (int32) (db * 4.0)
+            c->exp_gain[i]
+
+    // Sample the OPL2 waveform at `phase` ∈ [0,1) with total attenuation
+    // `total_db` already summed (envelope + TL + KSL + tremolo). Returns the
+    // signed linear sample in [-gain, +gain] where gain = 10^(-total_db/20).
+    //
+    // Implementation mirrors the real chip: decompose phase into half/quarter
+    // bits, look up logsin, add to caller's dB-domain attenuation, then a
+    // single exp table lookup produces the final amplitude. All four OPL2
+    // waveforms amount to gating certain quadrants and optionally forcing
+    // the sign positive.
+    let wave_sample = (c: chip*, phase: float64, wf: int32, total_db: float64) ->
+        let p = phase - math.floor(phase)
+        let idx10 = (int32) (p * 1024.0)
+        let half = (idx10 >> 9) & 1      // 0 = first half (positive), 1 = second
+        let quarter = (idx10 >> 8) & 1   // 0 = rising quarter, 1 = falling
+        let idx = idx10 & 255
+        // Mirror the falling quarter so both quarters index the same table
+        // covering a quarter-wave of sin.
+        let table_idx = if quarter == 1 then 255 - idx else idx
+        let active = if wf == 0 then true
+            else if wf == 1 then half == 0
+            else if wf == 2 then true
+            else (half == 0 && quarter == 0)
+        if !active then 0.0
+        else
+            let sin_db = c->logsin_db[table_idx]
+            let gain = gain_from_db(c, sin_db + total_db)
+            let positive = if wf == 2 then true else half == 0
+            if positive then gain else 0.0 - gain
 
     // Advance an operator's envelope one sample. Linear in dB — the per-sample
     // step size was precomputed by recompute_op_rates.
@@ -322,72 +392,75 @@ module opl2 =
         else if m == 14 then 15.0
         else (float64) m
 
-    // Convert dB attenuation to linear gain = 10^(-dB/20). Cap at 96 dB
-    // (gain ≈ 1.6e-5 ≈ silence). Lower caps wrongly silence operators whose
-    // TL + envelope + KSL sum above 48 dB — which is routine for modulators
-    // with moderate TL during the sustain portion of a note.
-    let db_to_gain = (db: float64) ->
-        if db >= 96.0 then 0.0
-        else math.pow(10.0, 0.0 - db / 20.0)
-
     // Produce one output sample from the chip (int16, range tuned so a single
     // OPL2 chip leaves headroom for mixing against music + digi).
     let sample = (c: chip*) ->
+        // Advance the global LFOs once per sample. AM runs at ~3.7 Hz (period
+        // 0.27 s), VIB at ~6.1 Hz (0.164 s). Phases are kept in [0,1).
+        c->lfo_am_phase = c->lfo_am_phase + 3.7 / c->rate
+        if c->lfo_am_phase >= 1.0 then c->lfo_am_phase = c->lfo_am_phase - 1.0
+        c->lfo_vib_phase = c->lfo_vib_phase + 6.1 / c->rate
+        if c->lfo_vib_phase >= 1.0 then c->lfo_vib_phase = c->lfo_vib_phase - 1.0
+        // Tremolo: triangular wave 0..1 scaled by depth (1 dB or 4.8 dB).
+        // DAM=0 → 1 dB peak, DAM=1 → 4.8 dB peak. |sin| is a reasonable
+        // approximation to the chip's actual staircase triangle.
+        let am_depth = if c->dam then 4.8 else 1.0
+        let am_unit = math.abs(math.sin(c->lfo_am_phase * 6.2831853071795864))
+        let am_db = am_unit * am_depth
+        // Vibrato: ±7 cents (DVB=0) or ±14 cents (DVB=1) of pitch. Cents are
+        // converted to a frequency-multiplier factor (1.0 ± sin * cents_ratio).
+        // 7 cents ≈ ×1.00405, 14 cents ≈ ×1.00811.
+        let vib_cents = if c->dvb then 0.00811 else 0.00405
+        let vib_mul = 1.0 + math.sin(c->lfo_vib_phase * 6.2831853071795864) * vib_cents
         let mut out = 0.0
         for ch in 0..9
             let fnum = c->ch_fnum[ch]
             let block = c->ch_block[ch]
             // YM3812 frequency formula: fOUT = F * 2^(Block-1) * 49716 / 2^19.
-            // (Earlier we divided by 2^20 instead of 2^19, making every note
-            // exactly one octave too low.)
             let base_freq = (float64) fnum * math.pow(2.0, (float64) (block - 1)) * 49716.0 / 524288.0
             let mi = ch * 2
             let ci = ch * 2 + 1
             env_step(c, mi)
             env_step(c, ci)
-            // Skip channels whose carrier is silent (either off or deep in release).
-            // Saves a lot of work since most channels are idle most of the time.
+            // Skip channels whose carrier is silent — saves a lot of work
+            // since most channels are idle most of the time.
             if c->op_stage[ci] == stg_off then continue
-            // Modulator — advance phase, compute output with feedback.
-            let mf = base_freq * mult_val(c->op_mult[mi])
+            // Modulator phase advance (with optional vibrato on this op).
+            let m_vib = if c->op_vib[mi] then vib_mul else 1.0
+            let mf = base_freq * mult_val(c->op_mult[mi]) * m_vib
             c->op_phase[mi] = c->op_phase[mi] + mf / c->rate
             if c->op_phase[mi] >= 1.0 then
                 c->op_phase[mi] = c->op_phase[mi] - 1.0
             let m_tl_db = (float64) c->op_tl[mi] * 48.0 / 63.0
-            let m_total_db = c->op_env_db[mi] + m_tl_db + c->op_ksl_db[mi]
-            let mvol = db_to_gain(m_total_db)
+            let m_am = if c->op_am[mi] then am_db else 0.0
+            let m_total_db = c->op_env_db[mi] + m_tl_db + c->op_ksl_db[mi] + m_am
+            // Feedback: shift (7-fb) maps fb=7 to ~1 wavelength of self-mod
+            // (noise-like at peak), fb=1 to ~1/64 wavelength (subtle), fb=0
+            // to none. Average of the two previous modulator outputs is used.
             let fb = c->ch_fb[ch]
             let mut fbv = 0.0
             if fb > 0 then
-                // Real OPL2 feedback: the last-two-output average is shifted
-                // into the phase index, with fb=7 covering roughly a full
-                // wavelength (which is what makes fb=7 sound noise-like /
-                // sawtooth, e.g. for Wolf3D's hi-hat). With our average in
-                // ±1 normalized units, shift (7-fb) maps fb=7 → avg (1.0
-                // wavelength peak), fb=4 → avg/8, fb=1 → avg/64, fb=0 → 0.
                 fbv = (c->ch_prev0[ch] + c->ch_prev1[ch]) / 2.0 / math.pow(2.0, (float64) (7 - fb))
-            let mp = c->op_phase[mi] + fbv
-            let mout = wave(mp - math.floor(mp), c->op_wf[mi]) * mvol
+            let mout = wave_sample(c, c->op_phase[mi] + fbv, c->op_wf[mi], m_total_db)
             c->ch_prev1[ch] = c->ch_prev0[ch]
             c->ch_prev0[ch] = mout
-            // Carrier — either modulated by `mout` (FM) or mixed additively (AM).
-            let cf = base_freq * mult_val(c->op_mult[ci])
+            // Carrier phase advance (with optional vibrato on this op).
+            let c_vib = if c->op_vib[ci] then vib_mul else 1.0
+            let cf = base_freq * mult_val(c->op_mult[ci]) * c_vib
             c->op_phase[ci] = c->op_phase[ci] + cf / c->rate
             if c->op_phase[ci] >= 1.0 then
                 c->op_phase[ci] = c->op_phase[ci] - 1.0
             let c_tl_db = (float64) c->op_tl[ci] * 48.0 / 63.0
-            let c_total_db = c->op_env_db[ci] + c_tl_db + c->op_ksl_db[ci]
-            let cvol = db_to_gain(c_total_db)
+            let c_am = if c->op_am[ci] then am_db else 0.0
+            let c_total_db = c->op_env_db[ci] + c_tl_db + c->op_ksl_db[ci] + c_am
             if c->ch_add[ch] then
-                let cout = wave(c->op_phase[ci], c->op_wf[ci]) * cvol
+                // Additive: carrier plays independently, both sum to output.
+                let cout = wave_sample(c, c->op_phase[ci], c->op_wf[ci], c_total_db)
                 out = out + mout + cout
             else
-                // FM: modulator's output is added to carrier phase (wraps via
-                // floor). The 1.0 factor means mvol=1 creates ±1 wavelength
-                // of FM shift — comparable to dbopl where modulator output
-                // fills the wave index at full attenuation-free output.
-                let fmp = c->op_phase[ci] + mout
-                let cout = wave(fmp - math.floor(fmp), c->op_wf[ci]) * cvol
+                // FM: modulator's output is added to carrier phase (wraps
+                // via floor). mvol=1 ≈ ±1 wavelength of FM shift at peak.
+                let cout = wave_sample(c, c->op_phase[ci] + mout, c->op_wf[ci], c_total_db)
                 out = out + cout
         if out > 1.0 then out = 1.0
         if out < -1.0 then out = -1.0
