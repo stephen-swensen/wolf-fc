@@ -784,12 +784,21 @@ let player_blocked = (lv: level*, px: float64, py: float64) ->
         tile_solid(lv, tx, ty) || (tile_is_door(lv, tx, ty) && !door_passable(lv, tx, ty))
     blocks(xl, yl) || blocks(xr, yl) || blocks(xl, yh) || blocks(xr, yh)
 
-// Try to move to (nx, ny), handling collision per-axis.
+// Try to move to (nx, ny), handling collision per-axis. Returns true if
+// neither axis could move (the player is scraping a wall) so the caller can
+// trigger a wall-bump sound.
 let try_move = (lv: level*, g: game*, dx: float64, dy: float64) ->
     let nx = g->pos_x + dx
     let ny = g->pos_y + dy
-    if !player_blocked(lv, nx, g->pos_y) then g->pos_x = nx
-    if !player_blocked(lv, g->pos_x, ny) then g->pos_y = ny
+    let mut blocked_x = true
+    let mut blocked_y = true
+    if !player_blocked(lv, nx, g->pos_y) then
+        g->pos_x = nx
+        blocked_x = false
+    if !player_blocked(lv, g->pos_x, ny) then
+        g->pos_y = ny
+        blocked_y = false
+    blocked_x && blocked_y
 
 let rotate_camera = (g: game*, angle: float64) ->
     let c = math.cos(angle)
@@ -805,15 +814,22 @@ let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
     let spd = move_speed * dt * (if g->key_shift then run_mult else 1.0)
     let rot = turn_speed * dt * (if g->key_shift then run_mult else 1.0)
 
-    if g->key_up then try_move(lv, g, g->dir_x * spd, g->dir_y * spd)
-    if g->key_down then try_move(lv, g, 0.0 - g->dir_x * spd, 0.0 - g->dir_y * spd)
+    // Track whether any attempted move was fully blocked — if so and the
+    // AdLib SFX chip is idle, play the wall-bump sound (matches wolf4sdl's
+    // `if (!SD_SoundPlaying()) SD_PlaySound(HITWALLSND)` in T_Player).
+    let mut wall_hit = false
+    if g->key_up && try_move(lv, g, g->dir_x * spd, g->dir_y * spd) then wall_hit = true
+    if g->key_down && try_move(lv, g, 0.0 - g->dir_x * spd, 0.0 - g->dir_y * spd) then wall_hit = true
 
     if g->key_alt then
-        if g->key_left then try_move(lv, g, 0.0 - g->plane_x * spd, 0.0 - g->plane_y * spd)
-        if g->key_right then try_move(lv, g, g->plane_x * spd, g->plane_y * spd)
+        if g->key_left && try_move(lv, g, 0.0 - g->plane_x * spd, 0.0 - g->plane_y * spd) then wall_hit = true
+        if g->key_right && try_move(lv, g, g->plane_x * spd, g->plane_y * spd) then wall_hit = true
     else
         if g->key_left then rotate_camera(g, rot)
         if g->key_right then rotate_camera(g, 0.0 - rot)
+
+    if wall_hit && !ac->sfx->active then
+        trigger_sound(snd_hit_wall, ac)
 
     // Open doors / activate elevator with space
     if g->key_space then
@@ -895,7 +911,11 @@ let check_pickups = (lv: level*, g: game*, ac: audio_ctx*) ->
         lv->sprites[i].alive = false
         if it == item_gold_key || it == item_silver_key then
             trigger_sound(snd_get_key, ac)
-        else if it == item_clip || it == item_machine_gun || it == item_chain_gun then
+        else if it == item_machine_gun then
+            trigger_sound(snd_get_mg, ac)
+        else if it == item_chain_gun then
+            trigger_sound(snd_get_gat, ac)
+        else if it == item_clip then
             trigger_sound(snd_get_ammo, ac)
         else if it >= item_cross then
             trigger_sound(snd_treasure, ac)
@@ -1022,11 +1042,14 @@ let snd_get_ammo   = 7
 let snd_treasure   = 8
 let snd_pain       = 9
 let snd_push_wall  = 10
-let snd_count      = 11
+let snd_get_mg     = 11
+let snd_get_gat    = 12
+let snd_hit_wall   = 13
+let snd_count      = 14
 
 // Digi-pack index for each snd_* (-1 = no digitized version). The mapping
 // comes from wolf4sdl's wolfdigimap[] for Wolf3D; Spear of Destiny differs.
-let snd_digi = int32[11] {
+let snd_digi = int32[14] {
      3,   // open_door    (OPENDOORSND  -> digi 3)
      2,   // close_door   (CLOSEDOORSND -> digi 2)
      5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
@@ -1037,12 +1060,15 @@ let snd_digi = int32[11] {
     -1,   // get_ammo     (no digi)
     -1,   // treasure     (no digi)
     14,   // pain         (TAKEDAMAGESND -> digi 14)
-    15    // push_wall    (PUSHWALLSND  -> digi 15)
+    15,   // push_wall    (PUSHWALLSND  -> digi 15)
+    -1,   // get_mg       (no digi)
+    -1,   // get_gat      (no digi)
+    -1    // hit_wall     (no digi)
 }
 
 // AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this). -1 to
 // disable. Enum values taken from wolf4sdl's audiowl6.h.
-let snd_adlib_enum = int32[11] {
+let snd_adlib_enum = int32[14] {
     18,   // open_door    (OPENDOORSND)
     19,   // close_door   (CLOSEDOORSND)
     24,   // atk_pistol   (ATKPISTOLSND)
@@ -1053,7 +1079,10 @@ let snd_adlib_enum = int32[11] {
     31,   // get_ammo     (GETAMMOSND)
     35,   // treasure     (BONUS1SND)
     16,   // pain         (TAKEDAMAGESND)
-    46    // push_wall    (PUSHWALLSND)
+    46,   // push_wall    (PUSHWALLSND)
+    30,   // get_mg       (GETMACHINESND)
+    38,   // get_gat      (GETGATLINGSND)
+     0    // hit_wall     (HITWALLSND)
 }
 
 // Play a sound by wolf-fc sound ID (one of snd_open_door, etc.). Prefers
