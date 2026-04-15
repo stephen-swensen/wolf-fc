@@ -1,134 +1,109 @@
 # Wolf-FC TODO
 
-## Current State (2026-04-13)
+## Current State (2026-04-14)
 
 Working:
-- DDA raycasting with textured walls from VSWAP.WL6 data
-- Per-level ceiling colors, floor color
-- Doors render as full-tile walls with correct door textures (standard, locked, elevator)
-- Space key opens doors (instant removal from tilemap)
-- Billboard sprite rendering for static objects (tiles 23-72 from plane 1)
-  - Compressed sprite format (t_compshape) decoded correctly including signed newstart offsets
-  - Z-buffer occlusion against walls
-  - Distance-sorted back-to-front rendering
-- IMF music playback via OPL2 emulator (opl2.fc), per-level song mapping
-- Basic HUD: health, ammo, score, lives (bitmap digit font on dark red bar)
-- Classic Wolf3D controls: arrows move/turn, alt+arrows strafe, shift run, space open
-- Display: 320x200 game → 2x upscale to 640x400 → SDL texture → SDL_RenderSetLogicalSize(640,480) for 4:3 correction
-- F11 fake-fullscreen toggle (borderless window approach from face-invaders)
-- `--screenshot` flag saves PPM for debugging
-
-## Rendering
-
-### Doors (high priority)
-- [ ] Mid-tile door rendering: doors should render at tile midpoint (0.5 into tile), not as full-tile walls. Requires special-case ray intersection — when DDA enters a door tile, check if ray reaches the midpoint. See wolf4sdl `AsmRefresh` lines ~1231 and ~1386 for the `tilehit & 0x80` handling. The ray checks `doorposition[doornum]` to handle partially-open doors.
-- [ ] Door-side textures: walls adjacent to doors should show door frame texture (DOORWALL+2/+3) instead of their regular texture. Wolf4sdl uses a 0x40 flag on adjacent tiles, but the raycaster checks at runtime whether the actual adjacent tile has a door (0x80). See `HitVertWall`/`HitHorizWall` in wl_draw.cpp.
-- [ ] Animated door opening/closing: track door state (closed/opening/open/closing) with a `doorposition[]` array (0=closed, 0xFFFF=open). Advance position over time. See wolf4sdl `MoveDoors()` in wl_act1.cpp.
-
-### Push-walls
-- [ ] Plane 1 tile value 98 marks a pushable wall. Space key near a push-wall slides it 2 tiles in the direction the player pushes. See wolf4sdl `PushWall()` in wl_act1.cpp.
-
-### Weapon overlay
-- [ ] Draw the player's weapon sprite at the bottom center of the 3D viewport. Weapon sprites are in VGAGRAPH (not VSWAP). This requires Huffman decompression of VGAGRAPH chunks. Alternatively, use a simplified procedural weapon graphic.
-- [ ] Weapon bob during movement
-
-### HUD improvements
-- [ ] BJ face with expressions (idle, hurt, grinning) — faces are in VGAGRAPH, need Huffman decoding
-- [ ] Key indicators (gold/silver)
-- [ ] Level number display
-- [ ] Proper Wolf3D status bar layout (gray bar with sections)
-- [ ] Weapon name/icon
-
-### Rendering polish
-- [ ] Distance-based shading (walls farther away are darker). Wolf4sdl uses a shade table.
-- [ ] Textured floors and ceilings (optional — original Wolf3D uses flat colors)
+- DDA raycasting with textured walls from VSWAP.WL6, distance-based shading
+- Per-level ceiling colors, flat floor color
+- Doors: mid-tile rendering, animated open/close, door-frame (DOORWALL+2/+3) on adjacent walls, standard/locked/elevator textures, space-to-open
+- Push-walls: plane-1 tile 98 detected at level build, space slides the wall 2 tiles in the push direction
+- Billboard sprite rendering for static objects (tiles 23–72)
+  - Compressed t_compshape decoded including signed `newstart`
+  - Z-buffer occlusion against walls, distance-sorted back-to-front
+- Item pickups (walk-over): health (dog food/food/first-aid/extra life), ammo (clip/MG/chain), treasure (cross/chalice/bible/crown), gold/silver keys. Score tracked, extra life at 40 000.
+- Elevator tile (21) loads the next level; level state rebuilt, music switched, player re-spawned at new start.
+- IMF music via OPL2 emulator, per-level song table for episodes 1–3, M toggles music
+- AdLib SFX + digitized PCM SFX (VSWAP sound pages, 7042 Hz → 44100 Hz nearest) mixing additively. Sound triggers for door/weapon/pickup/pain.
+- Weapons: 4 slots (knife/pistol/MG/chain), fire rates per weapon, 1–4 key-select, procedural on-screen sprite with bob, Ctrl fires and decrements ammo
+- HUD: health/ammo/score/lives/floor-number digits, gold/silver key indicators
+- Display: 320×200 → 2× upscale → 640×400 texture → `SDL_RenderSetLogicalSize(640,480)` for 4:3
+- F11 fake-fullscreen toggle
+- Player collision radius (prevents see-through-walls glitch)
+- PNG screenshots via `s` key (→ `~/.wolf-fc/screenshots/ss_NNN.png`), with full game-state metadata in a `tEXt` chunk
+- Headless test mode (`--test`) with scripted commands for regression testing (see README.md)
 
 ## Gameplay
 
-### Enemy AI (major feature)
-- [ ] Spawn enemies from plane 1 data (tiles 108+). Each tile range maps to an enemy type (guard, officer, SS, dog, mutant, boss) with a facing direction.
-- [ ] Enemy state machine: standing, patrolling, chasing, attacking, pain, dying, dead
-- [ ] Line-of-sight detection (can the enemy see the player?)
-- [ ] Pathfinding: enemies move toward player, navigate around walls
-- [ ] Enemy rendering: enemies have 8 directional sprites (based on angle relative to player) plus animation frames for walking/attacking/dying. These are consecutive VSWAP sprite pages.
-- [ ] Enemy combat: enemies fire at player on a timer when in line of sight
+### Enemies (biggest missing feature)
+- [ ] Spawn enemies from plane 1 (tiles 108+). Tile ranges encode type (guard/officer/SS/dog/mutant/boss) and facing (N/E/S/W).
+- [ ] State machine: stand, patrol, chase, attack, pain, die, dead
+- [ ] Line-of-sight detection against the tilemap (ray from enemy tile to player tile, stopping at walls/closed doors)
+- [ ] Pathfinding / tile-based movement toward the player, avoiding walls and other enemies
+- [ ] 8-directional billboard rendering based on enemy angle relative to player, with animation frames for walk/attack/pain/die. Sprites are consecutive VSWAP pages per enemy type.
+- [ ] Enemies fire at the player on a per-type timer when in LOS; player takes damage
+- [ ] Corpses remain as a flat sprite, optionally dropping a pickup (MG/chain guns from officers/SS)
 
 ### Weapons and combat
-- [ ] Weapon types: knife, pistol, machine gun, chain gun
-- [ ] Firing: reduce ammo, hitscan ray from player to first enemy/wall
-- [ ] Damage calculation per weapon type
-- [ ] Weapon switching (1-4 keys)
-- [ ] Weapon pickup upgrades (machine gun, chain gun from floor items or enemies)
+- [ ] Hitscan fire: ray from player along facing, find first enemy or wall intersection, apply damage. Currently `Ctrl` only plays the fire animation and sound — no hits.
+- [ ] Auto-select knife when ammo hits 0 (today, out-of-ammo firing is a silent no-op)
+- [ ] Weapon-specific hit sounds and pain feedback on enemies
+- [ ] Real weapon sprites (knife/pistol/MG/chain) from VGAGRAPH instead of the current procedural placeholder — blocked on VGAGRAPH Huffman decoder (see Data Loading). Each weapon has a 4-frame firing animation.
+- [ ] Verify MG/chain pickups are reachable on early levels (they're implemented as pickup item types but most early-episode maps only surface them behind push-walls or from enemy drops, neither of which currently yield them)
 
-### Item pickups
-- [ ] Walk-over pickup detection (player position overlaps item tile)
-- [ ] Health items: dog food (+4), food (+10), first aid (+25), extra life (full heal)
-- [ ] Ammo: clip (+8), machine gun (+6 + weapon), chain gun (+6 + weapon)
-- [ ] Treasure: cross (100), chalice (500), bible (1000), crown (5000)
-- [ ] Keys: gold key, silver key (track in game state, check when opening locked doors)
-- [ ] Score tracking and extra life at 40,000 points
+### Game state / death flow
+- [ ] Player death when health ≤ 0: red flash, collapse animation, drop a life
+- [ ] Game-over screen when lives exhausted
+- [ ] Level-restart on death with lives remaining
+- [ ] Secret counter (push-walls found), kill counter, treasure counter
 
 ### Level progression
-- [ ] Elevator tile (tile 21 in plane 0) triggers level end
-- [ ] Load next level on elevator use
-- [ ] Par time tracking
-- [ ] Intermission screen (kills/secrets/treasure percentages)
-- [ ] Episode structure (6 episodes x 10 levels)
+- [ ] Par-time tracking per level
+- [ ] Intermission screen between levels (kills / secrets / treasure percentages, bonus points)
+- [ ] Full episode structure (6 episodes × 10 levels) with per-episode intermissions
+- [ ] Per-episode music table for episodes 4–6 (currently duplicates episodes 1–3)
 
-### Game state
-- [ ] Lives system (start with 3, death respawns or game over)
-- [ ] Health damage from enemies
-- [ ] Death sequence (red flash, collapse)
-- [ ] Game over screen
-- [ ] Secret counting (push-walls found)
+## Rendering
+
+### Polish
+- [ ] Textured floors and ceilings (optional — original Wolf3D ships flat colors)
+- [ ] Any-angle door-frame texture fixes if regressions surface after enemy rendering lands
+
+### HUD
+- [ ] BJ face with expressions (idle / hurt / grinning / dying) — requires VGAGRAPH
+- [ ] Proper Wolf3D gray status bar layout and graphics — requires VGAGRAPH
+- [ ] Weapon icon on status bar
 
 ## Audio
 
-### Sound effects
-- [ ] Digitized sound playback from VSWAP sound pages (8-bit unsigned PCM @ 7042 Hz, resample to 44100 Hz)
-- [ ] Sound triggers: door open, weapon fire, enemy alert/attack/pain/death, item pickup, player pain
-- [ ] Spatial audio (left/right panning based on sound source angle to player)
-
-### Music improvements
-- [ ] Music toggle (M key)
-- [ ] Fade out music on level end
-- [ ] Per-episode music mapping for episodes 4-6 (currently hardcoded for eps 1-3 repeated)
+- [ ] Spatial panning for SFX based on source angle relative to player (enemies will need this)
+- [ ] Music fade-out on level end / game over
+- [ ] Ambient sounds on specific tiles where applicable
 
 ## Data Loading
 
-### VGAGRAPH (needed for full HUD and menus)
-- [ ] Huffman decompression of VGAGRAPH chunks (VGADICT.WL6 + VGAHEAD.WL6 + VGAGRAPH.WL6)
-- [ ] Picture table loading (width/height metadata per graphic)
-- [ ] Status bar graphics, weapon sprites, font, BJ face sprites, menu graphics
+### VGAGRAPH (unblocks face, real weapon sprites, menus, messages)
+- [ ] Huffman decoder for VGAGRAPH (VGADICT.WL6 + VGAHEAD.WL6 + VGAGRAPH.WL6)
+- [ ] Picture table (width/height per graphic)
+- [ ] Asset extractors for: status-bar pieces, BJ face frames, weapon sprites, font, menu graphics
 
 ## UI / Menus
 
 - [ ] Title screen
-- [ ] Main menu (new game, sound, controls, quit)
-- [ ] Difficulty selection (can I play daddy? / don't hurt me / bring 'em on / I am death incarnate)
+- [ ] Main menu (new game / sound / controls / quit)
+- [ ] Difficulty selection (Can I play Daddy? / Don't hurt me / Bring 'em on / I am Death incarnate)
 - [ ] Pause screen
-- [ ] In-game text messages
+- [ ] In-game text messages (floor name, pickup notifications)
 
 ## Code Quality
 
-- [ ] Consider breaking main.fc into multiple files as it grows (e.g., separate render.fc, enemies.fc)
-- [ ] The sprite rendering could be more efficient — currently re-reads column data from raw VSWAP bytes each frame. Could pre-extract sprite columns at load time.
-- [ ] The tilemap could use uint16 instead of uint8 to support more tile states (doors with position, push-wall state, etc.)
+- [ ] Consider splitting `main.fc` (render / pickups / weapons / enemies) once enemies land and it grows further
+- [ ] Pre-extract sprite columns at load time — currently sprite rendering re-parses raw VSWAP bytes per frame
+- [ ] Widen tilemap to uint16 if more tile states are needed for enemy blocking / secret flags
 
 ## Reference
 
 - **wolf4sdl** at `../wolf4sdl/` — reference C implementation, consult for data format details and rendering correctness (but don't copy code to avoid GPL)
 - **fc-lang** at `../fc-lang/` — FC compiler and stdlib
 - Key wolf4sdl files:
-  - `wl_draw.cpp` — raycaster (AsmRefresh, HitVertWall, HitHorizWall, HitVertDoor, HitHorizDoor, ScaleShape, DrawScaleds)
-  - `wl_act1.cpp` — doors (SpawnDoor, MoveDoors, OpenDoor, PushWall)
-  - `wl_act2.cpp` — enemy AI (enemy state machines, SpawnStand/SpawnPatrol)
+  - `wl_draw.cpp` — raycaster (AsmRefresh, HitVertWall/Door, ScaleShape, DrawScaleds)
+  - `wl_act1.cpp` — doors (MoveDoors, OpenDoor), PushWall
+  - `wl_act2.cpp` — enemy AI state machines (SpawnStand/SpawnPatrol, T_Chase, T_Shoot)
   - `wl_game.cpp` — level setup (SetupGameLevel, ScanInfoPlane)
-  - `wl_agent.cpp` — player actions (weapon firing, movement, damage)
+  - `wl_agent.cpp` — player actions (weapon firing, damage)
   - `wl_play.cpp` — game loop, songs[] table
-  - `id_ca.cpp` — asset loading (Carmack/RLEW/Huffman decompression)
-  - `id_sd.cpp` — audio (IMF playback, sound effects)
+  - `id_ca.cpp` — asset loading (Carmack/RLEW/Huffman)
+  - `id_sd.cpp` — audio (IMF playback, SFX)
   - `id_pm.cpp` — VSWAP page manager
-  - `id_vl.cpp` — display setup (640x400 render, 640x480 logical, nearest scaling)
+  - `id_vl.cpp` — display setup
   - `audiowl6.h` — sound/music chunk enums (LASTSOUND=87, STARTMUSIC=261)
   - `wl_def.h` — all game constants and structs
