@@ -147,4 +147,36 @@ The audio pipeline each frame: zero buffer → `imf.fill` (music) → `adlib.fil
 
 The wolf-fc source code is licensed under the **BSD 2-Clause License** — see [`LICENSE`](LICENSE) for the full text. Copyright © 2026 Stephen Swensen.
 
-This project is original code written in FC. It reads Wolfenstein 3D data files but contains no code derived from the original game or GPL-licensed ports. The `.WL6` data files are copyrighted by id Software and are not included in this repository; users must supply their own from a legitimately-obtained copy of Wolfenstein 3D.
+Wolfenstein 3D itself has a complicated licensing history: the original id Software source release is under id's "Limited Use Software License" (educational use only, no commercial exploitation), and the widely-used port **Wolf4SDL** is under the **GPL v2**. Both are copyleft relative to BSD and would be incompatible with this project's license if we incorporated code from them. We've been careful to avoid that.
+
+### What is original
+
+All engine logic in this repo is written from scratch in FC. In particular:
+
+- **Rendering** — the DDA raycaster, sprite renderer (`t_compshape` decoder), HUD, weapon overlay, 2× upscaler, and distance shading are original implementations.
+- **Audio** — the OPL2 (YM3812) FM synth in [`opl2.fc`](opl2.fc) is from-scratch, not a port of Nuked OPL3 (LGPL, used by Wolf4SDL) or MAME's OPL cores. The IMF / AdLib SFX / digitized-sound drivers in [`sound.fc`](sound.fc) are original.
+- **PNG writer** ([`png.fc`](png.fc)) — pure-FC implementation of the PNG + zlib specs (CRC-32, Adler-32, stored deflate).
+- **Game code** — player movement, collision, door/push-wall animation, pickups, weapon cycling, level transitions, and the test-mode command interpreter are original.
+- **SDL2 bindings** ([`sdl2.fc`](sdl2.fc)) — author-written FC declarations against SDL2's C headers. SDL2 itself is zlib-licensed and linked dynamically, not vendored.
+
+No file in this repo is a translation, transcription, or line-by-line port of any file in Wolf4SDL or the id Software release.
+
+### Honest caveats
+
+A handful of small **data tables** that encode the original game's design are present verbatim, because any faithful reproduction needs the same values:
+
+- The 256-entry VGA palette in [`data.fc`](data.fc) (identical to Wolf4SDL's `wolfpal.inc` and id's original palette).
+- `ceil_table` in [`main.fc`](main.fc) (per-level ceiling colors — identical to `vgaCeiling[]` in Wolf4SDL's `wl_draw.cpp`).
+- `songs` in [`main.fc`](main.fc) (per-level music assignments — identical to `songs[]` in Wolf4SDL's `wl_play.cpp`).
+
+These are short tables of indices and color values, not code. The U.S. copyright view of small factual data tables is limited (*Feist v. Rural*), but the selection and ordering of music per level is arguably a creative choice, so we flag it rather than hand-wave it. Anyone who needs maximum licensing purity can replace these tables without touching engine code.
+
+The **Carmack and RLEW decompressors** in [`data.fc`](data.fc) implement publicly-documented file-format algorithms (the Wolf3D map formats, described in third-party modding references). Our code was written against those descriptions and naturally has the same algorithmic structure as every other implementation — including Wolf4SDL's — because the format dictates the steps. No code was copied.
+
+### Game data files
+
+The `.WL6` data files are copyrighted by id Software and are **not** included in this repository. Users must supply their own from a legitimately-obtained copy of Wolfenstein 3D (e.g. the Steam or GOG release). The wolf-fc binary is useless without them.
+
+### Summary
+
+The wolf-fc engine is BSD-2 and not encumbered by GPL or id's Limited Use License. The small data tables noted above are the only part of the repo that could be argued to trace back to id's original release; the rest is original FC code.
