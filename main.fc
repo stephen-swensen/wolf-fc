@@ -1243,33 +1243,47 @@ let render_hud = (rc: render_ctx*, g: game*) ->
 // Weapon overlay — procedural weapon sprite at bottom center
 // ============================================================
 
-// Weapon fire rates (seconds between shots)
+// Weapon fire rates (seconds between shots). Index by g->weapon.
 let fire_rate = float64[4] { 0.5, 0.3, 0.15, 0.1 }
+
+// Per-weapon firing sound. Values are snd_atk_knife / snd_atk_pistol /
+// snd_atk_mg / snd_atk_gat (the literals, since snd_* let-bindings can't
+// appear in an array literal at file scope).
+let weapon_fire_snd = int32[4] { 3, 2, 4, 5 }
+
+// Base sprite index in VSWAP for each weapon's "ready" pose. The 4 attack
+// frames follow sequentially (ready, atk1, atk2, atk3, atk4). Derived from
+// wolf4sdl's wl_def.h player-attack-frames enum: SPR_KNIFEREADY=416, etc.
+let weapon_sprite_base = int32[4] { 416, 421, 426, 431 }
 
 let update_weapon = (g: game*, dt: float64, ac: audio_ctx*) ->
     if g->fire_timer > 0.0 then
         g->fire_timer = g->fire_timer - dt
-        // Advance animation frames
+        // Advance animation frames across the fire_rate window (4 phases).
         if g->fire_timer <= 0.0 then
             g->weapon_frame = 0
             g->fire_timer = 0.0
+            // Wolf3D auto-switches to the knife at the end of an attack if
+            // ammo ran out (wl_agent.cpp T_Attack, the !ammo branch).
+            if g->weapon > 0 && g->ammo == 0 then g->weapon = 0
         else
             let total = fire_rate[g->weapon]
             let progress = 1.0 - g->fire_timer / total
-            g->weapon_frame = if progress < 0.3 then 1
-                else if progress < 0.6 then 2
-                else 3
+            g->weapon_frame = if progress < 0.25 then 1
+                else if progress < 0.5 then 2
+                else if progress < 0.75 then 3
+                else 4
     if g->key_fire && g->fire_timer <= 0.0 then
         if g->weapon == 0 then
             // Knife — no ammo needed
             g->fire_timer = fire_rate[0]
             g->weapon_frame = 1
-            trigger_sound(snd_atk_knife, ac)
+            trigger_sound(weapon_fire_snd[0], ac)
         else if g->ammo > 0 then
             g->ammo = g->ammo - 1
             g->fire_timer = fire_rate[g->weapon]
             g->weapon_frame = 1
-            trigger_sound(snd_atk_pistol, ac)
+            trigger_sound(weapon_fire_snd[g->weapon], ac)
 
 // One simulation tick — runs all per-frame game-state updates in order.
 // Used by both the interactive game loop and the headless test mode so
@@ -1281,52 +1295,63 @@ let tick = (w: world*, dt: float64) ->
     update_weapon(w->g, dt, w->ac)
     check_pickups(w->lv, w->g, w->ac)
 
-// Draw procedural weapon sprite (simple geometric shapes).
-let render_weapon = (rc: render_ctx*, g: game*) ->
-    let cx = game_w / 2    // center x = 160
-    let bot = view_h       // bottom of viewport = 160
+// Draw a t_compshape sprite as a HUD overlay, stretched to (dst_w, dst_h)
+// at screen position (dst_x, dst_y). Transparent (unused) source pixels are
+// skipped implicitly by the run-list format. Framebuffer writes are clipped
+// to the 3D viewport (0..view_h) so the weapon never paints onto the HUD bar.
+let draw_hud_sprite = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[],
+                       page: int32, dst_x: int32, dst_y: int32,
+                       dst_w: int32, dst_h: int32) ->
+    let base = vswap.page_offset(vs, page)
+    if base == 0 then return    // sparse page
+    let left_pix = (int32) bytes.u16(vs->raw, base)
+    let right_pix = (int32) bytes.u16(vs->raw, base + 2)
+    for sc in left_pix..(right_pix + 1)
+        let sx0 = dst_x + sc * dst_w / 64
+        let sx1 = dst_x + (sc + 1) * dst_w / 64
+        if sx1 <= 0 || sx0 >= game_w then continue
+        let col_idx = sc - left_pix
+        let data_off = (int64) bytes.u16(vs->raw, base + 4 + (int64) col_idx * 2)
+        let mut off = base + data_off
+        loop
+            let endy_raw = (int32) bytes.u16(vs->raw, off)
+            if endy_raw == 0 then break
+            let newstart = (int64) (int16) bytes.u16(vs->raw, off + 2)
+            let starty_raw = (int32) bytes.u16(vs->raw, off + 4)
+            off = off + 6
+            let row_start = starty_raw / 2
+            let row_end = endy_raw / 2
+            for row in row_start..row_end
+                let pix = vs->raw[base + newstart + (int64) row]
+                let color = pal[(int32) pix]
+                let sy0 = dst_y + row * dst_h / 64
+                let sy1 = dst_y + (row + 1) * dst_h / 64
+                let y0 = if sy0 < 0 then 0 else sy0
+                let y1 = if sy1 > view_h then view_h else sy1
+                for sx in sx0..sx1
+                    if sx < 0 || sx >= game_w then continue
+                    for sy in y0..y1
+                        rc->fb[(int64) sy * 320 + (int64) sx] = color
+
+// Draw the currently-held weapon sprite centered at the bottom of the 3D
+// viewport. Sprite page = sprite_start + weapon_sprite_base[weapon] + frame,
+// where frame 0 is "ready" and 1..4 are the attack frames.
+let render_weapon = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[], g: game*) ->
     let frame = g->weapon_frame
-    // Weapon bob during movement (subtle)
+    let sprite_idx = weapon_sprite_base[g->weapon] + frame
+    let page = vs->sprite_start + sprite_idx
+    // Weapon bob during movement (subtle vertical offset).
     let bob = if g->key_up || g->key_down then
         (int32) (math.sin(g->pos_x * 8.0 + g->pos_y * 8.0) * 2.0)
     else 0
-    // Draw based on weapon type
-    if g->weapon == 0 then
-        // Knife — simple blade shape
-        let blade_c = if frame > 0 then 0xFFFFFFFFu32 else 0xFFC0C0C0u32
-        let hilt_c = 0xFF804000u32
-        // Blade
-        for y in (bot - 30 + bob)..(bot - 10 + bob)
-            let w = 3 + (bot - 10 - y) / 4
-            for x in (cx - w)..(cx + w)
-                if x >= 0 && x < game_w && y >= 0 && y < view_h then
-                    rc->fb[(int64) y * 320 + (int64) x] = blade_c
-        // Hilt
-        for y in (bot - 10 + bob)..(bot + bob)
-            for x in (cx - 4)..(cx + 4)
-                if x >= 0 && x < game_w && y >= 0 && y < view_h then
-                    rc->fb[(int64) y * 320 + (int64) x] = hilt_c
-    else
-        // Gun — barrel + hand
-        let barrel_c = 0xFF808080u32
-        let flash_c = 0xFFFFFF00u32
-        let hand_c = 0xFFD0A060u32
-        // Muzzle flash when firing
-        if frame == 1 || frame == 2 then
-            for y in (bot - 45 + bob)..(bot - 35 + bob)
-                for x in (cx - 6)..(cx + 6)
-                    if x >= 0 && x < game_w && y >= 0 && y < view_h then
-                        rc->fb[(int64) y * 320 + (int64) x] = flash_c
-        // Barrel
-        for y in (bot - 35 + bob)..(bot - 10 + bob)
-            for x in (cx - 3)..(cx + 3)
-                if x >= 0 && x < game_w && y >= 0 && y < view_h then
-                    rc->fb[(int64) y * 320 + (int64) x] = barrel_c
-        // Hand/grip
-        for y in (bot - 10 + bob)..(bot + bob)
-            for x in (cx - 8)..(cx + 8)
-                if x >= 0 && x < game_w && y >= 0 && y < view_h then
-                    rc->fb[(int64) y * 320 + (int64) x] = hand_c
+    // Scale the 64x64 source to fill the viewport height, centered.
+    // Source transparency covers the upper rows so only the bottom portion
+    // of the weapon is actually drawn.
+    let dw = view_h
+    let dh = view_h
+    let dx = (game_w - dw) / 2
+    let dy = view_h - dh + bob
+    draw_hud_sprite(rc, vs, pal, page, dx, dy, dw, dh)
 
 // Upscale fb (320x200) to dbuf (640x400) with nearest-neighbor 2x.
 let upscale_2x = (rc: render_ctx*) ->
@@ -1354,7 +1379,7 @@ let mut screenshot_slot = 0
 let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
     render_walls(w->lv, w->rc, w->g, vs, pal)
     render_sprites(w->lv, w->rc, w->g, vs, pal)
-    render_weapon(w->rc, w->g)
+    render_weapon(w->rc, vs, pal, w->g)
     render_hud(w->rc, w->g)
 
 // Save the current fb as a PNG at `path` with game-state metadata embedded
@@ -1446,6 +1471,14 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         check_pickups(w->lv, g, w->ac)
     else if text.starts_with(arg, "sethp:") then
         g->health = text.parse_int32(arg[6..arg.len])!
+    else if text.starts_with(arg, "setweapon:") then
+        g->weapon = text.parse_int32(arg[10..arg.len])!
+    else if text.starts_with(arg, "setammo:") then
+        g->ammo = text.parse_int32(arg[8..arg.len])!
+    else if arg == "fire" then
+        g->key_fire = true
+        tick(w, dt)
+        g->key_fire = false
     else if arg == "facetile" then
         let fx = (int32) (g->pos_x + g->dir_x)
         let fy = (int32) (g->pos_y + g->dir_y)
