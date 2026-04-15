@@ -1555,8 +1555,8 @@ let take_screenshot = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
 
 let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
     let g = w->g
-    let bad = () ->
-        io.write("bad arg: %s{arg}\n", stdout)
+    let bad = (expected: const str) ->
+        io.write("bad arg '%s{arg}': expected %s{expected}\n", stderr)
         void()
     if text.starts_with(arg, "fwd:") then
         match text.parse_int32(arg[4..arg.len]) with
@@ -1565,7 +1565,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
             for j in 0..n
                 tick(w, dt)
             g->key_up = false
-        | none -> bad()
+        | none -> bad("integer tick count")
     else if text.starts_with(arg, "back:") then
         match text.parse_int32(arg[5..arg.len]) with
         | some(n) ->
@@ -1573,15 +1573,15 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
             for j in 0..n
                 tick(w, dt)
             g->key_down = false
-        | none -> bad()
+        | none -> bad("integer tick count")
     else if text.starts_with(arg, "turnr:") then
         match text.parse_int32(arg[6..arg.len]) with
         | some(deg) -> rotate_camera(g, 0.0 - (float64) deg * 3.14159265 / 180.0)
-        | none -> bad()
+        | none -> bad("integer degrees")
     else if text.starts_with(arg, "turnl:") then
         match text.parse_int32(arg[6..arg.len]) with
         | some(deg) -> rotate_camera(g, (float64) deg * 3.14159265 / 180.0)
-        | none -> bad()
+        | none -> bad("integer degrees")
     else if arg == "run" then
         g->key_shift = !g->key_shift
     else if text.starts_with(arg, "goto:") then
@@ -1593,22 +1593,23 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
                 | some(ty) ->
                     g->pos_x = (float64) tx + 0.5
                     g->pos_y = (float64) ty + 0.5
-                | none -> bad()
-            | none -> bad()
+                | none -> bad("integer Y coordinate")
+            | none -> bad("integer X coordinate")
+        else bad("X,Y coordinate pair")
         free(coords)
         check_pickups(w->lv, g, w->ac)
     else if text.starts_with(arg, "sethp:") then
         match text.parse_int32(arg[6..arg.len]) with
         | some(n) -> g->health = n
-        | none -> bad()
+        | none -> bad("integer HP value")
     else if text.starts_with(arg, "setweapon:") then
         match text.parse_int32(arg[10..arg.len]) with
         | some(n) -> g->weapon = n
-        | none -> bad()
+        | none -> bad("integer weapon index (0-3)")
     else if text.starts_with(arg, "setammo:") then
         match text.parse_int32(arg[8..arg.len]) with
         | some(n) -> g->ammo = n
-        | none -> bad()
+        | none -> bad("integer ammo count")
     else if arg == "fire" then
         g->key_fire = true
         tick(w, dt)
@@ -1636,7 +1637,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         | some(n) ->
             for j in 0..n
                 tick(w, dt)
-        | none -> bad()
+        | none -> bad("integer tick count")
     else if text.starts_with(arg, "ss:") then
         render_frame(w, w->ac->vs, pal)
         save_png(w, arg[3..arg.len])

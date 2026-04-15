@@ -113,6 +113,10 @@ Capture a screenshot of an opened door:
 ./wolf-fc-bin --test fwd:15 space wait:40 ss:door.png
 ```
 
+### Output streams
+
+Normal output (`state`, `facetile`, `ss:` confirmations, load progress) goes to **stdout**. Bad-argument warnings (e.g. `bad arg 'fwd:oops': expected integer tick count`) go to **stderr** so they don't contaminate stdout-based diffs. Use `2>&1` if you want them merged when debugging.
+
 ### Verifying screenshots
 
 Screenshots are PNG files (8-bit RGB, 320×200, uncompressed-deflate) with an optional `tEXt` chunk containing current game state (position, direction, health, ammo, score, level, etc.) as key/value lines. Standard tools open them directly, and the metadata is readable with any PNG inspector — `python3 -c 'import struct,zlib; …'` works with stdlib only.

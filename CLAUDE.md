@@ -27,6 +27,8 @@ Wolf-FC is a Wolfenstein 3D clone written in FC, intended as a demo of the FC la
 
 **Entry point**: `run_test_cmd` in `main.fc` dispatches each CLI arg to a command handler. After `--test`, args are processed left-to-right with a fixed `dt = 1.0 / 35.0` per simulated tick. The test mode skips SDL init entirely — data loads, game state initializes, commands run, then the program exits.
 
+**Error output goes to stderr.** The `bad` helper in `run_test_cmd` writes malformed-arg messages (e.g. `bad arg 'fwd:oops': expected integer tick count`) to `stderr`; `state`, `facetile`, and `ss:` go to `stdout`. This keeps golden-file diffs clean, but it means `cmd > out.txt` or `cmd | tail` will silently drop warnings from the captured output — use `2>&1` when debugging or when writing a harness that needs to notice errors.
+
 **User-facing command reference lives in `README.md`.** This section covers the internals and how to extend them.
 
 ### `world` — the grouped state handle
