@@ -9,7 +9,7 @@ Wolf-FC is a Wolfenstein 3D clone written in FC, intended as a demo of the FC la
 - **`../fc-lang/`** — The FC compiler and stdlib. **Read `../fc-lang/CLAUDE.md` for the full FC language reference** (syntax, type system, module system, C interop, naming conventions, etc.). Key paths:
   - `../fc-lang/fc` — compiler binary
   - `../fc-lang/stdlib/` — standard library (io, math, sys, text, random, data)
-  - `../fc-lang/spec/examples.fc` — runnable FC quick reference
+  - `../fc-lang/spec/examples.fc` — runnable FC quick reference. **Read this file fully at the start of every session** for a firm grasp on the FC language.
 
   Wolf-fc depends only on the compiler and stdlib. The SDL2 and OPL2 bindings, originally copied from `fc-lang/demos/shared/`, are now vendored into this repo (`sdl2.fc`, `opl2.fc`) so wolf-fc can evolve them independently of the shared demo copies.
 - **`../wolf4sdl/`** — C reference implementation of Wolf3D (SDL2 port). Consult for data format details and rendering correctness, but **don't copy code** (GPL). Key files listed in TODO.md.
