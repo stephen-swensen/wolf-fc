@@ -433,8 +433,8 @@ let shade_color = (c: uint32, factor: float64) ->
 
 // Compute shade factor from perpendicular distance.
 let dist_shade = (dist: float64) ->
-    let s = 1.0 - dist / 16.0
-    if s < 0.2 then 0.2 else if s > 1.0 then 1.0 else s
+    let s = 1.0 - dist / 24.0
+    if s < 0.45 then 0.45 else if s > 1.0 then 1.0 else s
 
 // Draw one sprite column from compressed VSWAP data.
 // Iterates over screen rows (not source rows) to avoid gaps when scaled up.
