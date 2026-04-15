@@ -29,20 +29,34 @@ Wolf-FC is a Wolfenstein 3D clone written in FC, intended as a demo of the FC la
 
 **User-facing command reference lives in `README.md`.** This section covers the internals and how to extend them.
 
+### `world` — the grouped state handle
+
+Game state, level data, renderer, and audio live in a single `world` struct. Orchestrator functions (`tick`, `render_frame`, `take_screenshot`, `run_test_cmd`) take `w: world*`; narrower functions take just the sub-contexts they need so their dependencies are visible in their signatures.
+
+```fc
+struct world =
+    g: game*            // player, input, session state
+    lv: level*          // tile grid + doors + sprites + push-wall (per-level, rebuilt on transition)
+    rc: render_ctx*     // renderer scratch buffers (fb, dbuf, zbuf)
+    ac: audio_ctx*      // sound pipeline (vs, ad, sfx chip, digi slots)
+```
+
+Factories: `build_level(lv_data, sprite_start)` allocates and initializes a level; `free_level(lv)` tears it down (called on level transition). `build_render_ctx()` allocates the scratch buffers once per process.
+
 ### The `tick()` function
 
 All per-frame game updates go through **one** function:
 
 ```fc
-let tick = (g: game*, dt: float64) ->
-    update_player(g, dt)
-    update_doors(g, dt)
-    update_pushwall(dt)
-    update_weapon(g, dt)
-    check_pickups(g)
+let tick = (w: world*, dt: float64) ->
+    update_player(w->lv, w->g, dt, w->ac)
+    update_doors(w->lv, w->g, dt, w->ac)
+    update_pushwall(w->lv, dt)
+    update_weapon(w->g, dt, w->ac)
+    check_pickups(w->lv, w->g, w->ac)
 ```
 
-Both the interactive game loop and every tick-advancing test command (`fwd`, `back`, `space`, `wait`) call `tick(g, dt)`. **When you add a new per-frame system (e.g. enemy AI), add the call inside `tick` — nowhere else.** This keeps the test mode and interactive mode bit-identical in their per-frame simulation. Earlier in the project, `update_doors` and `update_pushwall` were missing from some test commands and caused silent "animation frozen" bugs during scripted play.
+Both the interactive game loop and every tick-advancing test command (`fwd`, `back`, `space`, `wait`) call `tick(w, dt)`. **When you add a new per-frame system (e.g. enemy AI), add the call inside `tick` — nowhere else.** This keeps the test mode and interactive mode bit-identical in their per-frame simulation. Earlier in the project, `update_doors` and `update_pushwall` were missing from some test commands and caused silent "animation frozen" bugs during scripted play.
 
 The `goto:X,Y` command is deliberately NOT a full tick — it just teleports and calls `check_pickups` once. That's the right behavior: goto is an instant jump, not time passing.
 
@@ -51,12 +65,12 @@ The `goto:X,Y` command is deliberately NOT a full tick — it just teleports and
 1. Add an `else if` branch to `run_test_cmd` (ordered near related commands for readability).
 2. For prefix commands with an argument (e.g. `foo:N`), use `text.starts_with(arg, "foo:")` then `text.parse_int32(arg[4..arg.len])!`. Int literals auto-widen to `int64` in slice indices and comparisons, so `4` works where `int64` is expected — only suffix with `i64` when a binding's type must be `int64` from the start (e.g. `let mut x = 0i64` used in later `int64` arithmetic).
 3. For commands that produce textual output (state dumps, debug prints), end the branch with `void()` — `io.write` returns `int64` and `if/else` chains need matching branch types.
-4. If the command advances time, call `tick(g, dt)`. If it changes state without advancing time (like `sethp`, `givekeys`, `goto`), don't.
+4. If the command advances time, call `tick(w, dt)`. If it changes state without advancing time (like `sethp`, `givekeys`, `goto`), don't.
 5. Document the command in `README.md`'s Headless Test Mode section.
 
 ### Rendering in test mode
 
-`ss:FILE.png` calls `render_frame(g, vs, pal)` (the single-source-of-truth render path also used by the interactive loop and 's' key) and then `save_png` with game-state metadata. If you add a new render layer, add it to `render_frame` — nowhere else.
+`ss:FILE.png` calls `render_frame(w, vs, pal)` (the single-source-of-truth render path also used by the interactive loop and 's' key) and then `save_png` with game-state metadata. If you add a new render layer, add it to `render_frame` — nowhere else.
 
 ### Useful patterns for verification
 
@@ -84,11 +98,14 @@ All project modules are declared at the top level (no namespaces), so they're ac
 
 - **`main.fc`** — Game engine, no namespace:
   - Constants (game_w=320, game_h=200, screen_w=640, screen_h=400, actual_h=480, view_h=160, sample_rate=44100)
+  - `struct world` — the god-handle: `{g: game*, lv: level*, rc: render_ctx*, ac: audio_ctx*}`. Only orchestrators take `world*`; narrow functions take just the fields they touch.
   - `struct game` — player state (position, direction, camera plane, input, health/ammo/score)
+  - `struct level` — per-level mutable state: tilemap, pushwall_tiles, sprites[], doors[], door_pos[], pushwall animation. Rebuilt on level transition.
+  - `struct render_ctx` — `{fb, dbuf, zbuf}` renderer scratch buffers, process-wide.
+  - `struct audio_ctx` — `{vs, ad, sfx, digi}` bundle so `trigger_sound` / pickup / door code can fire sounds without globals.
   - `struct sprite_obj` — static objects (position, VSWAP page, distance)
-  - `struct audio_ctx` — `{vs, ad, sfx, digi}` bundle threaded through `tick()` and update functions so `trigger_sound` / pickup / door code can fire sounds without globals
-  - Tilemap builder + sprite spawner from level data
-  - DDA raycaster (`render_walls`) writing to 320x200 `fb` framebuffer
+  - Factories: `build_render_ctx()`, `build_level(lv_data, sprite_start)`, `free_level(lv)`.
+  - DDA raycaster (`render_walls`) writing to `rc->fb` (320x200 framebuffer)
   - Sprite renderer (`render_sprites`) with compressed t_compshape decoding
   - Audio output path: zero buffer → `imf.fill` (music) → `adlib.fill` (AdLib SFX) → `digi.fill` (8-bit PCM) → SDL queue (back-pressured via `queued_audio_size`)
   - HUD renderer with 3x5 bitmap digit font

@@ -90,45 +90,11 @@ struct game =
     fire_timer: float64    // cooldown timer (>0 means firing animation)
     weapon_frame: int32    // animation frame (0=idle, 1-3=firing)
 
-// Sound system handle: loaded-asset refs + AdLib SFX playback state.
-// Allocated in main after data is loaded and threaded through update
-// functions so we don't rely on file-level globals for sound state.
-struct audio_ctx =
-    vs: vswap.vswap_file*      // VSWAP — digi sound data + wall/sprite pages
-    ad: audio.audio_data*      // AUDIOT — AdLib SFX chunks + music
-    sfx: adlib.sfx_state*      // AdLib SFX playback (owns its own OPL2 chip)
-    digi: digi.player*         // 8-bit PCM playback (up to 4 slots)
-
-// Tilemap: 64*64, column-major — tilemap[x * 64 + y].
-// 0 = empty, 1-63 = wall tile, 90-101 = door.
-let tilemap = alloc(uint8[4096] {})!
-
-// Framebuffer for software rendering (320 x 200 game pixels).
-let fb = alloc(uint32[64000] {})!
-
-// Display buffer (640 x 400) — 2x upscale of fb for the SDL texture.
-let dbuf = alloc(uint32[256000] {})!
-
-// Z-buffer: perpendicular wall distance per column (for sprite clipping).
-let zbuf = alloc(float64[320] {})!
-
 // ============================================================
-// Sprites (static objects like barrels, lamps, items)
+// Per-level dynamic entities and geometry
 // ============================================================
 
-struct sprite_obj =
-    x: float64
-    y: float64
-    shape_page: int32    // VSWAP page index
-    dist: float64        // squared distance to player (for sorting)
-    item_type: int32     // 0=decoration, >0=pickable (see item_* constants)
-    alive: bool          // false after pickup (skip rendering)
-
-// ============================================================
-// Door system
-// ============================================================
-
-// Door states
+// Door states (values for door_obj.state)
 let door_closed = 0
 let door_opening = 1
 let door_open = 2
@@ -138,6 +104,9 @@ let door_closing = 3
 let door_speed = 2.0        // 0→1 in 0.5 seconds
 let door_stay_time = 4.0    // seconds before auto-close
 
+let max_doors = 64
+let max_sprites = 400
+
 struct door_obj =
     tile_x: int32
     tile_y: int32
@@ -146,10 +115,22 @@ struct door_obj =
     state: int32         // door_closed/opening/open/closing
     open_timer: float64  // time spent in open state (for auto-close)
 
-let max_doors = 64
-let doors = alloc(door_obj[64] {})!
-let door_pos = alloc(float64[64] {})!   // 0.0=closed, 1.0=fully open
-let mut num_doors = 0
+struct sprite_obj =
+    x: float64
+    y: float64
+    shape_page: int32    // VSWAP page index
+    dist: float64        // squared distance to player (for sorting)
+    item_type: int32     // 0=decoration, >0=pickable (see item_* constants)
+    alive: bool          // false after pickup (skip rendering)
+
+struct pushwall_state =
+    active: bool
+    tile_x: int32        // current tile being pushed
+    tile_y: int32
+    dir_x: int32         // push direction
+    dir_y: int32
+    progress: float64    // 0.0 to 2.0 (pushes 2 tiles)
+    orig_tile: uint8     // original wall texture tile
 
 // Item type constants for sprite_obj.item_type
 let item_none = 0
@@ -167,9 +148,92 @@ let item_chalice = 11     // +500 score
 let item_bible = 12       // +1000 score
 let item_crown = 13       // +5000 score
 
-let max_sprites = 400
-let sprites = alloc(sprite_obj[400] {})!
-let mut num_sprites = 0
+let pushwall_speed = 1.0  // tiles per second
+
+// Per-level state: tile grid, dynamic entities, in-progress animations.
+// Built once per level via build_level and destroyed via free_level on
+// transition. Everything that a save-state would need to preserve lives here.
+struct level =
+    // Column-major 64x64 tile grid: tilemap[x*64 + y].
+    // 0 = empty, 1-63 = wall texture, 128+ = door (index = value - 128).
+    tilemap: uint8[]
+    // Bitmap: which wall tiles are pushable (marker 98 in plane 1).
+    pushwall_tiles: bool[]
+    // Static sprite objects spawned from plane-1 tiles 23..72.
+    sprites: sprite_obj[]
+    num_sprites: int32
+    // Door objects allocated when their tiles are encountered during build.
+    doors: door_obj[]
+    door_pos: float64[]         // 0.0 = closed, 1.0 = open
+    num_doors: int32
+    // Currently-animating push-wall (at most one at a time).
+    pushwall: pushwall_state
+
+// Renderer scratch buffers. Process-wide and rewritten every frame; not
+// part of save-state. Held in its own struct so no one reaches for globals.
+struct render_ctx =
+    fb: uint32[]       // 320x200 ARGB — primary software-rendered frame
+    dbuf: uint32[]     // 640x400 ARGB — 2x nearest-neighbor upscale of fb
+    zbuf: float64[]    // per-column wall perp-distance, for sprite clipping
+
+// Sound system handle: loaded-asset refs + SFX playback state.
+struct audio_ctx =
+    vs: vswap.vswap_file*      // VSWAP — digi sound data + wall/sprite pages
+    ad: audio.audio_data*      // AUDIOT — AdLib SFX chunks + music
+    sfx: adlib.sfx_state*      // AdLib SFX playback (owns its own OPL2 chip)
+    digi: digi.player*         // 8-bit PCM playback (up to 4 slots)
+
+// Everything the running game needs in one handle. Functions that only need
+// one sub-context (e.g. `render_walls` only touches level + render_ctx) keep
+// their narrow signatures so their dependencies are visible in their types;
+// only orchestrators (`tick`, `render_frame`, `run_test_cmd`) take `world*`.
+// Wrapping this way unlocks save-state and multi-world scenarios without
+// having to thread four pointers through every caller.
+struct world =
+    g: game*            // player, input, session state
+    lv: level*          // tile grid + dynamic per-level entities
+    rc: render_ctx*     // renderer scratch buffers
+    ac: audio_ctx*      // sound pipeline
+
+// ============================================================
+// Factories
+// ============================================================
+
+// Allocate renderer scratch buffers. One instance per process.
+let build_render_ctx = () ->
+    let rc = alloc(render_ctx {
+        fb = alloc(uint32[game_w * game_h] {})!,
+        dbuf = alloc(uint32[screen_w * screen_h] {})!,
+        zbuf = alloc(float64[game_w] {})!
+    })!
+    rc
+
+// Allocate a level from the decoded wolf3d map data. Builds tilemap,
+// spawns static sprites, and marks push-wall tiles. Caller must call
+// free_level when the level is no longer needed.
+let build_level = (lv_data: maps.level*, sprite_start: int32) ->
+    let lv = alloc(level {
+        tilemap = alloc(uint8[map_size * map_size] {})!,
+        pushwall_tiles = alloc(bool[map_size * map_size] {})!,
+        sprites = alloc(sprite_obj[max_sprites] {})!,
+        num_sprites = 0,
+        doors = alloc(door_obj[max_doors] {})!,
+        door_pos = alloc(float64[max_doors] {})!,
+        num_doors = 0,
+        pushwall = default(pushwall_state)
+    })!
+    build_tilemap(lv, lv_data, sprite_start)
+    spawn_sprites(lv, lv_data, sprite_start)
+    mark_pushwalls(lv, lv_data)
+    lv
+
+let free_level = (lv: level*) ->
+    free(lv->tilemap)
+    free(lv->pushwall_tiles)
+    free(lv->sprites)
+    free(lv->doors)
+    free(lv->door_pos)
+    free(lv)
 
 // ============================================================
 // Setup helpers
@@ -179,66 +243,66 @@ let mut num_sprites = 0
 //   0        = empty
 //   1-63     = wall (texture index)
 //   128+     = door (128 + door_index)
-let build_tilemap = (lv: maps.level*, sprite_start: int32) ->
-    num_doors = 0
+let build_tilemap = (lv: level*, lv_data: maps.level*, sprite_start: int32) ->
+    lv->num_doors = 0
     for y in 0..map_size
         for x in 0..map_size
-            let tile = (int32) lv->walls[(int64) y * 64 + (int64) x]
+            let tile = (int32) lv_data->walls[(int64) y * 64 + (int64) x]
             let idx = (int64) x * 64 + (int64) y
             if tile >= 1 && tile <= 63 then
-                tilemap[idx] = (uint8) tile
-            else if tile >= 90 && tile <= 101 && num_doors < max_doors then
+                lv->tilemap[idx] = (uint8) tile
+            else if tile >= 90 && tile <= 101 && lv->num_doors < max_doors then
                 let is_vert = tile % 2 == 0
                 let lock = if is_vert then (tile - 90) / 2 else (tile - 91) / 2
-                doors[num_doors] = door_obj {
+                lv->doors[lv->num_doors] = door_obj {
                     tile_x = x, tile_y = y,
                     vertical = is_vert, lock_type = lock,
                     state = door_closed, open_timer = 0.0
                 }
-                door_pos[num_doors] = 0.0
-                tilemap[idx] = (uint8) (128 + num_doors)
-                num_doors = num_doors + 1
+                lv->door_pos[lv->num_doors] = 0.0
+                lv->tilemap[idx] = (uint8) (128 + lv->num_doors)
+                lv->num_doors = lv->num_doors + 1
             else
-                tilemap[idx] = 0u8
+                lv->tilemap[idx] = 0u8
 
 // Check if a tile is a wall (solid, not a door).
-let tile_solid = (x: int32, y: int32) ->
+let tile_solid = (lv: level*, x: int32, y: int32) ->
     if x < 0 || x >= map_size || y < 0 || y >= map_size then true
     else
-        let t = (int32) tilemap[(int64) x * 64 + (int64) y]
+        let t = (int32) lv->tilemap[(int64) x * 64 + (int64) y]
         t >= 1 && t <= 63
 
 // Check if tile is a door (for collision — doors block unless fully open).
-let tile_is_door = (x: int32, y: int32) ->
+let tile_is_door = (lv: level*, x: int32, y: int32) ->
     if x < 0 || x >= map_size || y < 0 || y >= map_size then false
     else
-        let t = (int32) tilemap[(int64) x * 64 + (int64) y]
+        let t = (int32) lv->tilemap[(int64) x * 64 + (int64) y]
         t >= 128
 
 // Check if a door tile is passable (fully open).
-let door_passable = (x: int32, y: int32) ->
+let door_passable = (lv: level*, x: int32, y: int32) ->
     if x < 0 || x >= map_size || y < 0 || y >= map_size then false
     else
-        let t = (int32) tilemap[(int64) x * 64 + (int64) y]
+        let t = (int32) lv->tilemap[(int64) x * 64 + (int64) y]
         if t < 128 then false
-        else doors[t - 128].state == door_open
+        else lv->doors[t - 128].state == door_open
 
 // Try to open a door at the given tile position.
-let try_open_door = (x: int32, y: int32, g: game*, ac: audio_ctx*) ->
+let try_open_door = (lv: level*, x: int32, y: int32, g: game*, ac: audio_ctx*) ->
     if x < 0 || x >= map_size || y < 0 || y >= map_size then false
     else
-        let t = (int32) tilemap[(int64) x * 64 + (int64) y]
+        let t = (int32) lv->tilemap[(int64) x * 64 + (int64) y]
         if t < 128 then false
         else
             let dn = t - 128
-            if doors[dn].state != door_closed then false
+            if lv->doors[dn].state != door_closed then false
             else
                 // Check key requirements
-                let lock = doors[dn].lock_type
+                let lock = lv->doors[dn].lock_type
                 if lock == 1 && !g->has_gold_key then false
                 else if lock == 2 && !g->has_silver_key then false
                 else
-                    doors[dn].state = door_opening
+                    lv->doors[dn].state = door_opening
                     trigger_sound(snd_open_door, ac)
                     true
 
@@ -301,15 +365,15 @@ let tile_to_item = (tile: int32) ->
 
 // Populate sprite list from level plane 1 data.
 // Tile values 23-72 are static objects. Shape = 2 + (tile - 23).
-let spawn_sprites = (lv: maps.level*, sprite_start: int32) ->
-    num_sprites = 0
+let spawn_sprites = (lv: level*, lv_data: maps.level*, sprite_start: int32) ->
+    lv->num_sprites = 0
     for y in 0..map_size
         for x in 0..map_size
-            let obj = (int32) lv->objects[(int64) y * 64 + (int64) x]
-            if obj >= 23 && obj <= 72 && num_sprites < max_sprites then
+            let obj = (int32) lv_data->objects[(int64) y * 64 + (int64) x]
+            if obj >= 23 && obj <= 72 && lv->num_sprites < max_sprites then
                 let shape = 2 + obj - 23
                 let page = sprite_start + shape
-                sprites[num_sprites] = sprite_obj {
+                lv->sprites[lv->num_sprites] = sprite_obj {
                     x = (float64) x + 0.5,
                     y = (float64) y + 0.5,
                     shape_page = page,
@@ -317,27 +381,27 @@ let spawn_sprites = (lv: maps.level*, sprite_start: int32) ->
                     item_type = tile_to_item(obj),
                     alive = true
                 }
-                num_sprites = num_sprites + 1
+                lv->num_sprites = lv->num_sprites + 1
 
 // Sort sprites by distance (farthest first) using insertion sort.
-let sort_sprites = (g: game*) ->
-    for i in 0..num_sprites
-        if !sprites[i].alive then
-            sprites[i].dist = -1.0
+let sort_sprites = (lv: level*, g: game*) ->
+    for i in 0..lv->num_sprites
+        if !lv->sprites[i].alive then
+            lv->sprites[i].dist = -1.0
             continue
-        let dx = sprites[i].x - g->pos_x
-        let dy = sprites[i].y - g->pos_y
-        sprites[i].dist = dx * dx + dy * dy
+        let dx = lv->sprites[i].x - g->pos_x
+        let dy = lv->sprites[i].y - g->pos_y
+        lv->sprites[i].dist = dx * dx + dy * dy
     // Insertion sort descending by dist.
-    for i in 1..num_sprites
-        let key = sprites[i]
+    for i in 1..lv->num_sprites
+        let key = lv->sprites[i]
         let mut j = i - 1
         loop
             if j < 0 then break
-            if sprites[j].dist >= key.dist then break
-            sprites[j + 1] = sprites[j]
+            if lv->sprites[j].dist >= key.dist then break
+            lv->sprites[j + 1] = lv->sprites[j]
             j = j - 1
-        sprites[j + 1] = key
+        lv->sprites[j + 1] = key
 
 // Shade a color by a factor (0.0 = black, 1.0 = original).
 let shade_color = (c: uint32, factor: float64) ->
@@ -354,7 +418,7 @@ let dist_shade = (dist: float64) ->
 
 // Draw one sprite column from compressed VSWAP data.
 // Iterates over screen rows (not source rows) to avoid gaps when scaled up.
-let draw_sprite_col = (vs: vswap.vswap_file*, pal: uint32[],
+let draw_sprite_col = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[],
                        page: int32, sprite_col: int32,
                        screen_x: int32, sprite_h: int32,
                        shade: float64) ->
@@ -386,17 +450,18 @@ let draw_sprite_col = (vs: vswap.vswap_file*, pal: uint32[],
                 let ey = if sy1 > view_h then view_h else sy1
                 loop
                     if sy >= ey then break
-                    fb[(int64) sy * 320 + (int64) screen_x] = color
+                    rc->fb[(int64) sy * 320 + (int64) screen_x] = color
                     sy = sy + 1
 
 // Render all visible sprites (sorted far to near).
-let render_sprites = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
-    sort_sprites(g)
+let render_sprites = (lv: level*, rc: render_ctx*, g: game*,
+                      vs: vswap.vswap_file*, pal: uint32[]) ->
+    sort_sprites(lv, g)
     let inv_det = 1.0 / (g->plane_x * g->dir_y - g->dir_x * g->plane_y)
-    for i in 0..num_sprites
-        if !sprites[i].alive then continue
-        let sx = sprites[i].x - g->pos_x
-        let sy = sprites[i].y - g->pos_y
+    for i in 0..lv->num_sprites
+        if !lv->sprites[i].alive then continue
+        let sx = lv->sprites[i].x - g->pos_x
+        let sy = lv->sprites[i].y - g->pos_y
         let tx = inv_det * (g->dir_y * sx - g->dir_x * sy)
         let ty = inv_det * (g->plane_x * sy - g->plane_y * sx)
         if ty <= 0.1 then continue    // behind camera
@@ -408,17 +473,18 @@ let render_sprites = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
         let draw_x1 = scr_x + half
         for stripe in draw_x0..draw_x1
             if stripe >= 0 && stripe < game_w then
-                if ty < zbuf[stripe] then
+                if ty < rc->zbuf[stripe] then
                     let tex_col = (stripe - draw_x0) * 64 / spr_h
                     let spr_shade = dist_shade(ty)
-                    draw_sprite_col(vs, pal, sprites[i].shape_page,
+                    draw_sprite_col(rc, vs, pal, lv->sprites[i].shape_page,
                         tex_col, stripe, spr_h, spr_shade)
 
 // ============================================================
 // Raycaster — one frame
 // ============================================================
 
-let render_walls = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
+let render_walls = (lv: level*, rc: render_ctx*, g: game*,
+                    vs: vswap.vswap_file*, pal: uint32[]) ->
     // Fill ceiling and floor with per-level colors.
     let ceil_idx = if g->level_num < 60 then ceil_table[g->level_num] else 0x1D
     // view_h is the global constant (192)
@@ -427,14 +493,14 @@ let render_walls = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
     let half = view_h / 2
     for y in 0..half
         for x in 0..game_w
-            fb[(int64) y * 320 + (int64) x] = ceil_color
+            rc->fb[(int64) y * 320 + (int64) x] = ceil_color
     for y in half..view_h
         for x in 0..game_w
-            fb[(int64) y * 320 + (int64) x] = floor_color
+            rc->fb[(int64) y * 320 + (int64) x] = floor_color
 
     // Reset z-buffer.
     for i in 0..game_w
-        zbuf[i] = 1000000.0
+        rc->zbuf[i] = 1000000.0
 
     // Cast one ray per screen column.
     for col in 0..game_w
@@ -495,14 +561,14 @@ let render_walls = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
             if map_x < 0 || map_x >= map_size || map_y < 0 || map_y >= map_size then
                 hit = true
             else
-                let tile = (int32) tilemap[(int64) map_x * 64 + (int64) map_y]
+                let tile = (int32) lv->tilemap[(int64) map_x * 64 + (int64) map_y]
                 if tile >= 1 && tile <= 63 then
                     hit = true
                 else if tile >= 128 then
                     // Door tile — check midpoint intersection
                     let dn = tile - 128
-                    let dp = door_pos[dn]
-                    let is_vert = doors[dn].vertical
+                    let dp = lv->door_pos[dn]
+                    let is_vert = lv->doors[dn].vertical
                     // Only check if ray enters from matching direction
                     let matches = if is_vert then side == 0 else side == 1
                     if matches then
@@ -535,7 +601,7 @@ let render_walls = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
 
         // Get tile value at hit position
         let tile_val = if map_x >= 0 && map_x < map_size && map_y >= 0 && map_y < map_size then
-            (int32) tilemap[(int64) map_x * 64 + (int64) map_y]
+            (int32) lv->tilemap[(int64) map_x * 64 + (int64) map_y]
         else 1
 
         if tile_val == 0 && !is_door_hit then continue
@@ -546,7 +612,7 @@ let render_walls = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
             else side_y - delta_y
 
         if perp_dist <= 0.001 then continue
-        zbuf[(int64) col] = perp_dist
+        rc->zbuf[(int64) col] = perp_dist
 
         // Wall column height on screen
         let line_h = (int32) ((float64) view_h / perp_dist)
@@ -566,8 +632,8 @@ let render_walls = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
             if tex_x < 0 then tex_x = 0
             if tex_x > 63 then tex_x = 63
             // Door texture page based on lock type
-            let lock = doors[door_hit_num].lock_type
-            let is_vert = doors[door_hit_num].vertical
+            let lock = lv->doors[door_hit_num].lock_type
+            let is_vert = lv->doors[door_hit_num].vertical
             if lock == 0 || lock == 3 then
                 tex_page = if is_vert then door_wall + 1 else door_wall
             else if lock == 4 || lock == 5 then
@@ -597,7 +663,7 @@ let render_walls = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
                 let adj_y = if side == 1 then map_y - step_y else map_y
                 let mut use_doorside = false
                 if adj_x >= 0 && adj_x < map_size && adj_y >= 0 && adj_y < map_size then
-                    let adj_t = (int32) tilemap[(int64) adj_x * 64 + (int64) adj_y]
+                    let adj_t = (int32) lv->tilemap[(int64) adj_x * 64 + (int64) adj_y]
                     if adj_t >= 128 then use_doorside = true
                 if use_doorside then
                     tex_page = if side == 1 then door_wall + 2 else door_wall + 3
@@ -623,7 +689,7 @@ let render_walls = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
             // Distance shading + side darkening
             let mut shade = dist_shade(perp_dist)
             if side == 1 then shade = shade * 0.75
-            fb[(int64) y * 320 + (int64) col] = shade_color(pal[(int32) pix], shade)
+            rc->fb[(int64) y * 320 + (int64) col] = shade_color(pal[(int32) pix], shade)
 
 // ============================================================
 // Player movement (classic Wolf3D: arrows turn/move, alt=strafe)
@@ -637,21 +703,21 @@ let render_walls = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
 let player_radius = 0.35
 
 // True if the player's bbox at (px, py) overlaps a wall or a closed door.
-let player_blocked = (px: float64, py: float64) ->
+let player_blocked = (lv: level*, px: float64, py: float64) ->
     let xl = (int32) (px - player_radius)
     let xr = (int32) (px + player_radius)
     let yl = (int32) (py - player_radius)
     let yh = (int32) (py + player_radius)
     let blocks = (tx: int32, ty: int32) ->
-        tile_solid(tx, ty) || (tile_is_door(tx, ty) && !door_passable(tx, ty))
+        tile_solid(lv, tx, ty) || (tile_is_door(lv, tx, ty) && !door_passable(lv, tx, ty))
     blocks(xl, yl) || blocks(xr, yl) || blocks(xl, yh) || blocks(xr, yh)
 
 // Try to move to (nx, ny), handling collision per-axis.
-let try_move = (g: game*, dx: float64, dy: float64) ->
+let try_move = (lv: level*, g: game*, dx: float64, dy: float64) ->
     let nx = g->pos_x + dx
     let ny = g->pos_y + dy
-    if !player_blocked(nx, g->pos_y) then g->pos_x = nx
-    if !player_blocked(g->pos_x, ny) then g->pos_y = ny
+    if !player_blocked(lv, nx, g->pos_y) then g->pos_x = nx
+    if !player_blocked(lv, g->pos_x, ny) then g->pos_y = ny
 
 let rotate_camera = (g: game*, angle: float64) ->
     let c = math.cos(angle)
@@ -663,16 +729,16 @@ let rotate_camera = (g: game*, angle: float64) ->
     g->plane_x = op * c + g->plane_y * s
     g->plane_y = op * (0.0 - s) + g->plane_y * c
 
-let update_player = (g: game*, dt: float64, ac: audio_ctx*) ->
+let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
     let spd = move_speed * dt * (if g->key_shift then run_mult else 1.0)
     let rot = turn_speed * dt * (if g->key_shift then run_mult else 1.0)
 
-    if g->key_up then try_move(g, g->dir_x * spd, g->dir_y * spd)
-    if g->key_down then try_move(g, 0.0 - g->dir_x * spd, 0.0 - g->dir_y * spd)
+    if g->key_up then try_move(lv, g, g->dir_x * spd, g->dir_y * spd)
+    if g->key_down then try_move(lv, g, 0.0 - g->dir_x * spd, 0.0 - g->dir_y * spd)
 
     if g->key_alt then
-        if g->key_left then try_move(g, 0.0 - g->plane_x * spd, 0.0 - g->plane_y * spd)
-        if g->key_right then try_move(g, g->plane_x * spd, g->plane_y * spd)
+        if g->key_left then try_move(lv, g, 0.0 - g->plane_x * spd, 0.0 - g->plane_y * spd)
+        if g->key_right then try_move(lv, g, g->plane_x * spd, g->plane_y * spd)
     else
         if g->key_left then rotate_camera(g, rot)
         if g->key_right then rotate_camera(g, 0.0 - rot)
@@ -683,31 +749,31 @@ let update_player = (g: game*, dt: float64, ac: audio_ctx*) ->
         let fy = (int32) (g->pos_y + g->dir_y)
         // Check for elevator switch (tile 21)
         if fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
-            let face_tile = (int32) tilemap[(int64) fx * 64 + (int64) fy]
+            let face_tile = (int32) lv->tilemap[(int64) fx * 64 + (int64) fy]
             if face_tile == 21 then
                 g->next_level = true
         // Try push-wall (determine push direction from player facing)
         let push_dx = if g->dir_x > 0.5 then 1 else if g->dir_x < -0.5 then -1 else 0
         let push_dy = if g->dir_y > 0.5 then 1 else if g->dir_y < -0.5 then -1 else 0
         if push_dx != 0 || push_dy != 0 then
-            try_push_wall(fx, fy, push_dx, push_dy)
-        try_open_door(fx, fy, g, ac)
+            try_push_wall(lv, fx, fy, push_dx, push_dy)
+        try_open_door(lv, fx, fy, g, ac)
         g->key_space = false
 
 // ============================================================
 // Item pickups — walk-over detection
 // ============================================================
 
-let check_pickups = (g: game*, ac: audio_ctx*) ->
+let check_pickups = (lv: level*, g: game*, ac: audio_ctx*) ->
     let px = (int32) g->pos_x
     let py = (int32) g->pos_y
-    for i in 0..num_sprites
-        if !sprites[i].alive then continue
-        if sprites[i].item_type == item_none then continue
-        let sx = (int32) sprites[i].x
-        let sy = (int32) sprites[i].y
+    for i in 0..lv->num_sprites
+        if !lv->sprites[i].alive then continue
+        if lv->sprites[i].item_type == item_none then continue
+        let sx = (int32) lv->sprites[i].x
+        let sy = (int32) lv->sprites[i].y
         if px != sx || py != sy then continue
-        let it = sprites[i].item_type
+        let it = lv->sprites[i].item_type
         // Health items — skip if already at max health (100)
         if it == item_dog_food then
             if g->health >= 100 then continue
@@ -753,7 +819,7 @@ let check_pickups = (g: game*, ac: audio_ctx*) ->
             g->score = g->score + 5000
         else continue
         // Item was picked up — remove it and play sound
-        sprites[i].alive = false
+        lv->sprites[i].alive = false
         if it == item_gold_key || it == item_silver_key then
             trigger_sound(snd_get_key, ac)
         else if it == item_clip || it == item_machine_gun || it == item_chain_gun then
@@ -769,40 +835,23 @@ let check_pickups = (g: game*, ac: audio_ctx*) ->
 // Push-walls
 // ============================================================
 
-struct pushwall_state =
-    active: bool
-    tile_x: int32        // current tile being pushed
-    tile_y: int32
-    dir_x: int32         // push direction
-    dir_y: int32
-    progress: float64    // 0.0 to 2.0 (pushes 2 tiles)
-    orig_tile: uint8     // original wall texture tile
-
-let mut pushwall = pushwall_state {
-    active = false, tile_x = 0, tile_y = 0,
-    dir_x = 0, dir_y = 0, progress = 0.0, orig_tile = 0u8
-}
-let pushwall_speed = 1.0  // tiles per second
-
-// Mark push-wall tiles from plane 1 data during tilemap build.
+// Mark push-wall tiles from plane-1 data during tilemap build.
 // Tile value 98 in plane 1 marks the wall at that position as pushable.
-let pushwall_tiles = alloc(bool[4096] {})!
-
-let mark_pushwalls = (lv: maps.level*) ->
+let mark_pushwalls = (lv: level*, lv_data: maps.level*) ->
     for y in 0..map_size
         for x in 0..map_size
-            let obj = (int32) lv->objects[(int64) y * 64 + (int64) x]
-            pushwall_tiles[(int64) x * 64 + (int64) y] = obj == 98
+            let obj = (int32) lv_data->objects[(int64) y * 64 + (int64) x]
+            lv->pushwall_tiles[(int64) x * 64 + (int64) y] = obj == 98
 
-let try_push_wall = (x: int32, y: int32, dx: int32, dy: int32) ->
+let try_push_wall = (lv: level*, x: int32, y: int32, dx: int32, dy: int32) ->
     if x < 0 || x >= map_size || y < 0 || y >= map_size then false
-    else if pushwall.active then false  // only one at a time
+    else if lv->pushwall.active then false  // only one at a time
     else
         let idx = (int64) x * 64 + (int64) y
-        let t = (int32) tilemap[idx]
+        let t = (int32) lv->tilemap[idx]
         if t < 1 || t > 63 then false
         else
-            let is_pw = pushwall_tiles[idx]
+            let is_pw = lv->pushwall_tiles[idx]
             if !is_pw then false
             else
                 // Check that the 2 tiles in push direction are empty
@@ -813,60 +862,60 @@ let try_push_wall = (x: int32, y: int32, dx: int32, dy: int32) ->
                 if t1x < 0 || t1x >= map_size || t1y < 0 || t1y >= map_size then false
                 else if t2x < 0 || t2x >= map_size || t2y < 0 || t2y >= map_size then false
                 else
-                    let t1 = (int32) tilemap[(int64) t1x * 64 + (int64) t1y]
-                    let t2 = (int32) tilemap[(int64) t2x * 64 + (int64) t2y]
+                    let t1 = (int32) lv->tilemap[(int64) t1x * 64 + (int64) t1y]
+                    let t2 = (int32) lv->tilemap[(int64) t2x * 64 + (int64) t2y]
                     if t1 != 0 || t2 != 0 then false
                     else
-                        pushwall = pushwall_state {
+                        lv->pushwall = pushwall_state {
                             active = true, tile_x = x, tile_y = y,
                             dir_x = dx, dir_y = dy,
                             progress = 0.0, orig_tile = (uint8) t
                         }
                         true
 
-let update_pushwall = (dt: float64) ->
-    if !pushwall.active then return
-    let prev = pushwall.progress
-    pushwall.progress = pushwall.progress + pushwall_speed * dt
+let update_pushwall = (lv: level*, dt: float64) ->
+    if !lv->pushwall.active then return
+    let prev = lv->pushwall.progress
+    lv->pushwall.progress = lv->pushwall.progress + pushwall_speed * dt
     // When crossing tile boundaries, update tilemap
-    if prev < 1.0 && pushwall.progress >= 1.0 then
+    if prev < 1.0 && lv->pushwall.progress >= 1.0 then
         // Clear original tile, place wall at +1 tile
-        tilemap[(int64) pushwall.tile_x * 64 + (int64) pushwall.tile_y] = 0u8
-        let nx = pushwall.tile_x + pushwall.dir_x
-        let ny = pushwall.tile_y + pushwall.dir_y
-        tilemap[(int64) nx * 64 + (int64) ny] = pushwall.orig_tile
-        pushwall.tile_x = nx
-        pushwall.tile_y = ny
-    if pushwall.progress >= 2.0 then
+        lv->tilemap[(int64) lv->pushwall.tile_x * 64 + (int64) lv->pushwall.tile_y] = 0u8
+        let nx = lv->pushwall.tile_x + lv->pushwall.dir_x
+        let ny = lv->pushwall.tile_y + lv->pushwall.dir_y
+        lv->tilemap[(int64) nx * 64 + (int64) ny] = lv->pushwall.orig_tile
+        lv->pushwall.tile_x = nx
+        lv->pushwall.tile_y = ny
+    if lv->pushwall.progress >= 2.0 then
         // Done — clear intermediate, place wall at final position
-        pushwall.active = false
+        lv->pushwall.active = false
 
 // ============================================================
 // Door animation
 // ============================================================
 
-let update_doors = (g: game*, dt: float64, ac: audio_ctx*) ->
-    for i in 0..num_doors
-        if doors[i].state == door_opening then
-            door_pos[i] = door_pos[i] + door_speed * dt
-            if door_pos[i] >= 1.0 then
-                door_pos[i] = 1.0
-                doors[i].state = door_open
-                doors[i].open_timer = 0.0
-        else if doors[i].state == door_open then
-            doors[i].open_timer = doors[i].open_timer + dt
-            if doors[i].open_timer >= door_stay_time then
+let update_doors = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
+    for i in 0..lv->num_doors
+        if lv->doors[i].state == door_opening then
+            lv->door_pos[i] = lv->door_pos[i] + door_speed * dt
+            if lv->door_pos[i] >= 1.0 then
+                lv->door_pos[i] = 1.0
+                lv->doors[i].state = door_open
+                lv->doors[i].open_timer = 0.0
+        else if lv->doors[i].state == door_open then
+            lv->doors[i].open_timer = lv->doors[i].open_timer + dt
+            if lv->doors[i].open_timer >= door_stay_time then
                 // Don't close if player is in the door tile
                 let px = (int32) g->pos_x
                 let py = (int32) g->pos_y
-                if px != doors[i].tile_x || py != doors[i].tile_y then
-                    doors[i].state = door_closing
+                if px != lv->doors[i].tile_x || py != lv->doors[i].tile_y then
+                    lv->doors[i].state = door_closing
                     trigger_sound(snd_close_door, ac)
-        else if doors[i].state == door_closing then
-            door_pos[i] = door_pos[i] - door_speed * dt
-            if door_pos[i] <= 0.0 then
-                door_pos[i] = 0.0
-                doors[i].state = door_closed
+        else if lv->doors[i].state == door_closing then
+            lv->door_pos[i] = lv->door_pos[i] - door_speed * dt
+            if lv->door_pos[i] <= 0.0 then
+                lv->door_pos[i] = 0.0
+                lv->doors[i].state = door_closed
 
 // ============================================================
 // Sound effects — digitized PCM from VSWAP
@@ -992,7 +1041,7 @@ let char_glyph = (ch: int32) ->
 
 let digit_glyph = (d: int32) -> char_glyph(d + 48)
 
-let draw_digit = (x: int32, y: int32, d: int32, color: uint32, scale: int32) ->
+let draw_digit = (rc: render_ctx*, x: int32, y: int32, d: int32, color: uint32, scale: int32) ->
     let g = digit_glyph(d)
     for row in 0..5
         let bits = (g >> (row * 3)) & 7
@@ -1003,9 +1052,9 @@ let draw_digit = (x: int32, y: int32, d: int32, color: uint32, scale: int32) ->
                         let px = x + col * scale + sx
                         let py = y + row * scale + sy
                         if px >= 0 && px < game_w && py >= 0 && py < game_h then
-                            fb[(int64) py * 320 + (int64) px] = color
+                            rc->fb[(int64) py * 320 + (int64) px] = color
 
-let draw_number = (x: int32, y: int32, num: int32, color: uint32, scale: int32) ->
+let draw_number = (rc: render_ctx*, x: int32, y: int32, num: int32, color: uint32, scale: int32) ->
     let mut n = num
     if n < 0 then n = 0
     let mut digits = int32[8] { 0, 0, 0, 0, 0, 0, 0, 0 }
@@ -1023,10 +1072,10 @@ let draw_number = (x: int32, y: int32, num: int32, color: uint32, scale: int32) 
     // Draw right-to-left (digits are stored reversed)
     for i in 0..count
         let dx = x - (i * (3 * scale + scale))
-        draw_digit(dx, y, digits[i], color, scale)
+        draw_digit(rc, dx, y, digits[i], color, scale)
 
 // Draw a string using the 3x5 bitmap font.
-let draw_text = (x: int32, y: int32, s: const str, color: uint32, scale: int32) ->
+let draw_text = (rc: render_ctx*, x: int32, y: int32, s: const str, color: uint32, scale: int32) ->
     for ci in 0..(int32) s.len
         let ch = (int32) s[(int64) ci]
         let gl = char_glyph(ch)
@@ -1041,24 +1090,24 @@ let draw_text = (x: int32, y: int32, s: const str, color: uint32, scale: int32) 
                                 let px = cx + col * scale + sx
                                 let py = y + row * scale + sy
                                 if px >= 0 && px < game_w && py >= 0 && py < game_h then
-                                    fb[(int64) py * 320 + (int64) px] = color
+                                    rc->fb[(int64) py * 320 + (int64) px] = color
 
 // Draw a filled rectangle in the framebuffer.
-let fill_rect = (x0: int32, y0: int32, x1: int32, y1: int32, color: uint32) ->
+let fill_rect = (rc: render_ctx*, x0: int32, y0: int32, x1: int32, y1: int32, color: uint32) ->
     for y in y0..y1
         for x in x0..x1
             if x >= 0 && x < game_w && y >= 0 && y < game_h then
-                fb[(int64) y * 320 + (int64) x] = color
+                rc->fb[(int64) y * 320 + (int64) x] = color
 
 // Draw a vertical separator line with 3D effect.
-let draw_vsep = (x: int32, y0: int32, y1: int32) ->
+let draw_vsep = (rc: render_ctx*, x: int32, y0: int32, y1: int32) ->
     for y in y0..y1
         if x >= 0 && x < game_w && y >= 0 && y < game_h then
-            fb[(int64) y * 320 + (int64) x] = 0xFF383838u32
+            rc->fb[(int64) y * 320 + (int64) x] = 0xFF383838u32
             if x + 1 < game_w then
-                fb[(int64) y * 320 + (int64) (x + 1)] = 0xFF909090u32
+                rc->fb[(int64) y * 320 + (int64) (x + 1)] = 0xFF909090u32
 
-let render_hud = (g: game*) ->
+let render_hud = (rc: render_ctx*, g: game*) ->
     let bar_top = view_h    // 160
     let bar_bg = 0xFF585858u32      // medium gray
     let label_c = 0xFFB0B0B0u32     // light gray for labels
@@ -1067,42 +1116,42 @@ let render_hud = (g: game*) ->
     let border_lo = 0xFF303030u32   // shadow
 
     // Fill bar background
-    fill_rect(0, bar_top, game_w, game_h, bar_bg)
+    fill_rect(rc, 0, bar_top, game_w, game_h, bar_bg)
     // Top highlight, bottom shadow
-    fill_rect(0, bar_top, game_w, bar_top + 1, border_hi)
-    fill_rect(0, game_h - 1, game_w, game_h, border_lo)
+    fill_rect(rc, 0, bar_top, game_w, bar_top + 1, border_hi)
+    fill_rect(rc, 0, game_h - 1, game_w, game_h, border_lo)
 
     // FLOOR + level number (x=2..48)
-    draw_text(4, bar_top + 4, "FLOOR", label_c, 1)
-    draw_number(40, bar_top + 14, g->level_num + 1, num_c, 2)
-    draw_vsep(50, bar_top + 2, game_h - 2)
+    draw_text(rc, 4, bar_top + 4, "FLOOR", label_c, 1)
+    draw_number(rc, 40, bar_top + 14, g->level_num + 1, num_c, 2)
+    draw_vsep(rc, 50, bar_top + 2, game_h - 2)
 
     // SCORE (x=54..126)
-    draw_text(55, bar_top + 4, "SCORE", label_c, 1)
-    draw_number(118, bar_top + 14, g->score, num_c, 2)
-    draw_vsep(128, bar_top + 2, game_h - 2)
+    draw_text(rc, 55, bar_top + 4, "SCORE", label_c, 1)
+    draw_number(rc, 118, bar_top + 14, g->score, num_c, 2)
+    draw_vsep(rc, 128, bar_top + 2, game_h - 2)
 
     // LIVES (x=132..174)
-    draw_text(133, bar_top + 4, "LIVES", label_c, 1)
-    draw_number(162, bar_top + 14, g->lives, num_c, 2)
-    draw_vsep(174, bar_top + 2, game_h - 2)
+    draw_text(rc, 133, bar_top + 4, "LIVES", label_c, 1)
+    draw_number(rc, 162, bar_top + 14, g->lives, num_c, 2)
+    draw_vsep(rc, 174, bar_top + 2, game_h - 2)
 
     // HEALTH (x=178..236)
-    draw_text(179, bar_top + 4, "HEALTH", label_c, 1)
-    draw_number(228, bar_top + 14, g->health, num_c, 2)
-    draw_vsep(238, bar_top + 2, game_h - 2)
+    draw_text(rc, 179, bar_top + 4, "HEALTH", label_c, 1)
+    draw_number(rc, 228, bar_top + 14, g->health, num_c, 2)
+    draw_vsep(rc, 238, bar_top + 2, game_h - 2)
 
     // AMMO (x=242..288)
-    draw_text(243, bar_top + 4, "AMMO", label_c, 1)
-    draw_number(278, bar_top + 14, g->ammo, num_c, 2)
-    draw_vsep(288, bar_top + 2, game_h - 2)
+    draw_text(rc, 243, bar_top + 4, "AMMO", label_c, 1)
+    draw_number(rc, 278, bar_top + 14, g->ammo, num_c, 2)
+    draw_vsep(rc, 288, bar_top + 2, game_h - 2)
 
     // KEYS (x=292..318) + gold/silver indicators
-    draw_text(293, bar_top + 4, "KEYS", label_c, 1)
+    draw_text(rc, 293, bar_top + 4, "KEYS", label_c, 1)
     let gk_c = if g->has_gold_key then 0xFFFFD700u32 else 0xFF383838u32
     let sk_c = if g->has_silver_key then 0xFFC0C0C0u32 else 0xFF383838u32
-    fill_rect(293, bar_top + 14, 305, bar_top + 22, gk_c)
-    fill_rect(307, bar_top + 14, 319, bar_top + 22, sk_c)
+    fill_rect(rc, 293, bar_top + 14, 305, bar_top + 22, gk_c)
+    fill_rect(rc, 307, bar_top + 14, 319, bar_top + 22, sk_c)
 
 // Upscale fb (320x200) to dbuf (640x400) with nearest-neighbor 2x.
 // ============================================================
@@ -1140,15 +1189,15 @@ let update_weapon = (g: game*, dt: float64, ac: audio_ctx*) ->
 // One simulation tick — runs all per-frame game-state updates in order.
 // Used by both the interactive game loop and the headless test mode so
 // they stay in sync. Add new per-frame systems here, not at each caller.
-let tick = (g: game*, dt: float64, ac: audio_ctx*) ->
-    update_player(g, dt, ac)
-    update_doors(g, dt, ac)
-    update_pushwall(dt)
-    update_weapon(g, dt, ac)
-    check_pickups(g, ac)
+let tick = (w: world*, dt: float64) ->
+    update_player(w->lv, w->g, dt, w->ac)
+    update_doors(w->lv, w->g, dt, w->ac)
+    update_pushwall(w->lv, dt)
+    update_weapon(w->g, dt, w->ac)
+    check_pickups(w->lv, w->g, w->ac)
 
 // Draw procedural weapon sprite (simple geometric shapes).
-let render_weapon = (g: game*) ->
+let render_weapon = (rc: render_ctx*, g: game*) ->
     let cx = game_w / 2    // center x = 160
     let bot = view_h       // bottom of viewport = 160
     let frame = g->weapon_frame
@@ -1166,12 +1215,12 @@ let render_weapon = (g: game*) ->
             let w = 3 + (bot - 10 - y) / 4
             for x in (cx - w)..(cx + w)
                 if x >= 0 && x < game_w && y >= 0 && y < view_h then
-                    fb[(int64) y * 320 + (int64) x] = blade_c
+                    rc->fb[(int64) y * 320 + (int64) x] = blade_c
         // Hilt
         for y in (bot - 10 + bob)..(bot + bob)
             for x in (cx - 4)..(cx + 4)
                 if x >= 0 && x < game_w && y >= 0 && y < view_h then
-                    fb[(int64) y * 320 + (int64) x] = hilt_c
+                    rc->fb[(int64) y * 320 + (int64) x] = hilt_c
     else
         // Gun — barrel + hand
         let barrel_c = 0xFF808080u32
@@ -1182,30 +1231,30 @@ let render_weapon = (g: game*) ->
             for y in (bot - 45 + bob)..(bot - 35 + bob)
                 for x in (cx - 6)..(cx + 6)
                     if x >= 0 && x < game_w && y >= 0 && y < view_h then
-                        fb[(int64) y * 320 + (int64) x] = flash_c
+                        rc->fb[(int64) y * 320 + (int64) x] = flash_c
         // Barrel
         for y in (bot - 35 + bob)..(bot - 10 + bob)
             for x in (cx - 3)..(cx + 3)
                 if x >= 0 && x < game_w && y >= 0 && y < view_h then
-                    fb[(int64) y * 320 + (int64) x] = barrel_c
+                    rc->fb[(int64) y * 320 + (int64) x] = barrel_c
         // Hand/grip
         for y in (bot - 10 + bob)..(bot + bob)
             for x in (cx - 8)..(cx + 8)
                 if x >= 0 && x < game_w && y >= 0 && y < view_h then
-                    fb[(int64) y * 320 + (int64) x] = hand_c
+                    rc->fb[(int64) y * 320 + (int64) x] = hand_c
 
 // Upscale fb (320x200) to dbuf (640x400) with nearest-neighbor 2x.
-let upscale_2x = () ->
+let upscale_2x = (rc: render_ctx*) ->
     for y in 0..game_h
         for x in 0..game_w
-            let c = fb[(int64) y * (int64) game_w + (int64) x]
+            let c = rc->fb[(int64) y * (int64) game_w + (int64) x]
             let dx = (int64) x * 2
             let dy = (int64) y * 2
             let sw = (int64) screen_w
-            dbuf[dy * sw + dx] = c
-            dbuf[dy * sw + dx + 1] = c
-            dbuf[(dy + 1) * sw + dx] = c
-            dbuf[(dy + 1) * sw + dx + 1] = c
+            rc->dbuf[dy * sw + dx] = c
+            rc->dbuf[dy * sw + dx + 1] = c
+            rc->dbuf[(dy + 1) * sw + dx] = c
+            rc->dbuf[(dy + 1) * sw + dx + 1] = c
 
 // ============================================================
 // Screenshots — saved as PNG with game-state metadata in a tEXt chunk.
@@ -1217,20 +1266,21 @@ let screenshot_max_slots = 100
 let mut screenshot_slot = 0
 
 // Render the full game frame to fb (used before saving a screenshot).
-let render_frame = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
-    render_walls(g, vs, pal)
-    render_sprites(g, vs, pal)
-    render_weapon(g)
-    render_hud(g)
+let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
+    render_walls(w->lv, w->rc, w->g, vs, pal)
+    render_sprites(w->lv, w->rc, w->g, vs, pal)
+    render_weapon(w->rc, w->g)
+    render_hud(w->rc, w->g)
 
 // Save the current fb as a PNG at `path` with game-state metadata embedded
 // as a tEXt chunk (one field per line, grep-able).
-let save_png = (path: const str, g: game*) ->
+let save_png = (w: world*, path: const str) ->
+    let g = w->g
     let gk = if g->has_gold_key then 1 else 0
     let sk = if g->has_silver_key then 1 else 0
     let meta = alloc("level=%d{g->level_num + 1}\npos=(%7.3f{g->pos_x}, %7.3f{g->pos_y})\ndir=(%7.4f{g->dir_x}, %7.4f{g->dir_y})\nhealth=%d{g->health}\nammo=%d{g->ammo}\nscore=%d{g->score}\nlives=%d{g->lives}\nweapon=%d{g->weapon}\nkeys=gold:%d{gk},silver:%d{sk}")!
     defer free(meta)
-    png.write(path, fb, game_w, game_h, meta)
+    png.write(path, w->rc->fb, game_w, game_h, meta)
 
 // Clear any screenshot files left over from a previous session so each run
 // starts numbering from 000. Users who want to keep screenshots should copy
@@ -1258,7 +1308,7 @@ let clear_screenshots = () ->
 
 // Take an interactive screenshot: renders, picks the next rotating slot in
 // ~/.wolf-fc/screenshots/, and writes a PNG. Prints the path to stdout.
-let take_screenshot = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
+let take_screenshot = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
     match sys.home_dir() with
     | none ->
         io.write("[screenshot] HOME not set; skipping\n", stdout)
@@ -1269,8 +1319,8 @@ let take_screenshot = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
         let slot = screenshot_slot
         screenshot_slot = (screenshot_slot + 1) % screenshot_max_slots
         let path = "%s{home}/.wolf-fc/screenshots/ss_%03d{slot}.png"
-        render_frame(g, vs, pal)
-        save_png(path, g)
+        render_frame(w, vs, pal)
+        save_png(w, path)
         io.write("[screenshot] saved %s{path}\n", stdout)
         void()
 
@@ -1278,19 +1328,19 @@ let take_screenshot = (g: game*, vs: vswap.vswap_file*, pal: uint32[]) ->
 // Headless test mode — scripted commands for automated testing
 // ============================================================
 
-let run_test_cmd = (arg: const str, g: game*, ac: audio_ctx*,
-                    pal: uint32[], dt: float64) ->
+let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
+    let g = w->g
     if text.starts_with(arg, "fwd:") then
         let n = text.parse_int32(arg[4..arg.len])!
         g->key_up = true
         for j in 0..n
-            tick(g, dt, ac)
+            tick(w, dt)
         g->key_up = false
     else if text.starts_with(arg, "back:") then
         let n = text.parse_int32(arg[5..arg.len])!
         g->key_down = true
         for j in 0..n
-            tick(g, dt, ac)
+            tick(w, dt)
         g->key_down = false
     else if text.starts_with(arg, "turnr:") then
         let deg = text.parse_int32(arg[6..arg.len])!
@@ -1308,14 +1358,14 @@ let run_test_cmd = (arg: const str, g: game*, ac: audio_ctx*,
             g->pos_x = (float64) tx + 0.5
             g->pos_y = (float64) ty + 0.5
         free(coords)
-        check_pickups(g, ac)
+        check_pickups(w->lv, g, w->ac)
     else if text.starts_with(arg, "sethp:") then
         g->health = text.parse_int32(arg[6..arg.len])!
     else if arg == "facetile" then
         let fx = (int32) (g->pos_x + g->dir_x)
         let fy = (int32) (g->pos_y + g->dir_y)
         let ft = if fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
-            (int32) tilemap[(int64) fx * 64 + (int64) fy]
+            (int32) w->lv->tilemap[(int64) fx * 64 + (int64) fy]
         else -1
         let nl = if g->next_level then 1 else 0
         io.write("facing=(%d{fx},%d{fy}) tile=%d{ft} next_level=%d{nl}\n", stdout)
@@ -1325,15 +1375,15 @@ let run_test_cmd = (arg: const str, g: game*, ac: audio_ctx*,
         g->has_silver_key = true
     else if arg == "space" then
         g->key_space = true
-        tick(g, dt, ac)
+        tick(w, dt)
         g->key_space = false
     else if text.starts_with(arg, "wait:") then
         let n = text.parse_int32(arg[5..arg.len])!
         for j in 0..n
-            tick(g, dt, ac)
+            tick(w, dt)
     else if text.starts_with(arg, "ss:") then
-        render_frame(g, ac->vs, pal)
-        save_png(arg[3..arg.len], g)
+        render_frame(w, w->ac->vs, pal)
+        save_png(w, arg[3..arg.len])
         io.write("Saved %s{arg[3..arg.len]}\n", stdout)
         void()
     else if arg == "state" then
@@ -1365,15 +1415,13 @@ let main = (args: str[]) ->
     io.write("  audio chunks=%d{ad->num_chunks}\n", stdout)
 
     io.write("Loading level 0...\n", stdout)
-    let mut lv = maps.load("data/MAPHEAD.WL6", "data/GAMEMAPS.WL6", 0)
-    io.write("  map %d{lv->width}x%d{lv->height}\n", stdout)
+    let mut lv_data = maps.load("data/MAPHEAD.WL6", "data/GAMEMAPS.WL6", 0)
+    io.write("  map %d{lv_data->width}x%d{lv_data->height}\n", stdout)
 
-    // Build tilemap, spawn sprites, find player start
-    build_tilemap(lv, vs->sprite_start)
-    spawn_sprites(lv, vs->sprite_start)
-    mark_pushwalls(lv)
-
-    let mut g = game {
+    // Assemble the `world` — the handle that groups game state, level data,
+    // renderer, and audio. Orchestrators take `world*`; narrower functions
+    // still take just the sub-contexts they need.
+    let g = alloc(game {
         pos_x = 1.5, pos_y = 1.5,
         dir_x = 1.0, dir_y = 0.0,
         plane_x = 0.0, plane_y = fov_factor,
@@ -1386,25 +1434,30 @@ let main = (args: str[]) ->
         has_gold_key = false, has_silver_key = false,
         next_level = false,
         weapon = 1, fire_timer = 0.0, weapon_frame = 0
-    }
-    find_player_start(lv, &g)
-    io.write("  player at (%4.1f{g.pos_x}, %4.1f{g.pos_y})\n", stdout)
+    })!
+    find_player_start(lv_data, g)
+    io.write("  player at (%4.1f{g->pos_x}, %4.1f{g->pos_y})\n", stdout)
 
     // Sound system (valid in all modes; in --test and --screenshot nothing
     // actually reaches the speakers because SDL audio isn't opened, but
     // trigger_sound / digi.fill work over this same ctx either way).
-    let ac = alloc(audio_ctx {
-        vs = vs,
-        ad = ad,
-        sfx = adlib.init((float64) sample_rate),
-        digi = digi.init()
+    let w = alloc(world {
+        g = g,
+        lv = build_level(lv_data, vs->sprite_start),
+        rc = build_render_ctx(),
+        ac = alloc(audio_ctx {
+            vs = vs,
+            ad = ad,
+            sfx = adlib.init((float64) sample_rate),
+            digi = digi.init()
+        })!
     })!
 
     // Test mode: process scripted commands, no SDL needed
     if args.len > 1 && args[1] == "--test" then
         let test_dt = 1.0 / 35.0
         for ti in 2..(int32) args.len
-            run_test_cmd(args[(int64) ti], &g, ac, pal, test_dt)
+            run_test_cmd(w, args[(int64) ti], pal, test_dt)
         return 0
 
     // Initialize SDL2 (interactive mode only)
@@ -1439,7 +1492,7 @@ let main = (args: str[]) ->
     let mut obtained = default(sdl2.audio_spec)
     let audio_dev = sdl2.open_audio((any*) 0, 0, &spec, &obtained, 0)
     let start_music = 261
-    let music_chunk = start_music + songs[g.level_num]
+    let music_chunk = start_music + songs[g->level_num]
     let mut ms = if audio_dev > 0u32 && music_chunk < ad->num_chunks then
         sdl2.pause_audio(audio_dev, 0)
         some(music_load(ad, music_chunk))
@@ -1471,24 +1524,24 @@ let main = (args: str[]) ->
             if t == sdl2.quit_event then running = false
             if t == sdl2.keydown_event then
                 let k = event.key.keysym.sym
-                if k == sdl2.key_up then g.key_up = true
-                if k == sdl2.key_down then g.key_down = true
-                if k == sdl2.key_left then g.key_left = true
-                if k == sdl2.key_right then g.key_right = true
-                if k == sdl2.key_lshift then g.key_shift = true
-                if k == sdl2.key_lalt then g.key_alt = true
-                if k == sdl2.key_space then g.key_space = true
-                if k == sdl2.key_lctrl then g.key_fire = true
-                if k == sdl2.key_1 then g.weapon = 0
-                if k == sdl2.key_2 then g.weapon = 1
-                if k == sdl2.key_3 then g.weapon = 2
-                if k == sdl2.key_4 then g.weapon = 3
+                if k == sdl2.key_up then g->key_up = true
+                if k == sdl2.key_down then g->key_down = true
+                if k == sdl2.key_left then g->key_left = true
+                if k == sdl2.key_right then g->key_right = true
+                if k == sdl2.key_lshift then g->key_shift = true
+                if k == sdl2.key_lalt then g->key_alt = true
+                if k == sdl2.key_space then g->key_space = true
+                if k == sdl2.key_lctrl then g->key_fire = true
+                if k == sdl2.key_1 then g->weapon = 0
+                if k == sdl2.key_2 then g->weapon = 1
+                if k == sdl2.key_3 then g->weapon = 2
+                if k == sdl2.key_4 then g->weapon = 3
                 if k == sdl2.key_escape then running = false
                 if k == sdl2.key_m then
                     music_on = !music_on
                     if !music_on && audio_dev > 0u32 then
                         sdl2.clear_audio(audio_dev)
-                if k == sdl2.key_s then take_screenshot(&g, vs, pal)
+                if k == sdl2.key_s then take_screenshot(w, vs, pal)
                 if k == sdl2.key_f11 then
                     fullscreen = !fullscreen
                     if fullscreen then
@@ -1504,46 +1557,42 @@ let main = (args: str[]) ->
                     sdl2.set_logical_size(ren, screen_w, actual_h)
             if t == sdl2.keyup_event then
                 let k = event.key.keysym.sym
-                if k == sdl2.key_up then g.key_up = false
-                if k == sdl2.key_down then g.key_down = false
-                if k == sdl2.key_left then g.key_left = false
-                if k == sdl2.key_right then g.key_right = false
-                if k == sdl2.key_lshift then g.key_shift = false
-                if k == sdl2.key_lalt then g.key_alt = false
-                if k == sdl2.key_lctrl then g.key_fire = false
+                if k == sdl2.key_up then g->key_up = false
+                if k == sdl2.key_down then g->key_down = false
+                if k == sdl2.key_left then g->key_left = false
+                if k == sdl2.key_right then g->key_right = false
+                if k == sdl2.key_lshift then g->key_shift = false
+                if k == sdl2.key_lalt then g->key_alt = false
+                if k == sdl2.key_lctrl then g->key_fire = false
 
         // Update
-        tick(&g, dt, ac)
+        tick(w, dt)
 
         // Level transition
-        if g.next_level then
-            g.next_level = false
-            g.level_num = g.level_num + 1
-            if g.level_num >= 60 then g.level_num = 0
+        if g->next_level then
+            g->next_level = false
+            g->level_num = g->level_num + 1
+            if g->level_num >= 60 then g->level_num = 0
             // Reset keys (Wolf3D clears keys between levels)
-            g.has_gold_key = false
-            g.has_silver_key = false
+            g->has_gold_key = false
+            g->has_silver_key = false
             // Free old level and load new one
-            free(lv->walls)
-            free(lv->objects)
-            free(lv)
-            lv = maps.load("data/MAPHEAD.WL6", "data/GAMEMAPS.WL6", g.level_num)
-            build_tilemap(lv, vs->sprite_start)
-            spawn_sprites(lv, vs->sprite_start)
-            mark_pushwalls(lv)
-            find_player_start(lv, &g)
+            free_level(w->lv)
+            free(lv_data->walls)
+            free(lv_data->objects)
+            free(lv_data)
+            lv_data = maps.load("data/MAPHEAD.WL6", "data/GAMEMAPS.WL6", g->level_num)
+            w->lv = build_level(lv_data, vs->sprite_start)
+            find_player_start(lv_data, g)
             // Update music for new level
-            let new_chunk = 261 + songs[g.level_num]
+            let new_chunk = 261 + songs[g->level_num]
             if audio_dev > 0u32 && new_chunk < ad->num_chunks then
                 sdl2.clear_audio(audio_dev)
                 if ms.is_some then free(ms!)
                 ms = some(music_load(ad, new_chunk))
 
         // Render
-        render_walls(&g, vs, pal)
-        render_sprites(&g, vs, pal)
-        render_weapon(&g)
-        render_hud(&g)
+        render_frame(w, vs, pal)
 
         // Generate and queue audio: music -> AdLib SFX -> digi SFX -> SDL.
         // Back-pressure: each frame produces 1024 samples (~23ms at 44.1 kHz)
@@ -1561,15 +1610,15 @@ let main = (args: str[]) ->
                 music_buf[si] = 0i16
             if ms.is_some && music_on then
                 imf.fill(ms!, music_buf, 1024, sample_rate)
-            adlib.fill(ac->sfx, music_buf, 1024, sample_rate)
-            digi.fill(ac->digi, music_buf, 1024, sample_rate)
+            adlib.fill(w->ac->sfx, music_buf, 1024, sample_rate)
+            digi.fill(w->ac->digi, music_buf, 1024, sample_rate)
             sdl2.queue_audio(audio_dev, (any*) music_buf.ptr, 2048u32)
             void()
 
         // Upload framebuffer to texture and display.
         // Upscale 320x200 → 640x400, upload, and present.
-        upscale_2x()
-        sdl2.update_texture(tex, (any*) 0, (any*) dbuf.ptr, screen_w * 4)
+        upscale_2x(w->rc)
+        sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, screen_w * 4)
         sdl2.clear(ren)
         sdl2.render_copy(ren, tex, (any*) 0, (any*) 0)
         sdl2.present(ren)
