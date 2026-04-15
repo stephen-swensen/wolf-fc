@@ -251,18 +251,18 @@ module maps =
         // Decompress plane 0 (walls).
         let exp0 = (int32) bytes.u16(gm, p0_off)
         let carm0 = alloc(uint16[(int64) exp0 / 2 + 1] {})!
+        defer free(carm0)
         carmack_expand(gm, p0_off + 2, carm0, exp0)
         let walls = alloc(uint16[area] {})!
         rlew_expand(carm0, 1i64, walls, rlew_tag)
-        free(carm0)
 
         // Decompress plane 1 (objects / spawns).
         let exp1 = (int32) bytes.u16(gm, p1_off)
         let carm1 = alloc(uint16[(int64) exp1 / 2 + 1] {})!
+        defer free(carm1)
         carmack_expand(gm, p1_off + 2, carm1, exp1)
         let objects = alloc(uint16[area] {})!
         rlew_expand(carm1, 1i64, objects, rlew_tag)
-        free(carm1)
 
         alloc(level { walls = walls, objects = objects,
             width = w, height = h })!

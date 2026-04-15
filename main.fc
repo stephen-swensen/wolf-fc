@@ -103,11 +103,11 @@ struct game =
 // Per-level dynamic entities and geometry
 // ============================================================
 
-// Door states (values for door_obj.state)
-let door_closed = 0
-let door_opening = 1
-let door_open = 2
-let door_closing = 3
+union door_state =
+    | closed
+    | opening
+    | open
+    | closing
 
 // Door timing
 let door_speed = 2.0        // 0→1 in 0.5 seconds
@@ -121,7 +121,7 @@ struct door_obj =
     tile_y: int32
     vertical: bool       // true = surface runs N-S (enter via X), false = E-W (enter via Y)
     lock_type: int32     // 0=normal, 1=gold key, 2=silver key, 3-5=other
-    state: int32         // door_closed/opening/open/closing
+    state: door_state
     open_timer: float64  // time spent in open state (for auto-close)
 
 struct sprite_obj =
@@ -129,7 +129,7 @@ struct sprite_obj =
     y: float64
     shape_page: int32    // VSWAP page index
     dist: float64        // squared distance to player (for sorting)
-    item_type: int32     // 0=decoration, >0=pickable (see item_* constants)
+    item_type: item_kind
     alive: bool          // false after pickup (skip rendering)
 
 struct pushwall_state =
@@ -141,21 +141,25 @@ struct pushwall_state =
     progress: float64    // 0.0 to 2.0 (pushes 2 tiles)
     orig_tile: uint8     // original wall texture tile
 
-// Item type constants for sprite_obj.item_type
-let item_none = 0
-let item_dog_food = 1     // +4 health
-let item_food = 2         // +10 health
-let item_first_aid = 3    // +25 health
-let item_extra_life = 4   // full health + 1 life
-let item_clip = 5         // +8 ammo
-let item_machine_gun = 6  // weapon + ammo
-let item_chain_gun = 7    // weapon + ammo
-let item_gold_key = 8
-let item_silver_key = 9
-let item_cross = 10       // +100 score
-let item_chalice = 11     // +500 score
-let item_bible = 12       // +1000 score
-let item_crown = 13       // +5000 score
+union item_kind =
+    | decoration    // static sprite, no pickup behavior
+    // Health
+    | dog_food      // +4 health
+    | food          // +10 health
+    | first_aid     // +25 health
+    | extra_life    // full health + 1 life
+    // Ammo / weapons
+    | clip          // +8 ammo
+    | machine_gun   // weapon + ammo
+    | chain_gun     // weapon + ammo
+    // Keys
+    | gold_key
+    | silver_key
+    // Treasure
+    | cross         // +100 score
+    | chalice       // +500 score
+    | bible         // +1000 score
+    | crown         // +5000 score
 
 let pushwall_speed = 1.0  // tiles per second
 
@@ -266,7 +270,7 @@ let build_tilemap = (lv: level*, lv_data: maps.level*, sprite_start: int32) ->
                 lv->doors[lv->num_doors] = door_obj {
                     tile_x = x, tile_y = y,
                     vertical = is_vert, lock_type = lock,
-                    state = door_closed, open_timer = 0.0
+                    state = door_state.closed, open_timer = 0.0
                 }
                 lv->door_pos[lv->num_doors] = 0.0
                 lv->tilemap[idx] = (uint8) (128 + lv->num_doors)
@@ -294,7 +298,7 @@ let door_passable = (lv: level*, x: int32, y: int32) ->
     else
         let t = (int32) lv->tilemap[(int64) x * 64 + (int64) y]
         if t < 128 then false
-        else lv->doors[t - 128].state == door_open
+        else lv->doors[t - 128].state == door_state.open
 
 // Try to open a door at the given tile position.
 // Outcome of a use-action on a tile in front of the player. Callers pattern-
@@ -312,7 +316,7 @@ let try_open_door = (lv: level*, x: int32, y: int32, g: game*, ac: audio_ctx*) -
         if t < 128 then door_action.no_door
         else
             let dn = t - 128
-            if lv->doors[dn].state != door_closed then door_action.no_door
+            if lv->doors[dn].state != door_state.closed then door_action.no_door
             else
                 let lock = lv->doors[dn].lock_type
                 if lock == 1 && !g->has_gold_key then
@@ -322,7 +326,7 @@ let try_open_door = (lv: level*, x: int32, y: int32, g: game*, ac: audio_ctx*) -
                     trigger_sound(snd_no_way, ac)
                     door_action.door_locked
                 else
-                    lv->doors[dn].state = door_opening
+                    lv->doors[dn].state = door_state.opening
                     trigger_sound(snd_open_door, ac)
                     door_action.door_opened
 
@@ -335,28 +339,29 @@ let find_player_start = (lv: maps.level*, g: game*) ->
             if obj >= 19 && obj <= 22 then
                 g->pos_x = (float64) x + 0.5
                 g->pos_y = (float64) y + 0.5
-                let facing = obj - 19
                 // 0=N, 1=E, 2=S, 3=W
-                if facing == 0 then
+                match obj - 19 with
+                | 0 ->
                     g->dir_x = 0.0
                     g->dir_y = -1.0
                     g->plane_x = fov_factor
                     g->plane_y = 0.0
-                if facing == 1 then
+                | 1 ->
                     g->dir_x = 1.0
                     g->dir_y = 0.0
                     g->plane_x = 0.0
                     g->plane_y = fov_factor
-                if facing == 2 then
+                | 2 ->
                     g->dir_x = 0.0
                     g->dir_y = 1.0
                     g->plane_x = 0.0 - fov_factor
                     g->plane_y = 0.0
-                if facing == 3 then
+                | 3 ->
                     g->dir_x = -1.0
                     g->dir_y = 0.0
                     g->plane_x = 0.0
                     g->plane_y = 0.0 - fov_factor
+                | _ -> void()  // unreachable per obj==19..22 guard above
                 return
     // Fallback if no spawn found
     g->pos_x = 1.5
@@ -366,22 +371,23 @@ let find_player_start = (lv: maps.level*, g: game*) ->
     g->plane_x = 0.0
     g->plane_y = fov_factor
 
-// Map plane 1 tile value to item_type for pickable items.
+// Map plane 1 tile value to item_kind for pickable items.
 let tile_to_item = (tile: int32) ->
-    if tile == 29 then item_dog_food
-    else if tile == 43 then item_gold_key
-    else if tile == 44 then item_silver_key
-    else if tile == 47 then item_food
-    else if tile == 48 then item_first_aid
-    else if tile == 49 then item_clip
-    else if tile == 50 then item_machine_gun
-    else if tile == 51 then item_chain_gun
-    else if tile == 52 then item_cross
-    else if tile == 53 then item_chalice
-    else if tile == 54 then item_bible
-    else if tile == 55 then item_crown
-    else if tile == 56 then item_extra_life
-    else item_none
+    match tile with
+    | 29 -> item_kind.dog_food
+    | 43 -> item_kind.gold_key
+    | 44 -> item_kind.silver_key
+    | 47 -> item_kind.food
+    | 48 -> item_kind.first_aid
+    | 49 -> item_kind.clip
+    | 50 -> item_kind.machine_gun
+    | 51 -> item_kind.chain_gun
+    | 52 -> item_kind.cross
+    | 53 -> item_kind.chalice
+    | 54 -> item_kind.bible
+    | 55 -> item_kind.crown
+    | 56 -> item_kind.extra_life
+    | _ -> item_kind.decoration
 
 // Populate sprite list from level plane 1 data.
 // Tile values 23-72 are static objects. Shape = 2 + (tile - 23).
@@ -894,68 +900,81 @@ let check_pickups = (lv: level*, g: game*, ac: audio_ctx*) ->
     let py = (int32) g->pos_y
     for i in 0..lv->num_sprites
         if !lv->sprites[i].alive then continue
-        if lv->sprites[i].item_type == item_none then continue
         let sx = (int32) lv->sprites[i].x
         let sy = (int32) lv->sprites[i].y
         if px != sx || py != sy then continue
         let it = lv->sprites[i].item_type
-        // Health items — skip if already at max health (100)
-        if it == item_dog_food then
-            if g->health >= 100 then continue
-            g->health = g->health + 4
-            if g->health > 100 then g->health = 100
-        else if it == item_food then
-            if g->health >= 100 then continue
-            g->health = g->health + 10
-            if g->health > 100 then g->health = 100
-        else if it == item_first_aid then
-            if g->health >= 100 then continue
-            g->health = g->health + 25
-            if g->health > 100 then g->health = 100
-        else if it == item_extra_life then
+        // Health/ammo items return false at full health/ammo so the sprite
+        // stays on the floor for later instead of being wasted.
+        let picked_up = match it with
+        | decoration -> false
+        | dog_food ->
+            if g->health >= 100 then false
+            else
+                g->health = g->health + 4
+                if g->health > 100 then g->health = 100
+                true
+        | food ->
+            if g->health >= 100 then false
+            else
+                g->health = g->health + 10
+                if g->health > 100 then g->health = 100
+                true
+        | first_aid ->
+            if g->health >= 100 then false
+            else
+                g->health = g->health + 25
+                if g->health > 100 then g->health = 100
+                true
+        | extra_life ->
             g->health = 100
             g->lives = g->lives + 1
-        // Ammo
-        else if it == item_clip then
-            if g->ammo >= 99 then continue
-            g->ammo = g->ammo + 8
-            if g->ammo > 99 then g->ammo = 99
-        else if it == item_machine_gun then
+            true
+        | clip ->
+            if g->ammo >= 99 then false
+            else
+                g->ammo = g->ammo + 8
+                if g->ammo > 99 then g->ammo = 99
+                true
+        | machine_gun ->
             g->ammo = g->ammo + 6
             if g->ammo > 99 then g->ammo = 99
             if g->weapon < 2 then g->weapon = 2
-        else if it == item_chain_gun then
+            true
+        | chain_gun ->
             g->ammo = g->ammo + 6
             if g->ammo > 99 then g->ammo = 99
             if g->weapon < 3 then g->weapon = 3
-        // Keys
-        else if it == item_gold_key then
+            true
+        | gold_key ->
             g->has_gold_key = true
-        else if it == item_silver_key then
+            true
+        | silver_key ->
             g->has_silver_key = true
-        // Treasure
-        else if it == item_cross then
+            true
+        | cross ->
             g->score = g->score + 100
-        else if it == item_chalice then
+            true
+        | chalice ->
             g->score = g->score + 500
-        else if it == item_bible then
+            true
+        | bible ->
             g->score = g->score + 1000
-        else if it == item_crown then
+            true
+        | crown ->
             g->score = g->score + 5000
-        else continue
-        // Item was picked up — remove it and play sound
+            true
+        if !picked_up then continue
         lv->sprites[i].alive = false
-        if it == item_gold_key || it == item_silver_key then
-            trigger_sound(snd_get_key, ac)
-        else if it == item_machine_gun then
-            trigger_sound(snd_get_mg, ac)
-        else if it == item_chain_gun then
-            trigger_sound(snd_get_gat, ac)
-        else if it == item_clip then
-            trigger_sound(snd_get_ammo, ac)
-        else if it >= item_cross then
-            trigger_sound(snd_treasure, ac)
-        else void()
+        // Health items intentionally have no pickup sound (matches Wolf3D).
+        match it with
+        | gold_key | silver_key                       -> trigger_sound(snd_get_key, ac)
+        | machine_gun                                 -> trigger_sound(snd_get_mg, ac)
+        | chain_gun                                   -> trigger_sound(snd_get_gat, ac)
+        | clip                                        -> trigger_sound(snd_get_ammo, ac)
+        | cross | chalice | bible | crown             -> trigger_sound(snd_treasure, ac)
+        | dog_food | food | first_aid | extra_life    -> void()
+        | decoration                                  -> void()
         // Extra life at 40,000 points
         if g->score >= 40000 && g->score - 40000 < 5000 then
             g->lives = g->lives + 1
@@ -1037,26 +1056,28 @@ let update_pushwall = (lv: level*, dt: float64) ->
 
 let update_doors = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
     for i in 0..lv->num_doors
-        if lv->doors[i].state == door_opening then
+        match lv->doors[i].state with
+        | opening ->
             lv->door_pos[i] = lv->door_pos[i] + door_speed * dt
             if lv->door_pos[i] >= 1.0 then
                 lv->door_pos[i] = 1.0
-                lv->doors[i].state = door_open
+                lv->doors[i].state = door_state.open
                 lv->doors[i].open_timer = 0.0
-        else if lv->doors[i].state == door_open then
+        | open ->
             lv->doors[i].open_timer = lv->doors[i].open_timer + dt
             if lv->doors[i].open_timer >= door_stay_time then
                 // Don't close if player is in the door tile
                 let px = (int32) g->pos_x
                 let py = (int32) g->pos_y
                 if px != lv->doors[i].tile_x || py != lv->doors[i].tile_y then
-                    lv->doors[i].state = door_closing
+                    lv->doors[i].state = door_state.closing
                     trigger_sound(snd_close_door, ac)
-        else if lv->doors[i].state == door_closing then
+        | closing ->
             lv->door_pos[i] = lv->door_pos[i] - door_speed * dt
             if lv->door_pos[i] <= 0.0 then
                 lv->door_pos[i] = 0.0
-                lv->doors[i].state = door_closed
+                lv->doors[i].state = door_state.closed
+        | closed -> void()
 
 // ============================================================
 // Sound effects — digitized PCM from VSWAP
@@ -1511,41 +1532,60 @@ let take_screenshot = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
 
 let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
     let g = w->g
+    let bad = () ->
+        io.write("bad arg: %s{arg}\n", stdout)
+        void()
     if text.starts_with(arg, "fwd:") then
-        let n = text.parse_int32(arg[4..arg.len])!
-        g->key_up = true
-        for j in 0..n
-            tick(w, dt)
-        g->key_up = false
+        match text.parse_int32(arg[4..arg.len]) with
+        | some(n) ->
+            g->key_up = true
+            for j in 0..n
+                tick(w, dt)
+            g->key_up = false
+        | none -> bad()
     else if text.starts_with(arg, "back:") then
-        let n = text.parse_int32(arg[5..arg.len])!
-        g->key_down = true
-        for j in 0..n
-            tick(w, dt)
-        g->key_down = false
+        match text.parse_int32(arg[5..arg.len]) with
+        | some(n) ->
+            g->key_down = true
+            for j in 0..n
+                tick(w, dt)
+            g->key_down = false
+        | none -> bad()
     else if text.starts_with(arg, "turnr:") then
-        let deg = text.parse_int32(arg[6..arg.len])!
-        rotate_camera(g, 0.0 - (float64) deg * 3.14159265 / 180.0)
+        match text.parse_int32(arg[6..arg.len]) with
+        | some(deg) -> rotate_camera(g, 0.0 - (float64) deg * 3.14159265 / 180.0)
+        | none -> bad()
     else if text.starts_with(arg, "turnl:") then
-        let deg = text.parse_int32(arg[6..arg.len])!
-        rotate_camera(g, (float64) deg * 3.14159265 / 180.0)
+        match text.parse_int32(arg[6..arg.len]) with
+        | some(deg) -> rotate_camera(g, (float64) deg * 3.14159265 / 180.0)
+        | none -> bad()
     else if arg == "run" then
         g->key_shift = !g->key_shift
     else if text.starts_with(arg, "goto:") then
         let coords = text.split(arg[5..arg.len], ",")
         if coords.len >= 2 then
-            let tx = text.parse_int32(coords[0])!
-            let ty = text.parse_int32(coords[1])!
-            g->pos_x = (float64) tx + 0.5
-            g->pos_y = (float64) ty + 0.5
+            match text.parse_int32(coords[0]) with
+            | some(tx) ->
+                match text.parse_int32(coords[1]) with
+                | some(ty) ->
+                    g->pos_x = (float64) tx + 0.5
+                    g->pos_y = (float64) ty + 0.5
+                | none -> bad()
+            | none -> bad()
         free(coords)
         check_pickups(w->lv, g, w->ac)
     else if text.starts_with(arg, "sethp:") then
-        g->health = text.parse_int32(arg[6..arg.len])!
+        match text.parse_int32(arg[6..arg.len]) with
+        | some(n) -> g->health = n
+        | none -> bad()
     else if text.starts_with(arg, "setweapon:") then
-        g->weapon = text.parse_int32(arg[10..arg.len])!
+        match text.parse_int32(arg[10..arg.len]) with
+        | some(n) -> g->weapon = n
+        | none -> bad()
     else if text.starts_with(arg, "setammo:") then
-        g->ammo = text.parse_int32(arg[8..arg.len])!
+        match text.parse_int32(arg[8..arg.len]) with
+        | some(n) -> g->ammo = n
+        | none -> bad()
     else if arg == "fire" then
         g->key_fire = true
         tick(w, dt)
@@ -1569,9 +1609,11 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         g->key_space = false
         g->key_space_handled = false
     else if text.starts_with(arg, "wait:") then
-        let n = text.parse_int32(arg[5..arg.len])!
-        for j in 0..n
-            tick(w, dt)
+        match text.parse_int32(arg[5..arg.len]) with
+        | some(n) ->
+            for j in 0..n
+                tick(w, dt)
+        | none -> bad()
     else if text.starts_with(arg, "ss:") then
         render_frame(w, w->ac->vs, pal)
         save_png(w, arg[3..arg.len])
