@@ -22,14 +22,14 @@ case "$(uname -s)" in
             -o "$OUTDIR/wolf-fc.exe" "$OUTDIR/wolf-fc.c" \
             -lmingw32 -lSDL2main -lSDL2 -lm
         echo "Running Wolf-FC..."
-        "$OUTDIR/wolf-fc.exe"
+        "$OUTDIR/wolf-fc.exe" "$@"
         echo "[exit: $?]"
         ;;
     *)
         "$FC_DIR/fc" $SRCS -o /tmp/wolf-fc.c
         cc -std=c11 -Wall -Werror -o /tmp/wolf-fc-bin /tmp/wolf-fc.c -lSDL2 -lm
         echo "Running Wolf-FC..."
-        /tmp/wolf-fc-bin
+        /tmp/wolf-fc-bin "$@"
         echo "[exit: $?]"
         ;;
 esac
