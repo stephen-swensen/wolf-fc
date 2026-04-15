@@ -968,13 +968,18 @@ let check_pickups = (lv: level*, g: game*, ac: audio_ctx*) ->
         lv->sprites[i].alive = false
         // Health items intentionally have no pickup sound (matches Wolf3D).
         match it with
-        | gold_key | silver_key                       -> trigger_sound(snd_get_key, ac)
-        | machine_gun                                 -> trigger_sound(snd_get_mg, ac)
-        | chain_gun                                   -> trigger_sound(snd_get_gat, ac)
-        | clip                                        -> trigger_sound(snd_get_ammo, ac)
-        | cross | chalice | bible | crown             -> trigger_sound(snd_treasure, ac)
-        | dog_food | food | first_aid | extra_life    -> void()
-        | decoration                                  -> void()
+        | gold_key | silver_key    -> trigger_sound(snd_get_key, ac)
+        | machine_gun              -> trigger_sound(snd_get_mg, ac)
+        | chain_gun                -> trigger_sound(snd_get_gat, ac)
+        | clip                     -> trigger_sound(snd_get_ammo, ac)
+        | cross                    -> trigger_sound(snd_bonus1, ac)
+        | chalice                  -> trigger_sound(snd_bonus2, ac)
+        | bible                    -> trigger_sound(snd_bonus3, ac)
+        | crown                    -> trigger_sound(snd_bonus4, ac)
+        | extra_life               -> trigger_sound(snd_bonus1up, ac)
+        | dog_food | food          -> trigger_sound(snd_health1, ac)
+        | first_aid                -> trigger_sound(snd_health2, ac)
+        | decoration               -> void()
         // Extra life at 40,000 points
         if g->score >= 40000 && g->score - 40000 < 5000 then
             g->lives = g->lives + 1
@@ -1096,7 +1101,7 @@ let snd_atk_mg     = 4
 let snd_atk_gat    = 5
 let snd_get_key    = 6
 let snd_get_ammo   = 7
-let snd_treasure   = 8
+let snd_bonus1     = 8    // cross
 let snd_pain       = 9
 let snd_push_wall  = 10
 let snd_get_mg     = 11
@@ -1104,11 +1109,17 @@ let snd_get_gat    = 12
 let snd_hit_wall   = 13
 let snd_no_action  = 14
 let snd_no_way     = 15
-let snd_count      = 16
+let snd_bonus2     = 16   // chalice
+let snd_bonus3     = 17   // bible
+let snd_bonus4     = 18   // crown
+let snd_bonus1up   = 19   // extra life
+let snd_health1    = 20   // dog food / food
+let snd_health2    = 21   // first aid
+let snd_count      = 22
 
 // Digi-pack index for each snd_* (-1 = no digitized version). The mapping
 // comes from wolf4sdl's wolfdigimap[] for Wolf3D; Spear of Destiny differs.
-let snd_digi = int32[16] {
+let snd_digi = int32[22] {
      3,   // open_door    (OPENDOORSND  -> digi 3)
      2,   // close_door   (CLOSEDOORSND -> digi 2)
      5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
@@ -1117,19 +1128,25 @@ let snd_digi = int32[16] {
      6,   // atk_gat      (ATKGATLINGSND -> digi 6)
     -1,   // get_key      (no digi)
     -1,   // get_ammo     (no digi)
-    -1,   // treasure     (no digi)
+    -1,   // bonus1       (no digi)
     14,   // pain         (TAKEDAMAGESND -> digi 14)
     15,   // push_wall    (PUSHWALLSND  -> digi 15)
     -1,   // get_mg       (no digi)
     -1,   // get_gat      (no digi)
     -1,   // hit_wall     (no digi)
     -1,   // no_action    (no digi)
-    -1    // no_way       (no digi)
+    -1,   // no_way       (no digi)
+    -1,   // bonus2       (no digi)
+    -1,   // bonus3       (no digi)
+    -1,   // bonus4       (no digi)
+    -1,   // bonus1up     (no digi)
+    -1,   // health1      (no digi)
+    -1    // health2      (no digi)
 }
 
 // AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this). -1 to
 // disable. Enum values taken from wolf4sdl's audiowl6.h.
-let snd_adlib_enum = int32[16] {
+let snd_adlib_enum = int32[22] {
     18,   // open_door    (OPENDOORSND)
     19,   // close_door   (CLOSEDOORSND)
     24,   // atk_pistol   (ATKPISTOLSND)
@@ -1138,14 +1155,20 @@ let snd_adlib_enum = int32[16] {
     11,   // atk_gat      (ATKGATLINGSND)
     12,   // get_key      (GETKEYSND)
     31,   // get_ammo     (GETAMMOSND)
-    35,   // treasure     (BONUS1SND)
+    35,   // bonus1       (BONUS1SND)
     16,   // pain         (TAKEDAMAGESND)
     46,   // push_wall    (PUSHWALLSND)
     30,   // get_mg       (GETMACHINESND)
     38,   // get_gat      (GETGATLINGSND)
      0,   // hit_wall     (HITWALLSND)
     20,   // no_action    (DONOTHINGSND)
-     6    // no_way       (NOWAYSND)
+     6,   // no_way       (NOWAYSND)
+    36,   // bonus2       (BONUS2SND)
+    37,   // bonus3       (BONUS3SND)
+    45,   // bonus4       (BONUS4SND)
+    44,   // bonus1up     (BONUS1UPSND)
+    33,   // health1      (HEALTH1SND)
+    34    // health2      (HEALTH2SND)
 }
 
 // Play a sound by wolf-fc sound ID (one of snd_open_door, etc.). Prefers
