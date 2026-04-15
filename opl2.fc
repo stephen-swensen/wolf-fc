@@ -1,28 +1,77 @@
-// Minimal OPL2 (YM3812) emulator for IMF, AdLib, and Digi playback.
-// Written from scratch based on the publicly documented Yamaha YM3812 spec.
-// Simplified envelope and phase model — not bit-accurate but sounds recognizable.
+// OPL2 (YM3812) emulator for IMF music, AdLib SFX, and general FM synthesis.
+//
+// Written from scratch; not bit-accurate, but models the behaviors that
+// actually audibly differentiate OPL2 output:
+//
+//   - Envelopes step linearly in dB (exponential in gain), so decays sound
+//     natural instead of rushing through the top of the range and lingering
+//     near zero. 10-bit attenuation value in [0, 1023] where 0 = full volume
+//     and 1023 = silence (-48 dB).
+//   - Rate nibbles (AR/DR/RR) are exponential — each increment halves the
+//     time — using per-op cached dB-per-sample step sizes.
+//   - EGT (envelope sustain flag, reg 0x20 bit 5) controls whether a note
+//     releases automatically after decay (percussive, EGT=0) or holds at
+//     sustain until key-off (ADSR, EGT=1). This is the flag that makes Wolf3D
+//     SFX die away properly instead of hanging at sustain level.
+//   - KSR (key scale rate) speeds envelopes for higher notes.
+//   - KSL (key scale level) attenuates higher notes.
+//
+// Skipped intentionally: tremolo/vibrato LFO (reg 0xBD depths), rhythm mode,
+// CSM/NTS — none of them matter for Wolf3D playback.
 
 module opl2 =
     import math from std::
 
+    // Envelope stages. OFF is distinct so env_step can skip silent operators.
+    let stg_off     = 0
+    let stg_attack  = 1
+    let stg_decay   = 2
+    let stg_sustain = 3
+    let stg_release = 4
+
     struct chip =
+        // Phase accumulator per operator (0..1, wraps)
         op_phase: float64[18]
-        op_env: float64[18]
+        // Envelope attenuation in dB (0 = loud, 48 = silent)
+        op_env_db: float64[18]
+        // Envelope stage (stg_*)
         op_stage: int32[18]
+        // Total Level attenuation (reg 0x40 bits 0..5): 0..63, maps to 0..48 dB
         op_tl: int32[18]
+        // Frequency multiplier nibble (reg 0x20 bits 0..3): 0..15
         op_mult: int32[18]
+        // Attack/Decay/Sustain/Release rate nibbles (regs 0x60, 0x80)
         op_ar: int32[18]
         op_dr: int32[18]
-        op_sl: int32[18]
+        op_sl: int32[18]     // sustain level (0..15)
         op_rr: int32[18]
+        // Waveform select (reg 0xE0 bits 0..1): 0=sine, 1=half, 2=abs, 3=quarter-pulse
         op_wf: int32[18]
+        // Reg 0x20 flags: AM/VIB are unused (we skip LFO); EGT and KSR are live.
+        op_egt: bool[18]
+        op_ksr: bool[18]
+        // KSL (reg 0x40 bits 6..7): 0=off, 1..3 = scale factors for ksl_table
+        op_ksl: int32[18]
+        // Per-channel pitch state
         ch_fnum: int32[9]
         ch_block: int32[9]
         ch_key: bool[9]
+        // Feedback amount (0..7) and connection type (0=FM, 1=additive)
         ch_fb: int32[9]
         ch_add: bool[9]
+        // Previous modulator outputs for feedback (2-sample average, per OPL2)
         ch_prev0: float64[9]
         ch_prev1: float64[9]
+        // Attack is exponential approach in dB (env_db *= factor per sample,
+        // factor < 1). This matches OPL2's "fast then slow" attack shape —
+        // linear-in-dB would sit near silence for most of the attack time.
+        op_att_factor: float64[18]
+        // Decay and release are linear in dB (constant dB/sample).
+        op_dec_db_per_sample: float64[18]
+        op_rel_db_per_sample: float64[18]
+        // Cached KSL attenuation in dB (depends on fnum+block+ksl; recomputed
+        // when any of those change). Added to env_db + TL_db every sample.
+        op_ksl_db: float64[18]
         rate: float64
 
     let init = (sample_rate: float64) ->
@@ -31,9 +80,13 @@ module opl2 =
         for i in 0..18
             c->op_tl[i] = 63
             c->op_mult[i] = 1
+            c->op_env_db[i] = 48.0    // silent
+            c->op_stage[i] = stg_off
         c
 
-    // Register offset -> operator index (channel*2 + op), or -1 if invalid
+    // Register offset → operator index (channel*2 + op), or -1 if invalid.
+    // OPL2 groups 3 channels per bank with a gap: ch 0..2 use offsets 0..2,
+    // ch 3..5 use 8..10, ch 6..8 use 16..18. Carrier = modulator + 3.
     let op_idx = (offset: int32) ->
         let group = offset / 8
         let slot = offset % 8
@@ -43,53 +96,181 @@ module opl2 =
             let op = slot / 3
             ch * 2 + op
 
+    // Rate time constant. Each rate nibble halves the time. Values tuned to
+    // roughly match the YM3812 datasheet — AR=15 attacks in ~0.3 ms, DR/RR=15
+    // decays in ~6 ms, AR=1 attacks in ~8 s. Rate 0 = infinite (no change).
+    let rate_time_sec = (rate: int32, base_sec: float64) ->
+        if rate <= 0 then 1000000.0
+        else base_sec * math.pow(0.5, (float64) (rate - 1))
+
+    // Key-scale value from (block, fnum). Fed into KSR to speed envelopes up
+    // at higher pitches. Per datasheet: ks = (block << 1) | (fnum_msb_2bit).
+    let key_scale = (block: int32, fnum: int32) ->
+        (block << 1) | ((fnum >> 9) & 1)
+
+    // Recompute an operator's cached envelope rates, factoring in KSR. When
+    // KSR is off, the rate scales much less aggressively with pitch. Called
+    // on key-on and whenever AR/DR/RR/KSR/fnum/block changes.
+    let recompute_op_rates = (c: chip*, idx: int32, ks: int32) ->
+        // Real OPL2: effective_rate = nibble*4 + ksr_adjustment, where
+        // ksr_adjustment is `ks` (0..15) if KSR=1, else `ks>>2` (0..3).
+        // We operate in nibble units (each step halves time), so the bump
+        // is (ksr_adjustment / 4): `ks>>2` for KSR=1, 0 for KSR=0.
+        let ksr_bump = if c->op_ksr[idx] then ks >> 2 else 0
+        let ar_eff = c->op_ar[idx] + ksr_bump
+        let dr_eff = c->op_dr[idx] + ksr_bump
+        let rr_eff = c->op_rr[idx] + ksr_bump
+        // Clamp rates to 15 (the physical nibble range is 4 bits).
+        let ar_c = if ar_eff > 15 then 15 else ar_eff
+        let dr_c = if dr_eff > 15 then 15 else dr_eff
+        let rr_c = if rr_eff > 15 then 15 else rr_eff
+        // Base times (seconds at rate=1). Real OPL2 has a two-piece rate
+        // table (sub-rate clocking at low rates, linear doubling at high).
+        // We use a single geometric halving per nibble, tuned so mid-range
+        // rates (8..12 — the common music range) match DOSBox closely:
+        //   AR base 11 s  → AR=8 ≈ 86 ms (ref 85 ms), AR=15 ≈ 0.67 ms
+        //   DR base 44 s  → DR=8 ≈ 340 ms (ref 340 ms), DR=15 ≈ 2.7 ms
+        //   RR uses the DR table.
+        // Low rates (1..4) will be a bit fast vs hardware; acceptable.
+        let att_t = rate_time_sec(ar_c, 11.0)
+        let dec_t = rate_time_sec(dr_c, 44.0)
+        let rel_t = rate_time_sec(rr_c, 44.0)
+        // Attack: exponential approach to 0 dB. `factor` is the per-sample
+        // multiplier applied to env_db, so env_db halves every `att_t/ln(2)`
+        // seconds approximately. We pick factor so env_db reaches ~1 dB of
+        // silence target in `att_t` seconds (~99% point).
+        c->op_att_factor[idx] = math.exp(0.0 - 4.6 / (att_t * c->rate))
+        c->op_dec_db_per_sample[idx] = 48.0 / (dec_t * c->rate)
+        c->op_rel_db_per_sample[idx] = 48.0 / (rel_t * c->rate)
+
+    // YM3812 Key Scale Level ROM (16 entries indexed by fnum_msb4). Each
+    // unit is 0.375 dB. `ksl_raw` below combines this with the block number
+    // via `ksl_rom[fnum_msb4] - (7 - block) * 8`, floored at 0. The output
+    // is further scaled by the per-op KSL setting: KSL=1 → 1/4, 2 → 1/2, 3 → 1.
+    let ksl_rom = (i: int32) ->
+        if i == 0 then 0
+        else if i == 1 then 32
+        else if i == 2 then 40
+        else if i == 3 then 45
+        else if i == 4 then 48
+        else if i == 5 then 51
+        else if i == 6 then 53
+        else if i == 7 then 55
+        else if i == 8 then 56
+        else if i == 9 then 58
+        else if i == 10 then 59
+        else if i == 11 then 60
+        else if i == 12 then 61
+        else if i == 13 then 62
+        else if i == 14 then 63
+        else 64
+
+    let recompute_op_ksl = (c: chip*, idx: int32, block: int32, fnum: int32) ->
+        let ksl = c->op_ksl[idx]
+        if ksl == 0 then
+            c->op_ksl_db[idx] = 0.0
+        else
+            let fnum_msb4 = (fnum >> 6) & 15
+            let raw_val = ksl_rom(fnum_msb4) - (7 - block) * 8
+            let ksl_units = if raw_val < 0 then 0 else raw_val
+            let factor = if ksl == 1 then 0.25
+                else if ksl == 2 then 0.5
+                else 1.0
+            c->op_ksl_db[idx] = (float64) ksl_units * 0.375 * factor
+
+    // Recompute both rates and KSL for both operators on a channel. Used when
+    // fnum/block changes (affects both operators of the channel).
+    let refresh_channel_ops = (c: chip*, ch: int32) ->
+        let ks = key_scale(c->ch_block[ch], c->ch_fnum[ch])
+        recompute_op_rates(c, ch * 2, ks)
+        recompute_op_rates(c, ch * 2 + 1, ks)
+        recompute_op_ksl(c, ch * 2, c->ch_block[ch], c->ch_fnum[ch])
+        recompute_op_ksl(c, ch * 2 + 1, c->ch_block[ch], c->ch_fnum[ch])
+
     let write = (c: chip*, reg: int32, val: int32) ->
         let base = reg & 240
         let off = reg & 31
+        // 0x20–0x35: AM/VIB/EGT/KSR/MULT
         if base == 32 then
             let idx = op_idx(off)
-            if idx >= 0 then c->op_mult[idx] = val & 15
+            if idx >= 0 then
+                c->op_mult[idx] = val & 15
+                c->op_ksr[idx]  = (val & 16) != 0
+                c->op_egt[idx]  = (val & 32) != 0
+                // AM (128) and VIB (64) bits intentionally ignored — no LFO.
+                // KSR affects envelope rates; need to recompute for this op.
+                let ch = idx / 2
+                let ks = key_scale(c->ch_block[ch], c->ch_fnum[ch])
+                recompute_op_rates(c, idx, ks)
+        // 0x40–0x55: KSL / TL
         if base == 64 then
             let idx = op_idx(off)
-            if idx >= 0 then c->op_tl[idx] = val & 63
+            if idx >= 0 then
+                c->op_tl[idx]  = val & 63
+                c->op_ksl[idx] = (val >> 6) & 3
+                let ch = idx / 2
+                recompute_op_ksl(c, idx, c->ch_block[ch], c->ch_fnum[ch])
+        // 0x60–0x75: Attack / Decay
         if base == 96 then
             let idx = op_idx(off)
             if idx >= 0 then
                 c->op_ar[idx] = (val >> 4) & 15
                 c->op_dr[idx] = val & 15
+                let ch = idx / 2
+                let ks = key_scale(c->ch_block[ch], c->ch_fnum[ch])
+                recompute_op_rates(c, idx, ks)
+        // 0x80–0x95: Sustain Level / Release
         if base == 128 then
             let idx = op_idx(off)
             if idx >= 0 then
                 c->op_sl[idx] = (val >> 4) & 15
                 c->op_rr[idx] = val & 15
+                let ch = idx / 2
+                let ks = key_scale(c->ch_block[ch], c->ch_fnum[ch])
+                recompute_op_rates(c, idx, ks)
+        // 0xE0–0xF5: Waveform select
         if base == 224 then
             let idx = op_idx(off)
             if idx >= 0 then c->op_wf[idx] = val & 3
         let ci = reg & 15
+        // 0xA0–0xA8: fnum low byte
         if base == 160 && ci < 9 then
             c->ch_fnum[ci] = (c->ch_fnum[ci] & 768) | (val & 255)
+            refresh_channel_ops(c, ci)
+        // 0xB0–0xB8: fnum high 2 bits, block, key-on
         if base == 176 && ci < 9 then
             c->ch_fnum[ci] = (c->ch_fnum[ci] & 255) | ((val & 3) << 8)
             c->ch_block[ci] = (val >> 2) & 7
+            refresh_channel_ops(c, ci)
             let new_key = (val & 32) != 0
             if new_key && !c->ch_key[ci] then
-                c->op_stage[ci * 2] = 1
-                c->op_env[ci * 2] = 0.0
+                // Key-on: reset phase and start attack. DON'T reset env_db —
+                // real OPL2 preserves it, which matters for rapid retriggers
+                // (many SFX are a sequence of notes tighter than the release
+                // time; resetting to silence would kill each retriggered note).
+                c->op_stage[ci * 2] = stg_attack
                 c->op_phase[ci * 2] = 0.0
-                c->op_stage[ci * 2 + 1] = 1
-                c->op_env[ci * 2 + 1] = 0.0
+                c->op_stage[ci * 2 + 1] = stg_attack
                 c->op_phase[ci * 2 + 1] = 0.0
+                c->ch_prev0[ci] = 0.0
+                c->ch_prev1[ci] = 0.0
             if !new_key && c->ch_key[ci] then
-                if c->op_stage[ci * 2] > 0 then
-                    c->op_stage[ci * 2] = 4
-                if c->op_stage[ci * 2 + 1] > 0 then
-                    c->op_stage[ci * 2 + 1] = 4
+                // Key-off: transition to release, keep current attenuation.
+                if c->op_stage[ci * 2] != stg_off then
+                    c->op_stage[ci * 2] = stg_release
+                if c->op_stage[ci * 2 + 1] != stg_off then
+                    c->op_stage[ci * 2 + 1] = stg_release
             c->ch_key[ci] = new_key
+        // 0xC0–0xC8: Feedback / Connection
         if base == 192 && ci < 9 then
             c->ch_fb[ci] = (val >> 1) & 7
             c->ch_add[ci] = (val & 1) != 0
         return
 
+    // Sample the OPL2 waveform at `phase` ∈ [0,1). Four shapes:
+    //   0 = full sine; 1 = half sine (positive lobe, zero elsewhere);
+    //   2 = absolute sine (both lobes positive); 3 = pulse sine (first
+    //   quarter only).
     let wave = (phase: float64, wf: int32) ->
         let p = phase * 6.2831853071795864
         let s = math.sin(p)
@@ -98,41 +279,39 @@ module opl2 =
         else if wf == 2 then math.abs(s)
         else if phase < 0.25 then s else 0.0
 
+    // Advance an operator's envelope one sample. Linear in dB — the per-sample
+    // step size was precomputed by recompute_op_rates.
     let env_step = (c: chip*, idx: int32) ->
         let stage = c->op_stage[idx]
-        if stage == 0 then return
-        let mut env = c->op_env[idx]
-        let rs = 1.0 / c->rate
-        if stage == 1 then
-            let ar = c->op_ar[idx]
-            if ar == 0 then return
-            env = env + (float64) ar * 320.0 * rs
-            if env >= 1.0 then
-                env = 1.0
-                c->op_stage[idx] = 2
-        if stage == 2 then
-            let dr = c->op_dr[idx]
-            let target = 1.0 - (float64) c->op_sl[idx] / 15.0
-            if dr == 0 then
-                c->op_stage[idx] = 3
-            else
-                env = env - (float64) dr * 80.0 * rs
-                if env <= target then
-                    env = target
-                    c->op_stage[idx] = 3
-        if stage == 4 then
-            let rr = c->op_rr[idx]
-            if rr == 0 then
+        if stage == stg_off || stage == stg_sustain then return
+        let mut env = c->op_env_db[idx]
+        if stage == stg_attack then
+            // Exponential approach to 0 dB. Stops when we're within 0.5 dB
+            // of full volume — pure asymptote otherwise never reaches exactly 0.
+            env = env * c->op_att_factor[idx]
+            if env <= 0.5 then
                 env = 0.0
-                c->op_stage[idx] = 0
-            else
-                env = env - (float64) rr * 80.0 * rs
-                if env <= 0.0 then
-                    env = 0.0
-                    c->op_stage[idx] = 0
-        c->op_env[idx] = env
+                c->op_stage[idx] = stg_decay
+        else if stage == stg_decay then
+            // SL is 4-bit, 3 dB per step — EXCEPT SL=15 is special-cased to
+            // maximum attenuation (~93 dB / silent). Wolf3D percussive SFX
+            // rely on this to actually decay to silence, not hover at -45 dB.
+            let target = if c->op_sl[idx] == 15 then 96.0
+                else (float64) c->op_sl[idx] * 3.0
+            env = env + c->op_dec_db_per_sample[idx]
+            if env >= target then
+                env = target
+                // EGT=0 → percussive: continue releasing. EGT=1 → hold.
+                c->op_stage[idx] = if c->op_egt[idx] then stg_sustain else stg_release
+        else if stage == stg_release then
+            env = env + c->op_rel_db_per_sample[idx]
+            if env >= 48.0 then
+                env = 48.0
+                c->op_stage[idx] = stg_off
+        c->op_env_db[idx] = env
         return
 
+    // Frequency multiplier table per operator (bit-exact Yamaha mapping).
     let mult_val = (m: int32) ->
         if m == 0 then 0.5
         else if m == 11 then 10.0
@@ -140,6 +319,16 @@ module opl2 =
         else if m == 14 then 15.0
         else (float64) m
 
+    // Convert dB attenuation to linear gain = 10^(-dB/20). Cap at 96 dB
+    // (gain ≈ 1.6e-5 ≈ silence). Lower caps wrongly silence operators whose
+    // TL + envelope + KSL sum above 48 dB — which is routine for modulators
+    // with moderate TL during the sustain portion of a note.
+    let db_to_gain = (db: float64) ->
+        if db >= 96.0 then 0.0
+        else math.pow(10.0, 0.0 - db / 20.0)
+
+    // Produce one output sample from the chip (int16, range tuned so a single
+    // OPL2 chip leaves headroom for mixing against music + digi).
     let sample = (c: chip*) ->
         let mut out = 0.0
         for ch in 0..9
@@ -150,31 +339,47 @@ module opl2 =
             let ci = ch * 2 + 1
             env_step(c, mi)
             env_step(c, ci)
+            // Skip channels whose carrier is silent (either off or deep in release).
+            // Saves a lot of work since most channels are idle most of the time.
+            if c->op_stage[ci] == stg_off then continue
+            // Modulator — advance phase, compute output with feedback.
             let mf = base_freq * mult_val(c->op_mult[mi])
             c->op_phase[mi] = c->op_phase[mi] + mf / c->rate
             if c->op_phase[mi] >= 1.0 then
                 c->op_phase[mi] = c->op_phase[mi] - 1.0
-            let mtl = (float64) c->op_tl[mi] / 63.0
-            let mvol = c->op_env[mi] * (1.0 - mtl)
+            let m_tl_db = (float64) c->op_tl[mi] * 48.0 / 63.0
+            let m_total_db = c->op_env_db[mi] + m_tl_db + c->op_ksl_db[mi]
+            let mvol = db_to_gain(m_total_db)
             let fb = c->ch_fb[ch]
             let mut fbv = 0.0
             if fb > 0 then
-                fbv = (c->ch_prev0[ch] + c->ch_prev1[ch]) / 2.0 / math.pow(2.0, (float64) (8 - fb))
+                // Real OPL2 feedback shift table (DOSBox-style): fb=1..7
+                // right-shifts the last-two-output average by (9-fb) phase
+                // bits. In normalized phase (1 = wavelength), that's roughly
+                // fb=7 → 0.5 wavelength, fb=4 → 0.06, fb=1 → 0.004. Shift
+                // (9-fb) on a [-1,1]-normalized average gives this scaling.
+                fbv = (c->ch_prev0[ch] + c->ch_prev1[ch]) / 2.0 / math.pow(2.0, (float64) (9 - fb))
             let mp = c->op_phase[mi] + fbv
             let mout = wave(mp - math.floor(mp), c->op_wf[mi]) * mvol
             c->ch_prev1[ch] = c->ch_prev0[ch]
             c->ch_prev0[ch] = mout
+            // Carrier — either modulated by `mout` (FM) or mixed additively (AM).
             let cf = base_freq * mult_val(c->op_mult[ci])
-            let ctl = (float64) c->op_tl[ci] / 63.0
-            let cvol = c->op_env[ci] * (1.0 - ctl)
             c->op_phase[ci] = c->op_phase[ci] + cf / c->rate
             if c->op_phase[ci] >= 1.0 then
                 c->op_phase[ci] = c->op_phase[ci] - 1.0
+            let c_tl_db = (float64) c->op_tl[ci] * 48.0 / 63.0
+            let c_total_db = c->op_env_db[ci] + c_tl_db + c->op_ksl_db[ci]
+            let cvol = db_to_gain(c_total_db)
             if c->ch_add[ch] then
                 let cout = wave(c->op_phase[ci], c->op_wf[ci]) * cvol
                 out = out + mout + cout
             else
-                let fmp = c->op_phase[ci] + mout * 0.5
+                // FM: modulator's output is added to carrier phase (wraps via
+                // floor). The 1.0 factor means mvol=1 creates ±1 wavelength
+                // of FM shift — comparable to dbopl where modulator output
+                // fills the wave index at full attenuation-free output.
+                let fmp = c->op_phase[ci] + mout
                 let cout = wave(fmp - math.floor(fmp), c->op_wf[ci]) * cvol
                 out = out + cout
         if out > 1.0 then out = 1.0
@@ -186,16 +391,14 @@ module opl2 =
     // The chip instance is independent from any music instance.
     // ============================================================
 
-    // Modulator register-offset for channel N. OPL2 groups 3 channels per
-    // bank with a gap: ch 0..2 use offsets 0..2, ch 3..5 use 8..10, ch 6..8
-    // use 16..18. The carrier of a channel is always modulator + 3.
+    // Modulator register-offset for channel N.
     let op_mod_offset = (channel: int32) ->
         if channel < 3 then channel
         else if channel < 6 then channel + 5
         else channel + 10
 
     // Program an id-Software 11-byte AdLib instrument onto a melodic channel.
-    // Mirrors wolf4sdl's SDL_AlSetFXInst. Values are raw OPL2 register bytes.
+    // Values are raw OPL2 register bytes; our `write` path picks them apart.
     let load_instrument = (c: chip*, channel: int32,
                            m_char: int32,  c_char: int32,
                            m_scale: int32, c_scale: int32,
