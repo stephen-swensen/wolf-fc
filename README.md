@@ -2,6 +2,12 @@
 
 A Wolfenstein 3D clone written in [FC](https://github.com/stephen-swensen/fc-lang), a modern systems programming language that transpiles to C11. This project serves as a comprehensive demo of FC's capabilities: C interop, module system, manual memory management, and real-time rendering via SDL2.
 
+## Development Transparency
+
+Wolf-FC was developed with heavy AI assistance — primarily **Anthropic's Claude Opus 4.6** (and earlier Opus/Sonnet models) driven through **[Claude Code](https://claude.com/claude-code)**. The human author (Stephen Swensen) designed the project, set direction, reviewed every change, drove architectural decisions, and took responsibility for correctness, style, and the licensing posture described below. The AI generated the bulk of the FC code, test scaffolding, and documentation under that direction.
+
+This is disclosed up front because the project is also intended as a demonstration of what a well-directed human/AI collaboration can produce on a non-trivial systems programming task (FC is a niche language with no training-data precedent for a full raycasting engine), and because readers evaluating the code or using it as a reference for FC deserve to know how it was written.
+
 ## Requirements
 
 - **FC compiler** — clone `fc-lang` alongside this repo (i.e. `../fc-lang/`)
