@@ -75,7 +75,16 @@ struct game =
     key_alt: bool
     key_ctrl: bool
     key_space: bool
+    // Latched so a held-space only triggers the use-action once per press.
+    // Set true the first time update_player sees key_space=true; reset on
+    // keyup. Without this the SDL key-repeat stream retriggers the door/
+    // push-wall handlers on every frame, producing stray sounds.
+    key_space_handled: bool
     key_fire: bool
+    // Wall-scrape sound cooldown (seconds). Prevents HITWALLSND from firing
+    // every frame while the player grinds along a wall. Counts down in
+    // update_player; a new bump is only announced when it hits 0.
+    wall_hit_cooldown: float64
 
     // Game
     health: int32
@@ -288,23 +297,34 @@ let door_passable = (lv: level*, x: int32, y: int32) ->
         else lv->doors[t - 128].state == door_open
 
 // Try to open a door at the given tile position.
+// Outcome of a use-action on a tile in front of the player. Callers pattern-
+// match on this to decide whether the press was "handled" (in which case we
+// skip the generic DONOTHINGSND fall-through).
+union door_action =
+    | no_door        // tile isn't a door, or is already opening/open
+    | door_opened    // closed door started opening
+    | door_locked    // closed door needs a key the player doesn't have
+
 let try_open_door = (lv: level*, x: int32, y: int32, g: game*, ac: audio_ctx*) ->
-    if x < 0 || x >= map_size || y < 0 || y >= map_size then false
+    if x < 0 || x >= map_size || y < 0 || y >= map_size then door_action.no_door
     else
         let t = (int32) lv->tilemap[(int64) x * 64 + (int64) y]
-        if t < 128 then false
+        if t < 128 then door_action.no_door
         else
             let dn = t - 128
-            if lv->doors[dn].state != door_closed then false
+            if lv->doors[dn].state != door_closed then door_action.no_door
             else
-                // Check key requirements
                 let lock = lv->doors[dn].lock_type
-                if lock == 1 && !g->has_gold_key then false
-                else if lock == 2 && !g->has_silver_key then false
+                if lock == 1 && !g->has_gold_key then
+                    trigger_sound(snd_no_way, ac)
+                    door_action.door_locked
+                else if lock == 2 && !g->has_silver_key then
+                    trigger_sound(snd_no_way, ac)
+                    door_action.door_locked
                 else
                     lv->doors[dn].state = door_opening
                     trigger_sound(snd_open_door, ac)
-                    true
+                    door_action.door_opened
 
 // Find player start position and facing from level plane 1.
 // Tile values 19-22 = player facing N/E/S/W.
@@ -828,26 +848,42 @@ let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
         if g->key_left then rotate_camera(g, rot)
         if g->key_right then rotate_camera(g, 0.0 - rot)
 
-    if wall_hit && !ac->sfx->active then
+    if g->wall_hit_cooldown > 0.0 then
+        g->wall_hit_cooldown = g->wall_hit_cooldown - dt
+    if wall_hit && g->wall_hit_cooldown <= 0.0 then
         trigger_sound(snd_hit_wall, ac)
+        g->wall_hit_cooldown = 0.4   // ~400 ms before we'll re-announce
 
-    // Open doors / activate elevator with space
-    if g->key_space then
+    // Open doors / activate elevator with space (latched — SDL sends repeat
+    // KEYDOWN events while held, and we'd retrigger the use-action on every
+    // one of them otherwise, which causes stray sounds).
+    if g->key_space && !g->key_space_handled then
+        g->key_space_handled = true
         let fx = (int32) (g->pos_x + g->dir_x)
         let fy = (int32) (g->pos_y + g->dir_y)
-        // Check for elevator switch (tile 21)
+        let mut did_anything = false
+        // Check for elevator switch (tile 21).
         if fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
             let face_tile = (int32) lv->tilemap[(int64) fx * 64 + (int64) fy]
             if face_tile == 21 then
                 g->next_level = true
-        // Try push-wall (determine push direction from player facing)
+                did_anything = true
+        // Try push-wall (only if facing cardinally).
         let push_dx = if g->dir_x > 0.5 then 1 else if g->dir_x < -0.5 then -1 else 0
         let push_dy = if g->dir_y > 0.5 then 1 else if g->dir_y < -0.5 then -1 else 0
         if push_dx != 0 || push_dy != 0 then
             if try_push_wall(lv, fx, fy, push_dx, push_dy) then
                 trigger_sound(snd_push_wall, ac)
-        try_open_door(lv, fx, fy, g, ac)
-        g->key_space = false
+                did_anything = true
+        match try_open_door(lv, fx, fy, g, ac) with
+        | no_door      -> void()
+        | door_opened
+        | door_locked  -> did_anything = true
+        // Matches wolf4sdl's fall-through to DONOTHINGSND when no use-action
+        // fired. Locked-no-key plays NOWAYSND inside try_open_door and is
+        // reported back as door_locked so we don't also play DONOTHINGSND.
+        if !did_anything then
+            trigger_sound(snd_no_action, ac)
 
 // ============================================================
 // Item pickups — walk-over detection
@@ -1045,11 +1081,13 @@ let snd_push_wall  = 10
 let snd_get_mg     = 11
 let snd_get_gat    = 12
 let snd_hit_wall   = 13
-let snd_count      = 14
+let snd_no_action  = 14
+let snd_no_way     = 15
+let snd_count      = 16
 
 // Digi-pack index for each snd_* (-1 = no digitized version). The mapping
 // comes from wolf4sdl's wolfdigimap[] for Wolf3D; Spear of Destiny differs.
-let snd_digi = int32[14] {
+let snd_digi = int32[16] {
      3,   // open_door    (OPENDOORSND  -> digi 3)
      2,   // close_door   (CLOSEDOORSND -> digi 2)
      5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
@@ -1063,12 +1101,14 @@ let snd_digi = int32[14] {
     15,   // push_wall    (PUSHWALLSND  -> digi 15)
     -1,   // get_mg       (no digi)
     -1,   // get_gat      (no digi)
-    -1    // hit_wall     (no digi)
+    -1,   // hit_wall     (no digi)
+    -1,   // no_action    (no digi)
+    -1    // no_way       (no digi)
 }
 
 // AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this). -1 to
 // disable. Enum values taken from wolf4sdl's audiowl6.h.
-let snd_adlib_enum = int32[14] {
+let snd_adlib_enum = int32[16] {
     18,   // open_door    (OPENDOORSND)
     19,   // close_door   (CLOSEDOORSND)
     24,   // atk_pistol   (ATKPISTOLSND)
@@ -1082,7 +1122,9 @@ let snd_adlib_enum = int32[14] {
     46,   // push_wall    (PUSHWALLSND)
     30,   // get_mg       (GETMACHINESND)
     38,   // get_gat      (GETGATLINGSND)
-     0    // hit_wall     (HITWALLSND)
+     0,   // hit_wall     (HITWALLSND)
+    20,   // no_action    (DONOTHINGSND)
+     6    // no_way       (NOWAYSND)
 }
 
 // Play a sound by wolf-fc sound ID (one of snd_open_door, etc.). Prefers
@@ -1522,8 +1564,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         g->has_silver_key = true
     else if arg == "space" then
         g->key_space = true
+        g->key_space_handled = false
         tick(w, dt)
         g->key_space = false
+        g->key_space_handled = false
     else if text.starts_with(arg, "wait:") then
         let n = text.parse_int32(arg[5..arg.len])!
         for j in 0..n
@@ -1575,7 +1619,8 @@ let main = (args: str[]) ->
         key_up = false, key_down = false,
         key_left = false, key_right = false,
         key_shift = false, key_alt = false,
-        key_ctrl = false, key_space = false, key_fire = false,
+        key_ctrl = false, key_space = false, key_space_handled = false, key_fire = false,
+        wall_hit_cooldown = 0.0,
         health = 100, ammo = 8, score = 0, lives = 3,
         level_num = 0,
         has_gold_key = false, has_silver_key = false,
@@ -1711,6 +1756,9 @@ let main = (args: str[]) ->
                 if k == sdl2.key_lshift then g->key_shift = false
                 if k == sdl2.key_lalt then g->key_alt = false
                 if k == sdl2.key_lctrl then g->key_fire = false
+                if k == sdl2.key_space then
+                    g->key_space = false
+                    g->key_space_handled = false
 
         // Update
         tick(w, dt)
