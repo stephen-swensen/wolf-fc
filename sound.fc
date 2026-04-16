@@ -90,6 +90,13 @@ module imf =
             () -> advance_tick(p),
             p->volume)
 
+    // Tear down a player allocated by init_from_chunk. Frees the embedded
+    // OPL2 chip too — `free(p)` alone would leak ~10 KB of chip state per
+    // call, which adds up fast across menu↔game music swaps.
+    let destroy = (p: player*) ->
+        free(p->chip)
+        free(p)
+
 
 // ============================================================
 // AdLib SFX — id-Software AdLib sound-effect format (OPL2, 140 Hz)

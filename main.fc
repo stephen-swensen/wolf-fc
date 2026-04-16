@@ -3464,6 +3464,32 @@ let draw_vg_pic_scaled = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uin
             let pix = pic[sy * (int64) w + sx]
             rc->fb[(int64) dy * 320 + (int64) dx] = pal[(int32) pix]
 
+// One-time decode + nearest-neighbor scale of TITLEPIC into a 320×200 ARGB
+// buffer. Returns a heap slice the caller must hold for the process
+// lifetime. Builds the same pixels draw_vg_pic_scaled would emit, so the
+// cached blit is visually identical to the slow path.
+let build_title_bg_cache = (vg: vgagraph.vgagraph_file*, pal: uint32[]) ->
+    let buf = alloc(uint32[game_w * game_h] {})!
+    let pic = vgagraph.load_pic(vg, vg_title)
+    defer free(pic)
+    if pic.len == 0 then return buf
+    let w = vgagraph.pic_width(vg, vg_title)
+    let h = vgagraph.pic_height(vg, vg_title)
+    if w <= 0 || h <= 0 then return buf
+    for py in 0..game_h
+        let sy = (int64) py * (int64) h / (int64) game_h
+        for px in 0..game_w
+            let sx = (int64) px * (int64) w / (int64) game_w
+            let pix = pic[sy * (int64) w + sx]
+            buf[(int64) py * (int64) game_w + (int64) px] = pal[(int32) pix]
+    buf
+
+// Blit the cached title backdrop into the framebuffer.
+let blit_title_bg = (rc: render_ctx*) ->
+    if title_bg_cache.len == 0 then return
+    for i in 0..(game_w * game_h)
+        rc->fb[i] = title_bg_cache[i]
+
 // ============================================================
 // Wolf3D font rendering
 // ============================================================
@@ -4099,7 +4125,7 @@ let viewport_tint_full = (rc: render_ctx*, tint: uint32, alpha: float64) ->
 // Title screen — full-screen TITLEPIC with a "PRESS ANY KEY" blink at bottom.
 let render_title = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
                      font: font_info*, time: float64) ->
-    draw_vg_pic_scaled(rc, vg, pal, vg_title, 0, 0, game_w, game_h)
+    blit_title_bg(rc)
     // Blink on/off every 0.6 seconds.
     let blink_on = ((int32) (time * 1.6667)) % 2 == 0
     if blink_on then
@@ -4188,6 +4214,15 @@ struct save_slot_info =
     difficulty: int32
     score: int32
 
+// Cache of the title screen, pre-decoded and palette-applied at startup.
+// Used as the backdrop for both gp_title and gp_main_menu — without this
+// cache, every menu frame re-Huffman-decompresses TITLEPIC (~64KB of
+// per-bit tree-walk) and re-palettizes 64,000 pixels, which dropped the
+// frame rate enough to underrun the audio queue and kill the music. With
+// the cache, render_title / render_main_menu just blit 320×200 uint32s.
+// Allocated once in `main` after VGAGRAPH loads.
+let mut title_bg_cache = default(uint32[])
+
 // Cache of slot info for the active save/load menu. Refreshed by
 // refresh_save_slots on menu entry; allocated once inside `main`. Only
 // one save/load menu can be open at a time so a single static cache is
@@ -4249,7 +4284,7 @@ let render_slot_menu = (rc: render_ctx*, font: font_info*, title: const str,
 let render_main_menu = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
                         font: font_info*, g: game*) ->
     // Tint the title as a backdrop (slightly dimmed so the menu pops).
-    draw_vg_pic_scaled(rc, vg, pal, vg_title, 0, 0, game_w, game_h)
+    blit_title_bg(rc)
     // Darken overlay so menu text stays readable over the title art.
     viewport_tint_full(rc, 0x00000000u32, 0.55)
     if g->menu_level == menu_main then
@@ -5393,6 +5428,11 @@ let main = (args: str[]) ->
     save_slots = alloc(save_slot_info[num_save_slots] {})!
     label_scratch = alloc(uint8[32] {})!
     hex_scratch = alloc(uint8[1] {})!
+    // Pre-decode the title backdrop once. Re-decoding it every menu frame
+    // (Huffman-expand of 64KB + per-pixel scale) caused frame-rate drops
+    // big enough to underrun the SDL audio queue, which on PulseAudio /
+    // PipeWire could disconnect the stream entirely (silent music + SFX).
+    title_bg_cache = build_title_bg_cache(vg, pal)
 
     // Sound system (valid in all modes; in --test and --screenshot nothing
     // actually reaches the speakers because SDL audio isn't opened, but
@@ -5718,12 +5758,14 @@ let main = (args: str[]) ->
             restart_full_game(w, vs)
         // Sync the active music to whatever phase we're now in. Only swap
         // when the chunk actually changed, so we don't restart the IMF
-        // player every frame.
+        // player every frame. Don't call `sdl2.clear_audio` here — the
+        // already-queued ~46 ms of old music drains naturally while the
+        // new chunk's samples take over, which sounds cleaner than the
+        // audible underrun a hard flush causes.
         let want_chunk = music_chunk_for_phase(g->phase, g->level_num)
         if want_chunk != current_music_chunk then
             if audio_dev > 0u32 && want_chunk < ad->num_chunks then
-                sdl2.clear_audio(audio_dev)
-                if ms.is_some then free(ms!)
+                if ms.is_some then imf.destroy(ms!)
                 ms = some(music_load(ad, want_chunk))
                 current_music_chunk = want_chunk
 
