@@ -4257,8 +4257,9 @@ let render_paused = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[],
     render_hud(rc, vg, pal, g)
     // Dim + overlay.
     viewport_tint_full(rc, 0x00000000u32, 0.5)
-    draw_font_centered(rc, font, view_h / 2 - 8, "PAUSED", 0xFFFFD700u32)
-    draw_font_centered(rc, font, view_h / 2 + 8, "ANY KEY TO RESUME", 0xFFFFFFFFu32)
+    draw_font_centered(rc, font, view_h / 2 - 12, "PAUSED", 0xFFFFD700u32)
+    draw_font_centered(rc, font, view_h / 2 + 4, "ANY KEY TO RESUME", 0xFFFFFFFFu32)
+    draw_font_centered(rc, font, view_h / 2 + 16, "ESC FOR MAIN MENU", 0xFFB0B0B0u32)
 
 // Render the full game frame to fb (used before saving a screenshot).
 let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
