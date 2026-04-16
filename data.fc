@@ -102,11 +102,26 @@ module palette =
 module vswap =
     import io from std::
 
+    // Per-sprite cached header. Populated once at load time for every page
+    // in [sprite_start, sound_start). Eliminates 2 bytes.u16 reads per
+    // draw_sprite_col call and up to 64 more for column-offset lookups.
+    // Sparse pages (page_offset == 0) keep valid=false.
+    struct sprite_header =
+        valid: bool
+        base: int64              // file offset of this page (0 if sparse)
+        left_pix: int32          // first non-empty column (0..63)
+        right_pix: int32         // last non-empty column (0..63)
+        col_offsets: uint16[64]  // per-column data offset, relative to base;
+                                 // unused columns (outside [left..right]) stay 0
+
     struct vswap_file =
         raw: uint8[]
         num_chunks: int32
         sprite_start: int32
         sound_start: int32
+        // Index by sprite index (page - sprite_start). Length = sound_start -
+        // sprite_start. Always allocated; each entry is either valid or not.
+        sprite_headers: sprite_header[]
 
     let load = (path: const str) ->
         let f = io.open(path, "rb")!
@@ -119,8 +134,30 @@ module vswap =
         let nc = (int32) bytes.u16(raw, 0i64)
         let ss = (int32) bytes.u16(raw, 2i64)
         let snd = (int32) bytes.u16(raw, 4i64)
+        // Pre-extract per-sprite header metadata so draw_sprite_col can
+        // look up base / left / right / col_offset directly instead of
+        // re-reading from raw bytes every frame.
+        let n_sprites = snd - ss
+        let headers = alloc(sprite_header[(int64) n_sprites] {})!
+        for i in 0..n_sprites
+            let page = ss + i
+            let base = (int64) bytes.u32(raw, 6i64 + (int64) page * 4)
+            if base == 0 then
+                headers[i] = sprite_header { valid = false, base = 0,
+                    left_pix = 0, right_pix = 0,
+                    col_offsets = uint16[64] {} }
+            else
+                let lp = (int32) bytes.u16(raw, base)
+                let rp = (int32) bytes.u16(raw, base + 2)
+                let mut col_off = uint16[64] {}
+                let count = rp - lp + 1
+                for c in 0..count
+                    col_off[lp + c] = bytes.u16(raw, base + 4 + (int64) c * 2)
+                headers[i] = sprite_header { valid = true, base = base,
+                    left_pix = lp, right_pix = rp, col_offsets = col_off }
         alloc(vswap_file { raw = raw, num_chunks = nc,
-            sprite_start = ss, sound_start = snd })!
+            sprite_start = ss, sound_start = snd,
+            sprite_headers = headers })!
 
     // File offset of a page.
     let page_offset = (vs: vswap_file*, page: int32) ->
@@ -130,6 +167,14 @@ module vswap =
     let page_length = (vs: vswap_file*, page: int32) ->
         let len_off = 6i64 + (int64) vs->num_chunks * 4 + (int64) page * 2
         (int32) bytes.u16(vs->raw, len_off)
+
+    // Lookup pre-computed header for a sprite page. Returns by value;
+    // struct is small (~140 bytes) so the copy cost is negligible next to
+    // the saved bytes.u16 calls in draw_sprite_col. For non-sprite pages
+    // (walls, sounds) the result is undefined — call only with page in
+    // [sprite_start, sound_start).
+    let sprite_header_at = (vs: vswap_file*, page: int32) ->
+        vs->sprite_headers[page - vs->sprite_start]
 
     // Wall texture pixel (column-major 64x64). Returns palette index.
     let wall_pixel = (vs: vswap_file*, tex_page: int32, col: int32, row: int32) ->

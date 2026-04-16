@@ -231,6 +231,8 @@ module digi =
         data: uint8[]        // heap-owned 8-bit unsigned PCM @ 7042 Hz
         pos: float64         // current source-sample position
         playing: bool
+        gain_l: float64      // per-channel multiplier computed from pan
+        gain_r: float64
 
     struct player =
         slots: slot[4]
@@ -265,8 +267,10 @@ module digi =
 
     // Start playing `sound_num` on the first free slot, or steal slot 0
     // if all four are busy. Frees any PCM data previously owned by that
-    // slot before overwriting.
-    let play = (p: player*, vs: vswap.vswap_file*, sound_num: int32) ->
+    // slot before overwriting. `pan` is [-1, +1]; 0 = centered. The L/R
+    // gains use a linear crossfade scaled so center pan gives ~0.71 on
+    // each side (close to the classic Sound Blaster equal-power rule).
+    let play_panned = (p: player*, vs: vswap.vswap_file*, sound_num: int32, pan: float64) ->
         let mut idx = -1
         for i in 0..max_slots
             if !p->slots[i].playing then
@@ -275,28 +279,48 @@ module digi =
         if idx < 0 then idx = 0   // steal slot 0 if all full
         if p->slots[idx].data.len > 0 then
             free(p->slots[idx].data)
+        let mut pp = pan
+        if pp < -1.0 then pp = -1.0
+        if pp > 1.0 then pp = 1.0
+        let gl = 0.70710678 * (1.0 - pp)
+        let gr = 0.70710678 * (1.0 + pp)
         p->slots[idx] = slot {
             data = load_sound(vs, sound_num),
             pos = 0.0,
-            playing = true
+            playing = true,
+            gain_l = gl,
+            gain_r = gr
         }
 
-    // Mix up to `max_slots` simultaneous 8-bit sounds into `buf`, resampling
-    // nearest-neighbor from 7042 Hz to `sample_rate`. Marks a slot as not
-    // playing when its source buffer is exhausted.
+    // Back-compat: center-panned play.
+    let play = (p: player*, vs: vswap.vswap_file*, sound_num: int32) ->
+        play_panned(p, vs, sound_num, 0.0)
+
+    // Mix up to `max_slots` simultaneous 8-bit sounds into `buf` (stereo
+    // interleaved L,R,L,R…), resampling nearest-neighbor from 7042 Hz to
+    // `sample_rate`. Per-slot pan yields independent L/R gains. Marks a
+    // slot as not playing when its source buffer is exhausted.
     let fill = (p: player*, buf: int16[], count: int32, sample_rate: int32) ->
         let resample_ratio = src_rate / (float64) sample_rate
         for i in 0..count
-            let mut sample = (int32) buf[i]
+            let li = (int64) i * 2
+            let ri = li + 1
+            let mut sl = (int32) buf[li]
+            let mut sr = (int32) buf[ri]
             for s in 0..max_slots
                 if p->slots[s].playing then
                     let src_pos = (int32) p->slots[s].pos
                     if src_pos < (int32) p->slots[s].data.len then
                         let raw = (int32) p->slots[s].data[(int64) src_pos] - 128
-                        sample = sample + raw * 128
+                        let scaled = raw * 128
+                        sl = sl + (int32) ((float64) scaled * p->slots[s].gain_l)
+                        sr = sr + (int32) ((float64) scaled * p->slots[s].gain_r)
                         p->slots[s].pos = p->slots[s].pos + resample_ratio
                     else
                         p->slots[s].playing = false
-            if sample > 32767 then sample = 32767
-            if sample < -32767 then sample = -32767
-            buf[i] = (int16) sample
+            if sl > 32767 then sl = 32767
+            if sl < -32767 then sl = -32767
+            if sr > 32767 then sr = 32767
+            if sr < -32767 then sr = -32767
+            buf[li] = (int16) sl
+            buf[ri] = (int16) sr

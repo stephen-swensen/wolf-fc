@@ -146,7 +146,7 @@ assert_contains "static:blocks-player" \
     "pos=( 36.6000,  22.5000)"
 
 section "doors"
-assert_contains "door:elevator-switch"        "goto:25,47 turnl:90 space facetile" "tile=21 next_level=1"
+assert_contains "door:elevator-switch"        "goto:25,47 turnl:90 space facetile phase" "phase=intermission"
 assert_contains "door:walk-all-the-way-through" \
     "fwd:15 space wait:40 fwd:20 state" "pos=( 33.0000,  57.5000)"
 # Door straddle used to trap the player: walk through a door but stop with
@@ -156,7 +156,7 @@ assert_contains "door:walk-all-the-way-through" \
 # so the door stays open while the player is straddling. The player's
 # forward motion succeeds past the straddle pos (34.5, 37.8).
 assert_not_contains "door:straddle-does-not-lock" \
-    "goto:34,40 turnl:90 fwd:15 space wait:40 fwd:16 wait:200 fwd:10 state" \
+    "sethp:1000 goto:34,40 turnl:90 fwd:15 space wait:40 fwd:16 wait:200 fwd:10 state" \
     "pos=( 34.5000,  37.8000)"
 
 section "combat:player-fires"
@@ -182,7 +182,7 @@ assert_contains "ai:guard-wakes-on-sight" \
     "chase=1"
 assert_contains "ai:sustained-fire-kills-player" \
     "goto:28,60 wait:600 state" \
-    "health=0"
+    "lives=2"
 # Wake the dog at (45,34), teleport to the far side of the door at (43,33),
 # then wait for the dog's chase path to push through — the door should no
 # longer be closed (wolf4sdl T_Chase OpenDoor behaviour).
@@ -236,6 +236,78 @@ section "map-probe (diagnostic command)"
 # syntax could silently break the diagnostic.
 assert_contains "probe:prints-bbox"  "goto:29,57 probe" "bbox_tiles:"
 assert_contains "probe:detects-wall" "goto:29,57 probe" "open"
+
+section "death flow"
+# Total enemy count on E1M1 (hard difficulty, the default) — 37 live + 1 corpse.
+# total_kills mirrors the live count; corpses aren't counted.
+assert_contains "counters:initial" "counters" "kills=0/37 secrets=0/5 treasures=0/22"
+# Damaging the player drops their HP without changing phase.
+assert_contains "damage:hp-drops-not-dying" \
+    "sethp:5 counters phase" \
+    "phase=playing"
+# `kill` test command drops HP to 0 and flips to dying phase immediately.
+assert_contains "death:kill-enters-dying" "kill phase" "phase=dying"
+# After dying long enough (phase_timer >= death_anim_time = 1.0s = ~35 ticks),
+# the level reloads and one life is consumed. Phase is back to playing.
+assert_contains "death:restart-on-death-with-lives" \
+    "kill wait:50 phase" \
+    "phase=playing timer= 0.000 lives=2"
+# Deaths spend lives; 4 deaths (3→2→1→0→gameover) land on the game-over screen.
+assert_contains "death:game-over-after-lives-exhausted" \
+    "kill wait:50 kill wait:50 kill wait:50 kill wait:50 phase" \
+    "phase=gameover"
+# `advance` test command simulates the space-press that dismisses game-over.
+# Fresh game restored: 3 lives, score 0, level 0, back to player start.
+assert_contains "death:advance-from-game-over-resets" \
+    "kill wait:50 kill wait:50 kill wait:50 kill wait:50 advance state" \
+    "score=0 lives=3 level=0"
+
+section "intermission / level progression"
+# Stepping onto the elevator + space transitions to intermission phase.
+assert_contains "intermission:elevator-enters-intermission" \
+    "goto:25,47 turnl:90 space phase" \
+    "phase=intermission"
+# Level time accumulates in gp_playing and freezes during intermission.
+assert_regex "intermission:time-freezes-during-intermission" \
+    "fwd:70 goto:25,47 turnl:90 space wait:70 counters" \
+    'time=[ ]*2\.0[0-9]+'
+# `advance` on intermission loads the next level (level_num increments).
+assert_contains "intermission:advance-loads-next-level" \
+    "goto:25,47 turnl:90 space advance state" \
+    "level=1"
+# New level has its own enemy/secret/treasure totals.
+assert_contains "intermission:new-level-resets-counters" \
+    "goto:25,47 turnl:90 space advance counters" \
+    "kills=0/82 secrets=0/4 treasures=0/62"
+# Entering intermission with time 0 awards full par-time bonus: par=90s →
+# (90 - 0) * 500 / 10 = 4500.
+assert_contains "intermission:par-time-bonus-awarded" \
+    "goto:25,47 turnl:90 space state" \
+    "score=4500"
+
+section "counters"
+# A kill increments the kills counter and awards score.
+assert_contains "counters:kill-increments" \
+    "goto:30,62 turnr:180 setammo:50 fire wait:15 fire wait:15 fire counters" \
+    "kills=1/37"
+# Treasure pickup counts.
+assert_contains "counters:treasure-cross-pickup" \
+    "goto:7,14 counters" \
+    "treasures=1/22"
+
+section "difficulty"
+# Default (gd_hard=3) spawns all three tile tiers. E1M1 has 37 live enemies.
+assert_contains "difficulty:default-hard-spawns-all" "enemies" "total=38"
+# Lowering to gd_baby=0 filters out +36 and +72 tier tiles, leaving only
+# base-tier tiles + the pre-dead corpse.
+assert_contains "difficulty:baby-filters-higher-tiers" \
+    "setdifficulty:0 enemies" \
+    "total=12"
+# Medium allows base + medium tier (+36) only; hard adds +72.
+# E1M1: 11 base guards + 1 corpse + 7 medium = 19 + 2 dogs base + 1 medium = 21 at gd_medium.
+assert_contains "difficulty:medium-allows-middle-tier" \
+    "setdifficulty:2 enemies" \
+    "total=21"
 
 # ----------------------------------------------------------------------
 # Summary

@@ -509,11 +509,18 @@ module opl2 =
     let note_off = (c: chip*, channel: int32) ->
         write(c, 176 + channel, 0)
 
-    // Generic tick-driven audio producer. Emits `count` samples from `chip`
-    // mixed additively into `buf` (saturating). The `tick_accum` counter is
-    // advanced per sample; whenever it crosses `sample_rate / tick_rate`
-    // samples, `advance` is invoked once to let the caller process one
-    // tick's worth of events (register writes, note changes, end-of-sound…).
+    // Generic tick-driven audio producer. Emits `count` stereo sample frames
+    // from `chip` mixed additively into `buf` (saturating). The `tick_accum`
+    // counter is advanced per frame; whenever it crosses
+    // `sample_rate / tick_rate` frames, `advance` is invoked once to let the
+    // caller process one tick's worth of events (register writes, note
+    // changes, end-of-sound…).
+    //
+    // `buf` is interleaved L,R,L,R,…: two int16 per frame, `count` frames
+    // therefore occupies `2 * count` array slots. OPL2 music and AdLib SFX
+    // are mono sources — we duplicate each generated sample to both
+    // channels. Real stereo sources (per-slot panned digi) add themselves in
+    // `digi.fill` afterward.
     //
     // Callers own the tick_accum field on their player struct and pass its
     // address; the closure captures a pointer to whatever driver state it
@@ -529,10 +536,16 @@ module opl2 =
         let samples_per_tick = (float64) sample_rate / (float64) tick_rate
         for i in 0..count
             let s = sample(c)
-            let m = (int32) buf[i] + (int32) s
-            buf[i] = if m > 32767 then 32767i16
-                else if m < -32768 then -32768i16
-                else (int16) m
+            let li = (int64) i * 2
+            let ri = li + 1
+            let ml = (int32) buf[li] + (int32) s
+            let mr = (int32) buf[ri] + (int32) s
+            buf[li] = if ml > 32767 then 32767i16
+                else if ml < -32768 then -32768i16
+                else (int16) ml
+            buf[ri] = if mr > 32767 then 32767i16
+                else if mr < -32768 then -32768i16
+                else (int16) mr
             *tick_accum = *tick_accum + 1.0
             if *tick_accum >= samples_per_tick then
                 *tick_accum = *tick_accum - samples_per_tick

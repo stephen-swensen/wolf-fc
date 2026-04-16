@@ -2,6 +2,17 @@
 
 ## Current State (2026-04-16)
 
+### Recent additions (this session)
+- Player death flow: red damage-flash overlay, dying-collapse tint, transition to restart-level (lives remaining) or game-over (lives exhausted).
+- Game-over screen: black fullscreen, "GAME OVER" + final score + "PRESS SPACE" prompt. Space resets to level 0 with 3 lives.
+- Level-restart on death: reloads current level from disk, resets health/ammo/weapon, preserves score + inventory.
+- Intermission screen between levels: "FLOOR N COMPLETE", kill/secret/treasure percentages, time vs par, press-space prompt.
+- Kill / secret / treasure counters: totals computed at build_level (live enemies, pushwall tiles, treasure pickups); current values mirrored on game.
+- Par-time tracking: per-level seconds from wolf4sdl ParTimes table; level_time accumulates during gp_playing.
+- Difficulty filter: `gd_baby..gd_hard` gate enemy tile tiers. Default is `gd_hard` (all enemies spawn; matches pre-change behavior).
+- Spatial SFX panning: audio now stereo (2-channel). Enemy voices, gunfire, and death screams pan by source position relative to player facing. Player-originated sounds (gun, doors, pickups) stay centered.
+- Pre-extracted sprite headers: VSWAP load pre-parses leftpix/rightpix/col_offsets for every sprite page, eliminating per-column bytes.u16 overhead in draw_sprite_col.
+
 Working:
 - DDA raycasting with textured walls from VSWAP.WL6, distance-based shading
 - Per-level ceiling colors, flat floor color
@@ -41,7 +52,7 @@ Working:
 ## Gameplay
 
 ### Enemy polish
-- [ ] Difficulty selection — currently spawns all tiers regardless of skill. Add a difficulty setting that filters tiles 144+ / 180+ at build time.
+- [x] Difficulty-filtered spawning: gd_baby/gd_easy/gd_medium/gd_hard control which tile tiers spawn. Default gd_hard. No menu UI yet — settable via `--test setdifficulty:N` for scripted play.
 - [x] Patrol path markers (plane-1 tiles 90..97 "ICONARROWS" that redirect T_Path).
 - [x] FL_AMBUSH tile (106) handling — enemies on that tile ignore noise and only wake on direct LOS.
 - [x] Enemies opening doors as they walk into them (wolf4sdl's OpenDoor-from-T_Chase path).
@@ -55,16 +66,17 @@ Working:
 - [ ] Verify MG/chain pickups are reachable on early levels (now that SS drop MG on death, this should be automatic once SS enemies appear on a level — confirm on E1M3).
 
 ### Game state / death flow
-- [ ] Player death when health ≤ 0: red flash, collapse animation, drop a life. Currently health can reach 0 but the player keeps playing with a visual glitch; there's no death transition.
-- [ ] Game-over screen when lives exhausted
-- [ ] Level-restart on death with lives remaining
-- [ ] Kill counter / secret counter / treasure counter (spawn_enemies knows the total; wire to `gamestate.killtotal` equivalent)
+- [x] Player death when health ≤ 0: red damage flash + collapse tint, drop a life, transition to restart.
+- [x] Game-over screen when lives exhausted (press space to restart).
+- [x] Level-restart on death with lives remaining.
+- [x] Kill / secret / treasure counters (built at level load, increment in damage_enemy / try_push_wall / check_pickups).
 
 ### Level progression
-- [ ] Par-time tracking per level
-- [ ] Intermission screen between levels (kills / secrets / treasure percentages, bonus points)
+- [x] Par-time tracking per level (par_times[] from wolf4sdl, seconds).
+- [x] Intermission screen between levels (kill/secret/treasure percentages, time vs par, press space to continue).
 - [ ] Full episode structure (6 episodes × 10 levels) with per-episode intermissions
-- [ ] Per-episode music table for episodes 4–6 (currently duplicates episodes 1–3)
+- [x] Per-episode music table for episodes 4–6 — songs[] table matches wolf4sdl: Wolf3D's six episodes share the three music sets, so the "duplication" is correct.
+- [x] Bonus score calculations: par-beaten bonus (500 pts per unused 10s) + 10000 pts each for 100% kills / secrets / treasures. Applied when entering intermission, reflected in score line.
 
 ## Rendering
 
@@ -79,7 +91,7 @@ Working:
 
 ## Audio
 
-- [ ] Spatial panning for SFX based on source angle relative to player (enemies will need this)
+- [x] Spatial panning for SFX based on source angle relative to player — enemy voices/gunfire/death pan per-source; player-originated sounds stay centered. Stereo output via digi per-slot pan; adlib/imf duplicated to both channels.
 - [ ] Music fade-out on level end / game over
 - [ ] Ambient sounds on specific tiles where applicable
 
@@ -101,7 +113,7 @@ Working:
 ## Code Quality
 
 - [ ] Consider splitting `main.fc` (render / pickups / weapons / enemies) once enemies land and it grows further
-- [ ] Pre-extract sprite columns at load time — currently sprite rendering re-parses raw VSWAP bytes per frame
+- [x] Pre-extract sprite column headers (leftpix/rightpix/col_offsets) at load — avoids repeated bytes.u16 reads per draw_sprite_col call. Column-level run-list is still parsed at draw time; further pre-decoding to flat pixel rows is possible but not yet needed.
 - [ ] Widen tilemap to uint16 if more tile states are needed for enemy blocking / secret flags
 
 ## Reference
