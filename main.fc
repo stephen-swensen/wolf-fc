@@ -1355,7 +1355,7 @@ let render_hud = (rc: render_ctx*, g: game*) ->
 
 // Upscale fb (320x200) to dbuf (640x400) with nearest-neighbor 2x.
 // ============================================================
-// Weapon overlay — procedural weapon sprite at bottom center
+// Weapon overlay — VSWAP weapon sprite at bottom center
 // ============================================================
 
 // Weapon fire rates (seconds between shots). Index by g->weapon.

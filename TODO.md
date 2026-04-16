@@ -1,6 +1,6 @@
 # Wolf-FC TODO
 
-## Current State (2026-04-14)
+## Current State (2026-04-15)
 
 Working:
 - DDA raycasting with textured walls from VSWAP.WL6, distance-based shading
@@ -35,9 +35,7 @@ Working:
 
 ### Weapons and combat
 - [ ] Hitscan fire: ray from player along facing, find first enemy or wall intersection, apply damage. Currently `Ctrl` only plays the fire animation and sound — no hits.
-- [ ] Auto-select knife when ammo hits 0 (today, out-of-ammo firing is a silent no-op)
 - [ ] Weapon-specific hit sounds and pain feedback on enemies
-- [ ] Real weapon sprites (knife/pistol/MG/chain) from VGAGRAPH instead of the current procedural placeholder — blocked on VGAGRAPH Huffman decoder (see Data Loading). Each weapon has a 4-frame firing animation.
 - [ ] Verify MG/chain pickups are reachable on early levels (they're implemented as pickup item types but most early-episode maps only surface them behind push-walls or from enemy drops, neither of which currently yield them)
 
 ### Game state / death flow
@@ -71,10 +69,10 @@ Working:
 
 ## Data Loading
 
-### VGAGRAPH (unblocks face, real weapon sprites, menus, messages)
+### VGAGRAPH (unblocks face, menus, messages)
 - [ ] Huffman decoder for VGAGRAPH (VGADICT.WL6 + VGAHEAD.WL6 + VGAGRAPH.WL6)
 - [ ] Picture table (width/height per graphic)
-- [ ] Asset extractors for: status-bar pieces, BJ face frames, weapon sprites, font, menu graphics
+- [ ] Asset extractors for: status-bar pieces, BJ face frames, font, menu graphics
 
 ## UI / Menus
 
