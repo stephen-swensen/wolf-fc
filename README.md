@@ -99,7 +99,8 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `setlevel:N` | Load level N (0..59) and enter gp_playing |
 | `setepisode:N` | Jump to the start of episode N (0..5) — level=N*10 |
 | `setdifficulty:N` | Re-apply difficulty N (0..3) to the current level, re-running spawn filtering |
-| `setphase:X` | Force phase: `title` / `menu` / `epmenu` / `diffmenu` / `savemenu` / `loadmenu` / `paused` / `playing` |
+| `setphase:X` | Force phase: `title` / `menu` / `epmenu` / `diffmenu` / `savemenu` / `loadmenu` / `playing` |
+| `music` | Print the AUDIOT chunk that should be playing for the current phase (no audio device required) |
 | `endepisode` | Set `next_level` on current level (quick path to intermission/episode-end screens) |
 | `advance` | Simulate "press space" on intermission / episode-end / victory / game-over |
 | `save:N` | Write the running world to save slot N (0..9) under `~/.wolf-fc/saves/` |

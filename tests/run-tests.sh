@@ -319,7 +319,6 @@ assert_contains "vgagraph:face-pic-dims"        "vginfo:109"        "width=24 he
 
 section "phases"
 assert_contains "phase:title-on-fresh-interactive" "setphase:title phase" "phase=title"
-assert_contains "phase:paused-freezes-play"        "setphase:paused phase" "phase=paused"
 assert_contains "phase:menu-nav-state"             "setphase:menu phase"   "phase=menu"
 
 section "bosses / ghosts"
@@ -385,6 +384,24 @@ assert_contains "episode:last-episode-end-goes-to-victory" \
 assert_contains "episode:victory-advance-to-menu" \
     "setlevel:58 endepisode wait:2 advance advance advance phase" \
     "phase=menu"
+
+section "music routing"
+# Phase-driven music swap: each between-game / between-screen state plays
+# its wolf3d-original track instead of whatever per-level song was last
+# loaded. Asserting the chunk number is enough — the audio path itself
+# isn't exercised in headless mode.
+assert_contains "music:title-plays-wonderin"      "setphase:title music"      "audiot offset=14"
+assert_contains "music:menu-plays-wonderin"       "setphase:menu music"       "audiot offset=14"
+assert_contains "music:gameplay-uses-songs-table" "music"                     "audiot offset=3"
+assert_contains "music:intermission-plays-endlevel" \
+    "setlevel:8 endepisode wait:2 music" \
+    "audiot offset=16"
+assert_contains "music:episode-end-plays-urahero" \
+    "setlevel:8 endepisode wait:2 advance music" \
+    "audiot offset=24"
+assert_contains "music:final-victory-plays-vicmarch" \
+    "setlevel:58 endepisode wait:2 advance advance music" \
+    "audiot offset=25"
 
 section "save / load"
 # Fresh slot state: zap any slot files from a previous session so the

@@ -2,6 +2,21 @@
 
 ## Current State (2026-04-16)
 
+### Recent additions (this session, part 4)
+- Esc from `gp_playing` now jumps straight to the main menu (no separate
+  pause overlay); RESUME GAME is added as menu item 0 and is the default
+  selection on entry. Up/down navigation skips locked rows so RESUME and
+  SAVE GAME stay out of the way when no game is active.
+- Phase-aware music: `music_chunk_for_phase` picks WONDERIN_MUS for
+  title/menu, ENDLEVEL_MUS for intermission, URAHERO_MUS for per-episode
+  victory, VICMARCH_MUS for final victory, and the per-level `songs[]`
+  table for gameplay. Main loop tracks `current_music_chunk` and only
+  reloads the IMF player on actual chunk changes.
+- `music` test command prints the chunk for the current phase; 6 new
+  regression tests assert routing on title / menu / gameplay /
+  intermission / episode-end / final-victory.
+- Removed `gp_paused` phase, `render_paused`, and `setphase:paused`.
+
 ### Recent additions (this session, part 3)
 - Episode structure: 6 episodes × 10 levels. Elevator on level 8 triggers the
   per-episode victory screen; level 9 (secret) routes back via wolf4sdl's
