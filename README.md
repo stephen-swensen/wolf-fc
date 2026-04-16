@@ -94,7 +94,8 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `givekeys` | Grant gold and silver keys (debug) |
 | `facetile` | Print the tile the player is facing and the `next_level` flag (debug) |
 | `enemies` | Print totals per enemy kind and per state |
-| `enemylist` | Print each enemy: index, tile, kind, state, direction, hp |
+| `enemylist` | Print each enemy: index, tile, kind, state, direction, hp, area number |
+| `arrows` | Print every plane-1 ICONARROWS path-marker tile (`x,y` and dir 0..7) |
 
 ### Examples
 

@@ -189,6 +189,26 @@ assert_contains "ai:sustained-fire-kills-player" \
 assert_regex "ai:enemies-open-doors-while-chasing" \
     "goto:45,34 wait:5 goto:42,33 wait:60 goto:43,33 probe" \
     'tile \(43,33\) = 137 \(DOOR:(opening|open)\)'
+# ICONARROWS path markers (plane-1 90..97) redirect patrolling enemies to the
+# encoded direction. Dog [19] spawns at (45,34) walking west; arrows at (44,34)
+# and (46,34) bounce it back and forth. After 200 ticks (~5.7s) it should be
+# resting on an arrow tile facing east. Player teleports to the far corner so
+# the dog never enters chase.
+assert_regex "ai:patrol-arrow-redirects-dog" \
+    "goto:29,57 wait:200 enemylist" \
+    '\[19\] \(44,34\) kind=dog state=path dir=0'
+# madenoise propagation: just standing at the spawn never wakes a guard whose
+# sight cone misses the player. Firing a pistol from the same spot is meant to
+# wake every non-AMBUSH guard in the player's currently-connected area set
+# (wolf4sdl SightPlayer noise short-circuit). The two stand guards in area 2
+# at (28,62) and (39,61) should both flip to chase. We assert the diff so the
+# test stays meaningful even if level layout changes the absolute counts.
+assert_contains "ai:no-wake-without-noise-or-sight" \
+    "wait:10 enemies" \
+    "chase=0"
+assert_contains "ai:firing-wakes-guards-in-connected-area" \
+    "setammo:50 fire wait:10 enemies" \
+    "chase=2"
 
 section "weapons:auto-restore"
 # Running out of ammo drops the player to the knife; grabbing the clip that

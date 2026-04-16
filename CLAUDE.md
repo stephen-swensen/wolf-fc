@@ -110,7 +110,7 @@ All project modules are declared at the top level (no namespaces), so they're ac
   - Constants (game_w=320, game_h=200, screen_w=640, screen_h=400, actual_h=480, view_h=160, sample_rate=44100)
   - `struct world` — the god-handle: `{g: game*, lv: level*, rc: render_ctx*, ac: audio_ctx*}`. Only orchestrators take `world*`; narrow functions take just the fields they touch.
   - `struct game` — player state (position, direction, camera plane, input, health/ammo/score)
-  - `struct level` — per-level mutable state: tilemap, pushwall_tiles, sprites[], doors[], door_pos[], pushwall animation, enemies[]. Rebuilt on level transition.
+  - `struct level` — per-level mutable state: tilemap, pushwall_tiles, path_arrows (ICONARROWS direction per tile, 8=none), sprites[], doors[] (each storing the two areas it connects), door_pos[], pushwall animation, enemies[], tile_areas (wolf4sdl AREATILE numbering, 255=no area), area_connect (NUMAREAS² counter of currently-open doors per pair), area_by_player (per-area "reachable from player by open doors"). Rebuilt on level transition.
   - `struct render_ctx` — `{fb, dbuf, zbuf, billboards}` renderer scratch buffers, process-wide. `billboards[]` is rebuilt/sorted each frame from live enemies + live sprites.
   - `struct audio_ctx` — `{vs, ad, sfx, digi}` bundle so `trigger_sound` / pickup / door code can fire sounds without globals.
   - `struct sprite_obj` — static objects (position, VSWAP page, distance)
@@ -118,7 +118,7 @@ All project modules are declared at the top level (no namespaces), so they're ac
   - Factories: `build_render_ctx()`, `build_level(lv_data, sprite_start)` (now also calls `spawn_enemies`), `free_level(lv)`.
   - DDA raycaster (`render_walls`) writing to `rc->fb` (320x200 framebuffer)
   - Billboard renderer: `build_billboards` merges `lv->sprites` + `lv->enemies` into one back-to-front list, `render_billboards` draws each via `draw_sprite_col`. Non-rotating enemy states (pain/die/dead/shoot) use fixed VSWAP pages; stand/walk/chase use `enemy_angle_sprite` to pick one of 8 facing variants.
-  - Enemy AI: `check_line_clear` (tilemap LOS), `enemy_sees_player` (LOS + 90° forward cone), `select_chase_dir` / `select_path_dir`, `advance_enemy_move` (tile-center grid motion), `update_enemy` (state-machine dispatch), `enemy_fire_at_player` / `enemy_bite_player`, `damage_enemy` / `kill_enemy` / `wake_enemy`. `fire_player_hitscan` is invoked from `update_weapon` on trigger pull.
+  - Enemy AI: `check_line_clear` (tilemap LOS), `enemy_sees_player` (LOS + 90° forward cone), `enemy_should_wake` (area_by_player gate + AMBUSH-honoring noise/sight check, mirrors wolf4sdl SightPlayer), `select_chase_dir` / `select_path_dir`, `advance_enemy_move` (tile-center grid motion), `update_enemy` (state-machine dispatch), `enemy_fire_at_player` / `enemy_bite_player`, `damage_enemy` / `kill_enemy` / `wake_enemy`. `fire_player_hitscan` is invoked from `update_weapon` on trigger pull and raises `g->made_noise` for non-knife weapons; `damage_enemy` raises it on every hit (knife included). `start_door_opening` is the single transition point that increments `area_connect` and re-runs `connect_areas`; `update_doors` decrements + re-floods on the closing→closed transition.
   - Audio output path: zero buffer → `imf.fill` (music) → `adlib.fill` (AdLib SFX) → `digi.fill` (8-bit PCM) → SDL queue (back-pressured via `queued_audio_size`)
   - HUD renderer with 3x5 bitmap digit font
   - `upscale_2x` — pixel-doubles 320x200 → 640x400 for the SDL texture

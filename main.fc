@@ -102,6 +102,15 @@ struct game =
                            // again restores this weapon (wolf4sdl's chosenweapon).
     fire_timer: float64    // cooldown timer (>0 means firing animation)
     weapon_frame: int32    // animation frame (0=idle, 1-3=firing)
+    // Wolf4sdl player->areanumber: index into level->tile_areas for the tile
+    // the player is currently standing on. Used to anchor connect_areas's
+    // flood. Refreshed each tick by update_player_area.
+    area_number: int32
+    // Wolf4sdl `madenoise`: latched true when the player fires a non-knife
+    // weapon or damages an enemy; consumed by update_enemies to wake stand /
+    // path enemies in the player-connected area set without needing LOS.
+    // Reset at the top of each tick so it only fires for one frame.
+    made_noise: bool
 
 // ============================================================
 // Per-level dynamic entities and geometry
@@ -120,6 +129,14 @@ let door_stay_time = 4.0    // seconds before auto-close
 let max_doors = 64
 let max_sprites = 400
 
+// Per-tile area numbering (wolf4sdl wl_def.h AREATILE / NUMAREAS). Plane-0
+// floor tiles 107..(107+num_areas-1) name an area; doors inherit their
+// neighbor's area on spawn; everything else (walls, push-walls, ambush tiles)
+// gets the no_area sentinel and is excluded from connectivity checks.
+let num_areas = 37
+let area_tile = 107
+let no_area   = 255
+
 struct door_obj =
     tile_x: int32
     tile_y: int32
@@ -127,6 +144,11 @@ struct door_obj =
     lock_type: int32     // 0=normal, 1=gold key, 2=silver key, 3-5=other
     state: door_state
     open_timer: float64  // time spent in open state (for auto-close)
+    // Area numbers (0..num_areas-1) of the two neighboring floor tiles. -1 if
+    // the neighbor is off-map or non-area. Used by start_door_opening /
+    // update_doors to maintain area_connect when this door opens or closes.
+    area1: int32
+    area2: int32
 
 struct sprite_obj =
     x: float64
@@ -372,6 +394,10 @@ struct level =
     tilemap: uint8[]
     // Bitmap: which wall tiles are pushable (marker 98 in plane 1).
     pushwall_tiles: bool[]
+    // Per-tile path-arrow override for patrolling enemies (plane-1 tiles
+    // 90..97 = ICONARROWS + dir). 0..7 redirects a passing patroller to that
+    // dir; dir_nodir (8) means "no arrow at this tile".
+    path_arrows: uint8[]
     // Static sprite objects spawned from plane-1 tiles 23..72.
     sprites: sprite_obj[]
     num_sprites: int32
@@ -384,6 +410,13 @@ struct level =
     // Active + dead enemies spawned from plane-1 tiles 108+.
     enemies: enemy[]
     num_enemies: int32
+    // Wolf4sdl area system: per-tile area index (no_area for walls / other
+    // non-area tiles); a num_areas² counter of how many open doors connect
+    // each pair (>0 means connected); a per-area "reachable from player by
+    // open doors" flag refreshed by connect_areas on each door transition.
+    tile_areas: uint8[]
+    area_connect: uint8[]
+    area_by_player: bool[]
 
 // One drawable billboard emitted each frame — a merged queue of static sprites
 // and enemies, sorted back-to-front so farther items draw first and nearer
@@ -445,6 +478,7 @@ let build_level = (lv_data: maps.level*, sprite_start: int32) ->
     let lv = alloc(level {
         tilemap = alloc(uint8[map_size * map_size] {})!,
         pushwall_tiles = alloc(bool[map_size * map_size] {})!,
+        path_arrows = alloc(uint8[map_size * map_size] {})!,
         sprites = alloc(sprite_obj[max_sprites] {})!,
         num_sprites = 0,
         doors = alloc(door_obj[max_doors] {})!,
@@ -452,21 +486,30 @@ let build_level = (lv_data: maps.level*, sprite_start: int32) ->
         num_doors = 0,
         pushwall = default(pushwall_state),
         enemies = alloc(enemy[max_enemies] {})!,
-        num_enemies = 0
+        num_enemies = 0,
+        tile_areas = alloc(uint8[map_size * map_size] {})!,
+        area_connect = alloc(uint8[num_areas * num_areas] {})!,
+        area_by_player = alloc(bool[num_areas] {})!
     })!
     build_tilemap(lv, lv_data, sprite_start)
     spawn_sprites(lv, lv_data, sprite_start)
     mark_pushwalls(lv, lv_data)
+    mark_path_arrows(lv, lv_data)
+    build_areas(lv, lv_data)
     spawn_enemies(lv, lv_data)
     lv
 
 let free_level = (lv: level*) ->
     free(lv->tilemap)
     free(lv->pushwall_tiles)
+    free(lv->path_arrows)
     free(lv->sprites)
     free(lv->doors)
     free(lv->door_pos)
     free(lv->enemies)
+    free(lv->tile_areas)
+    free(lv->area_connect)
+    free(lv->area_by_player)
     free(lv)
 
 // ============================================================
@@ -491,7 +534,8 @@ let build_tilemap = (lv: level*, lv_data: maps.level*, sprite_start: int32) ->
                 lv->doors[lv->num_doors] = door_obj {
                     tile_x = x, tile_y = y,
                     vertical = is_vert, lock_type = lock,
-                    state = door_state.closed, open_timer = 0.0
+                    state = door_state.closed, open_timer = 0.0,
+                    area1 = -1, area2 = -1     // filled in by build_areas
                 }
                 lv->door_pos[lv->num_doors] = 0.0
                 lv->tilemap[idx] = (uint8) (128 + lv->num_doors)
@@ -547,8 +591,7 @@ let try_open_door = (lv: level*, x: int32, y: int32, g: game*, ac: audio_ctx*) -
                     trigger_sound(snd_no_way, ac)
                     door_action.door_locked
                 else
-                    lv->doors[dn].state = door_state.opening
-                    trigger_sound(snd_open_door, ac)
+                    start_door_opening(lv, dn, g, ac)
                     door_action.door_opened
 
 // Find player start position and facing from level plane 1.
@@ -784,6 +827,13 @@ let spawn_one_enemy = (lv: level*, tx: int32, ty: int32, info: enemy_spawn_info)
     }
     lv->num_enemies = lv->num_enemies + 1
 
+// Wolf4sdl AMBUSHTILE: a plane-0 marker (raw value 106) that gives the enemy
+// standing on it FL_AMBUSH and a borrowed area number. Ambush enemies wait in
+// dead silence until they actually see the player — noise won't wake them.
+// SpawnNewObj also rewrites the ambush tile to one of the four neighbor area
+// tiles so connectivity / sound checks have a real area to use.
+let ambush_tile = 106
+
 let spawn_enemies = (lv: level*, lv_data: maps.level*) ->
     lv->num_enemies = 0
     for y in 0..map_size
@@ -792,7 +842,29 @@ let spawn_enemies = (lv: level*, lv_data: maps.level*) ->
             if obj == 0 then continue
             match classify_enemy_tile(obj) with
             | none -> void()
-            | some(info) -> spawn_one_enemy(lv, x, y, info)
+            | some(info) ->
+                let before = lv->num_enemies
+                spawn_one_enemy(lv, x, y, info)
+                if lv->num_enemies > before then
+                    // Promote the just-spawned enemy to FL_AMBUSH if its tile
+                    // is the AMBUSHTILE marker, and patch tile_areas to the
+                    // first cardinal neighbor with a real area (matches the
+                    // east/north/south/west scan in wolf4sdl SpawnNewObj).
+                    let raw = (int32) lv_data->walls[(int64) y * 64 + (int64) x]
+                    if raw == ambush_tile then
+                        lv->enemies[before].ambush = true
+                        let inherit =
+                            let e = raw_area_at(lv_data, x + 1, y)
+                            if e >= 0 then e
+                            else
+                                let n = raw_area_at(lv_data, x, y - 1)
+                                if n >= 0 then n
+                                else
+                                    let s = raw_area_at(lv_data, x, y + 1)
+                                    if s >= 0 then s
+                                    else raw_area_at(lv_data, x - 1, y)
+                        if inherit >= 0 then
+                            lv->tile_areas[(int64) x * 64 + (int64) y] = (uint8) inherit
 
 // Pick the angle-dependent VSWAP page for a rotating enemy sprite. Returns a
 // sprite index (relative to sprite_start) given the enemy's position / facing,
@@ -1402,6 +1474,11 @@ let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
         // reported back as door_locked so we don't also play DONOTHINGSND.
         if !did_anything then
             trigger_sound(snd_no_action, ac)
+    // Refresh g->area_number from whatever tile the player is now standing
+    // on. wolf4sdl Thrust does this every frame; we follow suit so any door
+    // event next frame floods from the player's current area, not the area
+    // they were in when the level loaded.
+    update_player_area(lv, g)
 
 // ============================================================
 // Item pickups — walk-over detection
@@ -1515,6 +1592,100 @@ let mark_pushwalls = (lv: level*, lv_data: maps.level*) ->
             let obj = (int32) lv_data->objects[(int64) y * 64 + (int64) x]
             lv->pushwall_tiles[(int64) x * 64 + (int64) y] = obj == 98
 
+// Read the raw plane-0 area number at (x,y). Returns the index into
+// area_by_player (0..num_areas-1) for floor tiles, or -1 for any tile that
+// isn't an area tile (walls, doors before area assignment, off-map).
+let raw_area_at = (lv_data: maps.level*, x: int32, y: int32) ->
+    if x < 0 || x >= map_size || y < 0 || y >= map_size then -1
+    else
+        let raw = (int32) lv_data->walls[(int64) y * 64 + (int64) x]
+        let a = raw - area_tile
+        if a >= 0 && a < num_areas then a else -1
+
+// Bake plane-0 area numbers into lv->tile_areas, and fill each door's
+// (area1, area2) by reading its two flank-floor neighbors. Mirrors wolf4sdl
+// SetupGameLevel + SpawnDoor: walls and other non-area tiles get the no_area
+// sentinel; doors inherit one area from the perpendicular-axis neighbor (so
+// PlaySoundLocTile-style "is the door audible to the player" checks have a
+// number to use); areaconnect is touched only when a door actually opens.
+let build_areas = (lv: level*, lv_data: maps.level*) ->
+    for y in 0..map_size
+        for x in 0..map_size
+            let idx = (int64) x * 64 + (int64) y
+            let raw = (int32) lv_data->walls[(int64) y * 64 + (int64) x]
+            let a = raw - area_tile
+            if a >= 0 && a < num_areas then
+                lv->tile_areas[idx] = (uint8) a
+            else if raw >= 90 && raw <= 101 then
+                // Door tile in plane 0: inherit from a single adjacent floor.
+                // Vertical door (raw even) takes its area from x-1 (matching
+                // wolf4sdl SpawnDoor's `*map = *(map-1)`); horizontal from y-1.
+                let inherit = if raw % 2 == 0 then raw_area_at(lv_data, x - 1, y)
+                              else raw_area_at(lv_data, x, y - 1)
+                lv->tile_areas[idx] = if inherit >= 0 then (uint8) inherit
+                                       else (uint8) no_area
+            else
+                lv->tile_areas[idx] = (uint8) no_area
+    // Now that floor + door areas are assigned, give each door its two
+    // connected areas (the cells perpendicular to the door axis).
+    for di in 0..lv->num_doors
+        let d = &lv->doors[di]
+        let a1 = if d->vertical then raw_area_at(lv_data, d->tile_x + 1, d->tile_y)
+                 else raw_area_at(lv_data, d->tile_x, d->tile_y + 1)
+        let a2 = if d->vertical then raw_area_at(lv_data, d->tile_x - 1, d->tile_y)
+                 else raw_area_at(lv_data, d->tile_x, d->tile_y - 1)
+        d->area1 = a1
+        d->area2 = a2
+
+// Player area lookup — mirrors wolf4sdl Thrust's per-frame
+// `player->areanumber = *(mapsegs[0]+offset) - AREATILE`. Returns the area of
+// the tile the player is standing on, or -1 if outside the area system.
+let update_player_area = (lv: level*, g: game*) ->
+    let tx = (int32) g->pos_x
+    let ty = (int32) g->pos_y
+    if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then
+        g->area_number = -1
+    else
+        let a = (int32) lv->tile_areas[(int64) tx * 64 + (int64) ty]
+        g->area_number = if a >= num_areas then -1 else a
+
+// Recompute area_by_player from area_connect via fixed-point flood from the
+// player's current area. Mirrors wolf4sdl ConnectAreas / RecursiveConnect but
+// done iteratively (37×37 worst-case) so we don't take a stack-depth bet on
+// FC's calling convention. Called whenever a door opens or fully closes — not
+// on every frame, since unchanged door state means an unchanged reachability
+// set (matches wolf4sdl, which never re-floods on bare player movement).
+let connect_areas = (lv: level*, player_area: int32) ->
+    for i in 0..num_areas
+        lv->area_by_player[i] = false
+    if player_area < 0 || player_area >= num_areas then return
+    lv->area_by_player[player_area] = true
+    let mut changed = true
+    loop
+        if !changed then break
+        changed = false
+        for a in 0..num_areas
+            if !lv->area_by_player[a] then continue
+            for b in 0..num_areas
+                if lv->area_by_player[b] then continue
+                if lv->area_connect[(int64) a * (int64) num_areas + (int64) b] > 0u8 then
+                    lv->area_by_player[b] = true
+                    changed = true
+
+// Plane-1 tiles 90..97 are ICONARROWS markers. When a patrolling enemy crosses
+// a tile carrying one, wolf4sdl SelectPathDir snaps its dir to (tile - 90),
+// giving authored back-and-forth routes. Anywhere else stores dir_nodir (8) so
+// select_path_dir leaves the enemy's heading alone.
+let mark_path_arrows = (lv: level*, lv_data: maps.level*) ->
+    for y in 0..map_size
+        for x in 0..map_size
+            let obj = (int32) lv_data->objects[(int64) y * 64 + (int64) x]
+            let idx = (int64) x * 64 + (int64) y
+            if obj >= 90 && obj <= 97 then
+                lv->path_arrows[idx] = (uint8) (obj - 90)
+            else
+                lv->path_arrows[idx] = (uint8) dir_nodir
+
 let try_push_wall = (lv: level*, x: int32, y: int32, dx: int32, dy: int32) ->
     if x < 0 || x >= map_size || y < 0 || y >= map_size then false
     else if lv->pushwall.active then false  // only one at a time
@@ -1582,8 +1753,6 @@ let update_pushwall = (lv: level*, dt: float64) ->
 //     integer tics. Animation timers + positions are floats.
 //   • No ambush tiles / area-number sight shortcut (wolf4sdl skips LOS when
 //     the enemy's area is disconnected from the player's); we always raycast.
-//   • No ICON_ARROWS patrol-turn markers — patrol enemies walk straight and
-//     reverse at walls, which is less varied but fine for level-0 regressions.
 // ============================================================
 
 // Step through the tilemap along (x1,y1) → (x2,y2). Returns true if the ray
@@ -1728,29 +1897,16 @@ let select_chase_dir = (lv: level*, g: game*, self_idx: int32) ->
         if try_enemy_walk(lv, g, self_idx, turnaround) then return
     e->dir = dir_nodir
 
-// Patrol: keep walking straight; at a wall, turn 90° (right first, then left),
-// then reverse. Simpler than wolf4sdl's ICON_ARROWS path-marker system but
-// gives recognizable back-and-forth guard patrols.
+// Patrol: keep walking in the current heading. If the current tile carries an
+// ICON_ARROWS marker (plane-1 90..97, pre-baked into lv->path_arrows), snap to
+// that direction first. If the resulting move is blocked, stop — no wall-bounce
+// fallback. Matches wolf4sdl SelectPathDir.
 let select_path_dir = (lv: level*, g: game*, self_idx: int32) ->
     let e = &lv->enemies[self_idx]
-    let old = if e->dir == dir_nodir then dir_east else e->dir
-    if try_enemy_walk(lv, g, self_idx, old) then
-        e->dir = old
-        return
-    // Try right turn (for cardinals: old+2 mod 8 = 90° CW in our dir encoding).
-    let right = (old + 2) % 8
-    if try_enemy_walk(lv, g, self_idx, right) then
-        e->dir = right
-        return
-    let left = (old + 6) % 8
-    if try_enemy_walk(lv, g, self_idx, left) then
-        e->dir = left
-        return
-    let back = dir_opposite[old]
-    if try_enemy_walk(lv, g, self_idx, back) then
-        e->dir = back
-        return
-    e->dir = dir_nodir
+    let arrow = (int32) lv->path_arrows[(int64) e->tile_x * 64 + (int64) e->tile_y]
+    if arrow != dir_nodir then e->dir = arrow
+    if e->dir == dir_nodir || !try_enemy_walk(lv, g, self_idx, e->dir) then
+        e->dir = dir_nodir
 
 // Advance this enemy along its current direction by `speed * dt` tiles.
 // When crossing a tile center, consumes the leftover step by picking a new
@@ -1773,8 +1929,7 @@ let advance_enemy_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32,
             let nt = (int32) lv->tilemap[(int64) ntx * 64 + (int64) nty]
             if nt >= 128 && lv->doors[nt - 128].state != door_state.open then
                 if lv->doors[nt - 128].state == door_state.closed then
-                    lv->doors[nt - 128].state = door_state.opening
-                    trigger_sound(snd_open_door, ac)
+                    start_door_opening(lv, nt - 128, g, ac)
                 e->x = (float64) e->tile_x + 0.5
                 e->y = (float64) e->tile_y + 0.5
                 break
@@ -1859,6 +2014,10 @@ let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, dmg: int32,
     match e->state with
     | es_die | es_dead -> return
     | _ -> void()
+    // Damaging an enemy also raises noise (wolf4sdl DamageActor sets madenoise
+    // up front). This is what makes a knife hit wake nearby guards even though
+    // the knife itself isn't loud — the victim's pain shout is.
+    g->made_noise = true
     e->hp = e->hp - dmg
     e->notified = true
     if e->hp <= 0 then
@@ -1870,6 +2029,20 @@ let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, dmg: int32,
         e->anim_frame = 0
         e->anim_timer = pain_time
         e->dir = dir_nodir
+
+// True iff a stand / path enemy should react to the player right now. Mirrors
+// wolf4sdl SightPlayer (wl_state.cpp): an enemy ignores the player unless its
+// area is reachable from the player by open doors (area_by_player). Inside
+// that connected zone, AMBUSH-flagged enemies still need a literal LOS, but
+// regular guards wake on either LOS *or* a noise event (gun shot or pain
+// scream) anywhere in the connected zone — that's how firing in one room
+// pulls everyone in connected rooms toward you.
+let enemy_should_wake = (lv: level*, g: game*, e: enemy*) ->
+    let area = (int32) lv->tile_areas[(int64) e->tile_x * 64 + (int64) e->tile_y]
+    if area >= num_areas then false
+    else if !lv->area_by_player[area] then false
+    else if e->ambush then enemy_sees_player(lv, g, e)
+    else g->made_noise || enemy_sees_player(lv, g, e)
 
 // Wake up a sleeping (stand/path) enemy. Plays the per-kind alert vocal the
 // first time only; subsequent wake-ups from repeated hits / line-of-sight
@@ -1950,9 +2123,9 @@ let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, dt: f
             e->anim_timer = walk_frame_time
             e->dir = dir_nodir
     | es_stand ->
-        if enemy_sees_player(lv, g, e) then wake_enemy(e, ac)
+        if enemy_should_wake(lv, g, e) then wake_enemy(e, ac)
     | es_path ->
-        if enemy_sees_player(lv, g, e) then wake_enemy(e, ac)
+        if enemy_should_wake(lv, g, e) then wake_enemy(e, ac)
         else
             advance_enemy_move(lv, g, ac, self_idx, enemy_patrol_speed, dt, false)
             advance_walk_anim(e)
@@ -2072,6 +2245,11 @@ let fire_player_hitscan = (w: world*) ->
     let lv = w->lv
     let g = w->g
     let ac = w->ac
+    // Wolf4sdl GunAttack sets madenoise=true at the top regardless of hit;
+    // KnifeAttack does NOT — knife is a stealth weapon, only registering as
+    // noise (via damage_enemy below) when it actually connects. So gate on
+    // weapon > 0 here, and let damage_enemy cover the knife-hit case.
+    if g->weapon > 0 then g->made_noise = true
     let sprite_start = ac->vs->sprite_start
     let idx = find_hit_enemy(lv, g)
     if idx < 0 then return
@@ -2087,6 +2265,26 @@ let fire_player_hitscan = (w: world*) ->
 // ============================================================
 // Door animation
 // ============================================================
+
+// Transition a door from closed → opening: bumps area_connect for the two
+// areas this door joins (so connect_areas can flood through it), recomputes
+// area_by_player from the player's current area, then plays the open SFX.
+// Called from the player's space-to-open path (try_open_door) and from
+// chasing enemies that walk into a closed door (advance_enemy_move) — both
+// of which already gate on `state == door_state.closed`, mirroring
+// wolf4sdl's DoorOpening areaconnect++ guard (only on first frame from 0).
+let start_door_opening = (lv: level*, di: int32, g: game*, ac: audio_ctx*) ->
+    let d = &lv->doors[di]
+    if d->area1 >= 0 && d->area1 < num_areas
+       && d->area2 >= 0 && d->area2 < num_areas then
+        let i1 = (int64) d->area1
+        let i2 = (int64) d->area2
+        let n  = (int64) num_areas
+        lv->area_connect[i1 * n + i2] = lv->area_connect[i1 * n + i2] + 1u8
+        lv->area_connect[i2 * n + i1] = lv->area_connect[i2 * n + i1] + 1u8
+        connect_areas(lv, g->area_number)
+    d->state = door_state.opening
+    trigger_sound(snd_open_door, ac)
 
 let update_doors = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
     for i in 0..lv->num_doors
@@ -2134,6 +2332,17 @@ let update_doors = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
                 if lv->door_pos[i] <= 0.0 then
                     lv->door_pos[i] = 0.0
                     lv->doors[i].state = door_state.closed
+                    // Door fully closed → disconnect the two areas. Mirrors
+                    // wolf4sdl DoorClosing's areaconnect-- when position == 0.
+                    let d = &lv->doors[i]
+                    if d->area1 >= 0 && d->area1 < num_areas
+                       && d->area2 >= 0 && d->area2 < num_areas then
+                        let i1 = (int64) d->area1
+                        let i2 = (int64) d->area2
+                        let n  = (int64) num_areas
+                        lv->area_connect[i1 * n + i2] = lv->area_connect[i1 * n + i2] - 1u8
+                        lv->area_connect[i2 * n + i1] = lv->area_connect[i2 * n + i1] - 1u8
+                        connect_areas(lv, g->area_number)
         | closed -> void()
 
 // ============================================================
@@ -2493,6 +2702,11 @@ let update_weapon = (w: world*, dt: float64) ->
 // Used by both the interactive game loop and the headless test mode so
 // they stay in sync. Add new per-frame systems here, not at each caller.
 let tick = (w: world*, dt: float64) ->
+    // Wolf4sdl PlayLoop resets madenoise at the top of each frame; we follow
+    // suit so noise from one tick only wakes enemies on the same tick.
+    // update_weapon raises it again when the player fires a gun, and
+    // damage_enemy raises it on a knife hit.
+    w->g->made_noise = false
     update_player(w->lv, w->g, dt, w->ac)
     update_doors(w->lv, w->g, dt, w->ac)
     update_pushwall(w->lv, dt)
@@ -2689,6 +2903,12 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         else bad("X,Y coordinate pair")
         free(coords)
         check_pickups(w->lv, g, w->ac)
+        // Teleporting bypasses door traversal, so the player's area + the
+        // door-connectivity flood would otherwise stay anchored to the spawn
+        // area. Recompute both, equivalent to "treat the jump as if the
+        // player legally walked here through every open door."
+        update_player_area(w->lv, g)
+        connect_areas(w->lv, g->area_number)
     else if text.starts_with(arg, "sethp:") then
         match text.parse_int32(arg[6..arg.len]) with
         | some(n) -> g->health = n
@@ -2789,6 +3009,16 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
                 let bs = if s.blocks then "BLOCKS" else "walk"
                 io.write("  sprite[%d{i}] tile(%d{(int32) s.x},%d{(int32) s.y}) page=%d{s.shape_page} %s{bs} d=%5.3f{d}\n", stdout)
         void()
+    else if arg == "arrows" then
+        // Dump every ICON_ARROWS path-marker tile baked into the level. Lets a
+        // test author find a tile to walk a patrolling enemy through to verify
+        // that select_path_dir applies the override.
+        for y in 0..map_size
+            for x in 0..map_size
+                let v = (int32) w->lv->path_arrows[(int64) x * 64 + (int64) y]
+                if v != dir_nodir then
+                    io.write("arrow (%d{x},%d{y}) dir=%d{v}\n", stdout)
+        void()
     else if arg == "enemylist" then
         // Per-enemy dump: grid position, kind, state, dir. Handy to locate
         // a specific enemy for a scripted screenshot or attack test.
@@ -2808,7 +3038,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
             | es_pain  -> "pain"
             | es_die   -> "die"
             | es_dead  -> "dead"
-            io.write("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp}\n", stdout)
+            let area = (int32) w->lv->tile_areas[(int64) e.tile_x * 64 + (int64) e.tile_y]
+            io.write("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp} area=%d{area}\n", stdout)
         void()
     else if arg == "enemies" then
         // Summary: counts by kind and by state, for regression checks.
@@ -2877,7 +3108,8 @@ let main = (args: str[]) ->
         level_num = 0,
         has_gold_key = false, has_silver_key = false,
         next_level = false,
-        weapon = 1, best_weapon = 1, fire_timer = 0.0, weapon_frame = 0
+        weapon = 1, best_weapon = 1, fire_timer = 0.0, weapon_frame = 0,
+        area_number = -1, made_noise = false
     })!
     find_player_start(lv_data, g)
     io.write("  player at (%4.1f{g->pos_x}, %4.1f{g->pos_y})\n", stdout)
@@ -2896,6 +3128,12 @@ let main = (args: str[]) ->
             digi = digi.init()
         })!
     })!
+    // Now that both player position and level areas exist, anchor the
+    // player's area + the area_by_player set. wolf4sdl SpawnPlayer / InitAreas
+    // do this on level load: only the player's starting area is initially
+    // marked reachable, since all doors begin closed and area_connect is 0.
+    update_player_area(w->lv, g)
+    connect_areas(w->lv, g->area_number)
 
     // Test mode: process scripted commands, no SDL needed
     if args.len > 1 && args[1] == "--test" then
@@ -3031,6 +3269,8 @@ let main = (args: str[]) ->
             lv_data = maps.load("data/MAPHEAD.WL6", "data/GAMEMAPS.WL6", g->level_num)
             w->lv = build_level(lv_data, vs->sprite_start)
             find_player_start(lv_data, g)
+            update_player_area(w->lv, g)
+            connect_areas(w->lv, g->area_number)
             // Update music for new level
             let new_chunk = 261 + songs[g->level_num]
             if audio_dev > 0u32 && new_chunk < ad->num_chunks then

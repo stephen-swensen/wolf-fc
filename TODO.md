@@ -35,16 +35,17 @@ Working:
 - Player collision radius (prevents see-through-walls glitch)
 - PNG screenshots via `s` key (→ `~/.wolf-fc/screenshots/ss_NNN.png`), with full game-state metadata in a `tEXt` chunk
 - Doors stay open while the player's bbox overlaps the door tile (prevents a closing door from trapping a player straddling its edge) and reopen if the player re-enters mid-close
-- Headless test mode (`--test`) with scripted commands for regression testing (see README.md). Includes `enemies`, `enemylist`, and `probe` (bbox tile diagnostics) dumps.
-- Regression test suite at `tests/run-tests.sh` — 23 scripted scenarios covering spawn, pickups, doors (including straddle lockout and enemy-opened doors), static-sprite blocking, hitscan combat, enemy AI, weapon auto-restore, and the probe command. Supports `-k NAME` filter and `-v` verbose.
+- Headless test mode (`--test`) with scripted commands for regression testing (see README.md). Includes `enemies`, `enemylist`, `arrows`, and `probe` (bbox tile diagnostics) dumps.
+- Regression test suite at `tests/run-tests.sh` — 26 scripted scenarios covering spawn, pickups, doors (including straddle lockout and enemy-opened doors), static-sprite blocking, hitscan combat, enemy AI (ICONARROWS patrol redirection, areas+madenoise noise propagation), weapon auto-restore, and the probe command. Supports `-k NAME` filter and `-v` verbose.
 
 ## Gameplay
 
 ### Enemy polish
 - [ ] Difficulty selection — currently spawns all tiers regardless of skill. Add a difficulty setting that filters tiles 144+ / 180+ at build time.
-- [ ] Patrol path markers (plane-1 tiles 90..93 "ICON_ARROWS" that redirect T_Path) — currently patrol enemies turn at walls instead of following map-authored routes.
-- [ ] FL_AMBUSH tile (106) handling — enemies on that tile should ignore sound wake-ups.
+- [x] Patrol path markers (plane-1 tiles 90..97 "ICONARROWS" that redirect T_Path).
+- [x] FL_AMBUSH tile (106) handling — enemies on that tile ignore noise and only wake on direct LOS.
 - [x] Enemies opening doors as they walk into them (wolf4sdl's OpenDoor-from-T_Chase path).
+- [x] Areas + madenoise: firing a gun (or landing a knife hit) wakes every non-AMBUSH enemy in the player's currently-connected area set (open-door reachable). Knife stealth preserved.
 - [ ] Bosses (Hans, Gretel, Schabbs, Fat, Gift, Hitler variants) — currently ignored.
 - [ ] Ghosts (Blinky/Clyde/Pinky/Inky on secret Pacman-homage level).
 - [x] Mutant-specific double-shot pattern (they fire twice per shoot cycle in wolf4sdl).
