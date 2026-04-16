@@ -1878,25 +1878,43 @@ let render_walls = (lv: level*, rc: render_ctx*, g: game*,
 // Classic Wolf3D uses PLAYERSIZE ≈ 0.35 tiles for the same reason.
 let player_radius = 0.35
 
-// True if the player's bbox at (px, py) overlaps a wall or a closed door.
-// Does NOT check enemy overlap — that's handled in try_move with a distance
-// comparison so the player can always slide away from an enemy they're
-// already inside of (prevents the mutual-deadlock with chasing actors).
+// Static-decoration half-width (tiles). Blocking sprites (barrels, lamps,
+// tables, etc.) block the player as a half-tile AABB centered on the tile
+// instead of the whole 1×1 cell — you can approach a barrel until your
+// bbox edge is ~(player_radius + sprite_half) from its center. Tuned down
+// from a full tile because the art typically occupies only the middle half
+// and wolf4sdl's tile-grain blocking feels too intrusive at our scale.
+let sprite_block_half = 0.25
+
+// True if the player's bbox at (px, py) overlaps a wall, closed door, or
+// a blocking static sprite. Does NOT check enemy overlap — that's handled
+// in try_move with a distance comparison so the player can always slide
+// away from an enemy they're already inside of (prevents mutual-deadlock
+// with chasing actors).
 let player_blocked_by_map = (lv: level*, px: float64, py: float64) ->
     let xl = (int32) (px - player_radius)
     let xr = (int32) (px + player_radius)
     let yl = (int32) (py - player_radius)
     let yh = (int32) (py + player_radius)
-    let blocks = (tx: int32, ty: int32) ->
-        if tile_solid(lv, tx, ty) || (tile_is_door(lv, tx, ty) && !door_passable(lv, tx, ty)) then true
-        else
-            let mut hit = false
-            for i in 0..lv->num_sprites
-                let s = &lv->sprites[i]
-                if s->alive && s->blocks
-                   && (int32) s->x == tx && (int32) s->y == ty then hit = true
-            hit
-    blocks(xl, yl) || blocks(xr, yl) || blocks(xl, yh) || blocks(xr, yh)
+    // Walls + doors: per-tile check on each bbox corner.
+    let tile_blocks = (tx: int32, ty: int32) ->
+        tile_solid(lv, tx, ty) || (tile_is_door(lv, tx, ty) && !door_passable(lv, tx, ty))
+    if tile_blocks(xl, yl) || tile_blocks(xr, yl)
+       || tile_blocks(xl, yh) || tile_blocks(xr, yh) then true
+    else
+        // Blocking sprites: AABB overlap against a half-tile box centered
+        // on the sprite. reach = player_radius + sprite_block_half.
+        let reach = player_radius + sprite_block_half
+        let mut hit = false
+        for i in 0..lv->num_sprites
+            let s = &lv->sprites[i]
+            if s->alive && s->blocks then
+                let dx = px - s->x
+                let dy = py - s->y
+                let adx = if dx < 0.0 then 0.0 - dx else dx
+                let ady = if dy < 0.0 then 0.0 - dy else dy
+                if adx < reach && ady < reach then hit = true
+        hit
 
 // Enemy exclusion radius (tiles) — squared. Roughly player_radius (0.35) +
 // enemy body half-width (~0.25). Smaller than the full bbox so the player

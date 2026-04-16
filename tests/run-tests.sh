@@ -139,11 +139,13 @@ assert_contains "pickup:food-ignored-at-full" "goto:29,51 state"          "healt
 
 section "static-sprites"
 # Wolf3D blocking decorations (barrels, wells, tables, etc.) stop the player.
-# A blocking sprite sits at tile (37,22) on E1M1; walking east from (36,22)
-# should clamp the player just shy of x=37 (bbox-right = 36.95 ≤ tile 37).
+# A blocking sprite sits at tile (37,22) on E1M1. Blocking uses a half-tile
+# AABB centered on the sprite (reach = player_radius 0.35 + sprite_half 0.25
+# = 0.6), so the clamp point from the east is px ≤ 37.5 - 0.6 = 36.9.
+# Discrete-tick movement lands at 36.8.
 assert_contains "static:blocks-player" \
     "goto:36,22 fwd:60 state" \
-    "pos=( 36.6000,  22.5000)"
+    "pos=( 36.8000,  22.5000)"
 
 section "doors"
 assert_contains "door:elevator-switch"        "goto:25,47 turnl:90 space facetile phase" "phase=intermission"
