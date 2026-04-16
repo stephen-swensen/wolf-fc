@@ -15,6 +15,7 @@ Working:
 - IMF music via OPL2 emulator, per-level song table for episodes 1–3, M toggles music
 - AdLib SFX + digitized PCM SFX (VSWAP sound pages, 7042 Hz → 44100 Hz nearest) mixing additively. Sound triggers for door/weapon/pickup/pain/alert/fire/death.
 - Weapons: 4 slots (knife/pistol/MG/chain), fire rates per weapon, 1–4 key-select, procedural on-screen sprite with bob, Ctrl fires and decrements ammo
+- Auto-weapon-restore: running out of ammo drops the player to the knife; picking up a clip / MG / chain swaps them back to their best firearm (wolf4sdl's `GiveAmmo` / `chosenweapon` behaviour)
 - Player hitscan: ray from facing through FOV cone hits nearest enemy clear of walls; per-weapon damage roll, knife limited to 1.5-tile melee range. Scores kill on HP ≤ 0.
 - Enemies (guard / officer / SS / dog / mutant) spawned from plane-1 tiles 108+, with difficulty tiers recognized
   - State machine: stand → chase on sight, path/patrol, shoot (burst), pain, die, dead (corpse sprite)
@@ -23,13 +24,15 @@ Working:
   - Tile-center grid movement with chase / dodge selection (prefers axis toward player, random fallback, turnaround)
   - Enemy-fire distance-based hit chance / damage roll (SS are more accurate); dogs melee bite
   - Drops pickup on kill (guard/officer → clip, SS → machine gun, dog/mutant → nothing)
-  - Live enemies block player movement; corpses do not
+  - Live enemies block player movement with a "can always move away" exception (no mutual-deadlock when an enemy walks onto the player); corpses don't block
 - HUD: health/ammo/score/lives/floor-number digits, gold/silver key indicators
 - Display: 320×200 → 2× upscale → 640×400 texture → `SDL_RenderSetLogicalSize(640,480)` for 4:3
 - F11 fake-fullscreen toggle
 - Player collision radius (prevents see-through-walls glitch)
 - PNG screenshots via `s` key (→ `~/.wolf-fc/screenshots/ss_NNN.png`), with full game-state metadata in a `tEXt` chunk
-- Headless test mode (`--test`) with scripted commands for regression testing (see README.md). Includes `enemies` and `enemylist` dumps.
+- Doors stay open while the player's bbox overlaps the door tile (prevents a closing door from trapping a player straddling its edge) and reopen if the player re-enters mid-close
+- Headless test mode (`--test`) with scripted commands for regression testing (see README.md). Includes `enemies`, `enemylist`, and `probe` (bbox tile diagnostics) dumps.
+- Regression test suite at `tests/run-tests.sh` — 21 scripted scenarios covering spawn, pickups, doors (including straddle lockout), hitscan combat, enemy AI, weapon auto-restore, and the probe command. Supports `-k NAME` filter and `-v` verbose.
 
 ## Gameplay
 
