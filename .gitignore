@@ -1,6 +1,9 @@
 # Compiler binary
 fc
 
+# Wolf-fc-local cache of the FC compiler (built by run.sh with -O2)
+.fc-cache/
+
 # Object files
 *.o
 
