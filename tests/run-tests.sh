@@ -137,6 +137,14 @@ section "pickups"
 assert_contains "pickup:food-heals-10"        "sethp:50 goto:29,51 state" "health=60"
 assert_contains "pickup:food-ignored-at-full" "goto:29,51 state"          "health=100"
 
+section "static-sprites"
+# Wolf3D blocking decorations (barrels, wells, tables, etc.) stop the player.
+# A blocking sprite sits at tile (37,22) on E1M1; walking east from (36,22)
+# should clamp the player just shy of x=37 (bbox-right = 36.95 ≤ tile 37).
+assert_contains "static:blocks-player" \
+    "goto:36,22 fwd:60 state" \
+    "pos=( 36.6000,  22.5000)"
+
 section "doors"
 assert_contains "door:elevator-switch"        "goto:25,47 turnl:90 space facetile" "tile=21 next_level=1"
 assert_contains "door:walk-all-the-way-through" \

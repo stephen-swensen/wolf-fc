@@ -28,6 +28,7 @@ Working:
   - Mutants double-shot per shoot cycle (T_Shoot fires on frames 0 and 2); other enemies fire once mid-windup
   - Enemies open closed doors during chase/patrol — pause at the door tile, kick it open, then walk through (wolf4sdl T_Chase OpenDoor)
 - Player firearm hits trigger HITENEMYSND on impact
+- Static decorations block player and enemy movement per wolf4sdl `statinfo[].block` (barrels, tables, wells, lamps, columns, etc.); pickups, lights, gibs, and skeletons stay walk-through
 - HUD: health/ammo/score/lives/floor-number digits, gold/silver key indicators
 - Display: 320×200 → 2× upscale → 640×400 texture → `SDL_RenderSetLogicalSize(640,480)` for 4:3
 - F11 fake-fullscreen toggle
@@ -35,7 +36,7 @@ Working:
 - PNG screenshots via `s` key (→ `~/.wolf-fc/screenshots/ss_NNN.png`), with full game-state metadata in a `tEXt` chunk
 - Doors stay open while the player's bbox overlaps the door tile (prevents a closing door from trapping a player straddling its edge) and reopen if the player re-enters mid-close
 - Headless test mode (`--test`) with scripted commands for regression testing (see README.md). Includes `enemies`, `enemylist`, and `probe` (bbox tile diagnostics) dumps.
-- Regression test suite at `tests/run-tests.sh` — 22 scripted scenarios covering spawn, pickups, doors (including straddle lockout and enemy-opened doors), hitscan combat, enemy AI, weapon auto-restore, and the probe command. Supports `-k NAME` filter and `-v` verbose.
+- Regression test suite at `tests/run-tests.sh` — 23 scripted scenarios covering spawn, pickups, doors (including straddle lockout and enemy-opened doors), static-sprite blocking, hitscan combat, enemy AI, weapon auto-restore, and the probe command. Supports `-k NAME` filter and `-v` verbose.
 
 ## Gameplay
 

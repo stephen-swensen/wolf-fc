@@ -135,6 +135,7 @@ struct sprite_obj =
     dist: float64        // squared distance to player (for sorting)
     item_type: item_kind
     alive: bool          // false after pickup (skip rendering)
+    blocks: bool         // matches wolf4sdl statinfo[].block — solid decoration
 
 struct pushwall_state =
     active: bool
@@ -591,6 +592,35 @@ let find_player_start = (lv: maps.level*, g: game*) ->
     g->plane_x = 0.0
     g->plane_y = fov_factor
 
+// Wolf3D static-sprite blocking flags. Mirrors wolf4sdl wl_act1.cpp
+// statinfo[].block — barrels, tables, lamps, pillars, wells, etc. block the
+// player and enemies; pickups, lights, gibs, and skeletons are walk-through.
+// Tile = 23 + statinfo index (so SPR_STAT_1 "green barrel" = tile 24).
+let tile_blocks_player = (tile: int32) ->
+    match tile with
+    | 24 -> true   // green barrel
+    | 25 -> true   // table & chairs
+    | 26 -> true   // floor lamp
+    | 28 -> true   // hanged man
+    | 30 -> true   // red pillar
+    | 31 -> true   // tree
+    | 33 -> true   // sink
+    | 34 -> true   // potted plant
+    | 35 -> true   // urn
+    | 36 -> true   // bare table
+    | 39 -> true   // suit of armor
+    | 40 -> true   // hanging cage
+    | 41 -> true   // skeleton in cage
+    | 45 -> true   // stuff (basket)
+    | 58 -> true   // brown barrel
+    | 59 -> true   // well (full)
+    | 60 -> true   // well (empty)
+    | 62 -> true   // flag
+    | 63 -> true   // call apogee
+    | 68 -> true   // stove
+    | 69 -> true   // spears
+    | _  -> false
+
 // Map plane 1 tile value to item_kind for pickable items.
 let tile_to_item = (tile: int32) ->
     match tile with
@@ -625,7 +655,8 @@ let spawn_sprites = (lv: level*, lv_data: maps.level*, sprite_start: int32) ->
                     shape_page = page,
                     dist = 0.0,
                     item_type = tile_to_item(obj),
-                    alive = true
+                    alive = true,
+                    blocks = tile_blocks_player(obj)
                 }
                 lv->num_sprites = lv->num_sprites + 1
 
@@ -1239,7 +1270,14 @@ let player_blocked_by_map = (lv: level*, px: float64, py: float64) ->
     let yl = (int32) (py - player_radius)
     let yh = (int32) (py + player_radius)
     let blocks = (tx: int32, ty: int32) ->
-        tile_solid(lv, tx, ty) || (tile_is_door(lv, tx, ty) && !door_passable(lv, tx, ty))
+        if tile_solid(lv, tx, ty) || (tile_is_door(lv, tx, ty) && !door_passable(lv, tx, ty)) then true
+        else
+            let mut hit = false
+            for i in 0..lv->num_sprites
+                let s = &lv->sprites[i]
+                if s->alive && s->blocks
+                   && (int32) s->x == tx && (int32) s->y == ty then hit = true
+            hit
     blocks(xl, yl) || blocks(xr, yl) || blocks(xl, yh) || blocks(xr, yh)
 
 // Enemy exclusion radius (tiles) — squared. Roughly player_radius (0.35) +
@@ -1624,6 +1662,10 @@ let enemy_tile_passable = (lv: level*, g: game*, self_idx: int32, tx: int32, ty:
                 | es_dead -> void()     // corpses don't block
                 | _ ->
                     if oe->tile_x == tx && oe->tile_y == ty then blocked = true
+            for i in 0..lv->num_sprites
+                let s = &lv->sprites[i]
+                if s->alive && s->blocks
+                   && (int32) s->x == tx && (int32) s->y == ty then blocked = true
             !blocked
 
 // Try to take a step in `dir` from this enemy's current tile. For diagonal
@@ -1784,7 +1826,7 @@ let add_dropped_item = (lv: level*, x: float64, y: float64, page: int32, item: i
         lv->num_sprites = lv->num_sprites + 1
     lv->sprites[slot] = sprite_obj {
         x = x, y = y, shape_page = page, dist = 0.0,
-        item_type = item, alive = true
+        item_type = item, alive = true, blocks = false
     }
 
 // Transition this enemy into es_die: play death sound, drop any pickup they
@@ -2737,6 +2779,15 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
                     | ek_dog     -> "dog"
                     | ek_mutant  -> "mutant"
                     io.write("  enemy[%d{i}] %s{ks} tile(%d{e.tile_x},%d{e.tile_y}) pos(%6.3f{e.x},%6.3f{e.y}) d=%5.3f{d}\n", stdout)
+        for i in 0..w->lv->num_sprites
+            let s = w->lv->sprites[i]
+            if !s.alive then continue
+            let dx = s.x - px
+            let dy = s.y - py
+            let d = math.sqrt(dx * dx + dy * dy)
+            if d < 2.5 then
+                let bs = if s.blocks then "BLOCKS" else "walk"
+                io.write("  sprite[%d{i}] tile(%d{(int32) s.x},%d{(int32) s.y}) page=%d{s.shape_page} %s{bs} d=%5.3f{d}\n", stdout)
         void()
     else if arg == "enemylist" then
         // Per-enemy dump: grid position, kind, state, dir. Handy to locate
