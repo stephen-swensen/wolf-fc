@@ -385,6 +385,19 @@ assert_contains "episode:victory-advance-to-menu" \
     "setlevel:58 endepisode wait:2 advance advance advance phase" \
     "phase=menu"
 
+section "audio mixer"
+# Same-sound dedup: rapid retriggers of the same digi sound should share a
+# single mix slot rather than fan out across all four (which used to
+# stack DONOTHINGSND-style spam, overwhelm the SDL queue, and disconnect
+# the music stream on PulseAudio). 5 pistol shots — all sound=5 — should
+# only occupy one slot.
+assert_contains "audio:digi-dedup-rapid-fire" \
+    "setammo:50 fire fire fire fire fire digi_slots" \
+    "slot 0: playing=1 sound=5"
+assert_contains "audio:digi-dedup-no-stacking" \
+    "setammo:50 fire fire fire fire fire digi_slots" \
+    "slot 2: playing=0 sound=-1"
+
 section "music routing"
 # Phase-driven music swap: each between-game / between-screen state plays
 # its wolf3d-original track instead of whatever per-level song was last

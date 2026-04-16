@@ -241,6 +241,10 @@ module digi =
         data: uint8[]        // heap-owned 8-bit unsigned PCM @ 7042 Hz
         pos: float64         // current source-sample position
         playing: bool
+        sound_num: int32     // VSWAP digi index — used to dedup retriggers
+                             // of the same sound (mirrors wolf4sdl's
+                             // DigiChannel[which] = same-channel reuse).
+                             // -1 means "slot has never held a sound."
         gain_l: float64      // per-channel multiplier computed from pan
         gain_r: float64
 
@@ -248,7 +252,10 @@ module digi =
         slots: slot[4]
 
     let init = () ->
-        alloc(player {})!
+        let p = alloc(player {})!
+        for i in 0..max_slots
+            p->slots[i].sound_num = -1
+        p
 
     // Load a digitized sound from VSWAP using the digi info table on the
     // last VSWAP page. Returns a newly heap-allocated PCM buffer (caller
@@ -275,29 +282,51 @@ module digi =
             pg = pg + 1
         buf
 
-    // Start playing `sound_num` on the first free slot, or steal slot 0
-    // if all four are busy. Frees any PCM data previously owned by that
-    // slot before overwriting. `pan` is [-1, +1]; 0 = centered. The L/R
-    // gains use a linear crossfade scaled so center pan gives ~0.71 on
-    // each side (close to the classic Sound Blaster equal-power rule).
+    // Start playing `sound_num` on a slot. Mirrors wolf4sdl's DigiChannel
+    // dedup: if `sound_num` is already playing in any slot, that slot is
+    // reused (rewound to the start, gains updated for the new pan) — no
+    // alloc, no overlap, no stacking. Holding the use button at a wall
+    // therefore retriggers DONOTHINGSND in-place every frame instead of
+    // burning through all four mix slots in a few hundred ms (which used
+    // to overwhelm the SDL audio queue and disconnect the music stream
+    // entirely on PulseAudio backends).
+    //
+    // Slot selection priority:
+    //   1. Slot already playing this sound_num -> rewind in place
+    //   2. First idle (playing = false) slot -> load fresh
+    //   3. Steal slot 0 -> halt + load fresh
+    //
+    // `pan` is [-1, +1]; 0 = centered. The L/R gains use a linear
+    // crossfade scaled so center pan gives ~0.71 on each side (close to
+    // the classic Sound Blaster equal-power rule).
     let play_panned = (p: player*, vs: vswap.vswap_file*, sound_num: int32, pan: float64) ->
-        let mut idx = -1
-        for i in 0..max_slots
-            if !p->slots[i].playing then
-                idx = i
-                break
-        if idx < 0 then idx = 0   // steal slot 0 if all full
-        if p->slots[idx].data.len > 0 then
-            free(p->slots[idx].data)
         let mut pp = pan
         if pp < -1.0 then pp = -1.0
         if pp > 1.0 then pp = 1.0
         let gl = 0.70710678 * (1.0 - pp)
         let gr = 0.70710678 * (1.0 + pp)
+        // 1. Already-playing same sound — rewind, repan, return.
+        for i in 0..max_slots
+            if p->slots[i].playing && p->slots[i].sound_num == sound_num then
+                p->slots[i].pos = 0.0
+                p->slots[i].gain_l = gl
+                p->slots[i].gain_r = gr
+                return
+        // 2. First idle slot.
+        let mut idx = -1
+        for i in 0..max_slots
+            if !p->slots[i].playing then
+                idx = i
+                break
+        // 3. All four busy — steal slot 0.
+        if idx < 0 then idx = 0
+        if p->slots[idx].data.len > 0 then
+            free(p->slots[idx].data)
         p->slots[idx] = slot {
             data = load_sound(vs, sound_num),
             pos = 0.0,
             playing = true,
+            sound_num = sound_num,
             gain_l = gl,
             gain_r = gr
         }
