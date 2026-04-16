@@ -88,8 +88,13 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `state` | Print position, direction, health, ammo, score, lives, level, keys |
 | `goto:X,Y` | Teleport player to tile center `(X+0.5, Y+0.5)` and run a pickup check |
 | `sethp:N` | Set health to N (debug) |
+| `setammo:N` | Set ammo count to N (debug) |
+| `setweapon:N` | Select weapon slot 0-3 (knife/pistol/MG/chain) |
+| `fire` | Press fire once (1 tick); hitscans enemies, decrements ammo, plays weapon SFX |
 | `givekeys` | Grant gold and silver keys (debug) |
 | `facetile` | Print the tile the player is facing and the `next_level` flag (debug) |
+| `enemies` | Print totals per enemy kind and per state |
+| `enemylist` | Print each enemy: index, tile, kind, state, direction, hp |
 
 ### Examples
 

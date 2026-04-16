@@ -7,42 +7,50 @@ Working:
 - Per-level ceiling colors, flat floor color
 - Doors: mid-tile rendering, animated open/close, door-frame (DOORWALL+2/+3) on adjacent walls, standard/locked/elevator textures, space-to-open
 - Push-walls: plane-1 tile 98 detected at level build, space slides the wall 2 tiles in the push direction
-- Billboard sprite rendering for static objects (tiles 23–72)
+- Billboard sprite rendering for static objects (tiles 23–72) and enemies, merged into one back-to-front draw list
   - Compressed t_compshape decoded including signed `newstart`
-  - Z-buffer occlusion against walls, distance-sorted back-to-front
+  - Z-buffer occlusion against walls
 - Item pickups (walk-over): health (dog food/food/first-aid/extra life), ammo (clip/MG/chain), treasure (cross/chalice/bible/crown), gold/silver keys. Score tracked, extra life at 40 000.
 - Elevator tile (21) loads the next level; level state rebuilt, music switched, player re-spawned at new start.
 - IMF music via OPL2 emulator, per-level song table for episodes 1–3, M toggles music
-- AdLib SFX + digitized PCM SFX (VSWAP sound pages, 7042 Hz → 44100 Hz nearest) mixing additively. Sound triggers for door/weapon/pickup/pain.
+- AdLib SFX + digitized PCM SFX (VSWAP sound pages, 7042 Hz → 44100 Hz nearest) mixing additively. Sound triggers for door/weapon/pickup/pain/alert/fire/death.
 - Weapons: 4 slots (knife/pistol/MG/chain), fire rates per weapon, 1–4 key-select, procedural on-screen sprite with bob, Ctrl fires and decrements ammo
+- Player hitscan: ray from facing through FOV cone hits nearest enemy clear of walls; per-weapon damage roll, knife limited to 1.5-tile melee range. Scores kill on HP ≤ 0.
+- Enemies (guard / officer / SS / dog / mutant) spawned from plane-1 tiles 108+, with difficulty tiers recognized
+  - State machine: stand → chase on sight, path/patrol, shoot (burst), pain, die, dead (corpse sprite)
+  - 8-directional billboard rendering with per-state frames (walk cycle, pain, shoot, die, dead)
+  - Line-of-sight against tilemap (walls + not-fully-open doors block); 90° forward cone
+  - Tile-center grid movement with chase / dodge selection (prefers axis toward player, random fallback, turnaround)
+  - Enemy-fire distance-based hit chance / damage roll (SS are more accurate); dogs melee bite
+  - Drops pickup on kill (guard/officer → clip, SS → machine gun, dog/mutant → nothing)
+  - Live enemies block player movement; corpses do not
 - HUD: health/ammo/score/lives/floor-number digits, gold/silver key indicators
 - Display: 320×200 → 2× upscale → 640×400 texture → `SDL_RenderSetLogicalSize(640,480)` for 4:3
 - F11 fake-fullscreen toggle
 - Player collision radius (prevents see-through-walls glitch)
 - PNG screenshots via `s` key (→ `~/.wolf-fc/screenshots/ss_NNN.png`), with full game-state metadata in a `tEXt` chunk
-- Headless test mode (`--test`) with scripted commands for regression testing (see README.md)
+- Headless test mode (`--test`) with scripted commands for regression testing (see README.md). Includes `enemies` and `enemylist` dumps.
 
 ## Gameplay
 
-### Enemies (biggest missing feature)
-- [ ] Spawn enemies from plane 1 (tiles 108+). Tile ranges encode type (guard/officer/SS/dog/mutant/boss) and facing (N/E/S/W).
-- [ ] State machine: stand, patrol, chase, attack, pain, die, dead
-- [ ] Line-of-sight detection against the tilemap (ray from enemy tile to player tile, stopping at walls/closed doors)
-- [ ] Pathfinding / tile-based movement toward the player, avoiding walls and other enemies
-- [ ] 8-directional billboard rendering based on enemy angle relative to player, with animation frames for walk/attack/pain/die. Sprites are consecutive VSWAP pages per enemy type.
-- [ ] Enemies fire at the player on a per-type timer when in LOS; player takes damage
-- [ ] Corpses remain as a flat sprite, optionally dropping a pickup (MG/chain guns from officers/SS)
+### Enemy polish
+- [ ] Difficulty selection — currently spawns all tiers regardless of skill. Add a difficulty setting that filters tiles 144+ / 180+ at build time.
+- [ ] Patrol path markers (plane-1 tiles 90..93 "ICON_ARROWS" that redirect T_Path) — currently patrol enemies turn at walls instead of following map-authored routes.
+- [ ] FL_AMBUSH tile (106) handling — enemies on that tile should ignore sound wake-ups.
+- [ ] Enemies opening doors as they walk into them (wolf4sdl's OpenDoor-from-T_Chase path).
+- [ ] Bosses (Hans, Gretel, Schabbs, Fat, Gift, Hitler variants) — currently ignored.
+- [ ] Ghosts (Blinky/Clyde/Pinky/Inky on secret Pacman-homage level).
+- [ ] Mutant-specific double-shot pattern (they fire twice per shoot cycle in wolf4sdl).
 
 ### Weapons and combat
-- [ ] Hitscan fire: ray from player along facing, find first enemy or wall intersection, apply damage. Currently `Ctrl` only plays the fire animation and sound — no hits.
-- [ ] Weapon-specific hit sounds and pain feedback on enemies
-- [ ] Verify MG/chain pickups are reachable on early levels (they're implemented as pickup item types but most early-episode maps only surface them behind push-walls or from enemy drops, neither of which currently yield them)
+- [ ] Weapon-specific hit sounds (HITENEMYSND when a shot connects).
+- [ ] Verify MG/chain pickups are reachable on early levels (now that SS drop MG on death, this should be automatic once SS enemies appear on a level — confirm on E1M3).
 
 ### Game state / death flow
-- [ ] Player death when health ≤ 0: red flash, collapse animation, drop a life
+- [ ] Player death when health ≤ 0: red flash, collapse animation, drop a life. Currently health can reach 0 but the player keeps playing with a visual glitch; there's no death transition.
 - [ ] Game-over screen when lives exhausted
 - [ ] Level-restart on death with lives remaining
-- [ ] Secret counter (push-walls found), kill counter, treasure counter
+- [ ] Kill counter / secret counter / treasure counter (spawn_enemies knows the total; wire to `gamestate.killtotal` equivalent)
 
 ### Level progression
 - [ ] Par-time tracking per level

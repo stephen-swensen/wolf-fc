@@ -54,11 +54,12 @@ let tick = (w: world*, dt: float64) ->
     update_player(w->lv, w->g, dt, w->ac)
     update_doors(w->lv, w->g, dt, w->ac)
     update_pushwall(w->lv, dt)
-    update_weapon(w->g, dt, w->ac)
+    update_weapon(w, dt)
+    update_enemies(w, dt)
     check_pickups(w->lv, w->g, w->ac)
 ```
 
-Both the interactive game loop and every tick-advancing test command (`fwd`, `back`, `space`, `wait`) call `tick(w, dt)`. **When you add a new per-frame system (e.g. enemy AI), add the call inside `tick` — nowhere else.** This keeps the test mode and interactive mode bit-identical in their per-frame simulation. Earlier in the project, `update_doors` and `update_pushwall` were missing from some test commands and caused silent "animation frozen" bugs during scripted play.
+Both the interactive game loop and every tick-advancing test command (`fwd`, `back`, `space`, `wait`, `fire`) call `tick(w, dt)`. **When you add a new per-frame system, add the call inside `tick` — nowhere else.** This keeps the test mode and interactive mode bit-identical in their per-frame simulation. Earlier in the project, `update_doors` and `update_pushwall` were missing from some test commands and caused silent "animation frozen" bugs during scripted play.
 
 The `goto:X,Y` command is deliberately NOT a full tick — it just teleports and calls `check_pickups` once. That's the right behavior: goto is an instant jump, not time passing.
 
@@ -102,13 +103,15 @@ All project modules are declared at the top level (no namespaces), so they're ac
   - Constants (game_w=320, game_h=200, screen_w=640, screen_h=400, actual_h=480, view_h=160, sample_rate=44100)
   - `struct world` — the god-handle: `{g: game*, lv: level*, rc: render_ctx*, ac: audio_ctx*}`. Only orchestrators take `world*`; narrow functions take just the fields they touch.
   - `struct game` — player state (position, direction, camera plane, input, health/ammo/score)
-  - `struct level` — per-level mutable state: tilemap, pushwall_tiles, sprites[], doors[], door_pos[], pushwall animation. Rebuilt on level transition.
-  - `struct render_ctx` — `{fb, dbuf, zbuf}` renderer scratch buffers, process-wide.
+  - `struct level` — per-level mutable state: tilemap, pushwall_tiles, sprites[], doors[], door_pos[], pushwall animation, enemies[]. Rebuilt on level transition.
+  - `struct render_ctx` — `{fb, dbuf, zbuf, billboards}` renderer scratch buffers, process-wide. `billboards[]` is rebuilt/sorted each frame from live enemies + live sprites.
   - `struct audio_ctx` — `{vs, ad, sfx, digi}` bundle so `trigger_sound` / pickup / door code can fire sounds without globals.
   - `struct sprite_obj` — static objects (position, VSWAP page, distance)
-  - Factories: `build_render_ctx()`, `build_level(lv_data, sprite_start)`, `free_level(lv)`.
+  - `struct enemy` — active actors (position, tile_x/y, kind, state, dir, HP, animation timer, shoot-fired latch). Direction encoding matches wolf4sdl `dirtype` (east=0, northeast=1, ..., southeast=7, nodir=8). Uses the shared `enemy_rng` (random.lcg_random, fixed seed) so scripted test runs reproduce across builds.
+  - Factories: `build_render_ctx()`, `build_level(lv_data, sprite_start)` (now also calls `spawn_enemies`), `free_level(lv)`.
   - DDA raycaster (`render_walls`) writing to `rc->fb` (320x200 framebuffer)
-  - Sprite renderer (`render_sprites`) with compressed t_compshape decoding
+  - Billboard renderer: `build_billboards` merges `lv->sprites` + `lv->enemies` into one back-to-front list, `render_billboards` draws each via `draw_sprite_col`. Non-rotating enemy states (pain/die/dead/shoot) use fixed VSWAP pages; stand/walk/chase use `enemy_angle_sprite` to pick one of 8 facing variants.
+  - Enemy AI: `check_line_clear` (tilemap LOS), `enemy_sees_player` (LOS + 90° forward cone), `select_chase_dir` / `select_path_dir`, `advance_enemy_move` (tile-center grid motion), `update_enemy` (state-machine dispatch), `enemy_fire_at_player` / `enemy_bite_player`, `damage_enemy` / `kill_enemy` / `wake_enemy`. `fire_player_hitscan` is invoked from `update_weapon` on trigger pull.
   - Audio output path: zero buffer → `imf.fill` (music) → `adlib.fill` (AdLib SFX) → `digi.fill` (8-bit PCM) → SDL queue (back-pressured via `queued_audio_size`)
   - HUD renderer with 3x5 bitmap digit font
   - `upscale_2x` — pixel-doubles 320x200 → 640x400 for the SDL texture

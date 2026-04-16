@@ -9,6 +9,7 @@ import io from std::
 import sys from std::
 import math from std::
 import text from std::
+import random from std::
 
 // ============================================================
 // Constants
@@ -96,6 +97,9 @@ struct game =
     has_silver_key: bool
     next_level: bool
     weapon: int32          // 0=knife, 1=pistol, 2=machine gun, 3=chain gun
+    best_weapon: int32     // highest-tier firearm owned (pistol..chain). When
+                           // ammo runs out we drop to knife; picking ammo up
+                           // again restores this weapon (wolf4sdl's chosenweapon).
     fire_timer: float64    // cooldown timer (>0 means firing animation)
     weapon_frame: int32    // animation frame (0=idle, 1-3=firing)
 
@@ -163,6 +167,192 @@ union item_kind =
 
 let pushwall_speed = 1.0  // tiles per second
 
+// ============================================================
+// Enemies — plane-1 tiles 108+ spawn guard / officer / SS / dog / mutant
+// ============================================================
+
+// Matches wolf4sdl dirtype (east=0, northeast=1, north=2, ... southeast=7).
+// Dir 8 = "nodir" (stationary / blocked-in).
+let dir_east      = 0
+let dir_northeast = 1
+let dir_north     = 2
+let dir_northwest = 3
+let dir_west      = 4
+let dir_southwest = 5
+let dir_south     = 6
+let dir_southeast = 7
+let dir_nodir     = 8
+
+// Unit-vector lookup (wolf-fc game coords: +x east, +y south).
+let dir_vx = float64[8] { 1.0,  0.7071068,  0.0, -0.7071068, -1.0, -0.7071068,  0.0,  0.7071068 }
+let dir_vy = float64[8] { 0.0, -0.7071068, -1.0, -0.7071068,  0.0,  0.7071068,  1.0,  0.7071068 }
+// Integer tile-step lookup (for grid-aligned moves).
+let dir_dx = int32[8]   { 1,  1,  0, -1, -1, -1,  0,  1 }
+let dir_dy = int32[8]   { 0, -1, -1, -1,  0,  1,  1,  1 }
+// Opposite direction (for "don't turn straight around first").
+let dir_opposite = int32[8] { 4, 5, 6, 7, 0, 1, 2, 3 }
+
+union enemy_kind =
+    | ek_guard
+    | ek_officer
+    | ek_ss
+    | ek_dog
+    | ek_mutant
+
+union enemy_state =
+    | es_stand      // idle — transitions to chase/shoot on sight
+    | es_path       // patrolling along pre-set direction
+    | es_chase      // actively pursuing player
+    | es_shoot      // firing (multi-frame attack animation)
+    | es_pain       // brief flinch after taking damage
+    | es_die        // death animation frames
+    | es_dead       // corpse (final frame, no further animation)
+
+// One animate actor. State, position, direction, HP all mutate in place; the
+// live/dead distinction is `state == es_dead` (no separate `alive` flag).
+struct enemy =
+    x: float64
+    y: float64
+    tile_x: int32             // integer tile — authoritative for AI / LOS
+    tile_y: int32
+    kind: enemy_kind
+    state: enemy_state
+    dir: int32                // 0..7 or 8 (nodir)
+    hp: int32
+    anim_frame: int32         // index into the state's frame list (walk 0-3, shoot 0-2, die 0-3)
+    anim_timer: float64       // seconds until next anim transition
+    shoot_fired: bool         // set true after the damage-roll frame in es_shoot, so we only fire once per attack
+    move_remaining: float64   // distance (tiles) left to reach the next tile center
+    dist_to_player: float64   // squared distance, used for draw sort
+    dist_flat: float64        // tile-grid distance, used for some AI decisions
+    ambush: bool              // tile 106 (AMBUSH) — don't wake on sound, only LOS
+    notified: bool            // has entered active pursuit at least once (suppresses re-alert sound)
+
+// Tunables — see update_enemies for how each is used.
+let max_enemies = 150
+let enemy_chase_speed   = 1.5   // tiles/sec — walking chase for all humanoids
+let enemy_patrol_speed  = 0.9   // tiles/sec — patrol pace before player is spotted
+let dog_chase_speed     = 3.2   // tiles/sec — dogs roughly player-run speed
+let walk_frame_time     = 0.12  // seconds per W1/W2/W3/W4 cycle frame
+let shoot_frame_time    = 0.20  // humanoid shoot-windup frame duration
+let pain_time           = 0.20  // pain flinch duration
+let die_frame_time      = 0.18  // per frame during death animation
+let enemy_sight_range   = 16.0  // tiles — max LOS distance for sight check
+let enemy_melee_range   = 1.6   // tiles — dogs bite inside this distance
+
+// Per-kind sprite-page offsets relative to VSWAP sprite_start. Derived from
+// wolf4sdl's sprite enum (wl_def.h): SPR_GRD_S_1..SPR_GRD_SHOOT3 block at 50,
+// DOG block at 99 (no stand), SS at 138, MUT at 187, OFC at 238.
+//   stand_base : 8 angles at +0..+7 (standing/idle frame)
+//   walk_base  : 32 frames = 4 walk phases × 8 angles
+//   pain / die / dead / shoot : single-view pages (no angle variants)
+struct enemy_sprites =
+    stand_base: int32
+    walk_base: int32
+    pain1: int32
+    pain2: int32
+    die_frames: int32[4]
+    num_die_frames: int32
+    dead_frame: int32
+    shoot_frames: int32[4]
+    num_shoot_frames: int32
+
+// Populated in build_level — values are sprite-page indices, relative to
+// vs->sprite_start. (ek_dog has no stand pose, so stand_base == walk_base.)
+let enemy_sprites_guard = enemy_sprites {
+    stand_base = 50, walk_base = 58,
+    pain1 = 90, pain2 = 94,
+    die_frames = int32[4] { 91, 92, 93, 0 }, num_die_frames = 3,
+    dead_frame = 95,
+    shoot_frames = int32[4] { 96, 97, 98, 0 }, num_shoot_frames = 3
+}
+let enemy_sprites_dog = enemy_sprites {
+    stand_base = 99, walk_base = 99,
+    pain1 = 99, pain2 = 99,  // dogs don't show pain
+    die_frames = int32[4] { 131, 132, 133, 0 }, num_die_frames = 3,
+    dead_frame = 134,
+    shoot_frames = int32[4] { 135, 136, 137, 0 }, num_shoot_frames = 3  // jump-bite frames
+}
+let enemy_sprites_ss = enemy_sprites {
+    stand_base = 138, walk_base = 146,
+    pain1 = 178, pain2 = 182,
+    die_frames = int32[4] { 179, 180, 181, 0 }, num_die_frames = 3,
+    dead_frame = 183,
+    shoot_frames = int32[4] { 184, 185, 186, 0 }, num_shoot_frames = 3
+}
+let enemy_sprites_mut = enemy_sprites {
+    stand_base = 187, walk_base = 195,
+    pain1 = 227, pain2 = 231,
+    die_frames = int32[4] { 228, 229, 230, 232 }, num_die_frames = 4,
+    dead_frame = 233,
+    shoot_frames = int32[4] { 234, 235, 236, 237 }, num_shoot_frames = 4
+}
+let enemy_sprites_ofc = enemy_sprites {
+    stand_base = 238, walk_base = 246,
+    pain1 = 278, pain2 = 282,
+    die_frames = int32[4] { 279, 280, 281, 283 }, num_die_frames = 4,
+    dead_frame = 284,
+    shoot_frames = int32[4] { 285, 286, 287, 0 }, num_shoot_frames = 3
+}
+
+let sprites_for_kind = (k: enemy_kind) ->
+    match k with
+    | ek_guard   -> enemy_sprites_guard
+    | ek_officer -> enemy_sprites_ofc
+    | ek_ss      -> enemy_sprites_ss
+    | ek_dog     -> enemy_sprites_dog
+    | ek_mutant  -> enemy_sprites_mut
+
+// Per-kind HP. Difficulty isn't modeled yet — use "Bring 'em on" (gd_hard)
+// values to keep encounters readable. Dogs die in one shot.
+let hp_for_kind = (k: enemy_kind) ->
+    match k with
+    | ek_guard   -> 25
+    | ek_officer -> 50
+    | ek_ss      -> 100
+    | ek_dog     -> 1
+    | ek_mutant  -> 55
+
+// Score granted to the player on kill. Wolf3D values.
+let score_for_kind = (k: enemy_kind) ->
+    match k with
+    | ek_guard   -> 100
+    | ek_officer -> 400
+    | ek_ss      -> 500
+    | ek_dog     -> 200
+    | ek_mutant  -> 700
+
+// Movement speed while chasing (tiles/sec). Dogs sprint.
+let chase_speed_for_kind = (k: enemy_kind) ->
+    match k with
+    | ek_dog -> dog_chase_speed
+    | _      -> enemy_chase_speed
+
+// Pickup item to drop on death (item_kind.decoration = nothing). SS drop a
+// machine gun; everyone else drops a clip. Dogs and mutants don't carry weapons.
+let drop_for_kind = (k: enemy_kind) ->
+    match k with
+    | ek_guard   -> item_kind.clip
+    | ek_officer -> item_kind.clip
+    | ek_ss      -> item_kind.machine_gun
+    | ek_dog     -> item_kind.decoration
+    | ek_mutant  -> item_kind.decoration
+
+// VSWAP sprite page index of the dropped pickup's shape (shape = 2 + tile - 23).
+let drop_shape_for_kind = (k: enemy_kind) ->
+    match k with
+    | ek_guard   -> 2 + (49 - 23)   // clip shape
+    | ek_officer -> 2 + (49 - 23)
+    | ek_ss      -> 2 + (50 - 23)   // MG shape
+    | _ -> 0
+
+// Shared RNG for all enemy behavior (sight rolls, hit chance, damage). A single
+// fixed-seed sequence so scripted test runs are reproducible across builds.
+// Function calls aren't allowed in file-scope initializers, so we construct the
+// struct literal directly (random.lcg_random.make does the same thing).
+let mut enemy_rng = random.lcg_random { state = 0xDEADBEEF5EED1234u64 }
+let rnd_byte = () -> (int32) (random.lcg_random.next_uint32(&enemy_rng) & 0xFFu32)
+
 // Per-level state: tile grid, dynamic entities, in-progress animations.
 // Built once per level via build_level and destroyed via free_level on
 // transition. Everything that a save-state would need to preserve lives here.
@@ -181,6 +371,19 @@ struct level =
     num_doors: int32
     // Currently-animating push-wall (at most one at a time).
     pushwall: pushwall_state
+    // Active + dead enemies spawned from plane-1 tiles 108+.
+    enemies: enemy[]
+    num_enemies: int32
+
+// One drawable billboard emitted each frame — a merged queue of static sprites
+// and enemies, sorted back-to-front so farther items draw first and nearer
+// ones paint over them. Kept in a process-wide scratch buffer on render_ctx
+// rather than freshly allocated per frame.
+struct billboard =
+    x: float64
+    y: float64
+    shape_page: int32
+    dist_sq: float64
 
 // Renderer scratch buffers. Process-wide and rewritten every frame; not
 // part of save-state. Held in its own struct so no one reaches for globals.
@@ -188,6 +391,8 @@ struct render_ctx =
     fb: uint32[]       // 320x200 ARGB — primary software-rendered frame
     dbuf: uint32[]     // 640x400 ARGB — 2x nearest-neighbor upscale of fb
     zbuf: float64[]    // per-column wall perp-distance, for sprite clipping
+    billboards: billboard[]    // back-to-front draw list (statics + enemies)
+    num_billboards: int32
 
 // Sound system handle: loaded-asset refs + SFX playback state.
 struct audio_ctx =
@@ -217,7 +422,9 @@ let build_render_ctx = () ->
     let rc = alloc(render_ctx {
         fb = alloc(uint32[game_w * game_h] {})!,
         dbuf = alloc(uint32[screen_w * screen_h] {})!,
-        zbuf = alloc(float64[game_w] {})!
+        zbuf = alloc(float64[game_w] {})!,
+        billboards = alloc(billboard[max_sprites + max_enemies] {})!,
+        num_billboards = 0
     })!
     rc
 
@@ -233,11 +440,14 @@ let build_level = (lv_data: maps.level*, sprite_start: int32) ->
         doors = alloc(door_obj[max_doors] {})!,
         door_pos = alloc(float64[max_doors] {})!,
         num_doors = 0,
-        pushwall = default(pushwall_state)
+        pushwall = default(pushwall_state),
+        enemies = alloc(enemy[max_enemies] {})!,
+        num_enemies = 0
     })!
     build_tilemap(lv, lv_data, sprite_start)
     spawn_sprites(lv, lv_data, sprite_start)
     mark_pushwalls(lv, lv_data)
+    spawn_enemies(lv, lv_data)
     lv
 
 let free_level = (lv: level*) ->
@@ -246,6 +456,7 @@ let free_level = (lv: level*) ->
     free(lv->sprites)
     free(lv->doors)
     free(lv->door_pos)
+    free(lv->enemies)
     free(lv)
 
 // ============================================================
@@ -409,25 +620,232 @@ let spawn_sprites = (lv: level*, lv_data: maps.level*, sprite_start: int32) ->
                 }
                 lv->num_sprites = lv->num_sprites + 1
 
-// Sort sprites by distance (farthest first) using insertion sort.
-let sort_sprites = (lv: level*, g: game*) ->
+// Map a plane-1 tile value to (kind, is_patrol, dir) for enemy spawning.
+// Returns none for tiles that don't encode an enemy.
+// Tile encoding (wolf4sdl wl_game.cpp ScanInfoPlane):
+//   108..111 guard stand E/N/W/S, +36 per difficulty step (medium, hard)
+//   112..115 guard patrol E/N/W/S, +36 per difficulty step
+//   124      dead guard (corpse only)
+//   116..119 / 152..155 / 188..191 officer stand
+//   120..123 / 156..159 / 192..195 officer patrol
+//   126..129 / 162..165 / 198..201 ss stand
+//   130..133 / 166..169 / 202..205 ss patrol
+//   134..137 / 170..173 / 206..209 dog stand
+//   138..141 / 174..177 / 210..213 dog patrol
+//   216..219 / 234..237 / 252..255 mutant stand
+//   220..223 / 238..241 / 256..259 mutant patrol
+// Dir values 0..3 are east/north/west/south (matches dir_east / _north etc.
+// after multiplying by 2, which happens in spawn_one_enemy).
+struct enemy_spawn_info =
+    kind: enemy_kind
+    patrol: bool
+    dir4: int32        // 0=east, 1=north, 2=west, 3=south
+    dead: bool         // spawn as pre-killed corpse (tile 124)
+
+let classify_enemy_tile = (tile: int32) ->
+    // Guards
+    if tile >= 108 && tile <= 111 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_guard, patrol = false, dir4 = tile - 108, dead = false })
+    else if tile >= 144 && tile <= 147 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_guard, patrol = false, dir4 = tile - 144, dead = false })
+    else if tile >= 180 && tile <= 183 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_guard, patrol = false, dir4 = tile - 180, dead = false })
+    else if tile >= 112 && tile <= 115 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_guard, patrol = true, dir4 = tile - 112, dead = false })
+    else if tile >= 148 && tile <= 151 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_guard, patrol = true, dir4 = tile - 148, dead = false })
+    else if tile >= 184 && tile <= 187 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_guard, patrol = true, dir4 = tile - 184, dead = false })
+    else if tile == 124 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_guard, patrol = false, dir4 = 0, dead = true })
+    // Officers
+    else if tile >= 116 && tile <= 119 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_officer, patrol = false, dir4 = tile - 116, dead = false })
+    else if tile >= 152 && tile <= 155 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_officer, patrol = false, dir4 = tile - 152, dead = false })
+    else if tile >= 188 && tile <= 191 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_officer, patrol = false, dir4 = tile - 188, dead = false })
+    else if tile >= 120 && tile <= 123 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_officer, patrol = true, dir4 = tile - 120, dead = false })
+    else if tile >= 156 && tile <= 159 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_officer, patrol = true, dir4 = tile - 156, dead = false })
+    else if tile >= 192 && tile <= 195 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_officer, patrol = true, dir4 = tile - 192, dead = false })
+    // SS
+    else if tile >= 126 && tile <= 129 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_ss, patrol = false, dir4 = tile - 126, dead = false })
+    else if tile >= 162 && tile <= 165 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_ss, patrol = false, dir4 = tile - 162, dead = false })
+    else if tile >= 198 && tile <= 201 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_ss, patrol = false, dir4 = tile - 198, dead = false })
+    else if tile >= 130 && tile <= 133 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_ss, patrol = true, dir4 = tile - 130, dead = false })
+    else if tile >= 166 && tile <= 169 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_ss, patrol = true, dir4 = tile - 166, dead = false })
+    else if tile >= 202 && tile <= 205 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_ss, patrol = true, dir4 = tile - 202, dead = false })
+    // Dogs
+    else if tile >= 134 && tile <= 137 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_dog, patrol = false, dir4 = tile - 134, dead = false })
+    else if tile >= 170 && tile <= 173 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_dog, patrol = false, dir4 = tile - 170, dead = false })
+    else if tile >= 206 && tile <= 209 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_dog, patrol = false, dir4 = tile - 206, dead = false })
+    else if tile >= 138 && tile <= 141 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_dog, patrol = true, dir4 = tile - 138, dead = false })
+    else if tile >= 174 && tile <= 177 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_dog, patrol = true, dir4 = tile - 174, dead = false })
+    else if tile >= 210 && tile <= 213 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_dog, patrol = true, dir4 = tile - 210, dead = false })
+    // Mutants
+    else if tile >= 216 && tile <= 219 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_mutant, patrol = false, dir4 = tile - 216, dead = false })
+    else if tile >= 234 && tile <= 237 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_mutant, patrol = false, dir4 = tile - 234, dead = false })
+    else if tile >= 252 && tile <= 255 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_mutant, patrol = false, dir4 = tile - 252, dead = false })
+    else if tile >= 220 && tile <= 223 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_mutant, patrol = true, dir4 = tile - 220, dead = false })
+    else if tile >= 238 && tile <= 241 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_mutant, patrol = true, dir4 = tile - 238, dead = false })
+    else if tile >= 256 && tile <= 259 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_mutant, patrol = true, dir4 = tile - 256, dead = false })
+    else default(enemy_spawn_info?)
+
+// Allocate one enemy entry from plane-1 data. dir4 0..3 is east/north/west/south;
+// multiplied by 2 to land on the cardinal dirs of the 8-dir `dirtype` encoding.
+let spawn_one_enemy = (lv: level*, tx: int32, ty: int32, info: enemy_spawn_info) ->
+    if lv->num_enemies >= max_enemies then return
+    let dir8 = info.dir4 * 2   // 0,2,4,6
+    let initial_state = if info.dead then enemy_state.es_dead
+        else if info.patrol then enemy_state.es_path
+        else enemy_state.es_stand
+    let hp = if info.dead then 0 else hp_for_kind(info.kind)
+    let anim_frame = if info.dead then
+        sprites_for_kind(info.kind).num_die_frames - 1
+    else 0
+    lv->enemies[lv->num_enemies] = enemy {
+        x = (float64) tx + 0.5,
+        y = (float64) ty + 0.5,
+        tile_x = tx,
+        tile_y = ty,
+        kind = info.kind,
+        state = initial_state,
+        dir = if info.dead then dir_nodir else dir8,
+        hp = hp,
+        anim_frame = anim_frame,
+        anim_timer = walk_frame_time,
+        shoot_fired = false,
+        move_remaining = 0.0,
+        dist_to_player = 0.0,
+        dist_flat = 0.0,
+        ambush = false,
+        notified = false
+    }
+    lv->num_enemies = lv->num_enemies + 1
+
+let spawn_enemies = (lv: level*, lv_data: maps.level*) ->
+    lv->num_enemies = 0
+    for y in 0..map_size
+        for x in 0..map_size
+            let obj = (int32) lv_data->objects[(int64) y * 64 + (int64) x]
+            if obj == 0 then continue
+            match classify_enemy_tile(obj) with
+            | none -> void()
+            | some(info) -> spawn_one_enemy(lv, x, y, info)
+
+// Pick the angle-dependent VSWAP page for a rotating enemy sprite. Returns a
+// sprite index (relative to sprite_start) given the enemy's position / facing,
+// the player's position, and the base page for the current animation phase
+// (stand pose or one of the four walk poses). Non-rotating states (pain, die,
+// dead, shoot) use fixed pages and call this function only for rotating ones.
+//
+// Coord note: wolf-fc uses y-down, so we convert to a standard-math frame
+// (y-up, angles CCW from +x) by flipping the y delta, which lets us reuse
+// wolf4sdl's CalcRotate formula (`angle = atan2(e2p_y, e2p_x) - enemy_angle`
+// quantized into 8 bins with a 22.5° offset).
+let enemy_angle_sprite = (e: enemy*, px: float64, py: float64, base: int32) ->
+    let e2p_x = px - e->x
+    let e2p_y = e->y - py      // flip to std-math y-up
+    let a_e2p = math.atan2(e2p_y, e2p_x)
+    let a_face = (float64) e->dir * math.pi / 4.0
+    let mut rel = a_e2p - a_face + math.pi / 8.0
+    let two_pi = 2.0 * math.pi
+    loop
+        if rel >= 0.0 then break
+        rel = rel + two_pi
+    loop
+        if rel < two_pi then break
+        rel = rel - two_pi
+    let mut bin = (int32) (rel / (math.pi / 4.0))
+    if bin < 0 then bin = 0
+    if bin > 7 then bin = 7
+    base + bin
+
+// VSWAP page (relative to sprite_start) for this enemy in its current state.
+// Frame counts come from the wolf4sdl states[] table; animation loops for walk
+// states and plays once for die / shoot / pain.
+let enemy_sprite_page = (e: enemy*, px: float64, py: float64) ->
+    let sp = sprites_for_kind(e->kind)
+    match e->state with
+    | es_stand ->
+        // Dogs have no stand pose — fall back to walk-frame 1.
+        enemy_angle_sprite(e, px, py, sp.stand_base)
+    | es_path | es_chase ->
+        // Walk cycle: 4 phases of 8 angles. anim_frame cycles 0..3.
+        let ph = e->anim_frame % 4
+        enemy_angle_sprite(e, px, py, sp.walk_base + ph * 8)
+    | es_shoot ->
+        let f = if e->anim_frame < sp.num_shoot_frames then e->anim_frame else sp.num_shoot_frames - 1
+        sp.shoot_frames[f]
+    | es_pain ->
+        // Alternate pain pose if the kind has two. anim_frame 0 = pain1.
+        if e->anim_frame == 0 then sp.pain1 else sp.pain2
+    | es_die ->
+        let f = if e->anim_frame < sp.num_die_frames then e->anim_frame else sp.num_die_frames - 1
+        sp.die_frames[f]
+    | es_dead -> sp.dead_frame
+
+// Collect one frame's worth of visible billboards (static sprites + all enemy
+// states including dead) and sort back-to-front. Pickup sprites marked !alive
+// are skipped. The result lives in rc->billboards[0..num_billboards] and is
+// consumed by render_billboards.
+let build_billboards = (lv: level*, rc: render_ctx*, g: game*, sprite_start: int32) ->
+    let mut n = 0
     for i in 0..lv->num_sprites
-        if !lv->sprites[i].alive then
-            lv->sprites[i].dist = -1.0
-            continue
+        if !lv->sprites[i].alive then continue
         let dx = lv->sprites[i].x - g->pos_x
         let dy = lv->sprites[i].y - g->pos_y
-        lv->sprites[i].dist = dx * dx + dy * dy
-    // Insertion sort descending by dist.
-    for i in 1..lv->num_sprites
-        let key = lv->sprites[i]
+        rc->billboards[n] = billboard {
+            x = lv->sprites[i].x,
+            y = lv->sprites[i].y,
+            shape_page = lv->sprites[i].shape_page,
+            dist_sq = dx * dx + dy * dy
+        }
+        n = n + 1
+    for i in 0..lv->num_enemies
+        let e = &lv->enemies[i]
+        let page_rel = enemy_sprite_page(e, g->pos_x, g->pos_y)
+        let dx = e->x - g->pos_x
+        let dy = e->y - g->pos_y
+        rc->billboards[n] = billboard {
+            x = e->x,
+            y = e->y,
+            shape_page = sprite_start + page_rel,
+            dist_sq = dx * dx + dy * dy
+        }
+        n = n + 1
+    rc->num_billboards = n
+    // Insertion sort descending by dist_sq (far → near).
+    for i in 1..n
+        let key = rc->billboards[i]
         let mut j = i - 1
         loop
             if j < 0 then break
-            if lv->sprites[j].dist >= key.dist then break
-            lv->sprites[j + 1] = lv->sprites[j]
+            if rc->billboards[j].dist_sq >= key.dist_sq then break
+            rc->billboards[j + 1] = rc->billboards[j]
             j = j - 1
-        lv->sprites[j + 1] = key
+        rc->billboards[j + 1] = key
 
 // Shade a color by a factor (0.0 = black, 1.0 = original).
 let shade_color = (c: uint32, factor: float64) ->
@@ -479,15 +897,17 @@ let draw_sprite_col = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[],
                     rc->fb[(int64) sy * 320 + (int64) screen_x] = color
                     sy = sy + 1
 
-// Render all visible sprites (sorted far to near).
-let render_sprites = (lv: level*, rc: render_ctx*, g: game*,
-                      vs: vswap.vswap_file*, pal: uint32[]) ->
-    sort_sprites(lv, g)
+// Render the sorted billboards (static sprites + enemies). Caller must have
+// called build_billboards for this frame first. Depth-sorted draw order is
+// required because each billboard is drawn whole (no inter-billboard z-test);
+// the wall z-buffer clips columns against walls only.
+let render_billboards = (rc: render_ctx*, g: game*,
+                         vs: vswap.vswap_file*, pal: uint32[]) ->
     let inv_det = 1.0 / (g->plane_x * g->dir_y - g->dir_x * g->plane_y)
-    for i in 0..lv->num_sprites
-        if !lv->sprites[i].alive then continue
-        let sx = lv->sprites[i].x - g->pos_x
-        let sy = lv->sprites[i].y - g->pos_y
+    for i in 0..rc->num_billboards
+        let bb = rc->billboards[i]
+        let sx = bb.x - g->pos_x
+        let sy = bb.y - g->pos_y
         let tx = inv_det * (g->dir_y * sx - g->dir_x * sy)
         let ty = inv_det * (g->plane_x * sy - g->plane_y * sx)
         if ty <= 0.1 then continue    // behind camera
@@ -502,7 +922,7 @@ let render_sprites = (lv: level*, rc: render_ctx*, g: game*,
                 if ty < rc->zbuf[stripe] then
                     let tex_col = (stripe - draw_x0) * 64 / spr_h
                     let spr_shade = dist_shade(ty)
-                    draw_sprite_col(rc, vs, pal, lv->sprites[i].shape_page,
+                    draw_sprite_col(rc, vs, pal, bb.shape_page,
                         tex_col, stripe, spr_h, spr_shade)
 
 // ============================================================
@@ -801,7 +1221,10 @@ let render_walls = (lv: level*, rc: render_ctx*, g: game*,
 let player_radius = 0.35
 
 // True if the player's bbox at (px, py) overlaps a wall or a closed door.
-let player_blocked = (lv: level*, px: float64, py: float64) ->
+// Does NOT check enemy overlap — that's handled in try_move with a distance
+// comparison so the player can always slide away from an enemy they're
+// already inside of (prevents the mutual-deadlock with chasing actors).
+let player_blocked_by_map = (lv: level*, px: float64, py: float64) ->
     let xl = (int32) (px - player_radius)
     let xr = (int32) (px + player_radius)
     let yl = (int32) (py - player_radius)
@@ -810,18 +1233,60 @@ let player_blocked = (lv: level*, px: float64, py: float64) ->
         tile_solid(lv, tx, ty) || (tile_is_door(lv, tx, ty) && !door_passable(lv, tx, ty))
     blocks(xl, yl) || blocks(xr, yl) || blocks(xl, yh) || blocks(xr, yh)
 
-// Try to move to (nx, ny), handling collision per-axis. Returns true if
-// neither axis could move (the player is scraping a wall) so the caller can
-// trigger a wall-bump sound.
+// Enemy exclusion radius (tiles) — squared. Roughly player_radius (0.35) +
+// enemy body half-width (~0.25). Smaller than the full bbox so the player
+// can squeeze past an adjacent enemy without being locked out of corridors.
+let enemy_block_r2 = 0.55 * 0.55
+
+// Would moving from (cur_x, cur_y) to (nx, ny) collide with a live enemy?
+// Asymmetric: blocks only moves that put the player INSIDE the exclusion
+// zone of some live enemy AND DECREASE the distance to that enemy. Moves
+// that increase (or leave unchanged) the distance are always allowed, so if
+// an enemy walks onto the player the player can always slide away. Skips
+// dead and actively-dying enemies (they don't physically block).
+let move_blocked_by_enemy = (lv: level*, cur_x: float64, cur_y: float64,
+                             nx: float64, ny: float64) ->
+    let mut hit = false
+    for i in 0..lv->num_enemies
+        let e = &lv->enemies[i]
+        match e->state with
+        | es_dead | es_die -> void()
+        | _ ->
+            let new_dx = e->x - nx
+            let new_dy = e->y - ny
+            let new_d2 = new_dx * new_dx + new_dy * new_dy
+            if new_d2 < enemy_block_r2 then
+                let cur_dx = e->x - cur_x
+                let cur_dy = e->y - cur_y
+                let cur_d2 = cur_dx * cur_dx + cur_dy * cur_dy
+                if new_d2 < cur_d2 then hit = true
+    hit
+
+// Back-compat shim: walls-only check for old callers. Prefer the split above
+// when you know the current (cur_x, cur_y) so enemy sliding works.
+let player_blocked = (lv: level*, px: float64, py: float64) ->
+    player_blocked_by_map(lv, px, py)
+
+// Try to move the player by (dx, dy). Attempts per-axis (so the player can
+// slide along a wall when blocked on one axis) and reports "fully blocked"
+// so the caller can trigger a wall-bump sound. Collision is checked against
+// the map (walls + closed doors) AND live enemies — enemy blocking is
+// "directional": moves that put the player further from an enemy are always
+// allowed, which is what prevents the mutual-deadlock when an enemy walks
+// onto the player from their side.
 let try_move = (lv: level*, g: game*, dx: float64, dy: float64) ->
-    let nx = g->pos_x + dx
-    let ny = g->pos_y + dy
+    let cur_x = g->pos_x
+    let cur_y = g->pos_y
+    let nx = cur_x + dx
+    let ny = cur_y + dy
     let mut blocked_x = true
     let mut blocked_y = true
-    if !player_blocked(lv, nx, g->pos_y) then
+    if !player_blocked_by_map(lv, nx, cur_y)
+       && !move_blocked_by_enemy(lv, cur_x, cur_y, nx, cur_y) then
         g->pos_x = nx
         blocked_x = false
-    if !player_blocked(lv, g->pos_x, ny) then
+    if !player_blocked_by_map(lv, g->pos_x, ny)
+       && !move_blocked_by_enemy(lv, g->pos_x, cur_y, g->pos_x, ny) then
         g->pos_y = ny
         blocked_y = false
     blocked_x && blocked_y
@@ -933,18 +1398,25 @@ let check_pickups = (lv: level*, g: game*, ac: audio_ctx*) ->
         | clip ->
             if g->ammo >= 99 then false
             else
+                // wolf4sdl GiveAmmo: if player was out of ammo (dropped to
+                // knife), restore their best firearm when the clip comes in.
+                if g->ammo == 0 && g->weapon == 0 then g->weapon = g->best_weapon
                 g->ammo = g->ammo + 8
                 if g->ammo > 99 then g->ammo = 99
                 true
         | machine_gun ->
+            if g->ammo == 0 && g->weapon == 0 then g->weapon = 2
             g->ammo = g->ammo + 6
             if g->ammo > 99 then g->ammo = 99
             if g->weapon < 2 then g->weapon = 2
+            if g->best_weapon < 2 then g->best_weapon = 2
             true
         | chain_gun ->
+            if g->ammo == 0 && g->weapon == 0 then g->weapon = 3
             g->ammo = g->ammo + 6
             if g->ammo > 99 then g->ammo = 99
             if g->weapon < 3 then g->weapon = 3
+            if g->best_weapon < 3 then g->best_weapon = 3
             true
         | gold_key ->
             g->has_gold_key = true
@@ -1056,6 +1528,495 @@ let update_pushwall = (lv: level*, dt: float64) ->
         lv->pushwall.active = false
 
 // ============================================================
+// Enemy AI — line-of-sight, chase/patrol movement, attack decisions.
+//
+// Ported in spirit from wolf4sdl (wl_state.cpp, wl_act2.cpp). Differences:
+//   • We run in continuous float space at a fixed dt, vs wolf4sdl's 70Hz
+//     integer tics. Animation timers + positions are floats.
+//   • No ambush tiles / area-number sight shortcut (wolf4sdl skips LOS when
+//     the enemy's area is disconnected from the player's); we always raycast.
+//   • No ICON_ARROWS patrol-turn markers — patrol enemies walk straight and
+//     reverse at walls, which is less varied but fine for level-0 regressions.
+// ============================================================
+
+// Step through the tilemap along (x1,y1) → (x2,y2). Returns true if the ray
+// passes without hitting a solid wall or a not-fully-open door. Used for
+// enemy sight checks and player-fire hit-validation. Samples 8× per tile,
+// which is dense enough for 64-tile maps without being a bottleneck.
+let check_line_clear = (lv: level*, x1: float64, y1: float64, x2: float64, y2: float64) ->
+    let dx = x2 - x1
+    let dy = y2 - y1
+    let dist = math.sqrt(dx * dx + dy * dy)
+    if dist <= 0.0001 then return true
+    let steps = (int32) (dist * 8.0) + 1
+    let rx = dx / (float64) steps
+    let ry = dy / (float64) steps
+    let tx_end = (int32) x2
+    let ty_end = (int32) y2
+    let mut cx = x1
+    let mut cy = y1
+    let mut ok = true
+    for i in 1..steps
+        cx = cx + rx
+        cy = cy + ry
+        let tx = (int32) cx
+        let ty = (int32) cy
+        // Reached the destination tile — the rest of the line is inside it, so clear.
+        if tx == tx_end && ty == ty_end then break
+        if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then
+            ok = false
+            break
+        let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+        if t >= 1 && t <= 63 then
+            ok = false
+            break
+        if t >= 128 then
+            // Pass only through fully-open doors.
+            if lv->doors[t - 128].state != door_state.open then
+                ok = false
+                break
+    ok
+
+// Is the player visible to the enemy right now?
+// Combines a forward-cone check (player roughly in front of enemy) with a
+// tilemap LOS ray. Inside ~1.5 tiles, sight is automatic regardless of facing
+// (matches wolf4sdl's MINSIGHT fallback).
+let enemy_sees_player = (lv: level*, g: game*, e: enemy*) ->
+    let dx = g->pos_x - e->x
+    let dy = g->pos_y - e->y
+    let dist = math.sqrt(dx * dx + dy * dy)
+    if dist > enemy_sight_range then false
+    else if dist < 1.5 then check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y)
+    else
+        let fx = dir_vx[e->dir]
+        let fy = dir_vy[e->dir]
+        let dot = dx * fx + dy * fy
+        if dot <= 0.0 then false      // player is behind the enemy
+        else check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y)
+
+// True iff the tile at (tx, ty) is passable for an enemy trying to move INTO
+// it. Walls and not-fully-open doors block; the player's tile blocks (so
+// enemies don't walk into the camera); other live enemies block. `self_idx`
+// identifies the caller so it doesn't block itself.
+let enemy_tile_passable = (lv: level*, g: game*, self_idx: int32, tx: int32, ty: int32) ->
+    if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
+    else
+        let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+        if t >= 1 && t <= 63 then false
+        else if t >= 128 && lv->doors[t - 128].state != door_state.open then false
+        else if (int32) g->pos_x == tx && (int32) g->pos_y == ty then false
+        else
+            let mut blocked = false
+            for j in 0..lv->num_enemies
+                if j == self_idx then continue
+                let oe = &lv->enemies[j]
+                match oe->state with
+                | es_dead -> void()     // corpses don't block
+                | _ ->
+                    if oe->tile_x == tx && oe->tile_y == ty then blocked = true
+            !blocked
+
+// Try to take a step in `dir` from this enemy's current tile. For diagonal
+// moves we also insist both orthogonal neighbors are open so enemies don't
+// clip the corner of a wall (matches wolf4sdl's TryWalk corner check).
+let try_enemy_walk = (lv: level*, g: game*, self_idx: int32, dir: int32) ->
+    if dir == dir_nodir then false
+    else
+        let e = &lv->enemies[self_idx]
+        let ntx = e->tile_x + dir_dx[dir]
+        let nty = e->tile_y + dir_dy[dir]
+        if !enemy_tile_passable(lv, g, self_idx, ntx, nty) then false
+        else if dir_dx[dir] != 0 && dir_dy[dir] != 0 then
+            // Diagonal: require both cardinal neighbors passable too.
+            enemy_tile_passable(lv, g, self_idx, e->tile_x + dir_dx[dir], e->tile_y)
+                && enemy_tile_passable(lv, g, self_idx, e->tile_x, e->tile_y + dir_dy[dir])
+        else true
+
+// Wolf4sdl SelectChaseDir, minus the dodge variant and the turn markers.
+// Picks up to two preferred directions toward the player (the larger axis
+// tried first), tries the current heading, then scans all four cardinals in
+// a random starting order, and finally allows a turnaround. Leaves e->dir
+// at dir_nodir when fully blocked in.
+let select_chase_dir = (lv: level*, g: game*, self_idx: int32) ->
+    let e = &lv->enemies[self_idx]
+    let dxi = (int32) g->pos_x - e->tile_x
+    let dyi = (int32) g->pos_y - e->tile_y
+    let adx = if dxi < 0 then -dxi else dxi
+    let ady = if dyi < 0 then -dyi else dyi
+    let old_dir = e->dir
+    let turnaround = if old_dir == dir_nodir then dir_nodir else dir_opposite[old_dir]
+    let mut d1 = dir_nodir
+    let mut d2 = dir_nodir
+    if dxi > 0 then d1 = dir_east else if dxi < 0 then d1 = dir_west
+    if dyi > 0 then d2 = dir_south else if dyi < 0 then d2 = dir_north
+    if ady > adx then
+        let t = d1
+        d1 = d2
+        d2 = t
+    if d1 == turnaround then d1 = dir_nodir
+    if d2 == turnaround then d2 = dir_nodir
+    if d1 != dir_nodir then
+        e->dir = d1
+        if try_enemy_walk(lv, g, self_idx, d1) then return
+    if d2 != dir_nodir then
+        e->dir = d2
+        if try_enemy_walk(lv, g, self_idx, d2) then return
+    if old_dir != dir_nodir && old_dir != turnaround then
+        e->dir = old_dir
+        if try_enemy_walk(lv, g, self_idx, old_dir) then return
+    let cardinals = int32[4] { dir_east, dir_north, dir_west, dir_south }
+    let start = rnd_byte() % 4
+    for k in 0..4
+        let d = cardinals[(start + k) % 4]
+        if d == turnaround then continue
+        e->dir = d
+        if try_enemy_walk(lv, g, self_idx, d) then return
+    if turnaround != dir_nodir then
+        e->dir = turnaround
+        if try_enemy_walk(lv, g, self_idx, turnaround) then return
+    e->dir = dir_nodir
+
+// Patrol: keep walking straight; at a wall, turn 90° (right first, then left),
+// then reverse. Simpler than wolf4sdl's ICON_ARROWS path-marker system but
+// gives recognizable back-and-forth guard patrols.
+let select_path_dir = (lv: level*, g: game*, self_idx: int32) ->
+    let e = &lv->enemies[self_idx]
+    let old = if e->dir == dir_nodir then dir_east else e->dir
+    if try_enemy_walk(lv, g, self_idx, old) then
+        e->dir = old
+        return
+    // Try right turn (for cardinals: old+2 mod 8 = 90° CW in our dir encoding).
+    let right = (old + 2) % 8
+    if try_enemy_walk(lv, g, self_idx, right) then
+        e->dir = right
+        return
+    let left = (old + 6) % 8
+    if try_enemy_walk(lv, g, self_idx, left) then
+        e->dir = left
+        return
+    let back = dir_opposite[old]
+    if try_enemy_walk(lv, g, self_idx, back) then
+        e->dir = back
+        return
+    e->dir = dir_nodir
+
+// Advance this enemy along its current direction by `speed * dt` tiles.
+// When crossing a tile center, consumes the leftover step by picking a new
+// direction (chase or patrol) and continuing — otherwise enemies would slow
+// down noticeably at every grid crossing.
+let advance_enemy_move = (lv: level*, g: game*, self_idx: int32, speed: float64, dt: float64, is_chase: bool) ->
+    let mut step = speed * dt
+    loop
+        if step <= 0.000001 then break
+        let e = &lv->enemies[self_idx]
+        if e->dir == dir_nodir then
+            if is_chase then select_chase_dir(lv, g, self_idx)
+            else select_path_dir(lv, g, self_idx)
+            if e->dir == dir_nodir then break
+        let target_x = (float64) (e->tile_x + dir_dx[e->dir]) + 0.5
+        let target_y = (float64) (e->tile_y + dir_dy[e->dir]) + 0.5
+        let dx = target_x - e->x
+        let dy = target_y - e->y
+        let dist = math.sqrt(dx * dx + dy * dy)
+        if dist > step then
+            e->x = e->x + dx / dist * step
+            e->y = e->y + dy / dist * step
+            step = 0.0
+        else
+            e->x = target_x
+            e->y = target_y
+            e->tile_x = e->tile_x + dir_dx[e->dir]
+            e->tile_y = e->tile_y + dir_dy[e->dir]
+            step = step - dist
+            if is_chase then select_chase_dir(lv, g, self_idx)
+            else select_path_dir(lv, g, self_idx)
+
+// Advance a looping walk animation (4 frames with the same duration each).
+// Takes a pointer so callers don't have to know the backing array.
+let advance_walk_anim = (e: enemy*) ->
+    if e->anim_timer <= 0.0 then
+        e->anim_frame = (e->anim_frame + 1) % 4
+        e->anim_timer = walk_frame_time
+
+// Player damage path — one place so every damage source routes through the
+// same SFX + (eventual) death handling. Dmg ≤0 is a no-op.
+let damage_player = (g: game*, ac: audio_ctx*, dmg: int32) ->
+    if dmg <= 0 then return
+    g->health = g->health - dmg
+    trigger_sound(snd_pain, ac)
+    if g->health < 0 then g->health = 0
+
+// Drop a pickup sprite at (x, y). Reuses empty sprite slots from earlier
+// pickups before growing the list — prevents the array from hitting its cap
+// just because the player has been clearing rooms.
+let add_dropped_item = (lv: level*, x: float64, y: float64, page: int32, item: item_kind) ->
+    let mut slot = -1
+    for i in 0..lv->num_sprites
+        if !lv->sprites[i].alive then
+            slot = i
+            break
+    if slot < 0 then
+        if lv->num_sprites >= max_sprites then return
+        slot = lv->num_sprites
+        lv->num_sprites = lv->num_sprites + 1
+    lv->sprites[slot] = sprite_obj {
+        x = x, y = y, shape_page = page, dist = 0.0,
+        item_type = item, alive = true
+    }
+
+// Transition this enemy into es_die: play death sound, drop any pickup they
+// carry, and let the animation timer tick out the die frames. Caller awards
+// score separately so stand-level test commands can invoke this without
+// accidentally buffing the player.
+let kill_enemy = (lv: level*, ac: audio_ctx*, e: enemy*, sprite_start: int32) ->
+    e->state = enemy_state.es_die
+    e->anim_frame = 0
+    e->anim_timer = die_frame_time
+    e->dir = dir_nodir
+    let snd = match e->kind with
+    | ek_dog     -> snd_dog_death
+    | ek_ss      -> snd_death_3
+    | ek_officer -> snd_death_2
+    | _          -> snd_death_1
+    trigger_sound(snd, ac)
+    let drop = drop_for_kind(e->kind)
+    match drop with
+    | decoration -> void()
+    | _ ->
+        let shape = drop_shape_for_kind(e->kind)
+        add_dropped_item(lv, e->x, e->y, sprite_start + shape, drop)
+
+// Apply damage to an enemy. Always alerts them (matches wolf4sdl: a shot
+// through the wall still puts the actor into attack mode via FirstSighting).
+// If HP would drop to 0, transition to die and award score. Score goes here
+// so unscripted hitscans can't bypass it.
+let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, dmg: int32, sprite_start: int32) ->
+    match e->state with
+    | es_die | es_dead -> return
+    | _ -> void()
+    e->hp = e->hp - dmg
+    e->notified = true
+    if e->hp <= 0 then
+        kill_enemy(lv, ac, e, sprite_start)
+        g->score = g->score + score_for_kind(e->kind)
+    else
+        // Pain flinch (except dogs, which don't display pain frames).
+        e->state = enemy_state.es_pain
+        e->anim_frame = 0
+        e->anim_timer = pain_time
+        e->dir = dir_nodir
+
+// Wake up a sleeping (stand/path) enemy. Plays the per-kind alert vocal the
+// first time only; subsequent wake-ups from repeated hits / line-of-sight
+// loss/regain stay silent so the soundscape doesn't get spammy.
+let wake_enemy = (e: enemy*, ac: audio_ctx*) ->
+    e->state = enemy_state.es_chase
+    e->anim_frame = 0
+    e->anim_timer = walk_frame_time
+    e->dir = dir_nodir
+    if !e->notified then
+        e->notified = true
+        let snd = match e->kind with
+        | ek_guard   -> snd_halt
+        | ek_officer -> snd_halt
+        | ek_ss      -> snd_schutzad
+        | ek_dog     -> snd_dog_bark
+        | ek_mutant  -> snd_halt   // wolf4sdl uses MUTTISND; fall back to halt
+        trigger_sound(snd, ac)
+
+// Enemy firing an attack at the player, called from T_Shoot frames. Ports
+// wolf4sdl T_Shoot's distance-based hit chance and damage roll:
+//   hit chance  = 256 - dist*8 (SS get a 2/3 distance discount; more accurate)
+//   damage      = (rnd >> 2) if dist<2, (rnd >> 3) if dist<4, else (rnd >> 4)
+let enemy_fire_at_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
+    let snd = match e->kind with
+    | ek_ss -> snd_ss_fire
+    | _     -> snd_nazi_fire
+    trigger_sound(snd, ac)
+    if !check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then return
+    let dxi = (int32) g->pos_x - e->tile_x
+    let dyi = (int32) g->pos_y - e->tile_y
+    let adx = if dxi < 0 then -dxi else dxi
+    let ady = if dyi < 0 then -dyi else dyi
+    let dist_tiles = (float64) (if adx > ady then adx else ady)
+    let dist_adj = match e->kind with
+    | ek_ss -> dist_tiles * 2.0 / 3.0
+    | _     -> dist_tiles
+    let mut hitchance = 256 - (int32) (dist_adj * 8.0)
+    if hitchance < 20 then hitchance = 20
+    if rnd_byte() < hitchance then
+        let roll = rnd_byte()
+        let dmg = if dist_adj < 2.0 then roll / 4
+                  else if dist_adj < 4.0 then roll / 8
+                  else roll / 16
+        damage_player(g, ac, dmg + 1)
+
+// Dog melee bite — called from the jump-frame of es_shoot for ek_dog. Damage
+// is a flat ~0..16 roll inside melee range.
+let enemy_bite_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
+    let dx = g->pos_x - e->x
+    let dy = g->pos_y - e->y
+    let dist = math.sqrt(dx * dx + dy * dy)
+    if dist > enemy_melee_range then return
+    if !check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then return
+    if rnd_byte() < 180 then
+        let dmg = (rnd_byte() >> 4) + 1
+        damage_player(g, ac, dmg)
+
+// Per-frame AI step for one enemy. Dispatches on state; advances animation
+// and moves continuously. Called from update_enemies which does the loop.
+let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, dt: float64, sprite_start: int32) ->
+    let e = &lv->enemies[self_idx]
+    e->anim_timer = e->anim_timer - dt
+    match e->state with
+    | es_dead -> void()
+    | es_die ->
+        if e->anim_timer <= 0.0 then
+            let sp = sprites_for_kind(e->kind)
+            e->anim_frame = e->anim_frame + 1
+            if e->anim_frame >= sp.num_die_frames then
+                e->state = enemy_state.es_dead
+            else
+                e->anim_timer = die_frame_time
+    | es_pain ->
+        if e->anim_timer <= 0.0 then
+            e->state = enemy_state.es_chase
+            e->anim_frame = 0
+            e->anim_timer = walk_frame_time
+            e->dir = dir_nodir
+    | es_stand ->
+        if enemy_sees_player(lv, g, e) then wake_enemy(e, ac)
+    | es_path ->
+        if enemy_sees_player(lv, g, e) then wake_enemy(e, ac)
+        else
+            advance_enemy_move(lv, g, self_idx, enemy_patrol_speed, dt, false)
+            advance_walk_anim(e)
+    | es_chase ->
+        match e->kind with
+        | ek_dog ->
+            let dx = g->pos_x - e->x
+            let dy = g->pos_y - e->y
+            let dist = math.sqrt(dx * dx + dy * dy)
+            if dist < enemy_melee_range && check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then
+                e->state = enemy_state.es_shoot
+                e->anim_frame = 0
+                e->anim_timer = shoot_frame_time
+                e->shoot_fired = false
+            else
+                advance_enemy_move(lv, g, self_idx, dog_chase_speed, dt, true)
+                advance_walk_anim(e)
+        | _ ->
+            // Shoot roll: wolf4sdl uses (tics<<4)/dist against a 256-range rnd.
+            // We approximate with a dt-scaled chance so 35Hz and 70Hz tick
+            // rates behave equivalently. chance ≈ dt*40 / max(dist, 1).
+            if check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then
+                let dxi = (int32) g->pos_x - e->tile_x
+                let dyi = (int32) g->pos_y - e->tile_y
+                let adx = if dxi < 0 then -dxi else dxi
+                let ady = if dyi < 0 then -dyi else dyi
+                let dist_tiles = if adx > ady then adx else ady
+                let d = if dist_tiles < 1 then 1 else dist_tiles
+                let chance = (int32) (dt * 1400.0) / d   // ~40/tile/sec at 35Hz
+                if rnd_byte() < chance then
+                    e->state = enemy_state.es_shoot
+                    e->anim_frame = 0
+                    e->anim_timer = shoot_frame_time
+                    e->shoot_fired = false
+                    return
+            advance_enemy_move(lv, g, self_idx, chase_speed_for_kind(e->kind), dt, true)
+            advance_walk_anim(e)
+    | es_shoot ->
+        if e->anim_timer <= 0.0 then
+            let sp = sprites_for_kind(e->kind)
+            // Fire on the second shoot frame (middle of the windup).
+            if !e->shoot_fired && e->anim_frame == 1 then
+                e->shoot_fired = true
+                match e->kind with
+                | ek_dog -> enemy_bite_player(lv, g, ac, e)
+                | _      -> enemy_fire_at_player(lv, g, ac, e)
+            e->anim_frame = e->anim_frame + 1
+            if e->anim_frame >= sp.num_shoot_frames then
+                e->state = enemy_state.es_chase
+                e->anim_frame = 0
+                e->anim_timer = walk_frame_time
+                e->shoot_fired = false
+                e->dir = dir_nodir
+            else
+                e->anim_timer = shoot_frame_time
+
+let update_enemies = (w: world*, dt: float64) ->
+    let sprite_start = w->ac->vs->sprite_start
+    for i in 0..w->lv->num_enemies
+        update_enemy(w->lv, w->g, w->ac, i, dt, sprite_start)
+
+// ============================================================
+// Player-fire hitscan — called when Ctrl fires the weapon and there's a
+// chance to hit an enemy. Ray is along player->dir; we pick the nearest
+// live enemy within a small angular slice, then verify no wall is between.
+// ============================================================
+
+// Return the index of the enemy the player's current fire would hit, or -1.
+// `perp_limit` is the perpendicular half-width (tiles) of the "bullet" at
+// range 1 — scaled up with distance so far-away enemies are still hittable.
+let find_hit_enemy = (lv: level*, g: game*) ->
+    let mut best_idx = -1
+    let mut best_dist = 1000000.0
+    for i in 0..lv->num_enemies
+        let e = &lv->enemies[i]
+        match e->state with
+        | es_dead | es_die -> continue
+        | _ -> void()
+        let rx = e->x - g->pos_x
+        let ry = e->y - g->pos_y
+        let proj = rx * g->dir_x + ry * g->dir_y
+        if proj <= 0.1 || proj >= best_dist then continue
+        let perp = rx * g->dir_y - ry * g->dir_x
+        let pabs = if perp < 0.0 then -perp else perp
+        // Half-tile wide "enemy hitbox". Most enemies are ~0.7 wide in Wolf3D;
+        // 0.5 is a forgiving compromise for our raycaster where sprites render
+        // at the full tile scale.
+        if pabs >= 0.5 then continue
+        if !check_line_clear(lv, g->pos_x, g->pos_y, e->x, e->y) then continue
+        best_idx = i
+        best_dist = proj
+    best_idx
+
+// Per-weapon damage. Knife: 10-25 in melee (0 beyond ~1.5 tiles). Pistol /
+// MG / chain: similar damage per shot; rate-of-fire is what distinguishes
+// them (handled by fire_rate[] in update_weapon). Adapted from wolf4sdl
+// GunAttack: damage = (US_RndT() / 4) + base, tuned for our hp values.
+let weapon_damage_roll = (weapon: int32, dist: float64) ->
+    if weapon == 0 then
+        // Knife — fixed damage, only in melee.
+        if dist > 1.5 then 0
+        else (rnd_byte() >> 3) + 10
+    else
+        // Firearms — damage fades with distance (hitchance roll).
+        let roll = rnd_byte()
+        if dist < 2.0 then (roll >> 2) + 8
+        else if dist < 4.0 then (roll >> 3) + 5
+        else if dist < 8.0 then (roll >> 4) + 2
+        else (roll >> 5) + 1
+
+// Called from update_weapon when the player actually fires (not every frame,
+// only on trigger-pull that spends a bullet). Finds a target, applies damage,
+// potentially kills the enemy (handled inside damage_enemy).
+let fire_player_hitscan = (w: world*) ->
+    let lv = w->lv
+    let g = w->g
+    let ac = w->ac
+    let sprite_start = ac->vs->sprite_start
+    let idx = find_hit_enemy(lv, g)
+    if idx < 0 then return
+    let e = &lv->enemies[idx]
+    let rx = e->x - g->pos_x
+    let ry = e->y - g->pos_y
+    let dist = math.sqrt(rx * rx + ry * ry)
+    let dmg = weapon_damage_roll(g->weapon, dist)
+    if dmg <= 0 then return
+    damage_enemy(lv, g, ac, e, dmg, sprite_start)
+
+// ============================================================
 // Door animation
 // ============================================================
 
@@ -1071,17 +2032,40 @@ let update_doors = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
         | open ->
             lv->doors[i].open_timer = lv->doors[i].open_timer + dt
             if lv->doors[i].open_timer >= door_stay_time then
-                // Don't close if player is in the door tile
-                let px = (int32) g->pos_x
-                let py = (int32) g->pos_y
-                if px != lv->doors[i].tile_x || py != lv->doors[i].tile_y then
+                // Don't close if the player's BBOX (not just center tile)
+                // overlaps the door tile. Without this, a player who walks
+                // through a door and stops with their center just past the
+                // boundary but their trailing 0.35-tile radius still inside
+                // the door tile gets crushed: the door closes to the wall
+                // state and the bbox check in player_blocked_by_map rejects
+                // every subsequent move. wolf4sdl avoids this because its
+                // tilemap/actorat grid is coarser than our per-axis bbox test.
+                let px = g->pos_x
+                let py = g->pos_y
+                let dx = lv->doors[i].tile_x
+                let dy = lv->doors[i].tile_y
+                let bbox_x_in = (int32) (px - player_radius) <= dx && (int32) (px + player_radius) >= dx
+                let bbox_y_in = (int32) (py - player_radius) <= dy && (int32) (py + player_radius) >= dy
+                if !(bbox_x_in && bbox_y_in) then
                     lv->doors[i].state = door_state.closing
                     trigger_sound(snd_close_door, ac)
         | closing ->
-            lv->door_pos[i] = lv->door_pos[i] - door_speed * dt
-            if lv->door_pos[i] <= 0.0 then
-                lv->door_pos[i] = 0.0
-                lv->doors[i].state = door_state.closed
+            // Abort the close and reopen if the player has walked back into
+            // our tile during the close (wolf4sdl behaviour). Without this,
+            // a player rushing through a half-closed door gets pinched off.
+            let px = g->pos_x
+            let py = g->pos_y
+            let dx = lv->doors[i].tile_x
+            let dy = lv->doors[i].tile_y
+            let bbox_x_in = (int32) (px - player_radius) <= dx && (int32) (px + player_radius) >= dx
+            let bbox_y_in = (int32) (py - player_radius) <= dy && (int32) (py + player_radius) >= dy
+            if bbox_x_in && bbox_y_in then
+                lv->doors[i].state = door_state.opening
+            else
+                lv->door_pos[i] = lv->door_pos[i] - door_speed * dt
+                if lv->door_pos[i] <= 0.0 then
+                    lv->door_pos[i] = 0.0
+                    lv->doors[i].state = door_state.closed
         | closed -> void()
 
 // ============================================================
@@ -1115,11 +2099,21 @@ let snd_bonus4     = 18   // crown
 let snd_bonus1up   = 19   // extra life
 let snd_health1    = 20   // dog food / food
 let snd_health2    = 21   // first aid
-let snd_count      = 22
+let snd_halt       = 22   // guard/officer alert ("Halt!")
+let snd_schutzad   = 23   // SS alert ("Schutzstaffel!")
+let snd_dog_bark   = 24   // dog alert
+let snd_nazi_fire  = 25   // guard/officer fire
+let snd_ss_fire    = 26   // SS rapid fire
+let snd_dog_attack = 27   // dog bite
+let snd_dog_death  = 28
+let snd_death_1    = 29   // guard death scream
+let snd_death_2    = 30   // officer death scream
+let snd_death_3    = 31   // SS death scream
+let snd_count      = 32
 
 // Digi-pack index for each snd_* (-1 = no digitized version). The mapping
 // comes from wolf4sdl's wolfdigimap[] for Wolf3D; Spear of Destiny differs.
-let snd_digi = int32[22] {
+let snd_digi = int32[32] {
      3,   // open_door    (OPENDOORSND  -> digi 3)
      2,   // close_door   (CLOSEDOORSND -> digi 2)
      5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
@@ -1141,12 +2135,22 @@ let snd_digi = int32[22] {
     -1,   // bonus4       (no digi)
     -1,   // bonus1up     (no digi)
     -1,   // health1      (no digi)
-    -1    // health2      (no digi)
+    -1,   // health2      (no digi)
+     0,   // halt         (HALTSND -> digi 0)
+     7,   // schutzad     (SCHUTZADSND -> digi 7)
+     1,   // dog_bark     (DOGBARKSND -> digi 1)
+    21,   // nazi_fire    (NAZIFIRESND -> digi 21)
+    11,   // ss_fire      (SSFIRESND -> digi 11)
+    29,   // dog_attack   (DOGATTACKSND -> digi 29)
+    16,   // dog_death    (DOGDEATHSND -> digi 16)
+    12,   // death_1      (DEATHSCREAM1SND -> digi 12)
+    13,   // death_2      (DEATHSCREAM2SND -> digi 13)
+    13    // death_3      (DEATHSCREAM3SND -> digi 13, shares slot)
 }
 
 // AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this). -1 to
 // disable. Enum values taken from wolf4sdl's audiowl6.h.
-let snd_adlib_enum = int32[22] {
+let snd_adlib_enum = int32[32] {
     18,   // open_door    (OPENDOORSND)
     19,   // close_door   (CLOSEDOORSND)
     24,   // atk_pistol   (ATKPISTOLSND)
@@ -1168,7 +2172,17 @@ let snd_adlib_enum = int32[22] {
     45,   // bonus4       (BONUS4SND)
     44,   // bonus1up     (BONUS1UPSND)
     33,   // health1      (HEALTH1SND)
-    34    // health2      (HEALTH2SND)
+    34,   // health2      (HEALTH2SND)
+    21,   // halt         (HALTSND)
+    51,   // schutzad     (SCHUTZADSND)
+    41,   // dog_bark     (DOGBARKSND)
+    58,   // nazi_fire    (NAZIFIRESND)
+    60,   // ss_fire      (SSFIRESND)
+    68,   // dog_attack   (DOGATTACKSND)
+    10,   // dog_death    (DOGDEATHSND)
+    29,   // death_1      (DEATHSCREAM1SND)
+    22,   // death_2      (DEATHSCREAM2SND)
+    25    // death_3      (DEATHSCREAM3SND)
 }
 
 // Play a sound by wolf-fc sound ID (one of snd_open_door, etc.). Prefers
@@ -1371,7 +2385,9 @@ let weapon_fire_snd = int32[4] { 3, 2, 4, 5 }
 // wolf4sdl's wl_def.h player-attack-frames enum: SPR_KNIFEREADY=416, etc.
 let weapon_sprite_base = int32[4] { 416, 421, 426, 431 }
 
-let update_weapon = (g: game*, dt: float64, ac: audio_ctx*) ->
+let update_weapon = (w: world*, dt: float64) ->
+    let g = w->g
+    let ac = w->ac
     if g->fire_timer > 0.0 then
         g->fire_timer = g->fire_timer - dt
         // Advance animation frames across the fire_rate window (4 phases).
@@ -1394,11 +2410,13 @@ let update_weapon = (g: game*, dt: float64, ac: audio_ctx*) ->
             g->fire_timer = fire_rate[0]
             g->weapon_frame = 1
             trigger_sound(weapon_fire_snd[0], ac)
+            fire_player_hitscan(w)
         else if g->ammo > 0 then
             g->ammo = g->ammo - 1
             g->fire_timer = fire_rate[g->weapon]
             g->weapon_frame = 1
             trigger_sound(weapon_fire_snd[g->weapon], ac)
+            fire_player_hitscan(w)
 
 // One simulation tick — runs all per-frame game-state updates in order.
 // Used by both the interactive game loop and the headless test mode so
@@ -1407,7 +2425,8 @@ let tick = (w: world*, dt: float64) ->
     update_player(w->lv, w->g, dt, w->ac)
     update_doors(w->lv, w->g, dt, w->ac)
     update_pushwall(w->lv, dt)
-    update_weapon(w->g, dt, w->ac)
+    update_weapon(w, dt)
+    update_enemies(w, dt)
     check_pickups(w->lv, w->g, w->ac)
 
 // Draw a t_compshape sprite as a HUD overlay, stretched to (dst_w, dst_h)
@@ -1493,7 +2512,8 @@ let mut screenshot_slot = 0
 // Render the full game frame to fb (used before saving a screenshot).
 let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
     render_walls(w->lv, w->rc, w->g, vs, pal)
-    render_sprites(w->lv, w->rc, w->g, vs, pal)
+    build_billboards(w->lv, w->rc, w->g, vs->sprite_start)
+    render_billboards(w->rc, w->g, vs, pal)
     render_weapon(w->rc, vs, pal, w->g)
     render_hud(w->rc, w->g)
 
@@ -1645,10 +2665,96 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         void()
     else if arg == "state" then
         io.write("pos=(%8.4f{g->pos_x}, %8.4f{g->pos_y}) dir=(%8.4f{g->dir_x}, %8.4f{g->dir_y})\n", stdout)
-        io.write("health=%d{g->health} ammo=%d{g->ammo} score=%d{g->score} lives=%d{g->lives} level=%d{g->level_num}\n", stdout)
+        io.write("health=%d{g->health} ammo=%d{g->ammo} score=%d{g->score} lives=%d{g->lives} level=%d{g->level_num} weapon=%d{g->weapon} best=%d{g->best_weapon}\n", stdout)
         let gk = if g->has_gold_key then 1 else 0
         let sk = if g->has_silver_key then 1 else 0
         io.write("keys: gold=%d{gk} silver=%d{sk}\n", stdout)
+        void()
+    else if arg == "probe" then
+        // Diagnostic: why can't the player move from their current position?
+        // Prints the bbox tiles, any wall/door blocking each, and every live
+        // enemy within 2 tiles of the player with their distance and tile.
+        let px = g->pos_x
+        let py = g->pos_y
+        let xl = (int32) (px - player_radius)
+        let xr = (int32) (px + player_radius)
+        let yl = (int32) (py - player_radius)
+        let yh = (int32) (py + player_radius)
+        io.write("probe pos=(%7.3f{px}, %7.3f{py}) bbox_tiles: x[%d{xl}..%d{xr}] y[%d{yl}..%d{yh}]\n", stdout)
+        for tx in xl..(xr + 1)
+            for ty in yl..(yh + 1)
+                let ti = (int32) w->lv->tilemap[(int64) tx * 64 + (int64) ty]
+                let dstate = if ti < 128 then "open"
+                    else match w->lv->doors[ti - 128].state with
+                    | closed  -> "DOOR:closed"
+                    | opening -> "DOOR:opening"
+                    | open    -> "DOOR:open"
+                    | closing -> "DOOR:closing"
+                let solid = if ti >= 1 && ti <= 63 then "WALL" else dstate
+                io.write("  tile (%d{tx},%d{ty}) = %d{ti} (%s{solid})\n", stdout)
+        for i in 0..w->lv->num_enemies
+            let e = w->lv->enemies[i]
+            match e.state with
+            | es_dead | es_die -> void()
+            | _ ->
+                let dx = e.x - px
+                let dy = e.y - py
+                let d = math.sqrt(dx * dx + dy * dy)
+                if d < 2.5 then
+                    let ks = match e.kind with
+                    | ek_guard   -> "guard"
+                    | ek_officer -> "officer"
+                    | ek_ss      -> "ss"
+                    | ek_dog     -> "dog"
+                    | ek_mutant  -> "mutant"
+                    io.write("  enemy[%d{i}] %s{ks} tile(%d{e.tile_x},%d{e.tile_y}) pos(%6.3f{e.x},%6.3f{e.y}) d=%5.3f{d}\n", stdout)
+        void()
+    else if arg == "enemylist" then
+        // Per-enemy dump: grid position, kind, state, dir. Handy to locate
+        // a specific enemy for a scripted screenshot or attack test.
+        for i in 0..w->lv->num_enemies
+            let e = w->lv->enemies[i]
+            let ks = match e.kind with
+            | ek_guard   -> "guard"
+            | ek_officer -> "officer"
+            | ek_ss      -> "ss"
+            | ek_dog     -> "dog"
+            | ek_mutant  -> "mutant"
+            let ss = match e.state with
+            | es_stand -> "stand"
+            | es_path  -> "path"
+            | es_chase -> "chase"
+            | es_shoot -> "shoot"
+            | es_pain  -> "pain"
+            | es_die   -> "die"
+            | es_dead  -> "dead"
+            io.write("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp}\n", stdout)
+        void()
+    else if arg == "enemies" then
+        // Summary: counts by kind and by state, for regression checks.
+        let mut by_kind = int32[5] { 0, 0, 0, 0, 0 }
+        let mut by_state = int32[7] { 0, 0, 0, 0, 0, 0, 0 }
+        for i in 0..w->lv->num_enemies
+            let e = w->lv->enemies[i]
+            let ki = match e.kind with
+            | ek_guard -> 0
+            | ek_officer -> 1
+            | ek_ss -> 2
+            | ek_dog -> 3
+            | ek_mutant -> 4
+            by_kind[ki] = by_kind[ki] + 1
+            let si = match e.state with
+            | es_stand -> 0
+            | es_path -> 1
+            | es_chase -> 2
+            | es_shoot -> 3
+            | es_pain -> 4
+            | es_die -> 5
+            | es_dead -> 6
+            by_state[si] = by_state[si] + 1
+        io.write("enemies: total=%d{w->lv->num_enemies}\n", stdout)
+        io.write("  kind: guard=%d{by_kind[0]} officer=%d{by_kind[1]} ss=%d{by_kind[2]} dog=%d{by_kind[3]} mutant=%d{by_kind[4]}\n", stdout)
+        io.write("  state: stand=%d{by_state[0]} path=%d{by_state[1]} chase=%d{by_state[2]} shoot=%d{by_state[3]} pain=%d{by_state[4]} die=%d{by_state[5]} dead=%d{by_state[6]}\n", stdout)
         void()
     else
         io.write("Unknown test command: %s{arg}\n", stdout)
@@ -1691,7 +2797,7 @@ let main = (args: str[]) ->
         level_num = 0,
         has_gold_key = false, has_silver_key = false,
         next_level = false,
-        weapon = 1, fire_timer = 0.0, weapon_frame = 0
+        weapon = 1, best_weapon = 1, fire_timer = 0.0, weapon_frame = 0
     })!
     find_player_start(lv_data, g)
     io.write("  player at (%4.1f{g->pos_x}, %4.1f{g->pos_y})\n", stdout)
