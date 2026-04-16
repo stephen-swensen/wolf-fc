@@ -533,13 +533,25 @@ module opl2 =
                        sample_rate: int32, tick_rate: int32,
                        tick_accum: float64*,
                        advance: () -> void) ->
+        fill_ticked_vol(c, buf, count, sample_rate, tick_rate, tick_accum, advance, 1.0)
+
+    // Ticked producer with a volume scalar applied to each sample. Used
+    // by imf.fill to support music fade-out on level-end / game-over.
+    let fill_ticked_vol = (c: chip*,
+                           buf: int16[], count: int32,
+                           sample_rate: int32, tick_rate: int32,
+                           tick_accum: float64*,
+                           advance: () -> void,
+                           volume: float64) ->
         let samples_per_tick = (float64) sample_rate / (float64) tick_rate
+        let scale = if volume < 0.0 then 0.0 else if volume > 1.0 then 1.0 else volume
         for i in 0..count
             let s = sample(c)
+            let scaled = (int32) ((float64) s * scale)
             let li = (int64) i * 2
             let ri = li + 1
-            let ml = (int32) buf[li] + (int32) s
-            let mr = (int32) buf[ri] + (int32) s
+            let ml = (int32) buf[li] + scaled
+            let mr = (int32) buf[ri] + scaled
             buf[li] = if ml > 32767 then 32767i16
                 else if ml < -32768 then -32768i16
                 else (int16) ml

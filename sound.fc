@@ -39,6 +39,7 @@ module imf =
         tick_accum: float64
         time_count: int32       // current tick counter (for delay comparisons)
         hack_time: int32        // tick at which the next event fires
+        volume: float64         // 0..1 scaling applied in fill; set by level-end fade
 
     // Build a player over the AUDIOT bytes starting at `offset` with chunk
     // `length`. Some music chunks prefix the data with a uint16 length
@@ -56,7 +57,8 @@ module imf =
             chip = opl2.init(sample_rate),
             data = bytes, pos = d_off, start_pos = d_off,
             seq_len = d_len, remaining = d_len,
-            tick_accum = 0.0, time_count = 0, hack_time = 0
+            tick_accum = 0.0, time_count = 0, hack_time = 0,
+            volume = 1.0
         })!
 
     // Per-tick advance: drain every event whose scheduled fire time has
@@ -81,11 +83,12 @@ module imf =
         p->time_count = p->time_count + 1
 
     // Mix `count` samples into `buf` from the music chip while stepping
-    // events at 700 Hz. Delegates the sample/tick loop to opl2.fill_ticked.
+    // events at 700 Hz. Honors p->volume so callers can fade music out.
     let fill = (p: player*, buf: int16[], count: int32, sample_rate: int32) ->
-        opl2.fill_ticked(p->chip, buf, count, sample_rate, tick_rate,
+        opl2.fill_ticked_vol(p->chip, buf, count, sample_rate, tick_rate,
             &p->tick_accum,
-            () -> advance_tick(p))
+            () -> advance_tick(p),
+            p->volume)
 
 
 // ============================================================

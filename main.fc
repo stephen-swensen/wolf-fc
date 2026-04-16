@@ -88,10 +88,19 @@ let gd_hard      = 3
 //   gp_intermission  — stats screen between levels (press space to continue)
 //   gp_game_over     — lives exhausted (press space to restart from level 0)
 union game_phase =
+    | gp_title         // title screen shown before first game; any key → menu
+    | gp_main_menu     // nav a list with arrows, enter activates, esc resumes
+    | gp_paused        // in-game pause overlay; any key → gp_playing
     | gp_playing
     | gp_dying
     | gp_intermission
     | gp_game_over
+
+// Menu navigation state. `menu_level` picks which list to show:
+//   0 = main menu          (NEW GAME / SOUND / QUIT)
+//   1 = difficulty picker  (under NEW GAME)
+let menu_main = 0
+let menu_difficulty = 1
 
 // Death collapse duration (seconds). Wolf3D spends ~1s on the red-screen
 // collapse before transitioning to life-loss / game-over.
@@ -178,6 +187,31 @@ struct game =
     // ScanInfoPlane). Default gd_hard (2) matches the previous single-tier
     // behaviour; setdifficulty test command can dial it down for coverage.
     difficulty: int32
+
+    // Menu selection state.
+    menu_sel: int32
+    menu_level: int32
+
+    // Music on/off — togglable from the main menu "SOUND" entry and by
+    // the M key in-game. Interactive loop inspects this when filling audio.
+    music_on: bool
+
+    // User requested quit (main menu's QUIT entry). Main loop reads this
+    // and breaks out of the game loop.
+    want_quit: bool
+
+    // True once the player has started a game at least once. Controls the
+    // main-menu behaviour: when true, Esc from the main menu resumes play;
+    // otherwise there's nothing to return to.
+    has_active_game: bool
+
+    // Fading message banner at the top of the 3D viewport. Set via
+    // show_message; render_frame paints during gp_playing only. msg_buf
+    // is a fixed 64-byte buffer alloc'd once at game construction; we
+    // never realloc — just copy into the first msg_len bytes.
+    msg_buf: uint8[]
+    msg_len: int32
+    msg_timer: float64    // seconds remaining; decays during gp_playing
 
 // ============================================================
 // Per-level dynamic entities and geometry
@@ -288,6 +322,25 @@ union enemy_kind =
     | ek_ss
     | ek_dog
     | ek_mutant
+    // Bosses — single-view (no 8-angle rotation) high-HP enemies that
+    // end the level on death. Hans (E1), Schabbs (E2), Hitler (E3),
+    // Giftmacher (E4), Gretel (E5). Wolf3D's sprite indices for these
+    // lie in the 420-510 range in VSWAP; until verified against a
+    // reference dump, we render them with a per-boss sprite_base and
+    // rely on walk_base..walk_base+3 for the 4-frame walk cycle.
+    | ek_hans
+    | ek_schabbs
+    | ek_gretel
+    | ek_giftmacher
+    | ek_fat
+    | ek_hitler_fake
+    | ek_hitler
+    // Pacman ghosts — E1M10 (secret level) easter egg. Don't attack;
+    // chase the player; teleport him back on contact.
+    | ek_blinky
+    | ek_pinky
+    | ek_clyde
+    | ek_inky
 
 union enemy_state =
     | es_stand      // idle — transitions to chase/shoot on sight
@@ -385,6 +438,110 @@ let enemy_sprites_ofc = enemy_sprites {
     shoot_frames = int32[4] { 285, 286, 287, 0 }, num_shoot_frames = 3
 }
 
+// --- Boss / Pacman-ghost sprite tables ---
+// These are single-view (no angle variants). walk_base..+3 are the 4 walk
+// phases; stand_base = walk_base (bosses don't have a discrete stand
+// pose). Bosses have no dedicated pain pose in wolf4sdl's enum either —
+// we reuse shoot frame 0 so pain flicker isn't a blank page.
+//
+// All indices counted directly from wolf4sdl/wl_def.h (non-SPEAR build):
+// the enum starts with SPR_DEMO=0, SPR_DEATHCAM=1, then 48 statics, then
+// the five regular enemy types (guard / dog / ss / mutant / officer) use
+// 49 + 39 + 49 + 51 + 50 sprites respectively, ending at index 287. From
+// there the blocks are:
+//   288..295  ghosts (Blinky / Pinky / Clyde / Inky — 2 frames each)
+//   296..306  Hans   (4 walk, 3 shoot, 1 dead, 3 die = 11)
+//   307..320  Schabbs (4 walk, 2 shoot, 3 die, 1 dead, 4 hypo)
+//   321..333  Fake Hitler (4 walk, 1 shoot, 2 fire, 5 die, 1 dead)
+//   334..344  Mecha Hitler (4 walk, 3 shoot, 1 dead, 3 die)
+//   345..359  Real Hitler  (4 walk, 3 shoot, 1 dead, 7 die)
+//   360..369  Giftmacher (4 walk, 2 shoot, 3 die, 1 dead)
+// Gretel lives after the rocket/smoke/boom projectile block at 385..395.
+let enemy_sprites_hans = enemy_sprites {
+    stand_base = 296, walk_base = 296,
+    pain1 = 300, pain2 = 300,
+    die_frames = int32[4] { 304, 305, 306, 0 }, num_die_frames = 3,
+    dead_frame = 303,
+    shoot_frames = int32[4] { 300, 301, 302, 0 }, num_shoot_frames = 3
+}
+let enemy_sprites_schabbs = enemy_sprites {
+    stand_base = 307, walk_base = 307,
+    pain1 = 311, pain2 = 311,
+    die_frames = int32[4] { 313, 314, 315, 0 }, num_die_frames = 3,
+    dead_frame = 316,
+    shoot_frames = int32[4] { 311, 312, 0, 0 }, num_shoot_frames = 2
+}
+// Fake Hitler: only one SHOOT pose (325); FIRE1/FIRE2 are projectile
+// sprites, not character animation frames.
+let enemy_sprites_hitler_fake = enemy_sprites {
+    stand_base = 321, walk_base = 321,
+    pain1 = 325, pain2 = 325,
+    die_frames = int32[4] { 328, 329, 330, 331 }, num_die_frames = 4,
+    dead_frame = 333,
+    shoot_frames = int32[4] { 325, 325, 0, 0 }, num_shoot_frames = 2
+}
+// Real Hitler has 7 die frames — we truncate to the 4 the struct holds.
+let enemy_sprites_hitler = enemy_sprites {
+    stand_base = 345, walk_base = 345,
+    pain1 = 349, pain2 = 349,
+    die_frames = int32[4] { 353, 354, 355, 356 }, num_die_frames = 4,
+    dead_frame = 352,
+    shoot_frames = int32[4] { 349, 350, 351, 0 }, num_shoot_frames = 3
+}
+let enemy_sprites_giftmacher = enemy_sprites {
+    stand_base = 360, walk_base = 360,
+    pain1 = 364, pain2 = 364,
+    die_frames = int32[4] { 366, 367, 368, 0 }, num_die_frames = 3,
+    dead_frame = 369,
+    shoot_frames = int32[4] { 364, 365, 0, 0 }, num_shoot_frames = 2
+}
+// Gretel: placed after the rocket/smoke/boom block (370..384) in the
+// non-SPEAR build.
+let enemy_sprites_gretel = enemy_sprites {
+    stand_base = 385, walk_base = 385,
+    pain1 = 389, pain2 = 389,
+    die_frames = int32[4] { 393, 394, 395, 0 }, num_die_frames = 3,
+    dead_frame = 392,
+    shoot_frames = int32[4] { 389, 390, 391, 0 }, num_shoot_frames = 3
+}
+// Fat Face (E6 boss): 4 walk, 4 shoot, 3 die, 1 dead at 396..407.
+let enemy_sprites_fat = enemy_sprites {
+    stand_base = 396, walk_base = 396,
+    pain1 = 400, pain2 = 400,
+    die_frames = int32[4] { 404, 405, 406, 0 }, num_die_frames = 3,
+    dead_frame = 407,
+    shoot_frames = int32[4] { 400, 401, 402, 403 }, num_shoot_frames = 4
+}
+// Pacman ghosts: 288..295, 2 walk frames each, no other states.
+let enemy_sprites_blinky = enemy_sprites {
+    stand_base = 288, walk_base = 288,
+    pain1 = 288, pain2 = 289,
+    die_frames = int32[4] { 288, 289, 0, 0 }, num_die_frames = 2,
+    dead_frame = 289,
+    shoot_frames = int32[4] { 288, 0, 0, 0 }, num_shoot_frames = 1
+}
+let enemy_sprites_pinky = enemy_sprites {
+    stand_base = 290, walk_base = 290,
+    pain1 = 290, pain2 = 291,
+    die_frames = int32[4] { 290, 291, 0, 0 }, num_die_frames = 2,
+    dead_frame = 291,
+    shoot_frames = int32[4] { 290, 0, 0, 0 }, num_shoot_frames = 1
+}
+let enemy_sprites_clyde = enemy_sprites {
+    stand_base = 292, walk_base = 292,
+    pain1 = 292, pain2 = 293,
+    die_frames = int32[4] { 292, 293, 0, 0 }, num_die_frames = 2,
+    dead_frame = 293,
+    shoot_frames = int32[4] { 292, 0, 0, 0 }, num_shoot_frames = 1
+}
+let enemy_sprites_inky = enemy_sprites {
+    stand_base = 294, walk_base = 294,
+    pain1 = 294, pain2 = 295,
+    die_frames = int32[4] { 294, 295, 0, 0 }, num_die_frames = 2,
+    dead_frame = 295,
+    shoot_frames = int32[4] { 294, 0, 0, 0 }, num_shoot_frames = 1
+}
+
 let sprites_for_kind = (k: enemy_kind) ->
     match k with
     | ek_guard   -> enemy_sprites_guard
@@ -392,31 +549,82 @@ let sprites_for_kind = (k: enemy_kind) ->
     | ek_ss      -> enemy_sprites_ss
     | ek_dog     -> enemy_sprites_dog
     | ek_mutant  -> enemy_sprites_mut
+    | ek_hans         -> enemy_sprites_hans
+    | ek_schabbs      -> enemy_sprites_schabbs
+    | ek_gretel       -> enemy_sprites_gretel
+    | ek_giftmacher   -> enemy_sprites_giftmacher
+    | ek_fat          -> enemy_sprites_fat
+    | ek_hitler_fake  -> enemy_sprites_hitler_fake
+    | ek_hitler       -> enemy_sprites_hitler
+    | ek_blinky       -> enemy_sprites_blinky
+    | ek_pinky        -> enemy_sprites_pinky
+    | ek_clyde        -> enemy_sprites_clyde
+    | ek_inky         -> enemy_sprites_inky
+
+// True iff this kind uses the 8-angle rotating walk-sprite table (guards,
+// SS, officers, dogs, mutants). Bosses and ghosts are single-view.
+let kind_is_rotating = (k: enemy_kind) ->
+    match k with
+    | ek_hans | ek_schabbs | ek_gretel | ek_giftmacher | ek_fat
+    | ek_hitler_fake | ek_hitler
+    | ek_blinky | ek_pinky | ek_clyde | ek_inky -> false
+    | _ -> true
 
 // Per-kind HP. Difficulty isn't modeled yet — use "Bring 'em on" (gd_hard)
-// values to keep encounters readable. Dogs die in one shot.
+// values to keep encounters readable. Dogs die in one shot. Boss HP from
+// wolf4sdl's StartBonus table.
 let hp_for_kind = (k: enemy_kind) ->
     match k with
-    | ek_guard   -> 25
-    | ek_officer -> 50
-    | ek_ss      -> 100
-    | ek_dog     -> 1
-    | ek_mutant  -> 55
+    | ek_guard        -> 25
+    | ek_officer      -> 50
+    | ek_ss           -> 100
+    | ek_dog          -> 1
+    | ek_mutant       -> 55
+    | ek_hans         -> 850
+    | ek_schabbs      -> 850
+    | ek_gretel       -> 850
+    | ek_giftmacher   -> 850
+    | ek_fat          -> 850
+    | ek_hitler_fake  -> 200
+    | ek_hitler       -> 800
+    | ek_blinky | ek_pinky | ek_clyde | ek_inky -> 1000  // unkillable-ish
 
 // Score granted to the player on kill. Wolf3D values.
 let score_for_kind = (k: enemy_kind) ->
     match k with
-    | ek_guard   -> 100
-    | ek_officer -> 400
-    | ek_ss      -> 500
-    | ek_dog     -> 200
-    | ek_mutant  -> 700
+    | ek_guard        -> 100
+    | ek_officer      -> 400
+    | ek_ss           -> 500
+    | ek_dog          -> 200
+    | ek_mutant       -> 700
+    | ek_hans         -> 5000
+    | ek_schabbs      -> 5000
+    | ek_gretel       -> 5000
+    | ek_giftmacher   -> 5000
+    | ek_fat          -> 5000
+    | ek_hitler_fake  -> 2000
+    | ek_hitler       -> 5000
+    | ek_blinky | ek_pinky | ek_clyde | ek_inky -> 0
 
-// Movement speed while chasing (tiles/sec). Dogs sprint.
+// Movement speed while chasing (tiles/sec). Dogs sprint; bosses and
+// ghosts move at chase_speed.
 let chase_speed_for_kind = (k: enemy_kind) ->
     match k with
     | ek_dog -> dog_chase_speed
     | _      -> enemy_chase_speed
+
+// True iff the kind is a level-ending boss. Killing one ends the level.
+let kind_is_boss = (k: enemy_kind) ->
+    match k with
+    | ek_hans | ek_schabbs | ek_gretel | ek_giftmacher | ek_fat
+    | ek_hitler_fake | ek_hitler -> true
+    | _ -> false
+
+// True iff the kind is a pacman ghost (non-hostile chaser).
+let kind_is_ghost = (k: enemy_kind) ->
+    match k with
+    | ek_blinky | ek_pinky | ek_clyde | ek_inky -> true
+    | _ -> false
 
 // Bitmask: bit N set = fire (or bite) on entering shoot-frame N. Mutants use
 // a double-shot pattern (T_Shoot on s_mutshoot1 and s_mutshoot3 in wolf4sdl);
@@ -425,6 +633,7 @@ let chase_speed_for_kind = (k: enemy_kind) ->
 let shoot_fire_mask_for_kind = (k: enemy_kind) ->
     match k with
     | ek_mutant -> 5    // 0b0101 — frames 0 and 2
+    | ek_hans | ek_gretel -> 5    // bosses fire on both shoot frames (chain gun)
     | _         -> 4    // 0b0100 — frame 2
 
 // Pickup item to drop on death (item_kind.decoration = nothing). SS drop a
@@ -436,6 +645,10 @@ let drop_for_kind = (k: enemy_kind) ->
     | ek_ss      -> item_kind.machine_gun
     | ek_dog     -> item_kind.decoration
     | ek_mutant  -> item_kind.decoration
+    // Bosses drop gold keys (wolf4sdl — unlocks the exit elevator).
+    | ek_hans | ek_schabbs | ek_gretel | ek_giftmacher | ek_fat
+    | ek_hitler_fake | ek_hitler -> item_kind.gold_key
+    | ek_blinky | ek_pinky | ek_clyde | ek_inky -> item_kind.decoration
 
 // VSWAP sprite page index of the dropped pickup's shape (shape = 2 + tile - 23).
 let drop_shape_for_kind = (k: enemy_kind) ->
@@ -443,6 +656,8 @@ let drop_shape_for_kind = (k: enemy_kind) ->
     | ek_guard   -> 2 + (49 - 23)   // clip shape
     | ek_officer -> 2 + (49 - 23)
     | ek_ss      -> 2 + (50 - 23)   // MG shape
+    | ek_hans | ek_schabbs | ek_gretel | ek_giftmacher | ek_fat
+    | ek_hitler_fake | ek_hitler -> 2 + (43 - 23)  // gold key
     | _ -> 0
 
 // Shared RNG for all enemy behavior (sight rolls, hit chance, damage). A single
@@ -531,6 +746,9 @@ struct world =
                           // without another disk load)
     rc: render_ctx*     // renderer scratch buffers
     ac: audio_ctx*      // sound pipeline
+    vg: vgagraph.vgagraph_file*  // VGAGRAPH: fonts, status bar, BJ face,
+                                 // title screen, menu graphics.
+    font: font_info*             // small menu/UI font (chunk 1)
 
 // ============================================================
 // Factories
@@ -664,6 +882,36 @@ let compute_level_bonus = (g: game*) ->
     let secret_bonus = if g->total_secrets > 0 && g->secrets >= g->total_secrets then 10000 else 0
     let treas_bonus = if g->total_treasures > 0 && g->treasures >= g->total_treasures then 10000 else 0
     time_bonus + kill_bonus + secret_bonus + treas_bonus
+
+// Copy a const str into g->msg_buf and arm the message timer. The buffer
+// caps at 63 chars (1 spare); longer messages are truncated. Duration is
+// the wolf3d stock 3 seconds — long enough to read, short enough to not
+// stack up during a fight.
+let show_message = (g: game*, text: const str) ->
+    let mut n = (int32) text.len
+    if n > 63 then n = 63
+    for i in 0..n
+        g->msg_buf[i] = text[i]
+    g->msg_len = n
+    g->msg_timer = 3.0
+
+// Draw the banner message if active. Fades out in the last 0.5 s.
+let render_message = (rc: render_ctx*, font: font_info*, g: game*) ->
+    if g->msg_timer <= 0.0 || g->msg_len <= 0 then return
+    // Compute total width (font->width for each byte) and center above HUD.
+    let mut w = 0
+    for i in 0..g->msg_len
+        let ch = (int32) g->msg_buf[i]
+        if ch >= 0 && ch < 256 then w = w + font->width[ch]
+    let x = (game_w - w) / 2
+    let y = 4
+    // Foreground color brightens/fades.
+    let t = if g->msg_timer > 0.5 then 1.0 else g->msg_timer / 0.5
+    let bright = (uint32) (255.0 * t)
+    let color = 0xFF000000u32 | (bright << 16) | (bright << 8) | bright
+    let mut cx = x
+    for i in 0..g->msg_len
+        cx = cx + draw_font_char(rc, font, cx, y, (int32) g->msg_buf[i], color)
 
 // Begin the intermission phase (stats screen between levels). The phase
 // timer starts at 0 so the "press space to continue" gate needs at least
@@ -1053,6 +1301,33 @@ let classify_enemy_tile = (tile: int32) ->
         some(enemy_spawn_info { kind = enemy_kind.ek_mutant, patrol = true, dir4 = tile - 238, dead = false, tier = 1 })
     else if tile >= 256 && tile <= 259 then
         some(enemy_spawn_info { kind = enemy_kind.ek_mutant, patrol = true, dir4 = tile - 256, dead = false, tier = 2 })
+    // Bosses — wolf4sdl ScanInfoPlane tile constants. All single-tile
+    // spawns (no facing variants), tier 0 (always spawn regardless of
+    // difficulty).
+    else if tile == 214 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_hans, patrol = false, dir4 = 2, dead = false, tier = 0 })
+    else if tile == 196 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_schabbs, patrol = false, dir4 = 2, dead = false, tier = 0 })
+    else if tile == 197 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_gretel, patrol = false, dir4 = 2, dead = false, tier = 0 })
+    else if tile == 215 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_giftmacher, patrol = false, dir4 = 2, dead = false, tier = 0 })
+    else if tile == 179 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_fat, patrol = false, dir4 = 2, dead = false, tier = 0 })
+    else if tile == 160 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_hitler_fake, patrol = false, dir4 = 2, dead = false, tier = 0 })
+    else if tile == 178 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_hitler, patrol = false, dir4 = 2, dead = false, tier = 0 })
+    // Pacman ghosts on E1M10. Tiles 224 / 225 / 226 / 227 = Blinky /
+    // Clyde / Pinky / Inky (agent report order). Tier 0.
+    else if tile == 224 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_blinky, patrol = false, dir4 = 0, dead = false, tier = 0 })
+    else if tile == 225 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_clyde, patrol = false, dir4 = 0, dead = false, tier = 0 })
+    else if tile == 226 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_pinky, patrol = false, dir4 = 0, dead = false, tier = 0 })
+    else if tile == 227 then
+        some(enemy_spawn_info { kind = enemy_kind.ek_inky, patrol = false, dir4 = 0, dead = false, tier = 0 })
     else default(enemy_spawn_info?)
 
 // Allocate one enemy entry from plane-1 data. dir4 0..3 is east/north/west/south;
@@ -1168,14 +1443,18 @@ let enemy_angle_sprite = (e: enemy*, px: float64, py: float64, base: int32) ->
 // states and plays once for die / shoot / pain.
 let enemy_sprite_page = (e: enemy*, px: float64, py: float64) ->
     let sp = sprites_for_kind(e->kind)
+    let rotating = kind_is_rotating(e->kind)
     match e->state with
     | es_stand ->
-        // Dogs have no stand pose — fall back to walk-frame 1.
-        enemy_angle_sprite(e, px, py, sp.stand_base)
+        // Dogs have no stand pose — fall back to walk-frame 1. Bosses /
+        // ghosts are single-view: just use stand_base directly.
+        if rotating then enemy_angle_sprite(e, px, py, sp.stand_base)
+        else sp.stand_base
     | es_path | es_chase ->
         // Walk cycle: 4 phases of 8 angles. anim_frame cycles 0..3.
         let ph = e->anim_frame % 4
-        enemy_angle_sprite(e, px, py, sp.walk_base + ph * 8)
+        if rotating then enemy_angle_sprite(e, px, py, sp.walk_base + ph * 8)
+        else sp.walk_base + ph
     | es_shoot ->
         let f = if e->anim_frame < sp.num_shoot_frames then e->anim_frame else sp.num_shoot_frames - 1
         sp.shoot_frames[f]
@@ -1836,17 +2115,39 @@ let check_pickups = (lv: level*, g: game*, ac: audio_ctx*) ->
         lv->sprites[i].alive = false
         // Health items intentionally have no pickup sound (matches Wolf3D).
         match it with
-        | gold_key | silver_key    -> trigger_sound(snd_get_key, ac)
-        | machine_gun              -> trigger_sound(snd_get_mg, ac)
-        | chain_gun                -> trigger_sound(snd_get_gat, ac)
-        | clip                     -> trigger_sound(snd_get_ammo, ac)
-        | cross                    -> trigger_sound(snd_bonus1, ac)
-        | chalice                  -> trigger_sound(snd_bonus2, ac)
-        | bible                    -> trigger_sound(snd_bonus3, ac)
-        | crown                    -> trigger_sound(snd_bonus4, ac)
-        | extra_life               -> trigger_sound(snd_bonus1up, ac)
-        | dog_food | food          -> trigger_sound(snd_health1, ac)
-        | first_aid                -> trigger_sound(snd_health2, ac)
+        | gold_key ->
+            trigger_sound(snd_get_key, ac)
+            show_message(g, "GOLD KEY")
+        | silver_key ->
+            trigger_sound(snd_get_key, ac)
+            show_message(g, "SILVER KEY")
+        | machine_gun ->
+            trigger_sound(snd_get_mg, ac)
+            show_message(g, "MACHINE GUN")
+        | chain_gun ->
+            trigger_sound(snd_get_gat, ac)
+            show_message(g, "GATLING GUN")
+        | clip ->
+            trigger_sound(snd_get_ammo, ac)
+        | cross ->
+            trigger_sound(snd_bonus1, ac)
+            show_message(g, "CROSS +100")
+        | chalice ->
+            trigger_sound(snd_bonus2, ac)
+            show_message(g, "CHALICE +500")
+        | bible ->
+            trigger_sound(snd_bonus3, ac)
+            show_message(g, "BIBLE +1000")
+        | crown ->
+            trigger_sound(snd_bonus4, ac)
+            show_message(g, "CROWN +5000")
+        | extra_life ->
+            trigger_sound(snd_bonus1up, ac)
+            show_message(g, "EXTRA LIFE")
+        | dog_food | food ->
+            trigger_sound(snd_health1, ac)
+        | first_aid ->
+            trigger_sound(snd_health2, ac)
         | decoration               -> void()
         // Extra life at 40,000 points
         if g->score >= 40000 && g->score - 40000 < 5000 then
@@ -2305,9 +2606,15 @@ let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, dmg: int32,
     e->hp = e->hp - dmg
     e->notified = true
     if e->hp <= 0 then
+        let was_boss = kind_is_boss(e->kind)
         kill_enemy(lv, g, ac, e, sprite_start)
         g->score = g->score + score_for_kind(e->kind)
         g->kills = g->kills + 1
+        // Killing a boss ends the level immediately (wolf4sdl's
+        // LevelCompleted trigger on boss-death + elevator-reveal).
+        if was_boss then
+            g->next_level = true
+            show_message(g, "YOU GOT THE BOSS KEY!")
     else
         // Pain flinch (except dogs, which don't display pain frames).
         e->state = enemy_state.es_pain
@@ -2344,7 +2651,10 @@ let wake_enemy = (g: game*, e: enemy*, ac: audio_ctx*) ->
         | ek_officer -> snd_halt
         | ek_ss      -> snd_schutzad
         | ek_dog     -> snd_dog_bark
-        | ek_mutant  -> snd_halt   // wolf4sdl uses MUTTISND; fall back to halt
+        | ek_mutant  -> snd_halt
+        | ek_hans | ek_schabbs | ek_gretel | ek_giftmacher | ek_fat
+        | ek_hitler_fake | ek_hitler -> snd_schutzad
+        | ek_blinky | ek_pinky | ek_clyde | ek_inky -> snd_halt
         trigger_sound_at(snd, ac, g, e->x, e->y)
 
 // Enemy firing an attack at the player, called from T_Shoot frames. Ports
@@ -2428,6 +2738,16 @@ let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, dt: f
             else
                 advance_enemy_move(lv, g, ac, self_idx, dog_chase_speed, dt, true)
                 advance_walk_anim(e)
+        | ek_blinky | ek_pinky | ek_clyde | ek_inky ->
+            // Pacman ghosts — chase silently and damage on contact; no
+            // shoot animation, no projectile.
+            let dx = g->pos_x - e->x
+            let dy = g->pos_y - e->y
+            let dist = math.sqrt(dx * dx + dy * dy)
+            if dist < 0.8 then
+                damage_player(g, ac, 1)
+            advance_enemy_move(lv, g, ac, self_idx, enemy_chase_speed, dt, true)
+            advance_walk_anim(e)
         | _ ->
             // Shoot roll: wolf4sdl uses (tics<<4)/dist against a 256-range rnd.
             // We approximate with a dt-scaled chance so 35Hz and 70Hz tick
@@ -2807,6 +3127,178 @@ let trigger_sound_at = (sound_id: int32, ac: audio_ctx*, g: game*,
 // at this rate.
 let sample_rate = 44100
 
+// ============================================================
+// VGAGRAPH chunk IDs (Wolf3D WL6). Matches wolf4sdl gfxv_wl6.h.
+// ============================================================
+
+// Fonts — font 1 is the small menu font, font 2 (if present) is the
+// larger status-bar font. We use font 1 for all text.
+let vg_font_small = 1
+
+// Hit graphics
+let vg_statusbar   = 86
+let vg_title       = 87
+let vg_pg13        = 88
+let vg_credits     = 89
+let vg_highscores  = 90
+
+// Digits 0..9 + extras for status-bar countdowns. N_0PIC..N_9PIC.
+let vg_n_0 = 99
+let vg_n_9 = 108
+
+// Face pics — 8 expressions × 3 variants each (A/B/C). FACE1APIC = 109.
+// Expression index 0 = healthy grin, 7 = dead/severely injured.
+let vg_face_base = 109
+
+// Misc.
+let vg_got_gatling = 133
+let vg_mutant_bj   = 134
+let vg_paused      = 143     // "PAUSED" title graphic (if present)
+
+// Weapon icons for status bar: KNIFEPIC, PISTOLPIC, MGPIC, CHAINPIC.
+// 48x24 pics at chunks 91..94 (per vgtable).
+let vg_knife  = 91
+let vg_pistol = 92
+let vg_mg     = 93
+let vg_chain  = 94
+
+// Number digits at the status bar: N_BLANKPIC (98) + N_0PIC (99) .. N_9PIC (108).
+let vg_n_blank = 98
+
+// Draw a decoded VGA-planar pic at (dst_x, dst_y) in the framebuffer.
+// Pixels outside the fb are clipped. `pal` is the 256-entry ARGB palette.
+// Palette index 255 is magenta but treated as opaque here — VGAGRAPH
+// images don't use transparency (only sprites do).
+let draw_vg_pic = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+                   chunk: int32, dst_x: int32, dst_y: int32) ->
+    let pic = vgagraph.load_pic(vg, chunk)
+    defer free(pic)
+    if pic.len == 0 then return
+    let w = vgagraph.pic_width(vg, chunk)
+    let h = vgagraph.pic_height(vg, chunk)
+    for y in 0..h
+        let dy = dst_y + y
+        if dy < 0 || dy >= game_h then continue
+        for x in 0..w
+            let dx = dst_x + x
+            if dx < 0 || dx >= game_w then continue
+            let pix = pic[(int64) y * (int64) w + (int64) x]
+            rc->fb[(int64) dy * 320 + (int64) dx] = pal[(int32) pix]
+
+// Draw a VG pic scaled to fit a destination rectangle. Used for fit-to-
+// viewport rendering (title screen, credits) — nearest-neighbor scaling.
+let draw_vg_pic_scaled = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+                          chunk: int32, dst_x: int32, dst_y: int32,
+                          dst_w: int32, dst_h: int32) ->
+    let pic = vgagraph.load_pic(vg, chunk)
+    defer free(pic)
+    if pic.len == 0 then return
+    let w = vgagraph.pic_width(vg, chunk)
+    let h = vgagraph.pic_height(vg, chunk)
+    if w <= 0 || h <= 0 then return
+    for py in 0..dst_h
+        let dy = dst_y + py
+        if dy < 0 || dy >= game_h then continue
+        let sy = (int64) py * (int64) h / (int64) dst_h
+        for px in 0..dst_w
+            let dx = dst_x + px
+            if dx < 0 || dx >= game_w then continue
+            let sx = (int64) px * (int64) w / (int64) dst_w
+            let pix = pic[sy * (int64) w + sx]
+            rc->fb[(int64) dy * 320 + (int64) dx] = pal[(int32) pix]
+
+// ============================================================
+// Wolf3D font rendering
+// ============================================================
+//
+// The bitmap font in VGAGRAPH has this layout (after Huffman expand):
+//   int16 height
+//   int16 location[256]   — offset from struct start to each char's pixels
+//   int8  width[256]      — pixel width per char (0 for unused glyphs)
+//   ...pixel bytes (non-zero = ink, 0 = background)
+//
+// Characters are stored column-major within their glyph: a glyph of
+// (width, height) is `width * height` bytes; pixel[col, row] lives at
+// byte `col * height + row`... actually wolf4sdl walks it as
+// `source[i*height + j]` so row varies faster than column when iterating
+// column-first. We just read column-major: pix[col*height + row].
+
+struct font_info =
+    height: int32
+    location: int32[256]
+    width: int32[256]
+    pixels: uint8[]       // original decoded font chunk, held for glyph reads
+
+let load_font = (vg: vgagraph.vgagraph_file*, chunk: int32) ->
+    // Wolf4sdl fonts are raw (not planar). The decompressed chunk is the
+    // fontstruct followed by pixel data.
+    let raw = vgagraph.decompress_chunk(vg, chunk)
+    if raw.len < 4 then return alloc(font_info {
+        height = 8,
+        location = int32[256] {},
+        width = int32[256] {},
+        pixels = raw
+    })!
+    let h = (int32) bytes.u16(raw, 0i64)
+    let mut loc = int32[256] {}
+    let mut wdt = int32[256] {}
+    for i in 0..256
+        // location[] is 256 uint16 entries starting at offset 2.
+        loc[i] = (int32) bytes.u16(raw, 2i64 + (int64) i * 2)
+        // width[] is 256 uint8 entries starting after the location array
+        // (offset 2 + 512 = 514).
+        wdt[i] = (int32) raw[514i64 + (int64) i]
+    alloc(font_info {
+        height = h,
+        location = loc,
+        width = wdt,
+        pixels = raw
+    })!
+
+let free_font = (f: font_info*) ->
+    free(f->pixels)
+    free(f)
+
+// Draw one character from the VGAGRAPH font. Returns the advance width.
+// Glyph pixels are row-major: byte at (col, row) = pixels[row * width + col].
+let draw_font_char = (rc: render_ctx*, f: font_info*, x: int32, y: int32,
+                       ch: int32, color: uint32) ->
+    if ch < 0 || ch >= 256 then return 0
+    let cw = f->width[ch]
+    if cw <= 0 then return 0
+    let ch_h = f->height
+    let src_off = (int64) f->location[ch]
+    for row in 0..ch_h
+        for col in 0..cw
+            let px = f->pixels[src_off + (int64) row * (int64) cw + (int64) col]
+            if px != 0u8 then
+                let dx = x + col
+                let dy = y + row
+                if dx >= 0 && dx < game_w && dy >= 0 && dy < game_h then
+                    rc->fb[(int64) dy * 320 + (int64) dx] = color
+    cw
+
+let draw_font_text = (rc: render_ctx*, f: font_info*,
+                      x: int32, y: int32, s: const str, color: uint32) ->
+    let mut cx = x
+    for i in 0..(int32) s.len
+        let ch = (int32) s[(int64) i]
+        let advance = draw_font_char(rc, f, cx, y, ch, color)
+        cx = cx + advance
+
+// Measure a string's rendered pixel width (for centering).
+let font_text_width = (f: font_info*, s: const str) ->
+    let mut w = 0
+    for i in 0..(int32) s.len
+        let ch = (int32) s[(int64) i]
+        if ch >= 0 && ch < 256 then w = w + f->width[ch]
+    w
+
+let draw_font_centered = (rc: render_ctx*, f: font_info*,
+                          y: int32, s: const str, color: uint32) ->
+    let w = font_text_width(f, s)
+    draw_font_text(rc, f, (game_w - w) / 2, y, s, color)
+
 // Load an IMF music player from an AUDIOT chunk number.
 let music_load = (ad: audio.audio_data*, chunk: int32) ->
     let off = (int64) audio.chunk_offset(ad, chunk)
@@ -2923,51 +3415,81 @@ let draw_vsep = (rc: render_ctx*, x: int32, y0: int32, y1: int32) ->
             if x + 1 < game_w then
                 rc->fb[(int64) y * 320 + (int64) (x + 1)] = 0xFF909090u32
 
-let render_hud = (rc: render_ctx*, g: game*) ->
-    let bar_top = view_h    // 160
-    let bar_bg = 0xFF585858u32      // medium gray
-    let label_c = 0xFFB0B0B0u32     // light gray for labels
-    let num_c = 0xFFFFFFFFu32       // white for numbers
-    let border_hi = 0xFFA0A0A0u32   // highlight
-    let border_lo = 0xFF303030u32   // shadow
+// Pick the BJ face chunk from health. Wolf4sdl maps (100-health)/16 to one
+// of 7 face expressions (A/B/C variants) with a random per-frame flicker;
+// we simplify to always-A to keep rendering deterministic for tests.
+// Health=0 shows the final "mostly dead" face.
+let face_chunk_for = (health: int32) ->
+    let mut h = health
+    if h > 100 then h = 100
+    if h < 0 then h = 0
+    let idx = if h == 0 then 6 else (100 - h) / 16
+    let clamped = if idx > 6 then 6 else idx
+    vg_face_base + clamped * 3     // pick A-variant (offset 0 in triad)
 
-    // Fill bar background
-    fill_rect(rc, 0, bar_top, game_w, game_h, bar_bg)
-    // Top highlight, bottom shadow
-    fill_rect(rc, 0, bar_top, game_w, bar_top + 1, border_hi)
-    fill_rect(rc, 0, game_h - 1, game_w, game_h, border_lo)
+// Draw a right-aligned decimal number using the VGAGRAPH number pics.
+// `digits` is the cell count; shorter numbers get N_BLANKPIC padding on
+// the left (matches wolf4sdl LatchNumber). `px`/`py` is the top-left of
+// the LEFTMOST cell. Each cell is 8x16.
+let draw_vg_number = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+                      px: int32, py: int32, digits: int32, num: int32) ->
+    let mut n = if num < 0 then 0 else num
+    let mut out_digits = int32[16] {}
+    let mut count = 0
+    if n == 0 then
+        out_digits[0] = 0
+        count = 1
+    else
+        loop
+            if n == 0 then break
+            if count >= 16 then break
+            out_digits[count] = n % 10
+            n = n / 10
+            count = count + 1
+    // Draw right-to-left: rightmost digit at px + (digits-1)*8
+    for slot in 0..digits
+        let x = px + (digits - 1 - slot) * 8
+        let chunk = if slot < count then vg_n_0 + out_digits[slot]
+            else vg_n_blank
+        draw_vg_pic(rc, vg, pal, chunk, x, py)
 
-    // FLOOR + level number (x=2..48)
-    draw_text(rc, 4, bar_top + 4, "FLOOR", label_c, 1)
-    draw_number(rc, 40, bar_top + 14, g->level_num + 1, num_c, 2)
-    draw_vsep(rc, 50, bar_top + 2, game_h - 2)
-
-    // SCORE (x=54..126)
-    draw_text(rc, 55, bar_top + 4, "SCORE", label_c, 1)
-    draw_number(rc, 118, bar_top + 14, g->score, num_c, 2)
-    draw_vsep(rc, 128, bar_top + 2, game_h - 2)
-
-    // LIVES (x=132..174)
-    draw_text(rc, 133, bar_top + 4, "LIVES", label_c, 1)
-    draw_number(rc, 162, bar_top + 14, g->lives, num_c, 2)
-    draw_vsep(rc, 174, bar_top + 2, game_h - 2)
-
-    // HEALTH (x=178..236)
-    draw_text(rc, 179, bar_top + 4, "HEALTH", label_c, 1)
-    draw_number(rc, 228, bar_top + 14, g->health, num_c, 2)
-    draw_vsep(rc, 238, bar_top + 2, game_h - 2)
-
-    // AMMO (x=242..288)
-    draw_text(rc, 243, bar_top + 4, "AMMO", label_c, 1)
-    draw_number(rc, 278, bar_top + 14, g->ammo, num_c, 2)
-    draw_vsep(rc, 288, bar_top + 2, game_h - 2)
-
-    // KEYS (x=292..318) + gold/silver indicators
-    draw_text(rc, 293, bar_top + 4, "KEYS", label_c, 1)
-    let gk_c = if g->has_gold_key then 0xFFFFD700u32 else 0xFF383838u32
-    let sk_c = if g->has_silver_key then 0xFFC0C0C0u32 else 0xFF383838u32
-    fill_rect(rc, 293, bar_top + 14, 305, bar_top + 22, gk_c)
-    fill_rect(rc, 307, bar_top + 14, 319, bar_top + 22, sk_c)
+let render_hud = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[], g: game*) ->
+    let bar_top = view_h                         // 160
+    // Full Wolf3D status-bar graphic: all the cell outlines + labels are
+    // pre-rendered into a single 320x40 image. We paint it, then stamp
+    // digits / face / keys / weapon-icon over the empty cells.
+    draw_vg_pic(rc, vg, pal, vg_statusbar, 0, bar_top)
+    // Cell x-coords (in pixels) and widths (in 8-px "cells"), from
+    // wolf4sdl LatchNumber calls:
+    //   floor : x=16, 2 cells
+    //   score : x=48, 6 cells
+    //   lives : x=112, 1 cell
+    //   health: x=168, 3 cells
+    //   ammo  : x=216, 2 cells
+    let num_y = bar_top + 16
+    draw_vg_number(rc, vg, pal, 16, num_y, 2, g->level_num + 1)
+    draw_vg_number(rc, vg, pal, 48, num_y, 6, g->score)
+    draw_vg_number(rc, vg, pal, 112, num_y, 1, g->lives)
+    draw_vg_number(rc, vg, pal, 168, num_y, 3, g->health)
+    draw_vg_number(rc, vg, pal, 216, num_y, 2, g->ammo)
+    // BJ face — chosen by health. Dead / dying uses final frame.
+    let face = match g->phase with
+    | gp_dying     -> vg_face_base + 6 * 3    // worst face
+    | _            -> face_chunk_for(g->health)
+    draw_vg_pic(rc, vg, pal, face, 136, bar_top + 4)
+    // Weapon icon on the right.
+    let weapon_chunk = match g->weapon with
+    | 1 -> vg_pistol
+    | 2 -> vg_mg
+    | 3 -> vg_chain
+    | _ -> vg_knife
+    draw_vg_pic(rc, vg, pal, weapon_chunk, 256, bar_top + 8)
+    // Key indicators — two 16x16-ish cells on the right edge. The status
+    // bar pic has blank slots; paint coloured squares only when held.
+    if g->has_gold_key then
+        fill_rect(rc, 240, bar_top + 4, 254, bar_top + 18, 0xFFFFD700u32)
+    if g->has_silver_key then
+        fill_rect(rc, 240, bar_top + 22, 254, bar_top + 36, 0xFFC0C0C0u32)
 
 // Upscale fb (320x200) to dbuf (640x400) with nearest-neighbor 2x.
 // ============================================================
@@ -3029,6 +3551,10 @@ let tick = (w: world*, dt: float64) ->
     if g->damage_flash_timer > 0.0 then
         g->damage_flash_timer = g->damage_flash_timer - dt
         if g->damage_flash_timer < 0.0 then g->damage_flash_timer = 0.0
+    // Same for the message-banner timer.
+    if g->msg_timer > 0.0 then
+        g->msg_timer = g->msg_timer - dt
+        if g->msg_timer < 0.0 then g->msg_timer = 0.0
     // Outside gp_playing only phase_timer advances + the phase-transition
     // handler runs (so death collapse → restart, etc. can fire). Enemies,
     // doors, pickups, weapon, player: all frozen.
@@ -3235,9 +3761,126 @@ let render_game_over = (rc: render_ctx*, g: game*) ->
     draw_number(rc, 220, 120, g->score, white, 1)
     draw_centered_text(rc, 140, "PRESS SPACE", white, 1)
 
+// ============================================================
+// Title / Main menu / Pause
+// ============================================================
+
+// Variant of viewport_tint that covers the whole framebuffer (HUD + view).
+let viewport_tint_full = (rc: render_ctx*, tint: uint32, alpha: float64) ->
+    if alpha <= 0.0 then return
+    let a = if alpha >= 1.0 then 1.0 else alpha
+    let inv = 1.0 - a
+    let tr = (float64) ((tint >> 16) & 0xFFu32) * a
+    let tg = (float64) ((tint >> 8) & 0xFFu32) * a
+    let tb = (float64) (tint & 0xFFu32) * a
+    for y in 0..game_h
+        for x in 0..game_w
+            let c = rc->fb[(int64) y * 320 + (int64) x]
+            let r = (float64) ((c >> 16) & 0xFFu32) * inv + tr
+            let g = (float64) ((c >> 8) & 0xFFu32) * inv + tg
+            let b = (float64) (c & 0xFFu32) * inv + tb
+            rc->fb[(int64) y * 320 + (int64) x] =
+                0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
+
+// Title screen — full-screen TITLEPIC with a "PRESS ANY KEY" blink at bottom.
+let render_title = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+                     font: font_info*, time: float64) ->
+    draw_vg_pic_scaled(rc, vg, pal, vg_title, 0, 0, game_w, game_h)
+    // Blink on/off every 0.6 seconds.
+    let blink_on = ((int32) (time * 1.6667)) % 2 == 0
+    if blink_on then
+        draw_font_centered(rc, font, game_h - 22, "PRESS ANY KEY", 0xFFFFFF00u32)
+
+// Menu labels are returned by functions instead of living in an array
+// literal — FC treats `"foo"` as `const str` which doesn't fit into
+// `str[N]` directly.
+let main_menu_label = (i: int32) ->
+    match i with
+    | 0 -> "NEW GAME"
+    | 1 -> "SOUND"
+    | 2 -> "QUIT"
+    | _ -> ""
+
+let diff_menu_label = (i: int32) ->
+    match i with
+    | 0 -> "CAN I PLAY, DADDY?"
+    | 1 -> "DON'T HURT ME."
+    | 2 -> "BRING 'EM ON!"
+    | 3 -> "I AM DEATH INCARNATE!"
+    | _ -> ""
+
+let render_main_menu = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+                        font: font_info*, g: game*) ->
+    // Tint the title as a backdrop (slightly dimmed so the menu pops).
+    draw_vg_pic_scaled(rc, vg, pal, vg_title, 0, 0, game_w, game_h)
+    // Darken overlay so menu text stays readable over the title art.
+    viewport_tint_full(rc, 0x00000000u32, 0.55)
+    let yellow = 0xFFFFD700u32
+    let white  = 0xFFFFFFFFu32
+    let gray   = 0xFFB0B0B0u32
+    if g->menu_level == menu_main then
+        draw_font_centered(rc, font, 30, "MAIN MENU", yellow)
+        let items_y = 70
+        for i in 0..3
+            let y = items_y + i * (font->height + 6)
+            let is_sel = g->menu_sel == i
+            let color = if is_sel then yellow else white
+            // SOUND gets an inline ON/OFF suffix.
+            let label = if i == 1 then
+                if g->music_on then "SOUND:  ON" else "SOUND: OFF"
+            else main_menu_label(i)
+            draw_font_centered(rc, font, y, label, color)
+            if is_sel then
+                let w = font_text_width(font, label)
+                let cx = (game_w - w) / 2
+                draw_font_text(rc, font, cx - 14, y, ">", yellow)
+                draw_font_text(rc, font, cx + w + 6, y, "<", yellow)
+        draw_font_centered(rc, font, game_h - 28,
+            "UP/DOWN  ENTER  ESC", gray)
+    else
+        draw_font_centered(rc, font, 24, "CHOOSE DIFFICULTY", yellow)
+        let items_y = 56
+        for i in 0..4
+            let y = items_y + i * (font->height + 6)
+            let is_sel = g->menu_sel == i
+            let color = if is_sel then yellow else white
+            let label = diff_menu_label(i)
+            draw_font_centered(rc, font, y, label, color)
+            if is_sel then
+                let w = font_text_width(font, label)
+                let cx = (game_w - w) / 2
+                draw_font_text(rc, font, cx - 14, y, ">", yellow)
+                draw_font_text(rc, font, cx + w + 6, y, "<", yellow)
+        draw_font_centered(rc, font, game_h - 28,
+            "UP/DOWN  ENTER  ESC", gray)
+
+// Paused overlay: draws the last frame's game view dimmed + "PAUSED" text.
+let render_paused = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[],
+                      lv: level*, vg: vgagraph.vgagraph_file*, font: font_info*,
+                      g: game*) ->
+    // Re-render the game frame underneath so pause reflects current scene.
+    render_walls(lv, rc, g, vs, pal)
+    build_billboards(lv, rc, g, vs->sprite_start)
+    render_billboards(rc, g, vs, pal)
+    render_weapon(rc, vs, pal, g)
+    render_hud(rc, vg, pal, g)
+    // Dim + overlay.
+    viewport_tint_full(rc, 0x00000000u32, 0.5)
+    draw_font_centered(rc, font, view_h / 2 - 8, "PAUSED", 0xFFFFD700u32)
+    draw_font_centered(rc, font, view_h / 2 + 8, "ANY KEY TO RESUME", 0xFFFFFFFFu32)
+
 // Render the full game frame to fb (used before saving a screenshot).
 let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
     match w->g->phase with
+    | gp_title ->
+        render_title(w->rc, w->vg, pal, w->font, w->g->phase_timer)
+        return
+    | gp_main_menu ->
+        render_main_menu(w->rc, w->vg, pal, w->font, w->g)
+        return
+    | gp_paused ->
+        render_paused(w->rc, vs, pal, w->lv, w->vg, w->font, w->g)
+        return
     | gp_intermission ->
         render_intermission(w->rc, w->g)
         return
@@ -3250,6 +3893,9 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
     render_billboards(w->rc, w->g, vs, pal)
     render_weapon(w->rc, vs, pal, w->g)
     // Damage / death red tint is applied over the 3D view, under the HUD.
+    // (The fall-through below covers both branches — phase-filtered renderers
+    //  return earlier, so this block is only reached during gp_playing or
+    //  gp_dying.)
     let red_tint = 0x00C00000u32    // color channels; alpha multiplier below
     let flash_a = if w->g->damage_flash_timer > 0.0 then
         w->g->damage_flash_timer / damage_flash_time * 0.45
@@ -3262,7 +3908,8 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
     | _ -> 0.0
     let a = if flash_a > die_a then flash_a else die_a
     if a > 0.0 then viewport_tint(w->rc, red_tint, a)
-    render_hud(w->rc, w->g)
+    render_hud(w->rc, w->vg, pal, w->g)
+    render_message(w->rc, w->font, w->g)
 
 // Save the current fb as a PNG at `path` with game-state metadata embedded
 // as a tEXt chunk (one field per line, grep-able).
@@ -3426,6 +4073,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
     else if arg == "counters" then
         // Kill / secret / treasure counters + level time / par / phase.
         let phase_s = match g->phase with
+        | gp_title        -> "title"
+        | gp_main_menu    -> "menu"
+        | gp_paused       -> "paused"
         | gp_playing      -> "playing"
         | gp_dying        -> "dying"
         | gp_intermission -> "intermission"
@@ -3434,6 +4084,60 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         io.write("phase=%s{phase_s} difficulty=%d{g->difficulty}\n", stdout)
         io.write("kills=%d{g->kills}/%d{g->total_kills} secrets=%d{g->secrets}/%d{g->total_secrets} treasures=%d{g->treasures}/%d{g->total_treasures}\n", stdout)
         io.write("time=%6.2f{g->level_time} par=%d{par}\n", stdout)
+        void()
+    else if text.starts_with(arg, "vgrender:") then
+        // Render one VGAGRAPH pic to the framebuffer and take a screenshot.
+        // Syntax: vgrender:CHUNK,OUTFILE.png — top-left aligned, unscaled.
+        let rest = arg[9..arg.len]
+        let parts = text.split(rest, ",")
+        if parts.len >= 2 then
+            match text.parse_int32(parts[0]) with
+            | some(n) ->
+                // Clear the fb black first so metadata is obvious.
+                for i in 0..(game_w * game_h)
+                    w->rc->fb[i] = 0xFF000000u32
+                draw_vg_pic(w->rc, w->vg, pal, n, 0, 0)
+                png.write(parts[1], w->rc->fb, game_w, game_h, "vg")
+                io.write("Saved %s{parts[1]}\n", stdout)
+                void()
+            | none -> bad("integer chunk number")
+        else bad("CHUNK,PATH.png")
+        free(parts)
+    else if text.starts_with(arg, "vgrenderfont:") then
+        // Render the entire font ASCII range onto the fb and save. Useful
+        // for verifying the font loader extracts correct glyphs.
+        for i in 0..(game_w * game_h)
+            w->rc->fb[i] = 0xFF000000u32
+        let mut py = 8
+        let mut px = 8
+        for ch in 32..127
+            let adv = draw_font_char(w->rc, w->font, px, py, ch, 0xFFFFFFFFu32)
+            px = px + adv + 1
+            if px > game_w - 16 then
+                px = 8
+                py = py + w->font->height + 2
+        png.write(arg[13..arg.len], w->rc->fb, game_w, game_h, "font")
+        io.write("Saved %s{arg[13..arg.len]}\n", stdout)
+        void()
+    else if text.starts_with(arg, "vginfo:") then
+        // Dump the dimensions of one VGAGRAPH chunk (pic). Useful to verify
+        // the decoder produces sane widths/heights after the Huffman expand.
+        match text.parse_int32(arg[7..arg.len]) with
+        | some(n) ->
+            let pw = vgagraph.pic_width(w->vg, n)
+            let ph = vgagraph.pic_height(w->vg, n)
+            let off = if n < w->vg->num_chunks then w->vg->offsets[n] else -1i64
+            io.write("vgchunk %d{n}: offset=%d{off} width=%d{pw} height=%d{ph}\n", stdout)
+            void()
+        | none -> bad("integer chunk number")
+    else if arg == "vgtable" then
+        // Dump the entire picture-dimensions table (STRUCTPIC / chunk 0).
+        for i in 0..w->vg->num_pics
+            let pw = w->vg->pic_dims[i].width
+            let ph = w->vg->pic_dims[i].height
+            if pw > 0 || ph > 0 then
+                let ch = i + vgagraph.start_pics
+                io.write("pic %d{ch}: %d{pw}x%d{ph}\n", stdout)
         void()
     else if arg == "level_stats" then
         // Dump total enemy/pushwall/treasure counts as counted by build_level.
@@ -3468,6 +4172,20 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
             g->total_kills = alive
             g->kills = 0
         | none -> bad("integer difficulty 0-3")
+    else if text.starts_with(arg, "setlevel:") then
+        match text.parse_int32(arg[9..arg.len]) with
+        | some(n) ->
+            if n < 0 || n >= 60 then bad("level 0..59")
+            else
+                g->level_num = n
+                reload_level_data(w, w->ac->vs)
+                find_player_start(w->lv_data, g)
+                reset_level_counters(g, w->lv)
+                update_player_area(w->lv, g)
+                connect_areas(w->lv, g->area_number)
+                g->phase = game_phase.gp_playing
+                g->phase_timer = 0.0
+        | none -> bad("integer level")
     else if arg == "kill" then
         // Instant-kill the player (skips the pain sound, goes straight to
         // dying). Mostly used by the regression suite to exercise the
@@ -3477,8 +4195,24 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         g->phase = game_phase.gp_dying
         g->phase_timer = 0.0
         trigger_sound(snd_death_1, w->ac)
+    else if text.starts_with(arg, "setphase:") then
+        // Force a phase transition for test-mode screenshot coverage.
+        let p = arg[9..arg.len]
+        if p == "title" then g->phase = game_phase.gp_title
+        else if p == "menu" then
+            g->phase = game_phase.gp_main_menu
+            g->menu_level = menu_main
+        else if p == "diffmenu" then
+            g->phase = game_phase.gp_main_menu
+            g->menu_level = menu_difficulty
+        else if p == "paused" then g->phase = game_phase.gp_paused
+        else if p == "playing" then g->phase = game_phase.gp_playing
+        else bad("title/menu/diffmenu/paused/playing")
     else if arg == "phase" then
         let phase_s = match g->phase with
+        | gp_title        -> "title"
+        | gp_main_menu    -> "menu"
+        | gp_paused       -> "paused"
         | gp_playing      -> "playing"
         | gp_dying        -> "dying"
         | gp_intermission -> "intermission"
@@ -3522,6 +4256,17 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
                     | ek_ss      -> "ss"
                     | ek_dog     -> "dog"
                     | ek_mutant  -> "mutant"
+                    | ek_hans    -> "hans"
+                    | ek_schabbs -> "schabbs"
+                    | ek_gretel  -> "gretel"
+                    | ek_giftmacher  -> "gift"
+                    | ek_fat     -> "fat"
+                    | ek_hitler_fake -> "hitler_fake"
+                    | ek_hitler  -> "hitler"
+                    | ek_blinky  -> "blinky"
+                    | ek_pinky   -> "pinky"
+                    | ek_clyde   -> "clyde"
+                    | ek_inky    -> "inky"
                     io.write("  enemy[%d{i}] %s{ks} tile(%d{e.tile_x},%d{e.tile_y}) pos(%6.3f{e.x},%6.3f{e.y}) d=%5.3f{d}\n", stdout)
         for i in 0..w->lv->num_sprites
             let s = w->lv->sprites[i]
@@ -3554,6 +4299,17 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
             | ek_ss      -> "ss"
             | ek_dog     -> "dog"
             | ek_mutant  -> "mutant"
+            | ek_hans    -> "hans"
+            | ek_schabbs -> "schabbs"
+            | ek_gretel  -> "gretel"
+            | ek_giftmacher  -> "gift"
+            | ek_fat     -> "fat"
+            | ek_hitler_fake -> "hitler_fake"
+            | ek_hitler  -> "hitler"
+            | ek_blinky  -> "blinky"
+            | ek_pinky   -> "pinky"
+            | ek_clyde   -> "clyde"
+            | ek_inky    -> "inky"
             let ss = match e.state with
             | es_stand -> "stand"
             | es_path  -> "path"
@@ -3567,7 +4323,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         void()
     else if arg == "enemies" then
         // Summary: counts by kind and by state, for regression checks.
-        let mut by_kind = int32[5] { 0, 0, 0, 0, 0 }
+        // Buckets: 0=guard, 1=officer, 2=ss, 3=dog, 4=mutant, 5=boss, 6=ghost.
+        let mut by_kind = int32[7] { 0, 0, 0, 0, 0, 0, 0 }
         let mut by_state = int32[7] { 0, 0, 0, 0, 0, 0, 0 }
         for i in 0..w->lv->num_enemies
             let e = w->lv->enemies[i]
@@ -3577,6 +4334,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
             | ek_ss -> 2
             | ek_dog -> 3
             | ek_mutant -> 4
+            | ek_hans | ek_schabbs | ek_gretel | ek_giftmacher | ek_fat
+            | ek_hitler_fake | ek_hitler -> 5
+            | ek_blinky | ek_pinky | ek_clyde | ek_inky -> 6
             by_kind[ki] = by_kind[ki] + 1
             let si = match e.state with
             | es_stand -> 0
@@ -3588,7 +4348,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
             | es_dead -> 6
             by_state[si] = by_state[si] + 1
         io.write("enemies: total=%d{w->lv->num_enemies}\n", stdout)
-        io.write("  kind: guard=%d{by_kind[0]} officer=%d{by_kind[1]} ss=%d{by_kind[2]} dog=%d{by_kind[3]} mutant=%d{by_kind[4]}\n", stdout)
+        io.write("  kind: guard=%d{by_kind[0]} officer=%d{by_kind[1]} ss=%d{by_kind[2]} dog=%d{by_kind[3]} mutant=%d{by_kind[4]} boss=%d{by_kind[5]} ghost=%d{by_kind[6]}\n", stdout)
         io.write("  state: stand=%d{by_state[0]} path=%d{by_state[1]} chase=%d{by_state[2]} shoot=%d{by_state[3]} pain=%d{by_state[4]} die=%d{by_state[5]} dead=%d{by_state[6]}\n", stdout)
         void()
     else
@@ -3612,6 +4372,10 @@ let main = (args: str[]) ->
     let ad = audio.load("data/AUDIOHED.WL6", "data/AUDIOT.WL6")
     io.write("  audio chunks=%d{ad->num_chunks}\n", stdout)
 
+    io.write("Loading VGAGRAPH...\n", stdout)
+    let vg = vgagraph.load("data/VGADICT.WL6", "data/VGAHEAD.WL6", "data/VGAGRAPH.WL6")
+    io.write("  vga chunks=%d{vg->num_chunks}, pics=%d{vg->num_pics}\n", stdout)
+
     io.write("Loading level 0...\n", stdout)
     let mut lv_data = maps.load("data/MAPHEAD.WL6", "data/GAMEMAPS.WL6", 0)
     io.write("  map %d{lv_data->width}x%d{lv_data->height}\n", stdout)
@@ -3634,12 +4398,17 @@ let main = (args: str[]) ->
         next_level = false,
         weapon = 1, best_weapon = 1, fire_timer = 0.0, weapon_frame = 0,
         area_number = -1, made_noise = false,
-        phase = game_phase.gp_playing, phase_timer = 0.0, damage_flash_timer = 0.0,
+        phase = game_phase.gp_title, phase_timer = 0.0, damage_flash_timer = 0.0,
         kills = 0, total_kills = 0,
         secrets = 0, total_secrets = 0,
         treasures = 0, total_treasures = 0,
         level_time = 0.0,
-        difficulty = gd_hard
+        difficulty = gd_hard,
+        menu_sel = 0, menu_level = menu_main,
+        music_on = true, want_quit = false,
+        has_active_game = false,
+        msg_buf = alloc(uint8[64] {})!,
+        msg_len = 0, msg_timer = 0.0
     })!
     find_player_start(lv_data, g)
     io.write("  player at (%4.1f{g->pos_x}, %4.1f{g->pos_y})\n", stdout)
@@ -3657,7 +4426,9 @@ let main = (args: str[]) ->
             ad = ad,
             sfx = adlib.init((float64) sample_rate),
             digi = digi.init()
-        })!
+        })!,
+        vg = vg,
+        font = load_font(vg, vg_font_small)
     })!
     // Initial per-level counters mirror what was tallied during build_level.
     g->total_kills = w->lv->total_enemies
@@ -3670,8 +4441,13 @@ let main = (args: str[]) ->
     update_player_area(w->lv, g)
     connect_areas(w->lv, g->area_number)
 
-    // Test mode: process scripted commands, no SDL needed
+    // Test mode: process scripted commands, no SDL needed. Skip the
+    // title/menu entry flow — tests start directly in gp_playing so
+    // existing regression scripts behave the same as before the UI
+    // overhaul.
     if args.len > 1 && args[1] == "--test" then
+        g->phase = game_phase.gp_playing
+        g->has_active_game = true
         let test_dt = 1.0 / 35.0
         for ti in 2..(int32) args.len
             run_test_cmd(w, args[(int64) ti], pal, test_dt)
@@ -3729,6 +4505,7 @@ let main = (args: str[]) ->
 
     loop
         if !running then break
+        if g->want_quit then break
 
         // Delta time
         let now = sdl2.get_ticks()
@@ -3743,24 +4520,7 @@ let main = (args: str[]) ->
             if t == sdl2.quit_event then running = false
             if t == sdl2.keydown_event then
                 let k = event.key.keysym.sym
-                if k == sdl2.key_up then g->key_up = true
-                if k == sdl2.key_down then g->key_down = true
-                if k == sdl2.key_left then g->key_left = true
-                if k == sdl2.key_right then g->key_right = true
-                if k == sdl2.key_lshift then g->key_shift = true
-                if k == sdl2.key_lalt then g->key_alt = true
-                if k == sdl2.key_space then g->key_space = true
-                if k == sdl2.key_lctrl then g->key_fire = true
-                if k == sdl2.key_1 then g->weapon = 0
-                if k == sdl2.key_2 then g->weapon = 1
-                if k == sdl2.key_3 then g->weapon = 2
-                if k == sdl2.key_4 then g->weapon = 3
-                if k == sdl2.key_escape then running = false
-                if k == sdl2.key_m then
-                    music_on = !music_on
-                    if !music_on && audio_dev > 0u32 then
-                        sdl2.clear_audio(audio_dev)
-                if k == sdl2.key_s then take_screenshot(w, vs, pal)
+                // F11 fullscreen toggle always works (even from menu/pause).
                 if k == sdl2.key_f11 then
                     fullscreen = !fullscreen
                     if fullscreen then
@@ -3774,8 +4534,93 @@ let main = (args: str[]) ->
                         sdl2.restore_window(win)
                         sdl2.maximize_window(win)
                     sdl2.set_logical_size(ren, screen_w, actual_h)
+                // Per-phase dispatch for everything else.
+                match g->phase with
+                | gp_title ->
+                    // Any key advances to the main menu.
+                    g->phase = game_phase.gp_main_menu
+                    g->menu_level = menu_main
+                    g->menu_sel = 0
+                    g->phase_timer = 0.0
+                | gp_main_menu ->
+                    if g->menu_level == menu_main then
+                        if k == sdl2.key_up then
+                            g->menu_sel = (g->menu_sel + 2) % 3
+                        else if k == sdl2.key_down then
+                            g->menu_sel = (g->menu_sel + 1) % 3
+                        else if k == sdl2.key_return || k == sdl2.key_space then
+                            match g->menu_sel with
+                            | 0 ->
+                                g->menu_level = menu_difficulty
+                                g->menu_sel = g->difficulty
+                            | 1 ->
+                                g->music_on = !g->music_on
+                                music_on = g->music_on
+                                if !music_on && audio_dev > 0u32 then
+                                    sdl2.clear_audio(audio_dev)
+                            | 2 ->
+                                g->want_quit = true
+                            | _ -> void()
+                        else if k == sdl2.key_escape then
+                            if g->has_active_game then
+                                g->phase = game_phase.gp_playing
+                    else
+                        // Difficulty sub-menu.
+                        if k == sdl2.key_up then
+                            g->menu_sel = (g->menu_sel + 3) % 4
+                        else if k == sdl2.key_down then
+                            g->menu_sel = (g->menu_sel + 1) % 4
+                        else if k == sdl2.key_return || k == sdl2.key_space then
+                            g->difficulty = g->menu_sel
+                            restart_full_game(w, vs)
+                            g->has_active_game = true
+                            // Kick music for the first level immediately
+                            // so the menu-to-play transition doesn't miss
+                            // it waiting for the post-tick music_switch.
+                            let new_chunk = 261 + songs[0]
+                            if audio_dev > 0u32 && new_chunk < ad->num_chunks then
+                                sdl2.clear_audio(audio_dev)
+                                if ms.is_some then free(ms!)
+                                ms = some(music_load(ad, new_chunk))
+                        else if k == sdl2.key_escape then
+                            g->menu_level = menu_main
+                            g->menu_sel = 0
+                | gp_paused ->
+                    // Any key resumes; Esc goes back to main menu.
+                    if k == sdl2.key_escape then
+                        g->phase = game_phase.gp_main_menu
+                        g->menu_level = menu_main
+                        g->menu_sel = 0
+                    else
+                        g->phase = game_phase.gp_playing
+                | _ ->
+                    // gp_playing, gp_dying, gp_intermission, gp_game_over.
+                    // Escape from playing pauses; from the others advances them.
+                    if k == sdl2.key_escape && g->phase == game_phase.gp_playing then
+                        g->phase = game_phase.gp_paused
+                        g->phase_timer = 0.0
+                    else
+                        if k == sdl2.key_up then g->key_up = true
+                        if k == sdl2.key_down then g->key_down = true
+                        if k == sdl2.key_left then g->key_left = true
+                        if k == sdl2.key_right then g->key_right = true
+                        if k == sdl2.key_lshift then g->key_shift = true
+                        if k == sdl2.key_lalt then g->key_alt = true
+                        if k == sdl2.key_space then g->key_space = true
+                        if k == sdl2.key_lctrl then g->key_fire = true
+                        if k == sdl2.key_1 then g->weapon = 0
+                        if k == sdl2.key_2 then g->weapon = 1
+                        if k == sdl2.key_3 then g->weapon = 2
+                        if k == sdl2.key_4 then g->weapon = 3
+                        if k == sdl2.key_m then
+                            music_on = !music_on
+                            g->music_on = music_on
+                            if !music_on && audio_dev > 0u32 then
+                                sdl2.clear_audio(audio_dev)
+                        if k == sdl2.key_s then take_screenshot(w, vs, pal)
             if t == sdl2.keyup_event then
                 let k = event.key.keysym.sym
+                // Keyup only clears flags; not phase-sensitive.
                 if k == sdl2.key_up then g->key_up = false
                 if k == sdl2.key_down then g->key_down = false
                 if k == sdl2.key_left then g->key_left = false
@@ -3790,6 +4635,22 @@ let main = (args: str[]) ->
         // Update
         tick(w, dt)
 
+        // Music volume fade. Intermission / game-over ramp toward zero
+        // over 0.5 s (~= 30 frames at 60fps); gp_playing ramps back up.
+        if ms.is_some then
+            let target = match g->phase with
+            | gp_intermission | gp_game_over -> 0.0
+            | _ -> 1.0
+            let fade_step = dt / 0.5
+            let cur = ms!->volume
+            let mut nv = cur
+            if cur < target then
+                nv = cur + fade_step
+                if nv > target then nv = target
+            else if cur > target then
+                nv = cur - fade_step
+                if nv < target then nv = target
+            ms!->volume = nv
         // Phase transitions (elevator→intermission, death→restart/gameover).
         // Returns true iff the level itself changed, which means the music
         // chunk for the new level should replace the current one.

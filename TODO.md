@@ -2,6 +2,19 @@
 
 ## Current State (2026-04-16)
 
+### Recent additions (this session, part 2)
+- VGAGRAPH Huffman decoder: loads VGADICT/VGAHEAD/VGAGRAPH.WL6, decodes pictures and the picture-table (STRUCTPIC). Unplanar conversion for 4-plane VGA format.
+- Wolf3D bitmap font rendering (variable-width, row-major glyph bitmaps).
+- Real Wolf3D status bar: draws STATUSBARPIC with BJ face (health-driven), N_*PIC digits (score/level/lives/health/ammo), weapon icons, gold/silver key indicators.
+- Title screen (TITLEPIC + blinking prompt).
+- Main menu with keyboard nav: New Game, Sound toggle, Quit; difficulty sub-menu (Can I Play Daddy / Don't Hurt Me / Bring 'Em On / I Am Death Incarnate).
+- Pause screen (Esc during play): dims the game frame + overlays "PAUSED".
+- In-game message banner: pickup names (gold key, treasures), fades out over 0.5s.
+- Boss enemy kinds: Hans, Schabbs, Gretel, Giftmacher, Hitler (fake/real). Non-rotating sprites, boss HP (850 / 200 / 800), killing ends the level, drops gold key.
+- Pacman ghosts (Blinky/Pinky/Clyde/Inky): non-rotating, chase-only, damages player on contact.
+- Music fade-out on intermission / game-over via imf volume field routed through opl2.fill_ticked_vol.
+- setdifficulty:N / setlevel:N / setphase:X test commands for scripted coverage.
+
 ### Recent additions (this session)
 - Player death flow: red damage-flash overlay, dying-collapse tint, transition to restart-level (lives remaining) or game-over (lives exhausted).
 - Game-over screen: black fullscreen, "GAME OVER" + final score + "PRESS SPACE" prompt. Space resets to level 0 with 3 lives.
@@ -57,13 +70,13 @@ Working:
 - [x] FL_AMBUSH tile (106) handling — enemies on that tile ignore noise and only wake on direct LOS.
 - [x] Enemies opening doors as they walk into them (wolf4sdl's OpenDoor-from-T_Chase path).
 - [x] Areas + madenoise: firing a gun (or landing a knife hit) wakes every non-AMBUSH enemy in the player's currently-connected area set (open-door reachable). Knife stealth preserved.
-- [ ] Bosses (Hans, Gretel, Schabbs, Fat, Gift, Hitler variants) — currently ignored.
-- [ ] Ghosts (Blinky/Clyde/Pinky/Inky on secret Pacman-homage level).
+- [x] Bosses: Hans / Schabbs / Gretel / Giftmacher / Fat / Hitler-fake / Hitler as enemy kinds with boss HP / score / gold-key drop. Killing a boss sets next_level=true. Sprite indices counted directly from wolf4sdl `wl_def.h` (non-SPEAR build); verified visually by rendering Hans on E1M9.
+- [x] Pacman ghosts: Blinky/Pinky/Clyde/Inky spawn from plane-1 tiles 224..227 (found on E3M10 = level 29), chase player, touch damage. Sprite indices 288..295 verified visually.
 - [x] Mutant-specific double-shot pattern (they fire twice per shoot cycle in wolf4sdl).
 
 ### Weapons and combat
 - [x] Weapon-specific hit sounds (HITENEMYSND when a shot connects).
-- [ ] Verify MG/chain pickups are reachable on early levels (now that SS drop MG on death, this should be automatic once SS enemies appear on a level — confirm on E1M3).
+- [x] Verify MG/chain pickups are reachable on early levels (SS spawn on E1M3+ now tested via `setlevel:2 enemies` — SS drop MG, chain gun pickup from secret rooms).
 
 ### Game state / death flow
 - [x] Player death when health ≤ 0: red damage flash + collapse tint, drop a life, transition to restart.
@@ -81,34 +94,36 @@ Working:
 ## Rendering
 
 ### Polish
-- [ ] Textured floors and ceilings (optional — original Wolf3D ships flat colors)
+- [ ] Textured floors and ceilings (optional — not part of OG Wolf3D; deferred).
 - [ ] Any-angle door-frame texture fixes if regressions surface after enemy rendering lands
 
 ### HUD
-- [ ] BJ face with expressions (idle / hurt / grinning / dying) — requires VGAGRAPH
-- [ ] Proper Wolf3D gray status bar layout and graphics — requires VGAGRAPH
-- [ ] Weapon icon on status bar
+- [x] BJ face with health-driven expressions (7 frames from healthy to near-dead; dying-phase locks to worst face).
+- [x] Full Wolf3D status bar: STATUSBARPIC, number pics for all fields, weapon icon, key indicators.
+- [x] Weapon icon on status bar.
 
 ## Audio
 
 - [x] Spatial panning for SFX based on source angle relative to player — enemy voices/gunfire/death pan per-source; player-originated sounds stay centered. Stereo output via digi per-slot pan; adlib/imf duplicated to both channels.
-- [ ] Music fade-out on level end / game over
-- [ ] Ambient sounds on specific tiles where applicable
+- [x] Music fade-out on level end / game over: 0.5s ramp via imf player volume field.
+- [ ] Ambient sounds on specific tiles — Wolf3D has no canonical ambient-sound system; deferred.
 
 ## Data Loading
 
 ### VGAGRAPH (unblocks face, menus, messages)
-- [ ] Huffman decoder for VGAGRAPH (VGADICT.WL6 + VGAHEAD.WL6 + VGAGRAPH.WL6)
-- [ ] Picture table (width/height per graphic)
-- [ ] Asset extractors for: status-bar pieces, BJ face frames, font, menu graphics
+- [x] Huffman decoder for VGAGRAPH (VGADICT.WL6 + VGAHEAD.WL6 + VGAGRAPH.WL6).
+- [x] Picture table (width/height per graphic): STRUCTPIC (chunk 0) decoded at load.
+- [x] Asset extractors for: status-bar, BJ face frames, font, title / credits pics, digit pics, weapon icons.
 
 ## UI / Menus
 
-- [ ] Title screen
-- [ ] Main menu (new game / sound / controls / quit)
-- [ ] Difficulty selection (Can I play Daddy? / Don't hurt me / Bring 'em on / I am Death incarnate)
-- [ ] Pause screen
-- [ ] In-game text messages (floor name, pickup notifications)
+- [x] Title screen (TITLEPIC + blinking "PRESS ANY KEY").
+- [x] Main menu (new game / sound toggle / quit).
+- [x] Difficulty selection submenu (Can I Play Daddy / Don't Hurt Me / Bring 'em On / I Am Death Incarnate).
+- [x] Pause screen (Esc freezes + "PAUSED" overlay; Esc again returns to main menu).
+- [x] In-game text messages (pickup names, boss-key banner, fade-out timer).
+- [ ] Controls remapping menu (wolf4sdl parity; optional).
+- [ ] Load/save slots menu (not implemented — save system missing).
 
 ## Code Quality
 

@@ -313,6 +313,201 @@ module maps =
             width = w, height = h })!
 
 // ============================================================
+// VGAGRAPH — Huffman-compressed UI graphics, fonts, pictures
+// ============================================================
+//
+// Three files work together:
+//   VGADICT.<ext>   — 510 bytes, 255 Huffman nodes (bit0, bit1 uint16 each)
+//   VGAHEAD.<ext>   — 3 bytes per chunk (24-bit LE file offset, 0xFFFFFF=sparse)
+//   VGAGRAPH.<ext>  — each chunk prefixed with 4-byte expanded length, then
+//                     Huffman-compressed data using the shared dictionary.
+//
+// Chunk 0 is always STRUCTPIC (the picture-table): one (uint16 width, uint16
+// height) pair per picture, picture index = chunk - STARTPICS. Fonts sit at
+// STARTFONT..STARTFONT+NUMFONT-1. Status-bar, title, face, digit, etc. are
+// pictures referenced by absolute chunk number (see main.fc vg_* constants).
+
+module vgagraph =
+    import io from std::
+
+    // Wolf3D WL6: 150 chunks, 2 fonts, pictures start at chunk 3.
+    let start_font = 1
+    let num_font   = 2
+    let start_pics = 3
+
+    struct huffnode =
+        bit0: uint16
+        bit1: uint16
+
+    struct pic_dim =
+        width: int32
+        height: int32
+
+    struct vgagraph_file =
+        raw: uint8[]          // entire VGAGRAPH file
+        dict: huffnode[]      // 255 nodes; root is dict[254]
+        offsets: int64[]      // per-chunk file offset; -1 for sparse
+        num_chunks: int32
+        pic_dims: pic_dim[]   // indexed by (chunk - start_pics)
+        num_pics: int32
+
+    // Huffman expand. Mirrors wolf4sdl CAL_HuffExpand exactly:
+    // tree is a flat array of 255 {bit0, bit1} nodes, root at index 254.
+    // Values < 256 are literal bytes; values ≥ 256 are node indices
+    // (tree_index = value - 256). Each input bit picks bit0 (0) or bit1
+    // (1); we reset to root after each output byte and stop when dest is
+    // full.
+    let huff_expand = (src: uint8[], src_start: int64,
+                       dest: uint8[], dest_len: int64,
+                       dict: huffnode[]) ->
+        if dest_len <= 0 then return
+        let head_idx = 254
+        let mut node_idx = head_idx
+        let mut si = src_start
+        let mut val = src[si]
+        si = si + 1
+        let mut mask = 1u8
+        let mut di = 0i64
+        loop
+            let node = dict[node_idx]
+            let nodeval = if (val & mask) == 0u8 then node.bit0 else node.bit1
+            if mask == 0x80u8 then
+                val = if si < (int64) src.len then src[si] else 0u8
+                si = si + 1
+                mask = 1u8
+            else
+                mask = mask << 1u8
+            if nodeval < 256u16 then
+                dest[di] = (uint8) nodeval
+                di = di + 1
+                if di >= dest_len then break
+                node_idx = head_idx
+            else
+                node_idx = (int32) (nodeval - 256u16)
+
+    // Decompress a chunk by file offset. The 4 bytes at offset are the
+    // expanded length (uint32 LE); the compressed data follows. Returns
+    // a heap-allocated uint8[] that the caller owns (empty slice if the
+    // chunk is sparse / offset < 0).
+    let decompress_at = (raw: uint8[], dict: huffnode[], offset: int64) ->
+        if offset < 0 then return alloc(uint8[0] {})!
+        let expanded_len = (int64) bytes.u32(raw, offset)
+        let dest = alloc(uint8[expanded_len] {})!
+        huff_expand(raw, offset + 4, dest, expanded_len, dict)
+        dest
+
+    // Decompress chunk `chunk` by number. Returns empty slice on out-of-
+    // range or sparse chunks.
+    let decompress_chunk = (vg: vgagraph_file*, chunk: int32) ->
+        if chunk < 0 || chunk >= vg->num_chunks then alloc(uint8[0] {})!
+        else decompress_at(vg->raw, vg->dict, vg->offsets[chunk])
+
+    // Load VGADICT + VGAHEAD + VGAGRAPH and decode STRUCTPIC (the picture
+    // dimension table). Caller owns the returned pointer; free_vgagraph
+    // releases all owned buffers.
+    let load = (dict_path: const str, head_path: const str, graph_path: const str) ->
+        // VGADICT — 510 bytes, 255 {bit0, bit1} huffnodes.
+        let df = io.open(dict_path, "rb")!
+        io.seek(df, 0i64, io.seek_end)
+        let dsize = io.tell(df)
+        io.seek(df, 0i64, io.seek_set)
+        let dict_raw = alloc(uint8[dsize] {})!
+        io.read(dict_raw, dsize, df)
+        io.close(df)
+        let dict = alloc(huffnode[255] {})!
+        for i in 0..255
+            let o = (int64) i * 4
+            dict[i] = huffnode {
+                bit0 = bytes.u16(dict_raw, o),
+                bit1 = bytes.u16(dict_raw, o + 2)
+            }
+        free(dict_raw)
+
+        // VGAHEAD — 3-byte little-endian file offsets; 0xFFFFFF = sparse.
+        let hf = io.open(head_path, "rb")!
+        io.seek(hf, 0i64, io.seek_end)
+        let hsize = io.tell(hf)
+        io.seek(hf, 0i64, io.seek_set)
+        let head_raw = alloc(uint8[hsize] {})!
+        io.read(head_raw, hsize, hf)
+        io.close(hf)
+        let nc = (int32) (hsize / 3)
+        let offsets = alloc(int64[nc] {})!
+        for i in 0..nc
+            let o = (int64) i * 3
+            let v = (int32) head_raw[o]
+                  | ((int32) head_raw[o + 1] << 8)
+                  | ((int32) head_raw[o + 2] << 16)
+            offsets[i] = if v == 0xFFFFFF then -1i64 else (int64) v
+        free(head_raw)
+
+        // VGAGRAPH — whole file into raw.
+        let gf = io.open(graph_path, "rb")!
+        io.seek(gf, 0i64, io.seek_end)
+        let gsize = io.tell(gf)
+        io.seek(gf, 0i64, io.seek_set)
+        let raw = alloc(uint8[gsize] {})!
+        io.read(raw, gsize, gf)
+        io.close(gf)
+
+        // Decode STRUCTPIC (chunk 0) — array of (uint16 width, uint16 height).
+        let pic_table = decompress_at(raw, dict, offsets[0])
+        let num_pics = (int32) (pic_table.len / 4)
+        let pic_dims = alloc(pic_dim[num_pics] {})!
+        for i in 0..num_pics
+            pic_dims[i] = pic_dim {
+                width  = (int32) bytes.u16(pic_table, (int64) i * 4),
+                height = (int32) bytes.u16(pic_table, (int64) i * 4 + 2)
+            }
+        free(pic_table)
+
+        alloc(vgagraph_file {
+            raw = raw, dict = dict, offsets = offsets, num_chunks = nc,
+            pic_dims = pic_dims, num_pics = num_pics
+        })!
+
+    // Look up pic dimensions by chunk number. Returns (0,0) for non-pic
+    // chunks (font, tile, out-of-range). Caller should validate before
+    // using the result for rendering.
+    let pic_width = (vg: vgagraph_file*, chunk: int32) ->
+        let idx = chunk - start_pics
+        if idx < 0 || idx >= vg->num_pics then 0
+        else vg->pic_dims[idx].width
+
+    let pic_height = (vg: vgagraph_file*, chunk: int32) ->
+        let idx = chunk - start_pics
+        if idx < 0 || idx >= vg->num_pics then 0
+        else vg->pic_dims[idx].height
+
+    // Convert a VGA-planar pic (as stored in VGAGRAPH) into a linear row-
+    // major 8-bit palette-index buffer. Planes are 4-way interleaved: the
+    // four bytes at linear[y*w + 4*n + 0..3] come from planes 0..3 at
+    // planar[plane*w/4*h + y*w/4 + n]. Width must be a multiple of 4.
+    let unplane = (planar: uint8[], width: int32, height: int32) ->
+        let w4 = width / 4
+        let size = (int64) width * (int64) height
+        let linear = alloc(uint8[size] {})!
+        for plane in 0..4
+            let plane_off = (int64) plane * (int64) w4 * (int64) height
+            for y in 0..height
+                let row_off = plane_off + (int64) y * (int64) w4
+                for x in 0..w4
+                    let dst = (int64) y * (int64) width
+                            + (int64) x * 4 + (int64) plane
+                    linear[dst] = planar[row_off + (int64) x]
+        linear
+
+    // Load a picture chunk and produce a linear 8-bit palette buffer.
+    // Returned slice is width * height bytes; caller owns it.
+    let load_pic = (vg: vgagraph_file*, chunk: int32) ->
+        let w = pic_width(vg, chunk)
+        let h = pic_height(vg, chunk)
+        if w <= 0 || h <= 0 then return alloc(uint8[0] {})!
+        let planar = decompress_chunk(vg, chunk)
+        defer free(planar)
+        unplane(planar, w, h)
+
+// ============================================================
 // Audio data — AUDIOHED + AUDIOT chunk manager
 // ============================================================
 

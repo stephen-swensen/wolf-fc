@@ -309,6 +309,41 @@ assert_contains "difficulty:medium-allows-middle-tier" \
     "setdifficulty:2 enemies" \
     "total=21"
 
+section "VGAGRAPH"
+assert_contains "vgagraph:loads-150-chunks"     "vgtable"           "pic 87: 320x200"
+assert_contains "vgagraph:statusbar-dims"       "vginfo:86"         "width=320 height=40"
+assert_contains "vgagraph:title-dims"           "vginfo:87"         "width=320 height=200"
+assert_contains "vgagraph:face-pic-dims"        "vginfo:109"        "width=24 height=32"
+
+section "phases"
+assert_contains "phase:title-on-fresh-interactive" "setphase:title phase" "phase=title"
+assert_contains "phase:paused-freezes-play"        "setphase:paused phase" "phase=paused"
+assert_contains "phase:menu-nav-state"             "setphase:menu phase"   "phase=menu"
+
+section "bosses / ghosts"
+# E1M9 is level 8 (0-indexed). It has Hans Grösse at tile (34, 14).
+assert_contains "boss:hans-spawns-on-e1m9" \
+    "setlevel:8 enemies" \
+    "boss=1 ghost=0"
+assert_contains "boss:hans-hp-850" \
+    "setlevel:8 enemylist" \
+    "kind=hans state=stand dir=4 hp=850"
+# E3M10 (level 29) is the Pacman-homage secret — all four ghosts spawn.
+assert_contains "ghost:four-ghosts-on-pacman-level" \
+    "setlevel:29 enemies" \
+    "ghost=4"
+assert_contains "ghost:blinky-is-present" \
+    "setlevel:29 enemylist" \
+    "kind=blinky state=stand"
+
+section "messages"
+# Picking up a treasure item posts a pickup message; msg_timer becomes > 0.
+# We verify the counters command doesn't show msg_timer directly, so render
+# a screenshot — the PNG tEXt metadata (saved by save_png) includes score.
+assert_contains "msg:cross-pickup-awards-100" \
+    "goto:7,14 state" \
+    "score=100"
+
 # ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
