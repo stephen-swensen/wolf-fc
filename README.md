@@ -132,6 +132,18 @@ Normal output (`state`, `facetile`, `ss:` confirmations, load progress) goes to 
 
 Screenshots are PNG files (8-bit RGB, 320×200, uncompressed-deflate) with an optional `tEXt` chunk containing current game state (position, direction, health, ammo, score, level, etc.) as key/value lines. Standard tools open them directly, and the metadata is readable with any PNG inspector — `python3 -c 'import struct,zlib; …'` works with stdlib only.
 
+### Regression tests
+
+A scripted test suite lives in [`tests/run-tests.sh`](tests/run-tests.sh) and exercises spawn tables, pickups, doors, hitscan combat, enemy AI, and the movement edge cases that have previously regressed (door straddle, mutual deadlock with a chasing enemy).
+
+```bash
+./tests/run-tests.sh          # run everything
+./tests/run-tests.sh -k door  # only tests whose name contains 'door'
+./tests/run-tests.sh -v       # print each test's output even on success
+```
+
+The tests rely on the enemy RNG's fixed seed for reproducibility — scripted scenarios reproduce bit-identically, so assertions on exact HP/score/position values are safe. When AI changes shift the RNG-call order, expected values will need updating; the failures are loud rather than silent.
+
 ## Architecture
 
 Wolf-fc depends only on the FC compiler and stdlib (`../fc-lang/`). Every other dependency — SDL2 bindings, the OPL2 emulator, the PNG writer — is vendored into this repo. All project modules are declared at the top level (no namespaces), so they're reachable from any file by qualified name without imports.

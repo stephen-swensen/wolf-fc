@@ -80,6 +80,13 @@ The `goto:X,Y` command is deliberately NOT a full tick — it just teleports and
 - **State checks after time-passing commands**: `fwd:20 state` prints position, health, etc. Grep the output.
 - **Pixel sampling from screenshots**: the Read tool can open PNGs directly. For per-pixel regression checks, Python with `struct` + `zlib` can decode pixel data in ~15 lines.
 - **Level-0 coordinates**: player spawn is `(29.5, 57.5)` facing east. Known landmarks: door at `(32, 57)`, elevator switch at `(25, 46)`, push-wall at `(10, 13)`, first-aid at `(29, 24)`, cross at `(7, 14)`.
+- **`probe` test command**: dumps the player's bbox tiles with wall/door state + any live enemy within 2.5 tiles. Use when a movement-related bug is reported — reveals whether a door, wall, or enemy is the blocker.
+
+### Regression test suite
+
+`tests/run-tests.sh` runs a set of scripted `--test` scenarios and asserts on their stdout. Enemy RNG is a fixed-seed LCG, so scripted outputs reproduce bit-identically. When you change AI or any RNG-consuming path, expect to update expected HP / state values — the failures are loud, not silent.
+
+Helpers defined in the script: `assert_contains NAME "CMD" "SUBSTRING"`, `assert_not_contains`, `assert_regex` (posix-extended). Tests are grouped with `section "name"` headers. Add new tests at the bottom of the relevant section; each test should be a single assertion that fails for one clear reason.
 
 ## Source Files
 
