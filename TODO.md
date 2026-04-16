@@ -106,7 +106,8 @@ Working:
 
 - [x] Spatial panning for SFX based on source angle relative to player — enemy voices/gunfire/death pan per-source; player-originated sounds stay centered. Stereo output via digi per-slot pan; adlib/imf duplicated to both channels.
 - [x] Music fade-out on level end / game over: 0.5s ramp via imf player volume field.
-- [ ] Ambient sounds on specific tiles — Wolf3D has no canonical ambient-sound system; deferred.
+- [x] Per-kind / per-boss vocal variety — wolf4sdl's FirstSighting + A_DeathScream behaviour. Guards now pick one of 8 random death screams; officers / SS / mutants / dogs have distinct death vocals (NEINSOVASSND / LEBENSND / AHHHGSND / DOGDEATHSND). Each boss has signature sighting + death lines (Gutentag/Mutti, Schabbs-ha/Mein Gott, Tot-hund/Hitler-ha, Die/Scheist, Die/Eva, Kein/Mein, Eine/Donner, Erlauben/Rose).
+- [ ] Tile-based ambient sounds (periodic fountain drip, torch crackle, etc.) — not in OG Wolf3D; would be an addition, not a port.
 
 ## Data Loading
 

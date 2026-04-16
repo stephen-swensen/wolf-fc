@@ -2573,17 +2573,35 @@ let add_dropped_item = (lv: level*, x: float64, y: float64, page: int32, item: i
 // carry, and let the animation timer tick out the die frames. Caller awards
 // score separately so stand-level test commands can invoke this without
 // accidentally buffing the player.
+// Pool of guard death screams. wolf4sdl A_DeathScream picks one of eight
+// at random for guard-class enemies so repeated kills don't sound identical.
+let guard_death_sounds = int32[8] {
+    29, 30, 31, 33, 34, 35, 36, 37
+    // snd_death_1..9 except the #6 slot (special-case in wolf4sdl); we
+    // include all eight regularly-used screams.
+}
+
 let kill_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, sprite_start: int32) ->
     e->state = enemy_state.es_die
     e->anim_frame = 0
     e->anim_timer = die_frame_time
     e->dir = dir_nodir
+    // Per-kind death vocal — mirrors wolf4sdl A_DeathScream.
     let snd = match e->kind with
-    | ek_dog     -> snd_dog_death
-    | ek_ss      -> snd_death_3
-    | ek_officer -> snd_death_2
-    | _          -> snd_death_1
-    trigger_sound_at(snd, ac, g, e->x, e->y)
+    | ek_dog          -> snd_dog_death
+    | ek_ss           -> snd_leben        // "Mein Leben!"
+    | ek_officer      -> snd_nein_sovass
+    | ek_mutant       -> snd_ahhhg
+    | ek_guard        -> guard_death_sounds[rnd_byte() & 7]
+    | ek_hans         -> snd_mutti        // "Mutti!"
+    | ek_gretel       -> snd_mein
+    | ek_giftmacher   -> snd_donner
+    | ek_fat          -> snd_rose
+    | ek_schabbs      -> snd_meingott     // "Mein Gott!"
+    | ek_hitler_fake  -> snd_hitlerha
+    | ek_hitler       -> snd_eva
+    | ek_blinky | ek_pinky | ek_clyde | ek_inky -> -1    // ghosts are silent
+    if snd >= 0 then trigger_sound_at(snd, ac, g, e->x, e->y)
     let drop = drop_for_kind(e->kind)
     match drop with
     | decoration -> void()
@@ -2646,16 +2664,24 @@ let wake_enemy = (g: game*, e: enemy*, ac: audio_ctx*) ->
     e->dir = dir_nodir
     if !e->notified then
         e->notified = true
+        // wolf4sdl FirstSighting: one vocal per kind played when the enemy
+        // enters combat. Mutants are silent (no vocalization). Ghosts are
+        // silent. Each boss has a signature line.
         let snd = match e->kind with
-        | ek_guard   -> snd_halt
-        | ek_officer -> snd_halt
-        | ek_ss      -> snd_schutzad
-        | ek_dog     -> snd_dog_bark
-        | ek_mutant  -> snd_halt
-        | ek_hans | ek_schabbs | ek_gretel | ek_giftmacher | ek_fat
-        | ek_hitler_fake | ek_hitler -> snd_schutzad
-        | ek_blinky | ek_pinky | ek_clyde | ek_inky -> snd_halt
-        trigger_sound_at(snd, ac, g, e->x, e->y)
+        | ek_guard        -> snd_halt
+        | ek_officer      -> snd_spion       // "Spion!"
+        | ek_ss           -> snd_schutzad    // "Schutzstaffel!"
+        | ek_dog          -> snd_dog_bark
+        | ek_mutant       -> -1              // silent
+        | ek_hans         -> snd_gutentag    // "Guten Tag!"
+        | ek_gretel       -> snd_kein
+        | ek_giftmacher   -> snd_eine
+        | ek_fat          -> snd_erlauben
+        | ek_schabbs      -> snd_schabbsha
+        | ek_hitler_fake  -> snd_tot_hund
+        | ek_hitler       -> snd_die
+        | ek_blinky | ek_pinky | ek_clyde | ek_inky -> -1    // silent
+        if snd >= 0 then trigger_sound_at(snd, ac, g, e->x, e->y)
 
 // Enemy firing an attack at the player, called from T_Shoot frames. Ports
 // wolf4sdl T_Shoot's distance-based hit chance and damage roll:
@@ -2988,15 +3014,44 @@ let snd_nazi_fire  = 25   // guard/officer fire
 let snd_ss_fire    = 26   // SS rapid fire
 let snd_dog_attack = 27   // dog bite
 let snd_dog_death  = 28
-let snd_death_1    = 29   // guard death scream
-let snd_death_2    = 30   // officer death scream
-let snd_death_3    = 31   // SS death scream
+let snd_death_1    = 29   // guard death scream (aka DEATHSCREAM1SND)
+let snd_death_2    = 30   // officer death scream (aka DEATHSCREAM2SND)
+let snd_death_3    = 31   // SS death scream (aka DEATHSCREAM3SND)
 let snd_hit_enemy  = 32   // bullet impact on flesh
-let snd_count      = 33
+// --- Expanded guard death scream pool (wolf4sdl A_DeathScream picks one
+//     of 8 at random for guardobj). The first three are snd_death_1..3.
+let snd_death_4    = 33   // DEATHSCREAM4SND
+let snd_death_5    = 34
+let snd_death_6    = 35
+let snd_death_7    = 36
+let snd_death_8    = 37
+let snd_death_9    = 38
+// --- Per-kind / per-boss vocals. Sighting = "FirstSighting" vocal played
+//     once when enemy wakes. Death = played once from A_DeathScream.
+let snd_spion          = 39   // SPIONSND — officer sighting
+let snd_nein_sovass    = 40   // NEINSOVASSND — officer death
+let snd_leben          = 41   // LEBENSND — SS death ("Mein Leben!")
+let snd_ahhhg          = 42   // AHHHGSND — mutant death
+let snd_gutentag       = 43   // GUTENTAGSND — Hans sighting
+let snd_mutti          = 44   // MUTTISND — Hans death ("Mutti!")
+let snd_kein           = 45   // KEINSND — Gretel sighting
+let snd_mein           = 46   // MEINSND — Gretel death
+let snd_eine           = 47   // EINESND — Giftmacher sighting
+let snd_donner         = 48   // DONNERSND — Giftmacher death
+let snd_erlauben       = 49   // ERLAUBENSND — Fat Face sighting
+let snd_rose           = 50   // ROSESND — Fat Face death
+let snd_schabbsha      = 51   // SCHABBSHASND — Schabbs sighting
+let snd_meingott       = 52   // MEINGOTTSND — Schabbs death ("Mein Gott!")
+let snd_tot_hund       = 53   // TOT_HUNDSND — Fake Hitler sighting
+let snd_hitlerha       = 54   // HITLERHASND — Fake Hitler death
+let snd_die            = 55   // DIESND — Mecha/Real Hitler sighting
+let snd_scheist        = 56   // SCHEISTSND — Mecha Hitler death
+let snd_eva            = 57   // EVASND — Real Hitler death
+let snd_count      = 58
 
 // Digi-pack index for each snd_* (-1 = no digitized version). The mapping
 // comes from wolf4sdl's wolfdigimap[] for Wolf3D; Spear of Destiny differs.
-let snd_digi = int32[33] {
+let snd_digi = int32[58] {
      3,   // open_door    (OPENDOORSND  -> digi 3)
      2,   // close_door   (CLOSEDOORSND -> digi 2)
      5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
@@ -3029,12 +3084,39 @@ let snd_digi = int32[33] {
     12,   // death_1      (DEATHSCREAM1SND -> digi 12)
     13,   // death_2      (DEATHSCREAM2SND -> digi 13)
     13,   // death_3      (DEATHSCREAM3SND -> digi 13, shares slot)
-    -1    // hit_enemy    (HITENEMYSND has no digi in Wolf3D)
+    -1,   // hit_enemy    (HITENEMYSND has no digi in Wolf3D)
+    // Extended sounds — digi mapping unknown without scanning VSWAP's
+    // per-sound header; fall through to AdLib via snd_adlib_enum.
+    -1,   // death_4
+    -1,   // death_5
+    -1,   // death_6
+    -1,   // death_7
+    -1,   // death_8
+    -1,   // death_9
+    -1,   // spion
+    -1,   // nein_sovass
+    -1,   // leben
+    -1,   // ahhhg
+    -1,   // gutentag
+    -1,   // mutti
+    -1,   // kein
+    -1,   // mein
+    -1,   // eine
+    -1,   // donner
+    -1,   // erlauben
+    -1,   // rose
+    -1,   // schabbsha
+    -1,   // meingott
+    -1,   // tot_hund
+    -1,   // hitlerha
+    -1,   // die
+    -1,   // scheist
+    -1    // eva
 }
 
 // AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this). -1 to
 // disable. Enum values taken from wolf4sdl's audiowl6.h.
-let snd_adlib_enum = int32[33] {
+let snd_adlib_enum = int32[58] {
     18,   // open_door    (OPENDOORSND)
     19,   // close_door   (CLOSEDOORSND)
     24,   // atk_pistol   (ATKPISTOLSND)
@@ -3067,7 +3149,32 @@ let snd_adlib_enum = int32[33] {
     29,   // death_1      (DEATHSCREAM1SND)
     22,   // death_2      (DEATHSCREAM2SND)
     25,   // death_3      (DEATHSCREAM3SND)
-    27    // hit_enemy    (HITENEMYSND)
+    27,   // hit_enemy    (HITENEMYSND)
+    73,   // death_4      (DEATHSCREAM4SND)
+    74,   // death_5      (DEATHSCREAM5SND)
+    75,   // death_6      (DEATHSCREAM6SND)
+    76,   // death_7      (DEATHSCREAM7SND)
+    77,   // death_8      (DEATHSCREAM8SND)
+    78,   // death_9      (DEATHSCREAM9SND)
+    66,   // spion        (SPIONSND)
+    67,   // nein_sovass  (NEINSOVASSND)
+    56,   // leben        (LEBENSND — "Mein Leben!")
+    52,   // ahhhg        (AHHHGSND — mutant death)
+    55,   // gutentag     (GUTENTAGSND — Hans sighting)
+    50,   // mutti        (MUTTISND — Hans death)
+    82,   // kein         (KEINSND — Gretel sighting)
+    83,   // mein         (MEINSND — Gretel death)
+    80,   // eine         (EINESND — Gift sighting)
+    79,   // donner       (DONNERSND — Gift death)
+    81,   // erlauben     (ERLAUBENSND — Fat sighting)
+    84,   // rose         (ROSESND — Fat death)
+    64,   // schabbsha    (SCHABBSHASND — Schabbs sighting)
+    63,   // meingott     (MEINGOTTSND — Schabbs death)
+    62,   // tot_hund     (TOT_HUNDSND — Fake Hitler sighting)
+    65,   // hitlerha     (HITLERHASND — Fake Hitler death)
+    53,   // die          (DIESND — Hitler sighting)
+    57,   // scheist      (SCHEISTSND — Mecha Hitler death)
+    54    // eva          (EVASND — Real Hitler death)
 }
 
 // Play a sound by wolf-fc sound ID (one of snd_open_door, etc.). Prefers

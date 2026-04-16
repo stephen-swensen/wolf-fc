@@ -335,6 +335,15 @@ assert_contains "ghost:four-ghosts-on-pacman-level" \
 assert_contains "ghost:blinky-is-present" \
     "setlevel:29 enemylist" \
     "kind=blinky state=stand"
+# Every boss tile spawns the right kind on its level.
+# E2M9 = level 18 (Dr. Schabbs). E3M9 = level 28 (Hitler).
+# E4M9 = level 38 (Giftmacher). E5M9 = level 48 (Gretel).
+# E6M9 = level 58 (Fat Face).
+assert_contains "boss:schabbs-on-e2m9"   "setlevel:18 enemylist" "kind=schabbs"
+assert_contains "boss:hitler-on-e3m9"    "setlevel:28 enemylist" "kind=hitler"
+assert_contains "boss:giftmacher-on-e4m9" "setlevel:38 enemylist" "kind=gift"
+assert_contains "boss:gretel-on-e5m9"    "setlevel:48 enemylist" "kind=gretel"
+assert_contains "boss:fat-face-on-e6m9"  "setlevel:58 enemylist" "kind=fat"
 
 section "messages"
 # Picking up a treasure item posts a pickup message; msg_timer becomes > 0.
