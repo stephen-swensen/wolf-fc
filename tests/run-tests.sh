@@ -355,6 +355,77 @@ assert_contains "msg:cross-pickup-awards-100" \
     "goto:7,14 state" \
     "score=100"
 
+section "episode structure"
+# Episode jumping via setepisode.
+assert_contains "episode:setepisode-0-starts-e1m1" \
+    "setepisode:0 state" \
+    "level=0"
+assert_contains "episode:setepisode-2-starts-e3m1" \
+    "setepisode:2 state" \
+    "level=20"
+# Level 8 (boss / finale) of an episode ends the episode on space, not a
+# normal level advance. advance should land in gp_episode_end, not playing.
+assert_contains "episode:level-8-advance-enters-episode-end" \
+    "setlevel:8 endepisode wait:2 advance phase" \
+    "phase=episode_end"
+# Pressing advance again on episode_end starts the next episode's map 0.
+assert_contains "episode:episode-end-advance-to-next-ep" \
+    "setlevel:8 endepisode wait:2 advance advance state" \
+    "level=10"
+# Level 9 (secret) advance routes back to elevator_back_to[ep]. For
+# ep=0 that's level 1 (E1M2).
+assert_contains "episode:secret-level-routes-back" \
+    "setlevel:9 endepisode wait:2 advance state" \
+    "level=1"
+# Episode 6 end → final victory screen.
+assert_contains "episode:last-episode-end-goes-to-victory" \
+    "setlevel:58 endepisode wait:2 advance advance phase" \
+    "phase=victory"
+# Victory → main menu: simulated by advance on gp_victory.
+assert_contains "episode:victory-advance-to-menu" \
+    "setlevel:58 endepisode wait:2 advance advance advance phase" \
+    "phase=menu"
+
+section "save / load"
+# Fresh slot state: zap any slot files from a previous session so the
+# "listsaves-empty" assertion below is stable.
+rm -f "$HOME/.wolf-fc/saves/slot_"*.sav
+
+# listsaves reports empty slots on a fresh directory.
+assert_contains "save:listsaves-empty" \
+    "listsaves" \
+    "slot 0: EMPTY"
+# Save to slot 4, load it back — round-trip state preservation. Using an
+# exact pos with enough resolution that any off-by-one in the float parser
+# would miss: fwd:30 at 35/sec lands at a non-trivial fraction.
+assert_contains "save:position-round-trips" \
+    "fwd:30 save:4 load:4 state" \
+    "pos=( 31.6000,  57.5000)"
+assert_contains "save:ammo-round-trips" \
+    "fwd:30 turnl:30 fire fwd:5 save:4 load:4 state" \
+    "ammo=7"
+# level_num round-trips through save/load even across game mode resets.
+assert_contains "save:level-round-trips" \
+    "setlevel:5 fwd:3 save:4 load:4 state" \
+    "level=5"
+# counter totals propagate from level rebuild on load (so the totals line
+# matches the level we landed on, not the level we were on before load).
+assert_contains "save:counters-level-specific-totals" \
+    "setlevel:2 save:5 setlevel:0 load:5 counters" \
+    "kills=0/73 secrets=0/10 treasures=0/66"
+# Loading an empty slot is a no-op returning failure — state stays at
+# whatever we had before the load call.
+rm -f "$HOME/.wolf-fc/saves/slot_07.sav"
+assert_contains "save:load-empty-fails" \
+    "setlevel:3 fwd:4 load:7 state" \
+    "level=3"
+# listsaves reports occupied slots with their saved level label. Using
+# setlevel:0 before save:6 pins the label to E1M1 regardless of whether
+# earlier round-trip tests moved the level.
+assert_contains "save:listsaves-occupied" \
+    "setlevel:0 save:6 listsaves" \
+    "slot 6: E1M1"
+
 # ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------

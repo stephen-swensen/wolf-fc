@@ -2,6 +2,26 @@
 
 ## Current State (2026-04-16)
 
+### Recent additions (this session, part 3)
+- Episode structure: 6 episodes × 10 levels. Elevator on level 8 triggers the
+  per-episode victory screen; level 9 (secret) routes back via wolf4sdl's
+  `ElevatorBackTo`; ALTELEVATORTILE (plane-0 area-0 tile under player's feet
+  while pressing space at an elevator-21) sets the `went_secret` latch and
+  jumps to the secret level.
+- New phases `gp_episode_end` and `gp_victory`. Episode-end screen shows
+  episode title + final score; final victory shown after episode 6.
+- Episode picker menu (under NEW GAME) lets the user start at any of the six
+  episodes; difficulty picker follows.
+- Save/load system: 10 slots at `~/.wolf-fc/saves/slot_NN.sav`, text format.
+  Persists level_num, difficulty, player state, doors, push-wall, sprite
+  alive flags, and full enemy roster (pos/state/hp/dir/animation).
+- Main menu gains LOAD GAME and SAVE GAME entries (SAVE GAME greyed without
+  an active game). Save/load list screens show slot label + level code +
+  score per slot.
+- Test commands: `setepisode:N`, `save:N`, `load:N`, `listsaves`,
+  `endepisode`, `setphase:{epmenu,savemenu,loadmenu}`. 14 new regression
+  tests cover episode boundaries and save/load round-trips.
+
 ### Recent additions (this session, part 2)
 - VGAGRAPH Huffman decoder: loads VGADICT/VGAHEAD/VGAGRAPH.WL6, decodes pictures and the picture-table (STRUCTPIC). Unplanar conversion for 4-plane VGA format.
 - Wolf3D bitmap font rendering (variable-width, row-major glyph bitmaps).
@@ -87,7 +107,7 @@ Working:
 ### Level progression
 - [x] Par-time tracking per level (par_times[] from wolf4sdl, seconds).
 - [x] Intermission screen between levels (kill/secret/treasure percentages, time vs par, press space to continue).
-- [ ] Full episode structure (6 episodes × 10 levels) with per-episode intermissions
+- [x] Full episode structure (6 episodes × 10 levels) with per-episode victory screen, secret-level routing (ALTELEVATORTILE → level 9, level 9 → ElevatorBackTo), and final victory after episode 6.
 - [x] Per-episode music table for episodes 4–6 — songs[] table matches wolf4sdl: Wolf3D's six episodes share the three music sets, so the "duplication" is correct.
 - [x] Bonus score calculations: par-beaten bonus (500 pts per unused 10s) + 10000 pts each for 100% kills / secrets / treasures. Applied when entering intermission, reflected in score line.
 
@@ -123,8 +143,9 @@ Working:
 - [x] Difficulty selection submenu (Can I Play Daddy / Don't Hurt Me / Bring 'em On / I Am Death Incarnate).
 - [x] Pause screen (Esc freezes + "PAUSED" overlay; Esc again returns to main menu).
 - [x] In-game text messages (pickup names, boss-key banner, fade-out timer).
+- [x] Episode selection submenu (6 episodes, under NEW GAME).
+- [x] Save Game / Load Game menus (10 slots, ~/.wolf-fc/saves/slot_NN.sav, text format).
 - [ ] Controls remapping menu (wolf4sdl parity; optional).
-- [ ] Load/save slots menu (not implemented — save system missing).
 
 ## Code Quality
 

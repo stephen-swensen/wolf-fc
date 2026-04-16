@@ -75,6 +75,35 @@ let gd_easy      = 1
 let gd_medium    = 2
 let gd_hard      = 3
 
+// Episode structure (Wolf3D WL6): 6 episodes × 10 levels each. Within an
+// episode, levels 0..7 are the normal maps, level 8 is the boss / finale,
+// level 9 is the secret level (reachable via ALTELEVATORTILE).
+//
+//   level 0..7 : elevator → next map in same episode
+//   level 8    : elevator → episode victory screen; next episode at ep*10
+//   level 9    : elevator → back to elevator_back_to[ep] within episode
+//                (mirrors wolf4sdl's ElevatorBackTo table)
+let levels_per_episode = 10
+let num_episodes       = 6
+let elevator_back_to   = int32[6] { 1, 1, 7, 3, 5, 3 }
+
+// Wolf3D plane-0 raw value for "alt elevator switch" (overloads AREATILE[0];
+// levels are designed so that only a particular hidden-route area-0 tile is
+// adjacent to an elevator-21 tile, making the secret exit positional).
+let alt_elevator_tile  = 107
+
+// Human-readable episode titles (used by the episode-picker menu and the
+// per-episode victory screen).
+let episode_title = (ep: int32) ->
+    match ep with
+    | 0 -> "ESCAPE FROM WOLFENSTEIN"
+    | 1 -> "OPERATION EISENFAUST"
+    | 2 -> "DIE, FUHRER, DIE!"
+    | 3 -> "A DARK SECRET"
+    | 4 -> "TRAIL OF THE MADMAN"
+    | 5 -> "CONFRONTATION"
+    | _ -> ""
+
 // ============================================================
 // Game state
 // ============================================================
@@ -95,12 +124,23 @@ union game_phase =
     | gp_dying
     | gp_intermission
     | gp_game_over
+    | gp_episode_end   // per-episode victory screen (after boss level 8)
+    | gp_victory       // all six episodes cleared; space returns to main menu
 
 // Menu navigation state. `menu_level` picks which list to show:
-//   0 = main menu          (NEW GAME / SOUND / QUIT)
-//   1 = difficulty picker  (under NEW GAME)
-let menu_main = 0
+//   0 = main menu          (NEW GAME / LOAD GAME / SAVE GAME / SOUND / QUIT)
+//   1 = difficulty picker  (under NEW GAME, after episode select)
+//   2 = episode picker     (under NEW GAME, before difficulty)
+//   3 = save-slot list     (Save Game — 10 slots)
+//   4 = load-slot list     (Load Game — 10 slots)
+let menu_main       = 0
 let menu_difficulty = 1
+let menu_episode    = 2
+let menu_savelist   = 3
+let menu_loadlist   = 4
+
+// Number of save slots available in the save/load menus.
+let num_save_slots = 10
 
 // Death collapse duration (seconds). Wolf3D spends ~1s on the red-screen
 // collapse before transitioning to life-loss / game-over.
@@ -150,6 +190,11 @@ struct game =
     best_weapon: int32     // highest-tier firearm owned (pistol..chain). When
                            // ammo runs out we drop to knife; picking ammo up
                            // again restores this weapon (wolf4sdl's chosenweapon).
+    // Latched when the player uses the alt-elevator switch (plane-0 raw tile
+    // 107 underfoot at the moment of activation). advance_next_level reads it
+    // to route to the secret level (ep*10+9) instead of the normal next map.
+    // Cleared after the routing decision is applied.
+    went_secret: bool
     fire_timer: float64    // cooldown timer (>0 means firing animation)
     weapon_frame: int32    // animation frame (0=idle, 1-3=firing)
     // Wolf4sdl player->areanumber: index into level->tile_areas for the tile
@@ -946,13 +991,29 @@ let reload_level_data = (w: world*, vs: vswap.vswap_file*) ->
     w->lv_data = maps.load("data/MAPHEAD.WL6", "data/GAMEMAPS.WL6", w->g->level_num)
     w->lv = build_level(w->lv_data, vs->sprite_start, w->g->difficulty)
 
-// Advance to level_num+1 (wrapping at 60). Resets keys + per-level counters;
-// preserves score, lives, weapon inventory. Shared by elevator-triggered
-// transitions and scripted tests.
+// Compute where the next elevator trip should land, given current level and
+// the `went_secret` latch. Wolf4sdl routing:
+//   - If we just came from the secret level (level 9 of episode), return to
+//     elevator_back_to[ep] within the same episode.
+//   - If the player used the alt-elevator switch, jump to the secret level
+//     (level 9 of current episode).
+//   - Otherwise, level+1 within the same episode (0..7). Level 8 is handled
+//     by the episode-end caller, not here.
+let compute_next_level_num = (level_num: int32, went_secret: bool) ->
+    let ep = level_num / levels_per_episode
+    let lvl = level_num % levels_per_episode
+    if went_secret then ep * levels_per_episode + 9
+    else if lvl == 9 then ep * levels_per_episode + elevator_back_to[ep]
+    else ep * levels_per_episode + lvl + 1
+
+// Advance to the next map per episode routing. Called after the intermission
+// space-press on levels 0..7 and level 9; level 8 → episode-end is handled
+// by `enter_episode_end` at the caller. Preserves score, lives, weapon; clears
+// keys. The `went_secret` latch is consumed and reset here.
 let advance_next_level = (w: world*, vs: vswap.vswap_file*) ->
     let g = w->g
-    let new_level = (g->level_num + 1) % 60
-    g->level_num = new_level
+    g->level_num = compute_next_level_num(g->level_num, g->went_secret)
+    g->went_secret = false
     // Wolf3D clears keys between levels.
     g->has_gold_key = false
     g->has_silver_key = false
@@ -964,6 +1025,46 @@ let advance_next_level = (w: world*, vs: vswap.vswap_file*) ->
     g->phase = game_phase.gp_playing
     g->phase_timer = 0.0
     g->made_noise = false
+
+// Transition to the per-episode victory screen. Called when the intermission
+// is dismissed on level 8 (boss/finale) of the current episode. Doesn't
+// reload — the episode-end screen is static, and pressing space there either
+// loads the next episode's map-0 or bounces back to the main menu (if this
+// was the last episode).
+let enter_episode_end = (g: game*) ->
+    g->phase = game_phase.gp_episode_end
+    g->phase_timer = 0.0
+    g->key_space_handled = true
+    g->went_secret = false
+    // Strip keys now; next-episode map load would do it anyway.
+    g->has_gold_key = false
+    g->has_silver_key = false
+
+// Transition to the game-complete victory screen after clearing episode 6.
+let enter_final_victory = (g: game*) ->
+    g->phase = game_phase.gp_victory
+    g->phase_timer = 0.0
+    g->key_space_handled = true
+
+// From gp_episode_end, move into the first map of the next episode. If this
+// was the last episode, go to the final victory screen instead.
+let advance_next_episode = (w: world*, vs: vswap.vswap_file*) ->
+    let g = w->g
+    let ep = g->level_num / levels_per_episode
+    if ep + 1 >= num_episodes then
+        enter_final_victory(g)
+    else
+        g->level_num = (ep + 1) * levels_per_episode
+        g->has_gold_key = false
+        g->has_silver_key = false
+        reload_level_data(w, vs)
+        find_player_start(w->lv_data, g)
+        reset_level_counters(g, w->lv)
+        update_player_area(w->lv, g)
+        connect_areas(w->lv, g->area_number)
+        g->phase = game_phase.gp_playing
+        g->phase_timer = 0.0
+        g->made_noise = false
 
 // Restart the current level (death with lives remaining). Resets player
 // health / ammo / weapon; preserves score; decrements lives at the caller
@@ -992,6 +1093,21 @@ let restart_full_game = (w: world*, vs: vswap.vswap_file*) ->
     connect_areas(w->lv, g->area_number)
     g->phase = game_phase.gp_playing
     g->phase_timer = 0.0
+
+// Start a new game at the current level_num (set by the episode picker).
+// Identical to restart_full_game except it doesn't reset level_num to 0 —
+// used to start a selected episode.
+let start_new_game_here = (w: world*, vs: vswap.vswap_file*) ->
+    let g = w->g
+    reload_level_data(w, vs)
+    find_player_start(w->lv_data, g)
+    reset_level_counters(g, w->lv)
+    reset_player_for_new_game(g)
+    update_player_area(w->lv, g)
+    connect_areas(w->lv, g->area_number)
+    g->phase = game_phase.gp_playing
+    g->phase_timer = 0.0
+    g->went_secret = false
 
 // Game-state phase transitions triggered by timers / flags. Called every
 // frame from both the interactive loop and (between test commands) the
@@ -2016,10 +2132,18 @@ let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
         let fx = (int32) (g->pos_x + g->dir_x)
         let fy = (int32) (g->pos_y + g->dir_y)
         let mut did_anything = false
-        // Check for elevator switch (tile 21).
+        // Check for elevator switch (tile 21). If the player is standing on
+        // ALTELEVATORTILE (plane-0 raw value 107 == area 0) when they flip
+        // it, route to the secret level instead (wolf4sdl ex_secretlevel).
+        // Wolf3D levels are designed so an area-0 floor is only adjacent to
+        // an elevator-21 tile along a hidden push-wall route; the positional
+        // gating falls out of the map layout, not extra code.
         if fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
             let face_tile = (int32) lv->tilemap[(int64) fx * 64 + (int64) fy]
             if face_tile == 21 then
+                let stand_area = (int32) lv->tile_areas[
+                    (int64) ((int32) g->pos_x) * 64 + (int64) ((int32) g->pos_y)]
+                if stand_area == 0 then g->went_secret = true
                 g->next_level = true
                 did_anything = true
         // Try push-wall (only if facing cardinally).
@@ -3886,6 +4010,50 @@ let render_game_over = (rc: render_ctx*, g: game*) ->
     draw_number(rc, 220, 120, g->score, white, 1)
     draw_centered_text(rc, 140, "PRESS SPACE", white, 1)
 
+// Per-episode victory screen (gp_episode_end): shown after the intermission
+// on level 8 (boss / finale) of each episode. Simple text screen — no
+// ENDART, no BJ art for now. Space advances to the next episode.
+let render_episode_end = (rc: render_ctx*, font: font_info*, g: game*) ->
+    for i in 0..(game_w * game_h)
+        rc->fb[i] = 0xFF000020u32    // deep blue backdrop
+    let ep = g->level_num / levels_per_episode
+    let yellow = 0xFFFFD700u32
+    let white  = 0xFFFFFFFFu32
+    let gray   = 0xFFB0B0B0u32
+    draw_centered_text(rc, 20, "YOU WIN", yellow, 3)
+    draw_font_centered(rc, font, 56, "EPISODE", white)
+    let ep_label = match ep with
+    | 0 -> "1"
+    | 1 -> "2"
+    | 2 -> "3"
+    | 3 -> "4"
+    | 4 -> "5"
+    | _ -> "6"
+    draw_font_centered(rc, font, 66, ep_label, yellow)
+    draw_font_centered(rc, font, 84, episode_title(ep), yellow)
+    // Score summary.
+    draw_text(rc, 70, 120, "FINAL SCORE", white, 1)
+    draw_number(rc, 220, 120, g->score, yellow, 1)
+    // Prompt.
+    draw_font_centered(rc, font, game_h - 32,
+        if ep + 1 >= num_episodes then "PRESS SPACE TO CONTINUE" else "PRESS SPACE FOR NEXT EPISODE",
+        gray)
+
+// Final victory (gp_victory): shown after clearing all six episodes. Space
+// returns to the main menu.
+let render_final_victory = (rc: render_ctx*, font: font_info*, g: game*) ->
+    for i in 0..(game_w * game_h)
+        rc->fb[i] = 0xFF200000u32    // deep red
+    let gold   = 0xFFFFD700u32
+    let white  = 0xFFFFFFFFu32
+    let gray   = 0xFFB0B0B0u32
+    draw_centered_text(rc, 20, "YOU WON", gold, 3)
+    draw_centered_text(rc, 54, "THE GAME", gold, 3)
+    draw_font_centered(rc, font, 104, "BJ HAS ESCAPED THE CASTLE", white)
+    draw_text(rc, 70, 124, "FINAL SCORE", white, 1)
+    draw_number(rc, 220, 124, g->score, gold, 1)
+    draw_font_centered(rc, font, game_h - 32, "PRESS SPACE", gray)
+
 // ============================================================
 // Title / Main menu / Pause
 // ============================================================
@@ -3919,11 +4087,21 @@ let render_title = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
 // Menu labels are returned by functions instead of living in an array
 // literal — FC treats `"foo"` as `const str` which doesn't fit into
 // `str[N]` directly.
+//
+// Main menu:
+//   0 NEW GAME
+//   1 LOAD GAME
+//   2 SAVE GAME   (only selectable with an active game; greyed-out otherwise)
+//   3 SOUND       (toggles music_on)
+//   4 QUIT
+let main_menu_len = 5
 let main_menu_label = (i: int32) ->
     match i with
     | 0 -> "NEW GAME"
-    | 1 -> "SOUND"
-    | 2 -> "QUIT"
+    | 1 -> "LOAD GAME"
+    | 2 -> "SAVE GAME"
+    | 3 -> "SOUND"
+    | 4 -> "QUIT"
     | _ -> ""
 
 let diff_menu_label = (i: int32) ->
@@ -3934,50 +4112,138 @@ let diff_menu_label = (i: int32) ->
     | 3 -> "I AM DEATH INCARNATE!"
     | _ -> ""
 
+// Episode picker labels — short for menu fit.
+let episode_menu_label = (i: int32) ->
+    match i with
+    | 0 -> "EPISODE 1  ESCAPE FROM WOLFENSTEIN"
+    | 1 -> "EPISODE 2  OPERATION EISENFAUST"
+    | 2 -> "EPISODE 3  DIE, FUHRER, DIE!"
+    | 3 -> "EPISODE 4  A DARK SECRET"
+    | 4 -> "EPISODE 5  TRAIL OF THE MADMAN"
+    | 5 -> "EPISODE 6  CONFRONTATION"
+    | _ -> ""
+
+// Draw a list-style menu: centered title, one highlighted row per item,
+// chevrons around the selected row. `label_fn` returns the text for item i.
+// Used by the main / episode / difficulty submenus; save-load slots paint
+// separately because their rows encode per-slot metadata.
+let draw_list_menu = (rc: render_ctx*, font: font_info*, title: const str,
+                      items_y: int32, n: int32, sel: int32,
+                      label_fn: (int32) -> const str, locked_fn: (int32) -> bool) ->
+    let yellow = 0xFFFFD700u32
+    let white  = 0xFFFFFFFFu32
+    let dull   = 0xFF707070u32
+    draw_font_centered(rc, font, 24, title, yellow)
+    for i in 0..n
+        let y = items_y + i * (font->height + 4)
+        let is_sel = sel == i
+        let is_locked = locked_fn(i)
+        let color = if is_locked then dull
+                    else if is_sel then yellow else white
+        let label = label_fn(i)
+        draw_font_centered(rc, font, y, label, color)
+        if is_sel then
+            let w = font_text_width(font, label)
+            let cx = (game_w - w) / 2
+            draw_font_text(rc, font, cx - 14, y, ">", yellow)
+            draw_font_text(rc, font, cx + w + 6, y, "<", yellow)
+
+// Save-slot info, materialized once at entry into the save / load menus so
+// render + input don't touch the filesystem on every frame. metadata_* fields
+// describe the save file (empty slots have `empty=true`).
+struct save_slot_info =
+    empty: bool
+    label: uint8[]      // heap — "label" field parsed from the save file;
+                        // zero-length for empty slots
+    level_num: int32
+    difficulty: int32
+    score: int32
+
+// Cache of slot info for the active save/load menu. Refreshed by
+// refresh_save_slots on menu entry; allocated once inside `main`. Only
+// one save/load menu can be open at a time so a single static cache is
+// enough.
+let mut save_slots = default(save_slot_info[])
+
+// 32-byte reusable scratch used to render slot-label substrings as const str.
+let mut label_scratch = default(uint8[])
+
+// Scratch for writing one hex nibble at a time into a save file.
+let mut hex_scratch = default(uint8[])
+
+// Render the save or load slot menu. Each row shows "N <label>" or
+// "N EMPTY". The save-picker highlights all slots (writable); the load-
+// picker greys empty slots so they're visually unselectable.
+let render_slot_menu = (rc: render_ctx*, font: font_info*, title: const str,
+                        sel: int32, load_mode: bool) ->
+    let yellow = 0xFFFFD700u32
+    let white  = 0xFFFFFFFFu32
+    let dull   = 0xFF707070u32
+    let gray   = 0xFFB0B0B0u32
+    draw_font_centered(rc, font, 20, title, yellow)
+    let items_y = 44
+    for i in 0..num_save_slots
+        let s = &save_slots[i]
+        let y = items_y + i * (font->height + 3)
+        let is_sel = sel == i
+        let is_locked = load_mode && s->empty
+        let color = if is_locked then dull
+                    else if is_sel then yellow else white
+        let row_x = 40
+        draw_font_text(rc, font, row_x, y, "%d{i + 1}", color)
+        if s->empty then
+            draw_font_text(rc, font, row_x + 18, y, "EMPTY", color)
+        else
+            // "LVL N  <label>  SCORE"
+            let ep = s->level_num / levels_per_episode + 1
+            let lvl = s->level_num % levels_per_episode + 1
+            draw_font_text(rc, font, row_x + 18, y,
+                "E%d{ep}M%d{lvl}", color)
+            // Label (user-chosen). Fall back to a generic string if unset.
+            if s->label.len > 0 then
+                // Draw up to ~22 chars of label.
+                let mut limit = (int32) s->label.len
+                if limit > 22 then limit = 22
+                // Copy to a tiny scratch buffer so we can treat it as const str.
+                for j in 0..limit
+                    label_scratch[j] = s->label[j]
+                label_scratch[limit] = 0u8
+                let slab = (const str) label_scratch[0..(int64) limit]
+                draw_font_text(rc, font, row_x + 60, y, slab, color)
+            draw_font_text(rc, font, row_x + 180, y, "%d{s->score}", color)
+        if is_sel then
+            draw_font_text(rc, font, 20, y, ">", yellow)
+            draw_font_text(rc, font, game_w - 28, y, "<", yellow)
+    draw_font_centered(rc, font, game_h - 24,
+        "UP/DOWN  ENTER  ESC", gray)
+
 let render_main_menu = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
                         font: font_info*, g: game*) ->
     // Tint the title as a backdrop (slightly dimmed so the menu pops).
     draw_vg_pic_scaled(rc, vg, pal, vg_title, 0, 0, game_w, game_h)
     // Darken overlay so menu text stays readable over the title art.
     viewport_tint_full(rc, 0x00000000u32, 0.55)
-    let yellow = 0xFFFFD700u32
-    let white  = 0xFFFFFFFFu32
-    let gray   = 0xFFB0B0B0u32
     if g->menu_level == menu_main then
-        draw_font_centered(rc, font, 30, "MAIN MENU", yellow)
-        let items_y = 70
-        for i in 0..3
-            let y = items_y + i * (font->height + 6)
-            let is_sel = g->menu_sel == i
-            let color = if is_sel then yellow else white
-            // SOUND gets an inline ON/OFF suffix.
-            let label = if i == 1 then
-                if g->music_on then "SOUND:  ON" else "SOUND: OFF"
-            else main_menu_label(i)
-            draw_font_centered(rc, font, y, label, color)
-            if is_sel then
-                let w = font_text_width(font, label)
-                let cx = (game_w - w) / 2
-                draw_font_text(rc, font, cx - 14, y, ">", yellow)
-                draw_font_text(rc, font, cx + w + 6, y, "<", yellow)
-        draw_font_centered(rc, font, game_h - 28,
-            "UP/DOWN  ENTER  ESC", gray)
-    else
-        draw_font_centered(rc, font, 24, "CHOOSE DIFFICULTY", yellow)
-        let items_y = 56
-        for i in 0..4
-            let y = items_y + i * (font->height + 6)
-            let is_sel = g->menu_sel == i
-            let color = if is_sel then yellow else white
-            let label = diff_menu_label(i)
-            draw_font_centered(rc, font, y, label, color)
-            if is_sel then
-                let w = font_text_width(font, label)
-                let cx = (game_w - w) / 2
-                draw_font_text(rc, font, cx - 14, y, ">", yellow)
-                draw_font_text(rc, font, cx + w + 6, y, "<", yellow)
-        draw_font_centered(rc, font, game_h - 28,
-            "UP/DOWN  ENTER  ESC", gray)
+        draw_list_menu(rc, font, "MAIN MENU", 56, main_menu_len, g->menu_sel,
+            (i: int32) ->
+                // SOUND row gets an inline ON/OFF; SAVE GAME row is locked
+                // without an active game.
+                if i == 3 then
+                    if g->music_on then "SOUND:  ON" else "SOUND: OFF"
+                else main_menu_label(i),
+            (i: int32) -> i == 2 && !g->has_active_game)
+    else if g->menu_level == menu_episode then
+        draw_list_menu(rc, font, "CHOOSE EPISODE", 44, num_episodes, g->menu_sel,
+            (i: int32) -> episode_menu_label(i),
+            (_: int32) -> false)
+    else if g->menu_level == menu_difficulty then
+        draw_list_menu(rc, font, "CHOOSE DIFFICULTY", 56, 4, g->menu_sel,
+            (i: int32) -> diff_menu_label(i),
+            (_: int32) -> false)
+    else if g->menu_level == menu_savelist then
+        render_slot_menu(rc, font, "SAVE GAME", g->menu_sel, false)
+    else if g->menu_level == menu_loadlist then
+        render_slot_menu(rc, font, "LOAD GAME", g->menu_sel, true)
 
 // Paused overlay: draws the last frame's game view dimmed + "PAUSED" text.
 let render_paused = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[],
@@ -4011,6 +4277,12 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
         return
     | gp_game_over ->
         render_game_over(w->rc, w->g)
+        return
+    | gp_episode_end ->
+        render_episode_end(w->rc, w->font, w->g)
+        return
+    | gp_victory ->
+        render_final_victory(w->rc, w->font, w->g)
         return
     | _ -> void()
     render_walls(w->lv, w->rc, w->g, vs, pal)
@@ -4087,6 +4359,487 @@ let take_screenshot = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
         save_png(w, path)
         io.write("[screenshot] saved %s{path}\n", stdout)
         void()
+
+// ============================================================
+// Save / load — one 10-slot save directory under ~/.wolf-fc/saves/.
+//
+// Format is a simple line-oriented text file: first token of each line
+// names the section ("WLFC", "label", "game", "pos", "doors", "door",
+// "pushwall", "sprites_alive", "enemies", "enemy"). Text is deliberate:
+// it's debuggable, round-trips cleanly through printf/%f parsing, and
+// avoids the platform-specific float64-to-bytes dance that a binary
+// format would need.
+// ============================================================
+
+let save_version = 1
+
+// Split a save-file line on spaces, compacting consecutive separators so
+// the padded-width floats we write (e.g. "%14.6f") parse cleanly. Returns
+// a heap `str[]` that the caller must free (along with each entry — this
+// matches text.split's ownership). Used by every `else if text.starts_with
+// (line, "tag ") then` branch in `load_game_from_slot`.
+let split_ws = (s: const str) ->
+    // Two-pass: count tokens, then allocate exact size.
+    let mut count = 0
+    let mut i = 0i64
+    loop
+        if i >= s.len then break
+        if s[i] == 0x20u8 then
+            i = i + 1
+            continue
+        count = count + 1
+        loop
+            if i >= s.len then break
+            if s[i] == 0x20u8 then break
+            i = i + 1
+    let out = alloc(str[count] {})!
+    let mut ti = 0
+    let mut j = 0i64
+    loop
+        if j >= s.len then break
+        if s[j] == 0x20u8 then
+            j = j + 1
+            continue
+        let start = j
+        loop
+            if j >= s.len then break
+            if s[j] == 0x20u8 then break
+            j = j + 1
+        let n = j - start
+        // Copy into a heap slice so entries outlive any caller reuse.
+        let buf = alloc(uint8[n] {})!
+        for k in 0..n
+            buf[k] = s[start + k]
+        out[ti] = buf
+        ti = ti + 1
+    out
+
+// Free the result of split_ws (both the outer array and each entry).
+let free_split = (toks: str[]) ->
+    for k in 0..(int32) toks.len
+        free(toks[(int64) k])
+    free(toks)
+
+// Ensure ~/.wolf-fc/saves exists. Returns true if the directory is
+// (now) available.
+let ensure_save_dir = () ->
+    match sys.home_dir() with
+    | none -> false
+    | some(home) ->
+        io.mkdir("%s{home}/.wolf-fc")
+        io.mkdir("%s{home}/.wolf-fc/saves")
+        true
+
+let save_slot_path = (slot: int32) ->
+    match sys.home_dir() with
+    | none -> default(str?)
+    | some(home) ->
+        let p = alloc("%s{home}/.wolf-fc/saves/slot_%02d{slot}.sav")!
+        some(p)
+
+// Return the current wall-clock seconds (for save-label timestamps).
+// Not currently used — reserved for future "DATE" field in the label.
+
+// Write the running world state to a save-slot file. Overwrites any existing
+// slot. Metadata label is auto-generated from the current level + time.
+let save_game_to_slot = (w: world*, slot: int32) ->
+    ensure_save_dir()
+    match save_slot_path(slot) with
+    | none ->
+        io.write("save: HOME not set, skipping\n", stderr)
+        void()
+    | some(path) ->
+        let g = w->g
+        let lv = w->lv
+        match io.open(path, "w") with
+        | none ->
+            io.write("save: failed to open %s{path}\n", stderr)
+            void()
+        | some(f) ->
+            defer io.close(f)
+            io.write("WLFC %d{save_version}\n", f)
+            // Auto-generated label — encodes episode/level for the menu.
+            let ep = g->level_num / levels_per_episode + 1
+            let lvl = g->level_num % levels_per_episode + 1
+            io.write("label E%d{ep}M%d{lvl}\n", f)
+            io.write(
+                "game %d{g->level_num} %d{g->difficulty} %d{g->lives} %d{g->score} %d{g->health} %d{g->ammo} %d{g->weapon} %d{g->best_weapon} %d{if g->has_gold_key then 1 else 0} %d{if g->has_silver_key then 1 else 0} %d{if g->went_secret then 1 else 0}\n", f)
+            io.write(
+                "counters %d{g->kills} %d{g->total_kills} %d{g->secrets} %d{g->total_secrets} %d{g->treasures} %d{g->total_treasures}\n", f)
+            io.write("time %14.6f{g->level_time}\n", f)
+            io.write("pos %14.6f{g->pos_x} %14.6f{g->pos_y}\n", f)
+            io.write("dir %14.6f{g->dir_x} %14.6f{g->dir_y}\n", f)
+            io.write("plane %14.6f{g->plane_x} %14.6f{g->plane_y}\n", f)
+            io.write("area %d{g->area_number}\n", f)
+            // Doors: count + one row per door.
+            io.write("doors %d{lv->num_doors}\n", f)
+            for i in 0..lv->num_doors
+                let d = &lv->doors[i]
+                let st = match d->state with
+                | closed  -> 0
+                | opening -> 1
+                | open    -> 2
+                | closing -> 3
+                io.write(
+                    "door %d{i} %d{d->tile_x} %d{d->tile_y} %d{st} %14.6f{d->open_timer} %14.6f{lv->door_pos[i]}\n", f)
+            // Pushwall.
+            let pw = &lv->pushwall
+            let pw_active = if pw->active then 1 else 0
+            io.write(
+                "pushwall %d{pw_active} %d{pw->tile_x} %d{pw->tile_y} %d{pw->dir_x} %d{pw->dir_y} %14.6f{pw->progress} %d{(int32) pw->orig_tile}\n", f)
+            // Sprite alive flags: compact hex bitmask, one char per 4 sprites.
+            io.write("sprites %d{lv->num_sprites} ", f)
+            let ns = lv->num_sprites
+            let bytes_needed = (ns + 3) / 4
+            for b in 0..bytes_needed
+                let mut nibble = 0
+                for bit in 0..4
+                    let idx = b * 4 + bit
+                    if idx < ns && lv->sprites[idx].alive then
+                        nibble = nibble | (1 << bit)
+                let ch = if nibble < 10 then 48 + nibble else 87 + nibble
+                hex_scratch[0] = (uint8) ch
+                io.write(hex_scratch[0..1], f)
+            io.write("\n", f)
+            // Enemies.
+            io.write("enemies %d{lv->num_enemies}\n", f)
+            for i in 0..lv->num_enemies
+                let e = &lv->enemies[i]
+                let ki = enemy_kind_to_int(e->kind)
+                let si = enemy_state_to_int(e->state)
+                let amb = if e->ambush then 1 else 0
+                let nfd = if e->notified then 1 else 0
+                let sh = if e->shoot_fired then 1 else 0
+                io.write(
+                    "enemy %d{i} %14.6f{e->x} %14.6f{e->y} %d{e->tile_x} %d{e->tile_y} %d{ki} %d{si} %d{e->dir} %d{e->hp} %d{e->anim_frame} %14.6f{e->anim_timer} %d{sh} %14.6f{e->move_remaining} %d{amb} %d{nfd}\n", f)
+            io.write("end\n", f)
+            void()
+
+// Numeric kind/state codes for serialization. Preserving ordering so older
+// saves stay loadable if we add new variants at the end.
+let enemy_kind_to_int = (k: enemy_kind) ->
+    match k with
+    | ek_guard        -> 0
+    | ek_officer      -> 1
+    | ek_ss           -> 2
+    | ek_dog          -> 3
+    | ek_mutant       -> 4
+    | ek_hans         -> 5
+    | ek_schabbs      -> 6
+    | ek_gretel       -> 7
+    | ek_giftmacher   -> 8
+    | ek_fat          -> 9
+    | ek_hitler_fake  -> 10
+    | ek_hitler       -> 11
+    | ek_blinky       -> 12
+    | ek_pinky        -> 13
+    | ek_clyde        -> 14
+    | ek_inky         -> 15
+
+let int_to_enemy_kind = (n: int32) ->
+    match n with
+    | 0  -> enemy_kind.ek_guard
+    | 1  -> enemy_kind.ek_officer
+    | 2  -> enemy_kind.ek_ss
+    | 3  -> enemy_kind.ek_dog
+    | 4  -> enemy_kind.ek_mutant
+    | 5  -> enemy_kind.ek_hans
+    | 6  -> enemy_kind.ek_schabbs
+    | 7  -> enemy_kind.ek_gretel
+    | 8  -> enemy_kind.ek_giftmacher
+    | 9  -> enemy_kind.ek_fat
+    | 10 -> enemy_kind.ek_hitler_fake
+    | 11 -> enemy_kind.ek_hitler
+    | 12 -> enemy_kind.ek_blinky
+    | 13 -> enemy_kind.ek_pinky
+    | 14 -> enemy_kind.ek_clyde
+    | _  -> enemy_kind.ek_inky
+
+let enemy_state_to_int = (s: enemy_state) ->
+    match s with
+    | es_stand -> 0
+    | es_path  -> 1
+    | es_chase -> 2
+    | es_shoot -> 3
+    | es_pain  -> 4
+    | es_die   -> 5
+    | es_dead  -> 6
+
+let int_to_enemy_state = (n: int32) ->
+    match n with
+    | 0 -> enemy_state.es_stand
+    | 1 -> enemy_state.es_path
+    | 2 -> enemy_state.es_chase
+    | 3 -> enemy_state.es_shoot
+    | 4 -> enemy_state.es_pain
+    | 5 -> enemy_state.es_die
+    | _ -> enemy_state.es_dead
+
+let int_to_door_state = (n: int32) ->
+    match n with
+    | 0 -> door_state.closed
+    | 1 -> door_state.opening
+    | 2 -> door_state.open
+    | _ -> door_state.closing
+
+// Load a saved slot file into the world. Returns true on success. On failure
+// the world state is undefined (caller should treat a failed load as the
+// equivalent of a save corrupt and return to the main menu).
+//
+// Approach: read the whole file into memory, split into lines, walk line by
+// line applying each section. First we load the map for the saved level_num,
+// then overlay door / pushwall / sprite / enemy state. The freshly-built
+// level already has enemies spawned from plane-1, which we overwrite.
+let load_game_from_slot = (w: world*, vs: vswap.vswap_file*, slot: int32) ->
+    match save_slot_path(slot) with
+    | none -> false
+    | some(path) ->
+        match io.read_all(path) with
+        | none -> false
+        | some(contents) ->
+            defer free(contents)
+            let lines = text.split(contents, "\n")
+            defer free(lines)
+            if lines.len < 2 then false
+            else if !text.starts_with(lines[0], "WLFC ") then false
+            else
+                let g = w->g
+                let mut level_loaded = false
+                let mut i = 0
+                loop
+                    if i >= (int32) lines.len then break
+                    let line = lines[(int64) i]
+                    i = i + 1
+                    if line.len == 0 then continue
+                    if text.starts_with(line, "label ") then
+                        void()   // menu-only; ignored at load time
+                    else if text.starts_with(line, "game ") then
+                        let toks = split_ws(line)
+                        defer free_split(toks)
+                        if toks.len >= 12 then
+                            g->level_num    = unwrap_int(toks[1])
+                            g->difficulty   = unwrap_int(toks[2])
+                            g->lives        = unwrap_int(toks[3])
+                            g->score        = unwrap_int(toks[4])
+                            g->health       = unwrap_int(toks[5])
+                            g->ammo         = unwrap_int(toks[6])
+                            g->weapon       = unwrap_int(toks[7])
+                            g->best_weapon  = unwrap_int(toks[8])
+                            g->has_gold_key   = unwrap_int(toks[9]) != 0
+                            g->has_silver_key = unwrap_int(toks[10]) != 0
+                            g->went_secret  = unwrap_int(toks[11]) != 0
+                            // Reload the level for the saved level_num. This
+                            // rebuilds lv->{tilemap,doors,pushwall,sprites,enemies}
+                            // which we'll immediately overwrite with the saved
+                            // state below.
+                            reload_level_data(w, vs)
+                            level_loaded = true
+                    else if text.starts_with(line, "counters ") then
+                        let toks = split_ws(line)
+                        defer free_split(toks)
+                        if toks.len >= 7 then
+                            g->kills           = unwrap_int(toks[1])
+                            g->total_kills     = unwrap_int(toks[2])
+                            g->secrets         = unwrap_int(toks[3])
+                            g->total_secrets   = unwrap_int(toks[4])
+                            g->treasures       = unwrap_int(toks[5])
+                            g->total_treasures = unwrap_int(toks[6])
+                    else if text.starts_with(line, "time ") then
+                        let toks = split_ws(line)
+                        defer free_split(toks)
+                        if toks.len >= 2 then g->level_time = unwrap_float(toks[1])
+                    else if text.starts_with(line, "pos ") then
+                        let toks = split_ws(line)
+                        defer free_split(toks)
+                        if toks.len >= 3 then
+                            g->pos_x = unwrap_float(toks[1])
+                            g->pos_y = unwrap_float(toks[2])
+                    else if text.starts_with(line, "dir ") then
+                        let toks = split_ws(line)
+                        defer free_split(toks)
+                        if toks.len >= 3 then
+                            g->dir_x = unwrap_float(toks[1])
+                            g->dir_y = unwrap_float(toks[2])
+                    else if text.starts_with(line, "plane ") then
+                        let toks = split_ws(line)
+                        defer free_split(toks)
+                        if toks.len >= 3 then
+                            g->plane_x = unwrap_float(toks[1])
+                            g->plane_y = unwrap_float(toks[2])
+                    else if text.starts_with(line, "area ") then
+                        let toks = split_ws(line)
+                        defer free_split(toks)
+                        if toks.len >= 2 then g->area_number = unwrap_int(toks[1])
+                    else if text.starts_with(line, "door ") then
+                        let toks = split_ws(line)
+                        defer free_split(toks)
+                        if toks.len >= 7 && level_loaded then
+                            let di = unwrap_int(toks[1])
+                            if di >= 0 && di < w->lv->num_doors then
+                                let d = &w->lv->doors[di]
+                                d->state = int_to_door_state(unwrap_int(toks[4]))
+                                d->open_timer = unwrap_float(toks[5])
+                                w->lv->door_pos[di] = unwrap_float(toks[6])
+                    else if text.starts_with(line, "pushwall ") && level_loaded then
+                        let toks = split_ws(line)
+                        defer free_split(toks)
+                        if toks.len >= 8 then
+                            let pw = &w->lv->pushwall
+                            pw->active   = unwrap_int(toks[1]) != 0
+                            pw->tile_x   = unwrap_int(toks[2])
+                            pw->tile_y   = unwrap_int(toks[3])
+                            pw->dir_x    = unwrap_int(toks[4])
+                            pw->dir_y    = unwrap_int(toks[5])
+                            pw->progress = unwrap_float(toks[6])
+                            pw->orig_tile = (uint8) unwrap_int(toks[7])
+                    else if text.starts_with(line, "sprites ") && level_loaded then
+                        let toks = split_ws(line)
+                        defer free_split(toks)
+                        if toks.len >= 3 then
+                            let ns = unwrap_int(toks[1])
+                            let bits = toks[2]
+                            let bytes_needed = (ns + 3) / 4
+                            for b in 0..bytes_needed
+                                if (int64) b >= bits.len then break
+                                let ch = (int32) bits[(int64) b]
+                                let nibble = if ch >= 48 && ch <= 57 then ch - 48
+                                             else if ch >= 97 && ch <= 102 then ch - 87
+                                             else 0
+                                for bit in 0..4
+                                    let idx = b * 4 + bit
+                                    if idx >= ns then break
+                                    if idx < w->lv->num_sprites then
+                                        w->lv->sprites[idx].alive = (nibble >> bit) & 1 != 0
+                    else if text.starts_with(line, "enemies ") && level_loaded then
+                        let toks = split_ws(line)
+                        defer free_split(toks)
+                        if toks.len >= 2 then
+                            w->lv->num_enemies = unwrap_int(toks[1])
+                    else if text.starts_with(line, "enemy ") && level_loaded then
+                        let toks = split_ws(line)
+                        defer free_split(toks)
+                        if toks.len >= 15 then
+                            let ei = unwrap_int(toks[1])
+                            if ei >= 0 && ei < w->lv->num_enemies then
+                                let e = &w->lv->enemies[ei]
+                                e->x              = unwrap_float(toks[2])
+                                e->y              = unwrap_float(toks[3])
+                                e->tile_x         = unwrap_int(toks[4])
+                                e->tile_y         = unwrap_int(toks[5])
+                                e->kind           = int_to_enemy_kind(unwrap_int(toks[6]))
+                                e->state          = int_to_enemy_state(unwrap_int(toks[7]))
+                                e->dir            = unwrap_int(toks[8])
+                                e->hp             = unwrap_int(toks[9])
+                                e->anim_frame     = unwrap_int(toks[10])
+                                e->anim_timer     = unwrap_float(toks[11])
+                                e->shoot_fired    = unwrap_int(toks[12]) != 0
+                                e->move_remaining = unwrap_float(toks[13])
+                                e->ambush         = unwrap_int(toks[14]) != 0
+                                if toks.len >= 16 then
+                                    e->notified = unwrap_int(toks[15]) != 0
+                // Recompute area_by_player from the restored door states so
+                // enemy AI sees the correct connectivity. connect_areas walks
+                // the door list and re-floods from the player's anchor area.
+                for a in 0..num_areas
+                    w->lv->area_by_player[a] = false
+                for aa in 0..(num_areas * num_areas)
+                    w->lv->area_connect[aa] = 0u8
+                // Sum open-door counts into area_connect (both directions).
+                for di in 0..w->lv->num_doors
+                    let d = &w->lv->doors[di]
+                    match d->state with
+                    | open ->
+                        if d->area1 >= 0 && d->area2 >= 0 then
+                            let i1 = d->area1 * num_areas + d->area2
+                            let i2 = d->area2 * num_areas + d->area1
+                            w->lv->area_connect[i1] = w->lv->area_connect[i1] + 1u8
+                            w->lv->area_connect[i2] = w->lv->area_connect[i2] + 1u8
+                    | _ -> void()
+                connect_areas(w->lv, g->area_number)
+                // Resume gameplay.
+                g->phase = game_phase.gp_playing
+                g->phase_timer = 0.0
+                g->made_noise = false
+                g->key_up = false
+                g->key_down = false
+                g->key_left = false
+                g->key_right = false
+                g->key_fire = false
+                g->key_space = false
+                g->key_space_handled = true
+                g->damage_flash_timer = 0.0
+                g->msg_timer = 0.0
+                true
+
+// Small parse helpers — saves bail gracefully if a field is unparseable by
+// defaulting to 0 / 0.0. Paired with the "expect at least N tokens" guards
+// in each section above, this keeps a malformed line from cascading.
+let unwrap_int = (s: const str) ->
+    match text.parse_int32(s) with
+    | some(n) -> n
+    | none    -> 0
+
+let unwrap_float = (s: const str) ->
+    match text.parse_float64(s) with
+    | some(x) -> x
+    | none    -> 0.0
+
+// Rebuild the save_slots cache from disk. Called when entering the save/load
+// menu. Reads only the header + label of each file (not the full body) by
+// streaming line-by-line until we've seen the `game` line.
+let refresh_save_slots = () ->
+    for i in 0..num_save_slots
+        // Free any label from a previous refresh.
+        let old_label = save_slots[i].label
+        if old_label.len > 0 then free(old_label)
+        save_slots[i] = save_slot_info {
+            empty = true,
+            label = default(uint8[]),
+            level_num = 0, difficulty = 0, score = 0
+        }
+    for i in 0..num_save_slots
+        match save_slot_path(i) with
+        | none -> void()
+        | some(path) ->
+            if !io.exists(path) then void()
+            else
+                match io.read_all(path) with
+                | none -> void()
+                | some(contents) ->
+                    defer free(contents)
+                    let lines = text.split(contents, "\n")
+                    defer free(lines)
+                    let mut level_num = 0
+                    let mut difficulty = 0
+                    let mut score = 0
+                    let mut label_src = default(const str?)
+                    let mut valid = false
+                    for li in 0..(int32) lines.len
+                        let line = lines[(int64) li]
+                        if text.starts_with(line, "label ") then
+                            label_src = some(line[6..line.len])
+                        else if text.starts_with(line, "game ") then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 5 then
+                                level_num = unwrap_int(toks[1])
+                                difficulty = unwrap_int(toks[2])
+                                score = unwrap_int(toks[4])
+                                valid = true
+                    if valid then
+                        let lbl = match label_src with
+                        | some(s) ->
+                            let n = s.len
+                            let buf = alloc(uint8[n] {})!
+                            for k in 0..n
+                                buf[k] = s[k]
+                            buf
+                        | none -> default(uint8[])
+                        save_slots[i] = save_slot_info {
+                            empty = false, label = lbl,
+                            level_num = level_num,
+                            difficulty = difficulty, score = score
+                        }
 
 // ============================================================
 // Headless test mode — scripted commands for automated testing
@@ -4205,6 +4958,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         | gp_dying        -> "dying"
         | gp_intermission -> "intermission"
         | gp_game_over    -> "gameover"
+        | gp_episode_end  -> "episode_end"
+        | gp_victory      -> "victory"
         let par = if g->level_num < 60 then par_times[g->level_num] else 0
         io.write("phase=%s{phase_s} difficulty=%d{g->difficulty}\n", stdout)
         io.write("kills=%d{g->kills}/%d{g->total_kills} secrets=%d{g->secrets}/%d{g->total_secrets} treasures=%d{g->treasures}/%d{g->total_treasures}\n", stdout)
@@ -4270,10 +5025,20 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         void()
     else if arg == "advance" then
         // Simulates the "press space" that dismisses an intermission /
-        // game-over screen. Test-mode equivalent of the interactive
-        // space-bar path. No-op outside those phases.
+        // game-over / episode-end / victory screen. Test-mode equivalent of
+        // the interactive space-bar path. No-op outside those phases.
         if g->phase == game_phase.gp_intermission then
-            advance_next_level(w, w->ac->vs)
+            if g->level_num % levels_per_episode == 8 then
+                enter_episode_end(g)
+            else
+                advance_next_level(w, w->ac->vs)
+        else if g->phase == game_phase.gp_episode_end then
+            advance_next_episode(w, w->ac->vs)
+        else if g->phase == game_phase.gp_victory then
+            g->phase = game_phase.gp_main_menu
+            g->menu_level = menu_main
+            g->menu_sel = 0
+            g->has_active_game = false
         else if g->phase == game_phase.gp_game_over then
             restart_full_game(w, w->ac->vs)
     else if text.starts_with(arg, "setdifficulty:") then
@@ -4311,6 +5076,61 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
                 g->phase = game_phase.gp_playing
                 g->phase_timer = 0.0
         | none -> bad("integer level")
+    else if text.starts_with(arg, "setepisode:") then
+        // Jump to the start of episode N (level = N*10), preserving
+        // score/lives. Wrapper around setlevel.
+        match text.parse_int32(arg[11..arg.len]) with
+        | some(n) ->
+            if n < 0 || n >= num_episodes then bad("episode 0..5")
+            else
+                g->level_num = n * levels_per_episode
+                reload_level_data(w, w->ac->vs)
+                find_player_start(w->lv_data, g)
+                reset_level_counters(g, w->lv)
+                update_player_area(w->lv, g)
+                connect_areas(w->lv, g->area_number)
+                g->phase = game_phase.gp_playing
+                g->phase_timer = 0.0
+        | none -> bad("integer episode 0..5")
+    else if text.starts_with(arg, "save:") then
+        match text.parse_int32(arg[5..arg.len]) with
+        | some(n) ->
+            if n < 0 || n >= num_save_slots then bad("slot 0..%d{num_save_slots - 1}")
+            else
+                save_game_to_slot(w, n)
+                io.write("saved slot %d{n}\n", stdout)
+                void()
+        | none -> bad("integer slot")
+    else if text.starts_with(arg, "load:") then
+        match text.parse_int32(arg[5..arg.len]) with
+        | some(n) ->
+            if n < 0 || n >= num_save_slots then bad("slot 0..%d{num_save_slots - 1}")
+            else
+                let ok = load_game_from_slot(w, w->ac->vs, n)
+                io.write("load slot %d{n}: %s{if ok then "ok" else "failed"}\n", stdout)
+                void()
+        | none -> bad("integer slot")
+    else if arg == "listsaves" then
+        // Dump the on-disk save slots (label + level + score).
+        refresh_save_slots()
+        for i in 0..num_save_slots
+            let s = &save_slots[i]
+            if s->empty then
+                io.write("slot %d{i}: EMPTY\n", stdout)
+                void()
+            else
+                let ep = s->level_num / levels_per_episode + 1
+                let lvl = s->level_num % levels_per_episode + 1
+                let lbl_chars = if s->label.len > 0 then s->label else default(uint8[])
+                io.write("slot %d{i}: E%d{ep}M%d{lvl} diff=%d{s->difficulty} score=%d{s->score} label=", stdout)
+                if lbl_chars.len > 0 then io.write(lbl_chars, stdout)
+                io.write("\n", stdout)
+                void()
+        void()
+    else if arg == "endepisode" then
+        // Force the episode-end path: sets next_level on level 8 of the
+        // current episode so the intermission → episode-end flow runs.
+        g->next_level = true
     else if arg == "kill" then
         // Instant-kill the player (skips the pain sound, goes straight to
         // dying). Mostly used by the regression suite to exercise the
@@ -4330,9 +5150,20 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         else if p == "diffmenu" then
             g->phase = game_phase.gp_main_menu
             g->menu_level = menu_difficulty
+        else if p == "epmenu" then
+            g->phase = game_phase.gp_main_menu
+            g->menu_level = menu_episode
+        else if p == "savemenu" then
+            g->phase = game_phase.gp_main_menu
+            g->menu_level = menu_savelist
+            refresh_save_slots()
+        else if p == "loadmenu" then
+            g->phase = game_phase.gp_main_menu
+            g->menu_level = menu_loadlist
+            refresh_save_slots()
         else if p == "paused" then g->phase = game_phase.gp_paused
         else if p == "playing" then g->phase = game_phase.gp_playing
-        else bad("title/menu/diffmenu/paused/playing")
+        else bad("title/menu/epmenu/diffmenu/savemenu/loadmenu/paused/playing")
     else if arg == "phase" then
         let phase_s = match g->phase with
         | gp_title        -> "title"
@@ -4342,6 +5173,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         | gp_dying        -> "dying"
         | gp_intermission -> "intermission"
         | gp_game_over    -> "gameover"
+        | gp_episode_end  -> "episode_end"
+        | gp_victory      -> "victory"
         io.write("phase=%s{phase_s} timer=%6.3f{g->phase_timer} lives=%d{g->lives}\n", stdout)
         void()
     else if arg == "probe" then
@@ -4521,7 +5354,8 @@ let main = (args: str[]) ->
         level_num = 0,
         has_gold_key = false, has_silver_key = false,
         next_level = false,
-        weapon = 1, best_weapon = 1, fire_timer = 0.0, weapon_frame = 0,
+        weapon = 1, best_weapon = 1, went_secret = false,
+        fire_timer = 0.0, weapon_frame = 0,
         area_number = -1, made_noise = false,
         phase = game_phase.gp_title, phase_timer = 0.0, damage_flash_timer = 0.0,
         kills = 0, total_kills = 0,
@@ -4537,6 +5371,13 @@ let main = (args: str[]) ->
     })!
     find_player_start(lv_data, g)
     io.write("  player at (%4.1f{g->pos_x}, %4.1f{g->pos_y})\n", stdout)
+
+    // Allocate the save/load menu scratch buffers. File-scope alloc isn't a
+    // constant expression in FC, so they're late-init'd here before any
+    // save/load path can run.
+    save_slots = alloc(save_slot_info[num_save_slots] {})!
+    label_scratch = alloc(uint8[32] {})!
+    hex_scratch = alloc(uint8[1] {})!
 
     // Sound system (valid in all modes; in --test and --screenshot nothing
     // actually reaches the speakers because SDL audio isn't opened, but
@@ -4668,48 +5509,106 @@ let main = (args: str[]) ->
                     g->menu_sel = 0
                     g->phase_timer = 0.0
                 | gp_main_menu ->
+                    let mut reload_music = false
                     if g->menu_level == menu_main then
                         if k == sdl2.key_up then
-                            g->menu_sel = (g->menu_sel + 2) % 3
+                            g->menu_sel = (g->menu_sel + main_menu_len - 1) % main_menu_len
                         else if k == sdl2.key_down then
-                            g->menu_sel = (g->menu_sel + 1) % 3
+                            g->menu_sel = (g->menu_sel + 1) % main_menu_len
                         else if k == sdl2.key_return || k == sdl2.key_space then
                             match g->menu_sel with
                             | 0 ->
-                                g->menu_level = menu_difficulty
-                                g->menu_sel = g->difficulty
+                                // NEW GAME → episode picker
+                                g->menu_level = menu_episode
+                                g->menu_sel = 0
                             | 1 ->
+                                // LOAD GAME → load slot menu (reads slot cache)
+                                refresh_save_slots()
+                                g->menu_level = menu_loadlist
+                                g->menu_sel = 0
+                            | 2 ->
+                                // SAVE GAME (locked without an active game)
+                                if g->has_active_game then
+                                    refresh_save_slots()
+                                    g->menu_level = menu_savelist
+                                    g->menu_sel = 0
+                            | 3 ->
                                 g->music_on = !g->music_on
                                 music_on = g->music_on
                                 if !music_on && audio_dev > 0u32 then
                                     sdl2.clear_audio(audio_dev)
-                            | 2 ->
+                            | 4 ->
                                 g->want_quit = true
                             | _ -> void()
                         else if k == sdl2.key_escape then
                             if g->has_active_game then
                                 g->phase = game_phase.gp_playing
-                    else
-                        // Difficulty sub-menu.
+                    else if g->menu_level == menu_episode then
+                        if k == sdl2.key_up then
+                            g->menu_sel = (g->menu_sel + num_episodes - 1) % num_episodes
+                        else if k == sdl2.key_down then
+                            g->menu_sel = (g->menu_sel + 1) % num_episodes
+                        else if k == sdl2.key_return || k == sdl2.key_space then
+                            // Remember chosen episode in menu_episode_sel via level_num
+                            // placeholder; the difficulty sub-menu consumes it on enter.
+                            g->level_num = g->menu_sel * levels_per_episode
+                            g->menu_level = menu_difficulty
+                            g->menu_sel = g->difficulty
+                        else if k == sdl2.key_escape then
+                            g->menu_level = menu_main
+                            g->menu_sel = 0
+                    else if g->menu_level == menu_difficulty then
                         if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + 3) % 4
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % 4
                         else if k == sdl2.key_return || k == sdl2.key_space then
                             g->difficulty = g->menu_sel
-                            restart_full_game(w, vs)
+                            // g->level_num already holds ep*10 from the episode
+                            // picker. Start the selected episode fresh.
+                            start_new_game_here(w, vs)
                             g->has_active_game = true
-                            // Kick music for the first level immediately
-                            // so the menu-to-play transition doesn't miss
-                            // it waiting for the post-tick music_switch.
-                            let new_chunk = 261 + songs[0]
-                            if audio_dev > 0u32 && new_chunk < ad->num_chunks then
-                                sdl2.clear_audio(audio_dev)
-                                if ms.is_some then free(ms!)
-                                ms = some(music_load(ad, new_chunk))
+                            reload_music = true
+                        else if k == sdl2.key_escape then
+                            g->menu_level = menu_episode
+                            g->menu_sel = g->level_num / levels_per_episode
+                    else if g->menu_level == menu_savelist then
+                        if k == sdl2.key_up then
+                            g->menu_sel = (g->menu_sel + num_save_slots - 1) % num_save_slots
+                        else if k == sdl2.key_down then
+                            g->menu_sel = (g->menu_sel + 1) % num_save_slots
+                        else if k == sdl2.key_return || k == sdl2.key_space then
+                            save_game_to_slot(w, g->menu_sel)
+                            refresh_save_slots()
+                            // Return to main menu after save, so user can see
+                            // confirmation in the list.
+                            g->menu_level = menu_main
+                            g->menu_sel = 2
                         else if k == sdl2.key_escape then
                             g->menu_level = menu_main
-                            g->menu_sel = 0
+                            g->menu_sel = 2
+                    else if g->menu_level == menu_loadlist then
+                        if k == sdl2.key_up then
+                            g->menu_sel = (g->menu_sel + num_save_slots - 1) % num_save_slots
+                        else if k == sdl2.key_down then
+                            g->menu_sel = (g->menu_sel + 1) % num_save_slots
+                        else if k == sdl2.key_return || k == sdl2.key_space then
+                            if !save_slots[g->menu_sel].empty then
+                                if load_game_from_slot(w, vs, g->menu_sel) then
+                                    g->has_active_game = true
+                                    reload_music = true
+                        else if k == sdl2.key_escape then
+                            g->menu_level = menu_main
+                            g->menu_sel = 1
+                    // Kick music for whatever level we just loaded. Done outside
+                    // the menu_level branches so both new-game and load-game go
+                    // through the same path.
+                    if reload_music then
+                        let new_chunk = 261 + songs[g->level_num]
+                        if audio_dev > 0u32 && new_chunk < ad->num_chunks then
+                            sdl2.clear_audio(audio_dev)
+                            if ms.is_some then free(ms!)
+                            ms = some(music_load(ad, new_chunk))
                 | gp_paused ->
                     // Any key resumes; Esc goes back to main menu.
                     if k == sdl2.key_escape then
@@ -4760,11 +5659,12 @@ let main = (args: str[]) ->
         // Update
         tick(w, dt)
 
-        // Music volume fade. Intermission / game-over ramp toward zero
-        // over 0.5 s (~= 30 frames at 60fps); gp_playing ramps back up.
+        // Music volume fade. Between-screens (intermission / game-over /
+        // episode-end / victory) ramp toward zero over 0.5 s (~= 30 frames
+        // at 60fps); gp_playing ramps back up.
         if ms.is_some then
             let target = match g->phase with
-            | gp_intermission | gp_game_over -> 0.0
+            | gp_intermission | gp_game_over | gp_episode_end | gp_victory -> 0.0
             | _ -> 1.0
             let fade_step = dt / 0.5
             let cur = ms!->volume
@@ -4780,12 +5680,30 @@ let main = (args: str[]) ->
         // Returns true iff the level itself changed, which means the music
         // chunk for the new level should replace the current one.
         let mut music_switch = update_phase_transitions(w, vs)
-        // Intermission → load next level on space.
+        // Intermission → either episode-end (if we just finished level 8)
+        // or next map. The episode-end screen owns its own space-advance.
         if g->phase == game_phase.gp_intermission && g->phase_timer > 0.0
            && g->key_space && !g->key_space_handled then
             g->key_space_handled = true
-            advance_next_level(w, vs)
+            if g->level_num % levels_per_episode == 8 then
+                enter_episode_end(g)
+            else
+                advance_next_level(w, vs)
+                music_switch = true
+        // Episode-end → next episode's first map (or final victory).
+        if g->phase == game_phase.gp_episode_end && g->phase_timer > 0.0
+           && g->key_space && !g->key_space_handled then
+            g->key_space_handled = true
+            advance_next_episode(w, vs)
             music_switch = true
+        // Final victory → return to main menu.
+        if g->phase == game_phase.gp_victory && g->phase_timer > 0.0
+           && g->key_space && !g->key_space_handled then
+            g->key_space_handled = true
+            g->phase = game_phase.gp_main_menu
+            g->menu_level = menu_main
+            g->menu_sel = 0
+            g->has_active_game = false
         // Game-over: space restarts from level 0 with a fresh game.
         if g->phase == game_phase.gp_game_over
            && g->key_space && !g->key_space_handled then

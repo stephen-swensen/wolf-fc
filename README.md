@@ -96,6 +96,17 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `enemies` | Print totals per enemy kind and per state |
 | `enemylist` | Print each enemy: index, tile, kind, state, direction, hp, area number |
 | `arrows` | Print every plane-1 ICONARROWS path-marker tile (`x,y` and dir 0..7) |
+| `setlevel:N` | Load level N (0..59) and enter gp_playing |
+| `setepisode:N` | Jump to the start of episode N (0..5) — level=N*10 |
+| `setdifficulty:N` | Re-apply difficulty N (0..3) to the current level, re-running spawn filtering |
+| `setphase:X` | Force phase: `title` / `menu` / `epmenu` / `diffmenu` / `savemenu` / `loadmenu` / `paused` / `playing` |
+| `endepisode` | Set `next_level` on current level (quick path to intermission/episode-end screens) |
+| `advance` | Simulate "press space" on intermission / episode-end / victory / game-over |
+| `save:N` | Write the running world to save slot N (0..9) under `~/.wolf-fc/saves/` |
+| `load:N` | Read save slot N back into the world (level reloaded, state overlaid) |
+| `listsaves` | Dump each save slot (`slot N: E<ep>M<lvl> diff=... score=... label=...` or `EMPTY`) |
+| `counters` | Print kills/secrets/treasures counters + par time + phase |
+| `phase` | Print current phase + timer + lives |
 
 ### Examples
 
