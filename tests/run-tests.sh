@@ -175,6 +175,12 @@ assert_contains "ai:guard-wakes-on-sight" \
 assert_contains "ai:sustained-fire-kills-player" \
     "goto:28,60 wait:600 state" \
     "health=0"
+# Wake the dog at (45,34), teleport to the far side of the door at (43,33),
+# then wait for the dog's chase path to push through — the door should no
+# longer be closed (wolf4sdl T_Chase OpenDoor behaviour).
+assert_regex "ai:enemies-open-doors-while-chasing" \
+    "goto:45,34 wait:5 goto:42,33 wait:60 goto:43,33 probe" \
+    'tile \(43,33\) = 137 \(DOOR:(opening|open)\)'
 
 section "weapons:auto-restore"
 # Running out of ammo drops the player to the knife; grabbing the clip that

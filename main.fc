@@ -328,6 +328,15 @@ let chase_speed_for_kind = (k: enemy_kind) ->
     | ek_dog -> dog_chase_speed
     | _      -> enemy_chase_speed
 
+// Bitmask: bit N set = fire (or bite) on entering shoot-frame N. Mutants use
+// a double-shot pattern (T_Shoot on s_mutshoot1 and s_mutshoot3 in wolf4sdl);
+// everyone else fires once at the windup midpoint (frame 2 in our 3-frame
+// shoot cycle, matching the timing of the previous single-fire convention).
+let shoot_fire_mask_for_kind = (k: enemy_kind) ->
+    match k with
+    | ek_mutant -> 5    // 0b0101 — frames 0 and 2
+    | _         -> 4    // 0b0100 — frame 2
+
 // Pickup item to drop on death (item_kind.decoration = nothing). SS drop a
 // machine gun; everyone else drops a clip. Dogs and mutants don't carry weapons.
 let drop_for_kind = (k: enemy_kind) ->
@@ -1595,15 +1604,16 @@ let enemy_sees_player = (lv: level*, g: game*, e: enemy*) ->
         else check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y)
 
 // True iff the tile at (tx, ty) is passable for an enemy trying to move INTO
-// it. Walls and not-fully-open doors block; the player's tile blocks (so
-// enemies don't walk into the camera); other live enemies block. `self_idx`
-// identifies the caller so it doesn't block itself.
+// it. Walls block; the player's tile blocks (so enemies don't walk into the
+// camera); other live enemies block. Doors of any state are routable —
+// `advance_enemy_move` handles the wait-for-open pause and triggers the door
+// to open, matching wolf4sdl T_Chase. `self_idx` identifies the caller so it
+// doesn't block itself.
 let enemy_tile_passable = (lv: level*, g: game*, self_idx: int32, tx: int32, ty: int32) ->
     if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
     else
         let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
         if t >= 1 && t <= 63 then false
-        else if t >= 128 && lv->doors[t - 128].state != door_state.open then false
         else if (int32) g->pos_x == tx && (int32) g->pos_y == ty then false
         else
             let mut blocked = false
@@ -1703,8 +1713,10 @@ let select_path_dir = (lv: level*, g: game*, self_idx: int32) ->
 // Advance this enemy along its current direction by `speed * dt` tiles.
 // When crossing a tile center, consumes the leftover step by picking a new
 // direction (chase or patrol) and continuing — otherwise enemies would slow
-// down noticeably at every grid crossing.
-let advance_enemy_move = (lv: level*, g: game*, self_idx: int32, speed: float64, dt: float64, is_chase: bool) ->
+// down noticeably at every grid crossing. If the next tile is a closed or
+// animating door, kicks it to opening (with sound) and pauses at the current
+// tile center until it's fully open — matches wolf4sdl T_Chase OpenDoor.
+let advance_enemy_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, speed: float64, dt: float64, is_chase: bool) ->
     let mut step = speed * dt
     loop
         if step <= 0.000001 then break
@@ -1713,8 +1725,19 @@ let advance_enemy_move = (lv: level*, g: game*, self_idx: int32, speed: float64,
             if is_chase then select_chase_dir(lv, g, self_idx)
             else select_path_dir(lv, g, self_idx)
             if e->dir == dir_nodir then break
-        let target_x = (float64) (e->tile_x + dir_dx[e->dir]) + 0.5
-        let target_y = (float64) (e->tile_y + dir_dy[e->dir]) + 0.5
+        let ntx = e->tile_x + dir_dx[e->dir]
+        let nty = e->tile_y + dir_dy[e->dir]
+        if ntx >= 0 && ntx < map_size && nty >= 0 && nty < map_size then
+            let nt = (int32) lv->tilemap[(int64) ntx * 64 + (int64) nty]
+            if nt >= 128 && lv->doors[nt - 128].state != door_state.open then
+                if lv->doors[nt - 128].state == door_state.closed then
+                    lv->doors[nt - 128].state = door_state.opening
+                    trigger_sound(snd_open_door, ac)
+                e->x = (float64) e->tile_x + 0.5
+                e->y = (float64) e->tile_y + 0.5
+                break
+        let target_x = (float64) ntx + 0.5
+        let target_y = (float64) nty + 0.5
         let dx = target_x - e->x
         let dy = target_y - e->y
         let dist = math.sqrt(dx * dx + dy * dy)
@@ -1889,7 +1912,7 @@ let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, dt: f
     | es_path ->
         if enemy_sees_player(lv, g, e) then wake_enemy(e, ac)
         else
-            advance_enemy_move(lv, g, self_idx, enemy_patrol_speed, dt, false)
+            advance_enemy_move(lv, g, ac, self_idx, enemy_patrol_speed, dt, false)
             advance_walk_anim(e)
     | es_chase ->
         match e->kind with
@@ -1903,7 +1926,7 @@ let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, dt: f
                 e->anim_timer = shoot_frame_time
                 e->shoot_fired = false
             else
-                advance_enemy_move(lv, g, self_idx, dog_chase_speed, dt, true)
+                advance_enemy_move(lv, g, ac, self_idx, dog_chase_speed, dt, true)
                 advance_walk_anim(e)
         | _ ->
             // Shoot roll: wolf4sdl uses (tics<<4)/dist against a 256-range rnd.
@@ -1923,26 +1946,28 @@ let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, dt: f
                     e->anim_timer = shoot_frame_time
                     e->shoot_fired = false
                     return
-            advance_enemy_move(lv, g, self_idx, chase_speed_for_kind(e->kind), dt, true)
+            advance_enemy_move(lv, g, ac, self_idx, chase_speed_for_kind(e->kind), dt, true)
             advance_walk_anim(e)
     | es_shoot ->
+        let sp = sprites_for_kind(e->kind)
         if e->anim_timer <= 0.0 then
-            let sp = sprites_for_kind(e->kind)
-            // Fire on the second shoot frame (middle of the windup).
-            if !e->shoot_fired && e->anim_frame == 1 then
-                e->shoot_fired = true
-                match e->kind with
-                | ek_dog -> enemy_bite_player(lv, g, ac, e)
-                | _      -> enemy_fire_at_player(lv, g, ac, e)
             e->anim_frame = e->anim_frame + 1
+            e->shoot_fired = false
             if e->anim_frame >= sp.num_shoot_frames then
                 e->state = enemy_state.es_chase
                 e->anim_frame = 0
                 e->anim_timer = walk_frame_time
-                e->shoot_fired = false
                 e->dir = dir_nodir
-            else
-                e->anim_timer = shoot_frame_time
+                return
+            e->anim_timer = shoot_frame_time
+        // Fire on entering each fire-frame in the per-kind mask. shoot_fired
+        // is a per-frame latch so mutants (mask = bits 0 and 2) fire twice.
+        let mask = shoot_fire_mask_for_kind(e->kind)
+        if !e->shoot_fired && (mask & (1 << e->anim_frame)) != 0 then
+            e->shoot_fired = true
+            match e->kind with
+            | ek_dog -> enemy_bite_player(lv, g, ac, e)
+            | _      -> enemy_fire_at_player(lv, g, ac, e)
 
 let update_enemies = (w: world*, dt: float64) ->
     let sprite_start = w->ac->vs->sprite_start
@@ -2015,6 +2040,7 @@ let fire_player_hitscan = (w: world*) ->
     let dmg = weapon_damage_roll(g->weapon, dist)
     if dmg <= 0 then return
     damage_enemy(lv, g, ac, e, dmg, sprite_start)
+    trigger_sound(snd_hit_enemy, ac)
 
 // ============================================================
 // Door animation
@@ -2109,11 +2135,12 @@ let snd_dog_death  = 28
 let snd_death_1    = 29   // guard death scream
 let snd_death_2    = 30   // officer death scream
 let snd_death_3    = 31   // SS death scream
-let snd_count      = 32
+let snd_hit_enemy  = 32   // bullet impact on flesh
+let snd_count      = 33
 
 // Digi-pack index for each snd_* (-1 = no digitized version). The mapping
 // comes from wolf4sdl's wolfdigimap[] for Wolf3D; Spear of Destiny differs.
-let snd_digi = int32[32] {
+let snd_digi = int32[33] {
      3,   // open_door    (OPENDOORSND  -> digi 3)
      2,   // close_door   (CLOSEDOORSND -> digi 2)
      5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
@@ -2145,12 +2172,13 @@ let snd_digi = int32[32] {
     16,   // dog_death    (DOGDEATHSND -> digi 16)
     12,   // death_1      (DEATHSCREAM1SND -> digi 12)
     13,   // death_2      (DEATHSCREAM2SND -> digi 13)
-    13    // death_3      (DEATHSCREAM3SND -> digi 13, shares slot)
+    13,   // death_3      (DEATHSCREAM3SND -> digi 13, shares slot)
+    -1    // hit_enemy    (HITENEMYSND has no digi in Wolf3D)
 }
 
 // AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this). -1 to
 // disable. Enum values taken from wolf4sdl's audiowl6.h.
-let snd_adlib_enum = int32[32] {
+let snd_adlib_enum = int32[33] {
     18,   // open_door    (OPENDOORSND)
     19,   // close_door   (CLOSEDOORSND)
     24,   // atk_pistol   (ATKPISTOLSND)
@@ -2182,7 +2210,8 @@ let snd_adlib_enum = int32[32] {
     10,   // dog_death    (DOGDEATHSND)
     29,   // death_1      (DEATHSCREAM1SND)
     22,   // death_2      (DEATHSCREAM2SND)
-    25    // death_3      (DEATHSCREAM3SND)
+    25,   // death_3      (DEATHSCREAM3SND)
+    27    // hit_enemy    (HITENEMYSND)
 }
 
 // Play a sound by wolf-fc sound ID (one of snd_open_door, etc.). Prefers

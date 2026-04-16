@@ -1,6 +1,6 @@
 # Wolf-FC TODO
 
-## Current State (2026-04-15)
+## Current State (2026-04-16)
 
 Working:
 - DDA raycasting with textured walls from VSWAP.WL6, distance-based shading
@@ -25,6 +25,9 @@ Working:
   - Enemy-fire distance-based hit chance / damage roll (SS are more accurate); dogs melee bite
   - Drops pickup on kill (guard/officer → clip, SS → machine gun, dog/mutant → nothing)
   - Live enemies block player movement with a "can always move away" exception (no mutual-deadlock when an enemy walks onto the player); corpses don't block
+  - Mutants double-shot per shoot cycle (T_Shoot fires on frames 0 and 2); other enemies fire once mid-windup
+  - Enemies open closed doors during chase/patrol — pause at the door tile, kick it open, then walk through (wolf4sdl T_Chase OpenDoor)
+- Player firearm hits trigger HITENEMYSND on impact
 - HUD: health/ammo/score/lives/floor-number digits, gold/silver key indicators
 - Display: 320×200 → 2× upscale → 640×400 texture → `SDL_RenderSetLogicalSize(640,480)` for 4:3
 - F11 fake-fullscreen toggle
@@ -32,7 +35,7 @@ Working:
 - PNG screenshots via `s` key (→ `~/.wolf-fc/screenshots/ss_NNN.png`), with full game-state metadata in a `tEXt` chunk
 - Doors stay open while the player's bbox overlaps the door tile (prevents a closing door from trapping a player straddling its edge) and reopen if the player re-enters mid-close
 - Headless test mode (`--test`) with scripted commands for regression testing (see README.md). Includes `enemies`, `enemylist`, and `probe` (bbox tile diagnostics) dumps.
-- Regression test suite at `tests/run-tests.sh` — 21 scripted scenarios covering spawn, pickups, doors (including straddle lockout), hitscan combat, enemy AI, weapon auto-restore, and the probe command. Supports `-k NAME` filter and `-v` verbose.
+- Regression test suite at `tests/run-tests.sh` — 22 scripted scenarios covering spawn, pickups, doors (including straddle lockout and enemy-opened doors), hitscan combat, enemy AI, weapon auto-restore, and the probe command. Supports `-k NAME` filter and `-v` verbose.
 
 ## Gameplay
 
@@ -40,13 +43,13 @@ Working:
 - [ ] Difficulty selection — currently spawns all tiers regardless of skill. Add a difficulty setting that filters tiles 144+ / 180+ at build time.
 - [ ] Patrol path markers (plane-1 tiles 90..93 "ICON_ARROWS" that redirect T_Path) — currently patrol enemies turn at walls instead of following map-authored routes.
 - [ ] FL_AMBUSH tile (106) handling — enemies on that tile should ignore sound wake-ups.
-- [ ] Enemies opening doors as they walk into them (wolf4sdl's OpenDoor-from-T_Chase path).
+- [x] Enemies opening doors as they walk into them (wolf4sdl's OpenDoor-from-T_Chase path).
 - [ ] Bosses (Hans, Gretel, Schabbs, Fat, Gift, Hitler variants) — currently ignored.
 - [ ] Ghosts (Blinky/Clyde/Pinky/Inky on secret Pacman-homage level).
-- [ ] Mutant-specific double-shot pattern (they fire twice per shoot cycle in wolf4sdl).
+- [x] Mutant-specific double-shot pattern (they fire twice per shoot cycle in wolf4sdl).
 
 ### Weapons and combat
-- [ ] Weapon-specific hit sounds (HITENEMYSND when a shot connects).
+- [x] Weapon-specific hit sounds (HITENEMYSND when a shot connects).
 - [ ] Verify MG/chain pickups are reachable on early levels (now that SS drop MG on death, this should be automatic once SS enemies appear on a level — confirm on E1M3).
 
 ### Game state / death flow
