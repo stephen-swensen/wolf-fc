@@ -464,7 +464,13 @@ module opl2 =
                 out = out + cout
         if out > 1.0 then out = 1.0
         if out < -1.0 then out = -1.0
-        (int16) (out * 16000.0)
+        // Output scale: targets ±22000 (~67% of int16) so AdLib SFX and IMF
+        // music sit within ~3 dB of the full-scale digi mixer. The old 16000
+        // left them 6 dB under digi after digi went to raw*256 — pickup
+        // sounds (GETMACHINESND, GETAMMOSND, etc. all AdLib-only) sounded
+        // noticeably quieter than LEVELDONESND / door-open / gunfire / etc.
+        // Headroom remains for music + SFX sums; the caller clamps.
+        (int16) (out * 22000.0)
 
     // ============================================================
     // Higher-level helpers for id-Software-style AdLib sound effects.
