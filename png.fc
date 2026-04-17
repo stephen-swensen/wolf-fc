@@ -8,7 +8,7 @@ module png =
     import io from std::
 
     // CRC-32 (IEEE 802.3) over buf[start..start+len].
-    let crc32 = (buf: uint8[], start: int64, len: int64) ->
+    let crc32 = (buf: const uint8[], start: int64, len: int64) ->
         let mut c = 0xFFFFFFFFu32
         for i in 0..len
             c = c ^ (uint32) buf[start + i]
@@ -18,7 +18,7 @@ module png =
         c ^ 0xFFFFFFFFu32
 
     // Adler-32 checksum over buf[start..start+len] (for zlib wrapper).
-    let adler32 = (buf: uint8[], start: int64, len: int64) ->
+    let adler32 = (buf: const uint8[], start: int64, len: int64) ->
         let mut s1 = 1u32
         let mut s2 = 0u32
         for i in 0..len
@@ -41,7 +41,7 @@ module png =
     //
     // `metadata`, if non-empty, is embedded as a tEXt chunk with keyword
     // `"Wolf-FC"`. Pass `""` to skip metadata.
-    let write = (path: const str, fb: uint32[], w: int32, h: int32,
+    let write = (path: const str, fb: const uint32[], w: int32, h: int32,
                  metadata: const str) ->
         let row_bytes = 1i64 + (int64) w * 3
         let raw_size = (int64) h * row_bytes

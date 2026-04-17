@@ -5,14 +5,14 @@
 // ============================================================
 
 module bytes =
-    let u16 = (buf: uint8[], off: int64) ->
+    let u16 = (buf: const uint8[], off: int64) ->
         (uint16) buf[off] | ((uint16) buf[off + 1] << 8)
 
-    let u32 = (buf: uint8[], off: int64) ->
+    let u32 = (buf: const uint8[], off: int64) ->
         (uint32) buf[off] | ((uint32) buf[off + 1] << 8) |
             ((uint32) buf[off + 2] << 16) | ((uint32) buf[off + 3] << 24)
 
-    let i32 = (buf: uint8[], off: int64) ->
+    let i32 = (buf: const uint8[], off: int64) ->
         (int32) u32(buf, off)
 
 // ============================================================
@@ -160,11 +160,11 @@ module vswap =
             sprite_headers = headers })!
 
     // File offset of a page.
-    let page_offset = (vs: vswap_file*, page: int32) ->
+    let page_offset = (vs: const vswap_file*, page: int32) ->
         (int64) bytes.u32(vs->raw, 6i64 + (int64) page * 4)
 
     // Length of a page in bytes.
-    let page_length = (vs: vswap_file*, page: int32) ->
+    let page_length = (vs: const vswap_file*, page: int32) ->
         let len_off = 6i64 + (int64) vs->num_chunks * 4 + (int64) page * 2
         (int32) bytes.u16(vs->raw, len_off)
 
@@ -173,11 +173,11 @@ module vswap =
     // the saved bytes.u16 calls in draw_sprite_col. For non-sprite pages
     // (walls, sounds) the result is undefined — call only with page in
     // [sprite_start, sound_start).
-    let sprite_header_at = (vs: vswap_file*, page: int32) ->
+    let sprite_header_at = (vs: const vswap_file*, page: int32) ->
         vs->sprite_headers[page - vs->sprite_start]
 
     // Wall texture pixel (column-major 64x64). Returns palette index.
-    let wall_pixel = (vs: vswap_file*, tex_page: int32, col: int32, row: int32) ->
+    let wall_pixel = (vs: const vswap_file*, tex_page: int32, col: int32, row: int32) ->
         let off = page_offset(vs, tex_page)
         vs->raw[off + (int64) col * 64 + (int64) row]
 
@@ -207,7 +207,7 @@ module maps =
 
     // Carmack decompression: byte source -> word output.
     // byte_len is the expanded output size in bytes.
-    let carmack_expand = (src: uint8[], s_start: int64,
+    let carmack_expand = (src: const uint8[], s_start: int64,
                           dest: uint16[], byte_len: int32) ->
         let near_tag = 0xA7u8
         let far_tag = 0xA8u8
@@ -254,7 +254,7 @@ module maps =
                 remaining = remaining - 1
 
     // RLEW decompression: word source (starting at s_off) -> word output.
-    let rlew_expand = (src: uint16[], s_off: int64,
+    let rlew_expand = (src: const uint16[], s_off: int64,
                        dest: uint16[], tag: uint16) ->
         let mut s = s_off
         let mut d = 0i64
@@ -357,9 +357,9 @@ module vgagraph =
     // (tree_index = value - 256). Each input bit picks bit0 (0) or bit1
     // (1); we reset to root after each output byte and stop when dest is
     // full.
-    let huff_expand = (src: uint8[], src_start: int64,
+    let huff_expand = (src: const uint8[], src_start: int64,
                        dest: uint8[], dest_len: int64,
-                       dict: huffnode[]) ->
+                       dict: const huffnode[]) ->
         if dest_len <= 0 then return
         let head_idx = 254
         let mut node_idx = head_idx
@@ -389,7 +389,7 @@ module vgagraph =
     // expanded length (uint32 LE); the compressed data follows. Returns
     // a heap-allocated uint8[] that the caller owns (empty slice if the
     // chunk is sparse / offset < 0).
-    let decompress_at = (raw: uint8[], dict: huffnode[], offset: int64) ->
+    let decompress_at = (raw: const uint8[], dict: const huffnode[], offset: int64) ->
         if offset < 0 then return alloc(uint8[0] {})!
         let expanded_len = (int64) bytes.u32(raw, offset)
         let dest = alloc(uint8[expanded_len] {})!
@@ -398,7 +398,7 @@ module vgagraph =
 
     // Decompress chunk `chunk` by number. Returns empty slice on out-of-
     // range or sparse chunks.
-    let decompress_chunk = (vg: vgagraph_file*, chunk: int32) ->
+    let decompress_chunk = (vg: const vgagraph_file*, chunk: int32) ->
         if chunk < 0 || chunk >= vg->num_chunks then alloc(uint8[0] {})!
         else decompress_at(vg->raw, vg->dict, vg->offsets[chunk])
 
@@ -469,12 +469,12 @@ module vgagraph =
     // Look up pic dimensions by chunk number. Returns (0,0) for non-pic
     // chunks (font, tile, out-of-range). Caller should validate before
     // using the result for rendering.
-    let pic_width = (vg: vgagraph_file*, chunk: int32) ->
+    let pic_width = (vg: const vgagraph_file*, chunk: int32) ->
         let idx = chunk - start_pics
         if idx < 0 || idx >= vg->num_pics then 0
         else vg->pic_dims[idx].width
 
-    let pic_height = (vg: vgagraph_file*, chunk: int32) ->
+    let pic_height = (vg: const vgagraph_file*, chunk: int32) ->
         let idx = chunk - start_pics
         if idx < 0 || idx >= vg->num_pics then 0
         else vg->pic_dims[idx].height
@@ -483,7 +483,7 @@ module vgagraph =
     // major 8-bit palette-index buffer. Planes are 4-way interleaved: the
     // four bytes at linear[y*w + 4*n + 0..3] come from planes 0..3 at
     // planar[plane*w/4*h + y*w/4 + n]. Width must be a multiple of 4.
-    let unplane = (planar: uint8[], width: int32, height: int32) ->
+    let unplane = (planar: const uint8[], width: int32, height: int32) ->
         let w4 = width / 4
         let size = (int64) width * (int64) height
         let linear = alloc(uint8[size] {})!
@@ -499,7 +499,7 @@ module vgagraph =
 
     // Load a picture chunk and produce a linear 8-bit palette buffer.
     // Returned slice is width * height bytes; caller owns it.
-    let load_pic = (vg: vgagraph_file*, chunk: int32) ->
+    let load_pic = (vg: const vgagraph_file*, chunk: int32) ->
         let w = pic_width(vg, chunk)
         let h = pic_height(vg, chunk)
         if w <= 0 || h <= 0 then return alloc(uint8[0] {})!
@@ -539,10 +539,10 @@ module audio =
 
     // Get offset and length of an audio chunk.
     // Returns (offset, length). Length is from next chunk offset minus this one.
-    let chunk_offset = (ad: audio_data*, chunk: int32) ->
+    let chunk_offset = (ad: const audio_data*, chunk: int32) ->
         bytes.u32(ad->offsets, (int64) chunk * 4)
 
-    let chunk_length = (ad: audio_data*, chunk: int32) ->
+    let chunk_length = (ad: const audio_data*, chunk: int32) ->
         let off = (int64) chunk_offset(ad, chunk)
         let next_off = if chunk + 1 < ad->num_chunks then
             (int64) chunk_offset(ad, chunk + 1)
