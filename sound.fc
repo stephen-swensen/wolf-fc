@@ -84,7 +84,7 @@ module imf =
 
     // Mix `count` samples into `buf` from the music chip while stepping
     // events at 700 Hz. Honors p->volume so callers can fade music out.
-    let fill = (p: player*, buf: int16[], count: int32, sample_rate: int32) ->
+    let fill = (p: player*, buf: int32[], count: int32, sample_rate: int32) ->
         opl2.fill_ticked_vol(p->chip, buf, count, sample_rate, tick_rate,
             &p->tick_accum,
             () -> advance_tick(p),
@@ -216,7 +216,7 @@ module adlib =
 
     // Mix `count` samples into `buf` from the chip while driving note
     // data at 140 Hz. Delegates the sample/tick loop to opl2.fill_ticked.
-    let fill = (st: sfx_state*, buf: int16[], count: int32, sample_rate: int32) ->
+    let fill = (st: sfx_state*, buf: int32[], count: int32, sample_rate: int32) ->
         opl2.fill_ticked(st->chip, buf, count, sample_rate, tick_rate,
             &st->tick_accum,
             () -> advance_tick(st))
@@ -346,14 +346,16 @@ module digi =
     // Mix up to `max_slots` simultaneous 8-bit sounds into `buf` (stereo
     // interleaved L,R,L,R…), resampling nearest-neighbor from 7042 Hz to
     // `sample_rate`. Per-slot pan yields independent L/R gains. Marks a
-    // slot as not playing when its source buffer is exhausted.
-    let fill = (p: player*, buf: int16[], count: int32, sample_rate: int32) ->
+    // slot as not playing when its source buffer is exhausted. No per-stage
+    // clipping — buf is int32 so sums freely overshoot int16; the main loop
+    // soft-clips the final mix at the end of the pipeline.
+    let fill = (p: player*, buf: int32[], count: int32, sample_rate: int32) ->
         let resample_ratio = src_rate / (float64) sample_rate
         for i in 0..count
             let li = (int64) i * 2
             let ri = li + 1
-            let mut sl = (int32) buf[li]
-            let mut sr = (int32) buf[ri]
+            let mut sl = buf[li]
+            let mut sr = buf[ri]
             for s in 0..max_slots
                 if p->slots[s].playing then
                     let src_pos = (int32) p->slots[s].pos
@@ -361,8 +363,7 @@ module digi =
                         // 8-bit unsigned PCM → signed (-128..+127) → scaled
                         // to match the OPL2 driver's peak output so digi and
                         // AdLib SFX sit at roughly equal loudness (OG SB
-                        // hardware-mixer default). Post-mix clamp below
-                        // catches multi-slot / music-summed overflow.
+                        // hardware-mixer default).
                         let raw = (int32) p->slots[s].data[(int64) src_pos] - 128
                         let scaled = raw * pcm_scale
                         sl = sl + (int32) ((float64) scaled * p->slots[s].gain_l)
@@ -370,9 +371,5 @@ module digi =
                         p->slots[s].pos = p->slots[s].pos + resample_ratio
                     else
                         p->slots[s].playing = false
-            if sl > 32767 then sl = 32767
-            if sl < -32767 then sl = -32767
-            if sr > 32767 then sr = 32767
-            if sr < -32767 then sr = -32767
-            buf[li] = (int16) sl
-            buf[ri] = (int16) sr
+            buf[li] = sl
+            buf[ri] = sr

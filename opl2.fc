@@ -516,17 +516,18 @@ module opl2 =
         write(c, 176 + channel, 0)
 
     // Generic tick-driven audio producer. Emits `count` stereo sample frames
-    // from `chip` mixed additively into `buf` (saturating). The `tick_accum`
-    // counter is advanced per frame; whenever it crosses
-    // `sample_rate / tick_rate` frames, `advance` is invoked once to let the
-    // caller process one tick's worth of events (register writes, note
-    // changes, end-of-sound…).
+    // from `chip` mixed additively into `buf`. The `tick_accum` counter is
+    // advanced per frame; whenever it crosses `sample_rate / tick_rate`
+    // frames, `advance` is invoked once to let the caller process one
+    // tick's worth of events (register writes, note changes, etc.).
     //
-    // `buf` is interleaved L,R,L,R,…: two int16 per frame, `count` frames
+    // `buf` is interleaved L,R,L,R,…: two int32 per frame, `count` frames
     // therefore occupies `2 * count` array slots. OPL2 music and AdLib SFX
     // are mono sources — we duplicate each generated sample to both
-    // channels. Real stereo sources (per-slot panned digi) add themselves in
-    // `digi.fill` afterward.
+    // channels. Real stereo sources (per-slot panned digi) add themselves
+    // in `digi.fill` afterward. No per-stage clipping — buf is int32 so
+    // sums can overshoot int16 range freely; the main loop soft-clips the
+    // final mix at the end of the pipeline.
     //
     // Callers own the tick_accum field on their player struct and pass its
     // address; the closure captures a pointer to whatever driver state it
@@ -535,7 +536,7 @@ module opl2 =
     // Used by both the IMF music driver (700 Hz) and the AdLib SFX driver
     // (140 Hz). Each supplies its own event-decode closure.
     let fill_ticked = (c: chip*,
-                       buf: int16[], count: int32,
+                       buf: int32[], count: int32,
                        sample_rate: int32, tick_rate: int32,
                        tick_accum: float64*,
                        advance: () -> void) ->
@@ -544,7 +545,7 @@ module opl2 =
     // Ticked producer with a volume scalar applied to each sample. Used
     // by imf.fill to support music fade-out on level-end / game-over.
     let fill_ticked_vol = (c: chip*,
-                           buf: int16[], count: int32,
+                           buf: int32[], count: int32,
                            sample_rate: int32, tick_rate: int32,
                            tick_accum: float64*,
                            advance: () -> void,
@@ -556,14 +557,8 @@ module opl2 =
             let scaled = (int32) ((float64) s * scale)
             let li = (int64) i * 2
             let ri = li + 1
-            let ml = (int32) buf[li] + scaled
-            let mr = (int32) buf[ri] + scaled
-            buf[li] = if ml > 32767 then 32767i16
-                else if ml < -32768 then -32768i16
-                else (int16) ml
-            buf[ri] = if mr > 32767 then 32767i16
-                else if mr < -32768 then -32768i16
-                else (int16) mr
+            buf[li] = buf[li] + scaled
+            buf[ri] = buf[ri] + scaled
             *tick_accum = *tick_accum + 1.0
             if *tick_accum >= samples_per_tick then
                 *tick_accum = *tick_accum - samples_per_tick
