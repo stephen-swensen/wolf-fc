@@ -249,19 +249,19 @@ assert_contains "damage:hp-drops-not-dying" \
     "phase=playing"
 # `kill` test command drops HP to 0 and flips to dying phase immediately.
 assert_contains "death:kill-enters-dying" "kill phase" "phase=dying"
-# After dying long enough (phase_timer >= death_anim_time = 1.0s = ~35 ticks),
+# After dying long enough (phase_timer >= death_anim_time = 2.2s = ~77 ticks),
 # the level reloads and one life is consumed. Phase is back to playing.
 assert_contains "death:restart-on-death-with-lives" \
-    "kill wait:50 phase" \
+    "kill wait:80 phase" \
     "phase=playing timer= 0.000 lives=2"
 # Deaths spend lives; 4 deaths (3→2→1→0→gameover) land on the game-over screen.
 assert_contains "death:game-over-after-lives-exhausted" \
-    "kill wait:50 kill wait:50 kill wait:50 kill wait:50 phase" \
+    "kill wait:80 kill wait:80 kill wait:80 kill wait:80 phase" \
     "phase=gameover"
 # `advance` test command simulates the space-press that dismisses game-over.
 # Fresh game restored: 3 lives, score 0, level 0, back to player start.
 assert_contains "death:advance-from-game-over-resets" \
-    "kill wait:50 kill wait:50 kill wait:50 kill wait:50 advance state" \
+    "kill wait:80 kill wait:80 kill wait:80 kill wait:80 advance state" \
     "score=0 lives=3 level=0"
 
 section "intermission / level progression"

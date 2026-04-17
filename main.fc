@@ -150,9 +150,13 @@ let menu_loadlist   = 4
 // Number of save slots available in the save/load menus.
 let num_save_slots = 10
 
-// Death collapse duration (seconds). Wolf3D spends ~1s on the red-screen
-// collapse before transitioning to life-loss / game-over.
-let death_anim_time = 1.0
+// Death collapse timing: the red stipple ramps up over `death_fade_time`,
+// then holds at full coverage until `death_anim_time` elapses and the
+// respawn/game-over transition fires. After a respawn, `respawn_fade_time`
+// controls how quickly the red stipple uncovers back to the new scene.
+let death_fade_time = 1.4
+let death_anim_time = 2.2
+let respawn_fade_time = 0.35
 // Red-flash duration on any damage event (seconds). Short; purely visual.
 let damage_flash_time = 0.25
 
@@ -220,6 +224,9 @@ struct game =
     phase: game_phase
     phase_timer: float64       // seconds spent in current phase (for transitions)
     damage_flash_timer: float64  // red tint on damage; decays each tick
+    // Red stipple that uncovers back to the new scene after a death-restart.
+    // Set to `respawn_fade_time` by restart_current_level; decays each tick.
+    respawn_fade_timer: float64
 
     // Per-level counters. Totals come from build_level; current values
     // increment during play. All three are displayed on the intermission
@@ -910,6 +917,7 @@ let reset_player_for_life = (g: game*) ->
     g->next_level = false
     g->made_noise = false
     g->damage_flash_timer = 0.0
+    g->respawn_fade_timer = 0.0
     g->wall_hit_cooldown = 0.0
 
 // Full game reset — triggered after "press space" on the game-over screen.
@@ -1087,6 +1095,9 @@ let restart_current_level = (w: world*, vs: vswap.vswap_file*) ->
     connect_areas(w->lv, g->area_number)
     g->phase = game_phase.gp_playing
     g->phase_timer = 0.0
+    // Seed the respawn uncover: the new scene renders under a full red
+    // stipple that thins out rapidly, rather than a hard cut to gameplay.
+    g->respawn_fade_timer = respawn_fade_time
 
 // Full game reset after game-over. level_num → 0; player state back to
 // fresh-start (3 lives, score 0, full HP, pistol 8 ammo).
@@ -3847,10 +3858,13 @@ let update_weapon = (w: world*, dt: float64) ->
 // they stay in sync. Add new per-frame systems here, not at each caller.
 let tick = (w: world*, dt: float64) ->
     let g = w->g
-    // Damage flash decays every frame regardless of phase.
+    // Damage flash and respawn fade decay every frame regardless of phase.
     if g->damage_flash_timer > 0.0 then
         g->damage_flash_timer = g->damage_flash_timer - dt
         if g->damage_flash_timer < 0.0 then g->damage_flash_timer = 0.0
+    if g->respawn_fade_timer > 0.0 then
+        g->respawn_fade_timer = g->respawn_fade_timer - dt
+        if g->respawn_fade_timer < 0.0 then g->respawn_fade_timer = 0.0
     // Same for the message-banner timer.
     if g->msg_timer > 0.0 then
         g->msg_timer = g->msg_timer - dt
@@ -3975,6 +3989,26 @@ let viewport_tint = (rc: render_ctx*, tint: uint32, alpha: float64) ->
             let b = (float64) (c & 0xFFu32) * inv + tb
             rc->fb[(int64) y * 320 + (int64) x] =
                 0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
+
+// Stippled red dissolve driven by a per-pixel spatial hash. For each pixel,
+// a deterministic 16-bit hash h(x,y) is compared against a threshold derived
+// from `progress` (0..1): pixels whose hash falls below the threshold are
+// painted solid `tint`. Rising progress monotonically adds pixels; falling
+// progress monotonically removes them. The hash uses Knuth-style
+// multiplicative mixing — different constants produce visually similar
+// results, so the choice here is just "something well-mixed and cheap."
+let dissolve_stipple = (rc: render_ctx*, tint: uint32, progress: float64) ->
+    if progress <= 0.0 then return
+    let p = if progress >= 1.0 then 1.0 else progress
+    let threshold = (uint32) (p * 65536.0)
+    let color = 0xFF000000u32 | (tint & 0x00FFFFFFu32)
+    for y in 0..view_h
+        for x in 0..game_w
+            let mut h = (uint32) x * 0x9E3779B1u32 + (uint32) y * 0xC2B2AE35u32
+            h = (h ^ (h >> 13u32)) * 0x85EBCA6Bu32
+            h = (h ^ (h >> 16u32)) & 0xFFFFu32
+            if h < threshold then
+                rc->fb[(int64) y * 320 + (int64) x] = color
 
 // Draw a centered string in the 3D viewport using the 3x5 bitmap font,
 // scaled up to `scale` px per bit. Used by the intermission / game-over
@@ -4339,22 +4373,28 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
     build_billboards(w->lv, w->rc, w->g, vs->sprite_start)
     render_billboards(w->rc, w->g, vs, pal)
     render_weapon(w->rc, vs, pal, w->g)
-    // Damage / death red tint is applied over the 3D view, under the HUD.
-    // (The fall-through below covers both branches — phase-filtered renderers
-    //  return earlier, so this block is only reached during gp_playing or
-    //  gp_dying.)
-    let red_tint = 0x00C00000u32    // color channels; alpha multiplier below
+    // Damage / death red overlays — applied over the 3D view, under the HUD.
+    // Phase-filtered renderers above return early, so this block only runs
+    // during gp_playing or gp_dying. Damage flash is a brief uniform alpha
+    // blend; the longer death + respawn transitions use a spatial-hash
+    // stipple so the scene fills / clears as speckled grains of red.
+    let red_tint = 0x00C00000u32
     let flash_a = if w->g->damage_flash_timer > 0.0 then
         w->g->damage_flash_timer / damage_flash_time * 0.45
     else 0.0
-    let die_a = match w->g->phase with
+    if flash_a > 0.0 then viewport_tint(w->rc, red_tint, flash_a)
+    let stipple_progress = match w->g->phase with
     | gp_dying ->
-        let t = w->g->phase_timer / death_anim_time
-        let clamped = if t > 1.0 then 1.0 else t
-        0.55 + clamped * 0.40    // ramp from 0.55 → 0.95
-    | _ -> 0.0
-    let a = if flash_a > die_a then flash_a else die_a
-    if a > 0.0 then viewport_tint(w->rc, red_tint, a)
+        // Ramp 0 → 1 over death_fade_time, then hold at 1 until
+        // death_anim_time elapses and the phase transition fires.
+        let t = w->g->phase_timer / death_fade_time
+        if t > 1.0 then 1.0 else t
+    | _ ->
+        // Quick uncover back to the new scene on respawn.
+        if w->g->respawn_fade_timer > 0.0 then
+            w->g->respawn_fade_timer / respawn_fade_time
+        else 0.0
+    dissolve_stipple(w->rc, red_tint, stipple_progress)
     render_hud(w->rc, w->vg, pal, w->g)
     render_message(w->rc, w->font, w->g)
 
@@ -5484,7 +5524,8 @@ let main = (args: str[]) ->
         weapon = 1, best_weapon = 1, went_secret = false,
         fire_timer = 0.0, weapon_frame = 0,
         area_number = -1, made_noise = false,
-        phase = game_phase.gp_title, phase_timer = 0.0, damage_flash_timer = 0.0,
+        phase = game_phase.gp_title, phase_timer = 0.0,
+        damage_flash_timer = 0.0, respawn_fade_timer = 0.0,
         kills = 0, total_kills = 0,
         secrets = 0, total_secrets = 0,
         treasures = 0, total_treasures = 0,
