@@ -3187,7 +3187,11 @@ let start_door_opening = (lv: level*, di: int32, g: game*, ac: audio_ctx*) ->
         lv->area_connect[i2 * n + i1] = lv->area_connect[i2 * n + i1] + 1u8
         connect_areas(lv, g->area_number)
     d->state = door_state.opening
-    trigger_sound(snd_open_door, ac)
+    // Matches original-game behavior: the door-open SFX only plays when
+    // the just-connected area is reachable from the player through open
+    // doors. Otherwise distant enemies opening doors spam the SFX channel.
+    if d->area1 >= 0 && d->area1 < num_areas && lv->area_by_player[d->area1] then
+        trigger_sound(snd_open_door, ac)
 
 let update_doors = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
     for i in 0..lv->num_doors
@@ -3217,7 +3221,11 @@ let update_doors = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
                 let bbox_y_in = (int32) (py - player_radius) <= dy && (int32) (py + player_radius) >= dy
                 if !(bbox_x_in && bbox_y_in) then
                     lv->doors[i].state = door_state.closing
-                    trigger_sound(snd_close_door, ac)
+                    // Matches original-game behavior: the door-close SFX
+                    // only plays when the door's area is player-reachable.
+                    let a1 = lv->doors[i].area1
+                    if a1 >= 0 && a1 < num_areas && lv->area_by_player[a1] then
+                        trigger_sound(snd_close_door, ac)
         | closing ->
             // Abort the close and reopen if the player has walked back into
             // our tile during the close (wolf4sdl behaviour). Without this,
