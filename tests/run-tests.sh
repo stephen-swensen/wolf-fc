@@ -282,10 +282,10 @@ assert_contains "intermission:new-level-resets-counters" \
     "goto:25,47 turnl:90 space advance counters" \
     "kills=0/82 secrets=0/4 treasures=0/62"
 # Entering intermission with time 0 awards full par-time bonus: par=90s →
-# (90 - 0) * 500 / 10 = 4500.
+# (90 - 0) * 500 = 45000 (wolf4sdl LevelCompleted, PAR_AMOUNT = 500/sec).
 assert_contains "intermission:par-time-bonus-awarded" \
     "goto:25,47 turnl:90 space state" \
-    "score=4500"
+    "score=45000"
 
 section "counters"
 # A kill increments the kills counter and awards score.

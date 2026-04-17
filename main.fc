@@ -242,6 +242,24 @@ struct game =
     // gp_playing). Compared against par_times on intermission.
     level_time: float64
 
+    // Intermission screen animation state. Only meaningful during
+    // gp_intermission. Mirrors wolf4sdl LevelCompleted's count-up sequence:
+    // time bonus ticks up first, then kill / secret / treasure ratios.
+    //   stage: 0=time, 1=kill, 2=secret, 3=treasure, 4=done (awaiting space)
+    //   counter: current value rendered in the active stage
+    //   progress: fractional accumulator that drives counter at a fixed rate
+    //   bonus_shown: running "BONUS" line displayed at the top-right
+    //   target_timeleft / target_kr / target_sr / target_tr: cached goals
+    inter_stage: int32
+    inter_counter: int32
+    inter_progress: float64
+    inter_bonus_shown: int32
+    inter_target_timeleft: int32
+    inter_target_kr: int32
+    inter_target_sr: int32
+    inter_target_tr: int32
+    inter_breathe_timer: float64   // drives L_GUYPIC/L_GUY2PIC alternation
+
     // Difficulty: 0=Daddy, 1=Don't Hurt Me, 2=Bring 'em On, 3=Death Incarnate.
     // Controls which tile blocks spawn enemies (base/+36/+72 per wolf4sdl
     // ScanInfoPlane). Default gd_hard (2) matches the previous single-tier
@@ -931,17 +949,26 @@ let reset_player_for_new_game = (g: game*) ->
 // par-time and for 100% kills / secrets / treasures. Awarded once as the
 // intermission is entered; displayed on the intermission screen.
 // Values mirror wolf4sdl's LevelCompleted calculation:
-//   time bonus: +500 * (par_seconds - time_seconds) / 10  (minimum 0)
-//   100% kills:     +10000
+//   time bonus: +500 per second beaten par (PAR_AMOUNT = 500)
+//   100% kills:     +10000   (PERCENT100AMT)
 //   100% secrets:   +10000
 //   100% treasures: +10000
-let compute_level_bonus = (g: game*) ->
+let par_amount_per_sec = 500
+let percent_100_bonus  = 10000
+
+let compute_time_left = (g: game*) ->
     let par = if g->level_num < 60 then par_times[g->level_num] else 0
     let t = (int32) g->level_time
-    let time_bonus = if par > 0 && t < par then (par - t) * 500 / 10 else 0
-    let kill_bonus = if g->total_kills > 0 && g->kills >= g->total_kills then 10000 else 0
-    let secret_bonus = if g->total_secrets > 0 && g->secrets >= g->total_secrets then 10000 else 0
-    let treas_bonus = if g->total_treasures > 0 && g->treasures >= g->total_treasures then 10000 else 0
+    if par > 0 && t < par then par - t else 0
+
+let compute_ratio = (cur: int32, tot: int32) ->
+    if tot <= 0 then 0 else (cur * 100) / tot
+
+let compute_level_bonus = (g: game*) ->
+    let time_bonus = compute_time_left(g) * par_amount_per_sec
+    let kill_bonus = if g->total_kills > 0 && g->kills >= g->total_kills then percent_100_bonus else 0
+    let secret_bonus = if g->total_secrets > 0 && g->secrets >= g->total_secrets then percent_100_bonus else 0
+    let treas_bonus = if g->total_treasures > 0 && g->treasures >= g->total_treasures then percent_100_bonus else 0
     time_bonus + kill_bonus + secret_bonus + treas_bonus
 
 // Copy a const str into g->msg_buf and arm the message timer. The buffer
@@ -978,14 +1005,27 @@ let render_message = (rc: render_ctx*, font: font_info*, g: game*) ->
 // timer starts at 0 so the "press space to continue" gate needs at least
 // one frame before it will fire — prevents an in-flight space press from
 // instantly skipping the screen.
-let enter_intermission = (g: game*) ->
+let enter_intermission = (g: game*, ac: audio_ctx*) ->
     g->phase = game_phase.gp_intermission
     g->phase_timer = 0.0
     // Award the computed level-completion bonus to the running score so the
     // intermission total reflects it immediately and carries into the next
-    // level. Wolf4sdl shows the bonuses ticking up over the first few
-    // frames; we're fine awarding once up front.
+    // level. The classic screen animates the ticker counting up to this
+    // value; awarding once up front keeps save/advance simpler.
     g->score = g->score + compute_level_bonus(g)
+    // Cache the animation targets. Stage starts at 0 (time bonus counting).
+    g->inter_stage = 0
+    g->inter_counter = 0
+    g->inter_progress = 0.0
+    g->inter_bonus_shown = 0
+    g->inter_target_timeleft = compute_time_left(g)
+    g->inter_target_kr = compute_ratio(g->kills, g->total_kills)
+    g->inter_target_sr = compute_ratio(g->secrets, g->total_secrets)
+    g->inter_target_tr = compute_ratio(g->treasures, g->total_treasures)
+    g->inter_breathe_timer = 0.0
+    // Kick off the ENDLEVEL music ticker sound so the screen doesn't open
+    // silent; first bonus tick will overlay within ~0.2s.
+    trigger_sound(snd_end_bonus1, ac)
     // Clear held inputs so the player isn't sprinting into a wall when
     // the next level loads.
     g->key_up = false
@@ -994,6 +1034,68 @@ let enter_intermission = (g: game*) ->
     g->key_right = false
     g->key_fire = false
     g->key_space_handled = true    // suppress accidental instant-advance
+
+// Count-up rates for the intermission animation (units per second).
+// Slow enough that the counter is clearly animating, fast enough that the
+// full screen settles in under ~4 seconds on a long level.
+let inter_time_rate  = 40.0
+let inter_ratio_rate = 25.0
+
+// Jump the intermission animation to its final "everything shown" state.
+// Invoked when the player hits space mid-animation — mirrors wolf4sdl's
+// `if (IN_CheckAck()) goto done` behaviour inside the counter loops.
+let finish_intermission_anim = (g: game*) ->
+    g->inter_stage = 4
+    g->inter_counter = 0
+    g->inter_progress = 0.0
+    g->inter_bonus_shown = compute_level_bonus(g)
+
+// Advance the intermission count-up animation one frame. Fires count-up
+// tick sounds every 10 units and a stage-end sound (100% / non-100% / none)
+// when each counter reaches its target.
+let tick_intermission = (g: game*, ac: audio_ctx*, dt: float64) ->
+    if g->inter_stage >= 4 then
+        g->inter_breathe_timer = g->inter_breathe_timer + dt
+        return
+    g->inter_breathe_timer = g->inter_breathe_timer + dt
+    let rate = if g->inter_stage == 0 then inter_time_rate else inter_ratio_rate
+    let target = match g->inter_stage with
+    | 0 -> g->inter_target_timeleft
+    | 1 -> g->inter_target_kr
+    | 2 -> g->inter_target_sr
+    | 3 -> g->inter_target_tr
+    | _ -> 0
+    let prev = g->inter_counter
+    g->inter_progress = g->inter_progress + rate * dt
+    let mut cur = (int32) g->inter_progress
+    if cur > target then cur = target
+    g->inter_counter = cur
+    // Update the live "BONUS" line for stage 0 (time). For stages 1..3, the
+    // bonus only jumps when a 100% threshold is crossed — handled below at
+    // stage completion.
+    if g->inter_stage == 0 then
+        g->inter_bonus_shown = cur * par_amount_per_sec
+    // Tick sound every time we cross a multiple of 10.
+    if cur > prev && (cur / 10) > (prev / 10) then
+        trigger_sound(snd_end_bonus1, ac)
+    // Stage finished?
+    if cur >= target then
+        // Sync bonus_shown to the stage's final value (rounds off fractional
+        // drift and applies 100% bonus for the completed ratio stage).
+        if g->inter_stage == 0 then
+            g->inter_bonus_shown = target * par_amount_per_sec
+            trigger_sound(snd_end_bonus2, ac)
+        else
+            if target >= 100 then
+                g->inter_bonus_shown = g->inter_bonus_shown + percent_100_bonus
+                trigger_sound(snd_percent100, ac)
+            else if target == 0 then
+                trigger_sound(snd_no_bonus, ac)
+            else
+                trigger_sound(snd_end_bonus2, ac)
+        g->inter_stage = g->inter_stage + 1
+        g->inter_counter = 0
+        g->inter_progress = 0.0
 
 // Free the current level + lv_data and load + build the level at level_num.
 // Shared by every transition path (next-level / restart / new-game). After
@@ -1143,7 +1245,7 @@ let update_phase_transitions = (w: world*, vs: vswap.vswap_file*) ->
     let mut level_changed = false
     if g->next_level && g->phase == game_phase.gp_playing then
         g->next_level = false
-        enter_intermission(g)
+        enter_intermission(g, w->ac)
     if g->phase == game_phase.gp_dying && g->phase_timer >= death_anim_time then
         if g->lives > 0 then
             g->lives = g->lives - 1
@@ -2164,6 +2266,7 @@ let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
                     (int64) ((int32) g->pos_x) * 64 + (int64) ((int32) g->pos_y)]
                 if stand_area == 0 then g->went_secret = true
                 g->next_level = true
+                trigger_sound(snd_level_done, ac)
                 did_anything = true
         // Try push-wall (only if facing cardinally).
         let push_dx = if g->dir_x > 0.5 then 1 else if g->dir_x < -0.5 then -1 else 0
@@ -3212,11 +3315,17 @@ let snd_hitlerha       = 54   // HITLERHASND — Fake Hitler death
 let snd_die            = 55   // DIESND — Mecha/Real Hitler sighting
 let snd_scheist        = 56   // SCHEISTSND — Mecha Hitler death
 let snd_eva            = 57   // EVASND — Real Hitler death
-let snd_count      = 58
+// --- Intermission / elevator sounds ---
+let snd_level_done     = 58   // LEVELDONESND — elevator switch "ding"
+let snd_end_bonus1     = 59   // ENDBONUS1SND — per-tick counter during countup
+let snd_end_bonus2     = 60   // ENDBONUS2SND — counter stopped (non-100%)
+let snd_percent100     = 61   // PERCENT100SND — 100% ratio bonus
+let snd_no_bonus       = 62   // NOBONUSSND — 0% ratio
+let snd_count      = 63
 
 // Digi-pack index for each snd_* (-1 = no digitized version). The mapping
 // comes from wolf4sdl's wolfdigimap[] for Wolf3D; Spear of Destiny differs.
-let snd_digi = int32[58] {
+let snd_digi = int32[63] {
      3,   // open_door    (OPENDOORSND  -> digi 3)
      2,   // close_door   (CLOSEDOORSND -> digi 2)
      5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
@@ -3276,12 +3385,17 @@ let snd_digi = int32[58] {
     -1,   // hitlerha
     -1,   // die
     -1,   // scheist
-    -1    // eva
+    -1,   // eva
+    30,   // level_done   (LEVELDONESND -> digi 30)
+    -1,   // end_bonus1   (no digi — AdLib only)
+    -1,   // end_bonus2   (no digi — AdLib only)
+    -1,   // percent100   (no digi — AdLib only)
+    -1    // no_bonus     (no digi — AdLib only)
 }
 
 // AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this). -1 to
 // disable. Enum values taken from wolf4sdl's audiowl6.h.
-let snd_adlib_enum = int32[58] {
+let snd_adlib_enum = int32[63] {
     18,   // open_door    (OPENDOORSND)
     19,   // close_door   (CLOSEDOORSND)
     24,   // atk_pistol   (ATKPISTOLSND)
@@ -3339,7 +3453,12 @@ let snd_adlib_enum = int32[58] {
     65,   // hitlerha     (HITLERHASND — Fake Hitler death)
     53,   // die          (DIESND — Hitler sighting)
     57,   // scheist      (SCHEISTSND — Mecha Hitler death)
-    54    // eva          (EVASND — Real Hitler death)
+    54,   // eva          (EVASND — Real Hitler death)
+    40,   // level_done   (LEVELDONESND)
+    42,   // end_bonus1   (ENDBONUS1SND)
+    43,   // end_bonus2   (ENDBONUS2SND)
+    48,   // percent100   (PERCENT100SND)
+    47    // no_bonus     (NOBONUSSND)
 }
 
 // Play a sound by wolf-fc sound ID (one of snd_open_door, etc.). Prefers
@@ -3436,6 +3555,19 @@ let vg_chain  = 94
 
 // Number digits at the status bar: N_BLANKPIC (98) + N_0PIC (99) .. N_9PIC (108).
 let vg_n_blank = 98
+
+// LEVELEND_LUMP pics (wolf4sdl gfxv_wl6.h chunks 43..85): BJ portrait,
+// large-font letters / digits / punctuation, and BJ-wins art. Used by the
+// classic Wolf3D intermission "floor completed" screen.
+let vg_l_guy         = 43   // BJ portrait (breathing frame A)
+let vg_l_colon       = 44
+let vg_l_num0        = 45   // L_NUM0PIC..L_NUM9PIC = 45..54
+let vg_l_percent     = 55
+let vg_l_a           = 56   // L_APIC..L_ZPIC = 56..81
+let vg_l_expoint     = 82
+let vg_l_apostrophe  = 83
+let vg_l_guy2        = 84   // BJ portrait (breathing frame B)
+let vg_l_bjwins      = 85   // BJ-wins art for the episode-end screen
 
 // Draw a decoded VGA-planar pic at (dst_x, dst_y) in the framebuffer.
 // Pixels outside the fb are clipped. `pal` is the 256-entry ARGB palette.
@@ -3888,6 +4020,8 @@ let tick = (w: world*, dt: float64) ->
         check_pickups(w->lv, g, w->ac)
     | _ ->
         g->phase_timer = g->phase_timer + dt
+        if g->phase == game_phase.gp_intermission then
+            tick_intermission(g, w->ac, dt)
     // Phase transitions (death collapse → restart / game-over). Main loop
     // layers music switching on top of this; test mode doesn't need music
     // so it can ignore the return value.
@@ -4019,69 +4153,165 @@ let draw_centered_text = (rc: render_ctx*, y: int32, s: const str, color: uint32
     let x = (game_w - tw) / 2
     draw_text(rc, x, y, s, color, scale)
 
-// Intermission screen: "FLOOR N COMPLETE" plus kill/secret/treasure % and
-// time-vs-par. Painted over a black background (not the wall view) so it's
-// unambiguously a between-levels screen.
-let render_intermission = (rc: render_ctx*, g: game*) ->
-    for i in 0..(game_w * game_h)
-        rc->fb[i] = 0xFF000000u32
-    let white = 0xFFFFFFFFu32
-    let yellow = 0xFFFFD700u32
-    let gray = 0xFFB0B0B0u32
-    // Title line: "FLOOR N COMPLETE" rendered as three draw calls with a
-    // single baseline. Measure each piece to center the whole string.
-    let scale = 2
-    let cw = 3 * scale + scale       // per-char width (glyph + gap)
-    let w_floor = 5 * cw - scale
-    let w_num = (if g->level_num + 1 >= 10 then 2 else 1) * cw - scale
-    let w_comp = 8 * cw - scale
-    let w_gap = scale * 4    // generous spacing between "FLOOR", number, "COMPLETE"
-    let w_total = w_floor + w_gap + w_num + w_gap + w_comp
-    let title_x = (game_w - w_total) / 2
-    draw_text(rc, title_x, 14, "FLOOR", yellow, scale)
-    // draw_number places the rightmost digit at x; we want the digits to
-    // fit inside [title_x + w_floor + w_gap, +w_num], so the rightmost
-    // digit lands at (that_left + w_num - cw + scale).
-    let num_left = title_x + w_floor + w_gap
-    let num_x = num_left + w_num - cw + scale
-    draw_number(rc, num_x, 14, g->level_num + 1, yellow, scale)
-    draw_text(rc, num_left + w_num + w_gap, 14, "COMPLETE", yellow, scale)
+// Draw a single character from the LEVELEND_LUMP pic set. Returns the pixel
+// advance after the glyph. Matches wolf4sdl's Write() dispatch: letters,
+// digits, and '%' advance 16 px (the pics are drawn inside 16-wide cells);
+// ':', '!', "'" advance 8 px; ' ' just advances 16.
+let write_lpic_char = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+                       x: int32, y: int32, ch: int32) ->
+    // Uppercase lowercase letters in place.
+    let mut c = ch
+    if c >= 97 && c <= 122 then c = c - 32
+    if c == 32 then
+        16    // space — no draw, wide advance
+    else if c == 58 then
+        draw_vg_pic(rc, vg, pal, vg_l_colon, x, y)
+        8
+    else if c == 33 then
+        draw_vg_pic(rc, vg, pal, vg_l_expoint, x, y)
+        8
+    else if c == 39 then
+        draw_vg_pic(rc, vg, pal, vg_l_apostrophe, x, y)
+        8
+    else if c == 37 then
+        draw_vg_pic(rc, vg, pal, vg_l_percent, x, y)
+        16
+    else if c >= 48 && c <= 57 then
+        draw_vg_pic(rc, vg, pal, vg_l_num0 + (c - 48), x, y)
+        16
+    else if c >= 65 && c <= 90 then
+        draw_vg_pic(rc, vg, pal, vg_l_a + (c - 65), x, y)
+        16
+    else
+        16    // unsupported glyph; blank cell
 
-    // Stats block — labels on the left, digits on the right (scale 1 font).
-    let secs = (int32) g->level_time
-    let mm = secs / 60
-    let ss = secs % 60
+// Draw a string using the LEVELEND_LUMP letter/digit pics, starting at
+// pixel (x, y). `\n` resets x and advances y by 16 px (one row).
+let write_lpic_text = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+                       x: int32, y: int32, s: const str) ->
+    let mut nx = x
+    let mut ny = y
+    for i in 0..(int32) s.len
+        let ch = (int32) s[(int64) i]
+        if ch == 10 then
+            nx = x
+            ny = ny + 16
+        else
+            nx = nx + write_lpic_char(rc, vg, pal, nx, ny, ch)
+
+// Write a number using the big L_NUM pics. `align_right` = true right-aligns
+// the last digit at pixel column `x`; false starts the first digit at x.
+let write_lpic_number = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+                         x: int32, y: int32, num: int32, align_right: bool) ->
+    let mut n = if num < 0 then 0 else num
+    let mut digits = int32[12] {}
+    let mut count = 0
+    if n == 0 then
+        digits[0] = 0
+        count = 1
+    else
+        loop
+            if n == 0 then break
+            if count >= 12 then break
+            digits[count] = n % 10
+            n = n / 10
+            count = count + 1
+    let start_x = if align_right then x - count * 16 else x
+    for i in 0..count
+        let d = digits[count - 1 - i]
+        draw_vg_pic(rc, vg, pal, vg_l_num0 + d, start_x + i * 16, y)
+
+// Fill the framebuffer with a single palette-indexed color. Used for the
+// intermission background (VIEWCOLOR = 0x7f, a mid grey matching wolf3d).
+let fb_fill_palette = (rc: render_ctx*, pal: uint32[], idx: int32) ->
+    let color = pal[idx]
+    for i in 0..(game_w * game_h)
+        rc->fb[i] = color
+
+// Classic Wolf3D intermission: faithful recreation of LevelCompleted().
+// Background is a mid-grey fill (palette 0x7F VIEWCOLOR), BJ portrait on the
+// left (breathing), "floor N completed" caption, bonus / time / par lines,
+// and live kill / secret / treasure ratios animated via tick_intermission.
+let render_intermission = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+                           g: game*) ->
+    fb_fill_palette(rc, pal, 0x7F)
+
+    // BJ portrait — alternate L_GUYPIC / L_GUY2PIC every ~0.5s for a gentle
+    // breathing effect. Positioned at cell (0, 2) = pixel (0, 16) per wolf4sdl.
+    let breathe = ((int32) (g->inter_breathe_timer * 2.0)) % 2
+    let guy_pic = if breathe == 0 then vg_l_guy else vg_l_guy2
+    draw_vg_pic(rc, vg, pal, guy_pic, 0, 16)
+
+    // Caption: "floor\ncompleted" drawn at cell (14, 2) per wolf4sdl.
+    write_lpic_text(rc, vg, pal, 14 * 8, 2 * 8, "FLOOR\nCOMPLETED")
+    // Level number left-aligned at cell (26, 2).
+    let mapon = g->level_num % levels_per_episode + 1
+    write_lpic_number(rc, vg, pal, 26 * 8, 2 * 8, mapon, false)
+
+    // BONUS line at cell (14, 7). Label + right-aligned number at column 36.
+    write_lpic_text(rc, vg, pal, 14 * 8, 7 * 8, "BONUS")
+    write_lpic_number(rc, vg, pal, 36 * 8, 7 * 8, g->inter_bonus_shown, true)
+
+    // TIME and PAR rows at cells (16, 10) and (16, 12). Numbers drawn as
+    // 2-digit mm + colon + 2-digit ss starting at cell column 26.
+    write_lpic_text(rc, vg, pal, 16 * 8, 10 * 8, "TIME")
+    write_lpic_text(rc, vg, pal, 16 * 8, 12 * 8, " PAR")
+    let mut sec_total = (int32) g->level_time
+    if sec_total > 99 * 60 then sec_total = 99 * 60
+    let mm = sec_total / 60
+    let ss = sec_total % 60
+    let mut tx = 26 * 8
+    draw_vg_pic(rc, vg, pal, vg_l_num0 + mm / 10, tx, 10 * 8)
+    tx = tx + 16
+    draw_vg_pic(rc, vg, pal, vg_l_num0 + mm % 10, tx, 10 * 8)
+    tx = tx + 16
+    draw_vg_pic(rc, vg, pal, vg_l_colon, tx, 10 * 8)
+    tx = tx + 8
+    draw_vg_pic(rc, vg, pal, vg_l_num0 + ss / 10, tx, 10 * 8)
+    tx = tx + 16
+    draw_vg_pic(rc, vg, pal, vg_l_num0 + ss % 10, tx, 10 * 8)
+    // Par row (unknown-par levels render "??:??" — wolf3d's boss & secret
+    // levels, which for us is level_num % 10 == 8 or 9).
     let par = if g->level_num < 60 then par_times[g->level_num] else 0
-    let pm = par / 60
-    let ps = par % 60
-    // Row 1: time / par.
-    draw_text(rc, 40, 58, "TIME", white, 1)
-    draw_number(rc, 94, 58, mm, gray, 1)
-    draw_text(rc, 98, 58, "M", gray, 1)
-    draw_number(rc, 124, 58, ss, gray, 1)
-    draw_text(rc, 128, 58, "S", gray, 1)
-    draw_text(rc, 172, 58, "PAR", white, 1)
-    draw_number(rc, 214, 58, pm, gray, 1)
-    draw_text(rc, 218, 58, "M", gray, 1)
-    draw_number(rc, 244, 58, ps, gray, 1)
-    draw_text(rc, 248, 58, "S", gray, 1)
-    // Rows 2..4: counters.
-    let pct = (cur: int32, tot: int32) ->
-        if tot <= 0 then 100 else (cur * 100) / tot
-    draw_text(rc, 40, 78, "KILLS", white, 1)
-    draw_number(rc, 180, 78, pct(g->kills, g->total_kills), gray, 1)
-    draw_text(rc, 188, 78, "PERCENT", gray, 1)
-    draw_text(rc, 40, 92, "SECRETS", white, 1)
-    draw_number(rc, 180, 92, pct(g->secrets, g->total_secrets), gray, 1)
-    draw_text(rc, 188, 92, "PERCENT", gray, 1)
-    draw_text(rc, 40, 106, "TREASURE", white, 1)
-    draw_number(rc, 180, 106, pct(g->treasures, g->total_treasures), gray, 1)
-    draw_text(rc, 188, 106, "PERCENT", gray, 1)
-    // Running score. Reflects the bonus already added in enter_intermission.
-    draw_text(rc, 40, 122, "SCORE", yellow, 1)
-    draw_number(rc, 200, 122, g->score, yellow, 1)
-    // Prompt at bottom.
-    draw_centered_text(rc, 140, "PRESS SPACE", white, 1)
+    tx = 26 * 8
+    if par <= 0 then
+        write_lpic_text(rc, vg, pal, tx, 12 * 8, "??:??")
+    else
+        let pm = par / 60
+        let ps = par % 60
+        draw_vg_pic(rc, vg, pal, vg_l_num0 + pm / 10, tx, 12 * 8)
+        tx = tx + 16
+        draw_vg_pic(rc, vg, pal, vg_l_num0 + pm % 10, tx, 12 * 8)
+        tx = tx + 16
+        draw_vg_pic(rc, vg, pal, vg_l_colon, tx, 12 * 8)
+        tx = tx + 8
+        draw_vg_pic(rc, vg, pal, vg_l_num0 + ps / 10, tx, 12 * 8)
+        tx = tx + 16
+        draw_vg_pic(rc, vg, pal, vg_l_num0 + ps % 10, tx, 12 * 8)
+
+    // RATIOS — labels left-aligned, numbers right-aligned at column 37.
+    write_lpic_text(rc, vg, pal, 9 * 8, 14 * 8, "KILL RATIO    %")
+    write_lpic_text(rc, vg, pal, 5 * 8, 16 * 8, "SECRET RATIO    %")
+    write_lpic_text(rc, vg, pal, 1 * 8, 18 * 8, "TREASURE RATIO    %")
+    // Stage gating: each ratio shows its current count-up value in its
+    // active stage; earlier stages show their final value; later stages
+    // show nothing yet.
+    let kr_shown = if g->inter_stage > 1 then g->inter_target_kr
+                   else if g->inter_stage == 1 then g->inter_counter
+                   else -1
+    let sr_shown = if g->inter_stage > 2 then g->inter_target_sr
+                   else if g->inter_stage == 2 then g->inter_counter
+                   else -1
+    let tr_shown = if g->inter_stage > 3 then g->inter_target_tr
+                   else if g->inter_stage == 3 then g->inter_counter
+                   else -1
+    let ratio_right = 37 * 8
+    if kr_shown >= 0 then
+        write_lpic_number(rc, vg, pal, ratio_right, 14 * 8, kr_shown, true)
+    if sr_shown >= 0 then
+        write_lpic_number(rc, vg, pal, ratio_right, 16 * 8, sr_shown, true)
+    if tr_shown >= 0 then
+        write_lpic_number(rc, vg, pal, ratio_right, 18 * 8, tr_shown, true)
 
 // Game-over screen: black background, big "GAME OVER", score, prompt.
 let render_game_over = (rc: render_ctx*, g: game*) ->
@@ -4357,7 +4587,7 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
         render_main_menu(w->rc, w->vg, pal, w->font, w->g)
         return
     | gp_intermission ->
-        render_intermission(w->rc, w->g)
+        render_intermission(w->rc, w->vg, pal, w->g)
         return
     | gp_game_over ->
         render_game_over(w->rc, w->g)
@@ -5177,8 +5407,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
     else if arg == "advance" then
         // Simulates the "press space" that dismisses an intermission /
         // game-over / episode-end / victory screen. Test-mode equivalent of
-        // the interactive space-bar path. No-op outside those phases.
+        // the interactive space-bar path, but collapses animation-skip +
+        // advance into one step so scripted tests don't need two hops.
         if g->phase == game_phase.gp_intermission then
+            if g->inter_stage < 4 then finish_intermission_anim(g)
             if g->level_num % levels_per_episode == 8 then
                 enter_episode_end(g)
             else
@@ -5530,6 +5762,11 @@ let main = (args: str[]) ->
         secrets = 0, total_secrets = 0,
         treasures = 0, total_treasures = 0,
         level_time = 0.0,
+        inter_stage = 0, inter_counter = 0, inter_progress = 0.0,
+        inter_bonus_shown = 0,
+        inter_target_timeleft = 0, inter_target_kr = 0,
+        inter_target_sr = 0, inter_target_tr = 0,
+        inter_breathe_timer = 0.0,
         difficulty = gd_hard,
         menu_sel = 0, menu_level = menu_main,
         music_on = true, want_quit = false,
@@ -5850,10 +6087,14 @@ let main = (args: str[]) ->
         update_phase_transitions(w, vs)
         // Intermission → either episode-end (if we just finished level 8)
         // or next map. The episode-end screen owns its own space-advance.
+        // First press of space while the count-up is running skips animation
+        // to the final "everything shown" state; next press advances.
         if g->phase == game_phase.gp_intermission && g->phase_timer > 0.0
            && g->key_space && !g->key_space_handled then
             g->key_space_handled = true
-            if g->level_num % levels_per_episode == 8 then
+            if g->inter_stage < 4 then
+                finish_intermission_anim(g)
+            else if g->level_num % levels_per_episode == 8 then
                 enter_episode_end(g)
             else
                 advance_next_level(w, vs)

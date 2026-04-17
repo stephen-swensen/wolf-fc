@@ -1,6 +1,26 @@
 # Wolf-FC TODO
 
-## Current State (2026-04-16)
+## Current State (2026-04-17)
+
+### Recent additions (this session, part 5)
+- Elevator switch now plays the classic LEVELDONESND (digi 30 / AdLib 40) when
+  the player uses it — added `snd_level_done` + `snd_end_bonus1` / `_bonus2` /
+  `snd_percent100` / `snd_no_bonus` entries to the sound tables.
+- Classic Wolf3D intermission screen: L_GUYPIC/L_GUY2PIC breathing BJ portrait,
+  L_APIC..L_ZPIC big-letter font and L_NUM0..9/L_COLON/L_PERCENT digits/punct
+  from the LEVELEND lump, VIEWCOLOR (0x7F) background, "floor N completed"
+  caption, BONUS / TIME / PAR lines, KILL/SECRET/TREASURE RATIO rows. New
+  `write_lpic_text` + `write_lpic_number` helpers.
+- Intermission count-up animation via `tick_intermission`: stage machine
+  (time → kill % → secret % → treasure %), ticks ENDBONUS1SND every 10 units,
+  plays PERCENT100SND / ENDBONUS2SND / NOBONUSSND at each stage end, updates
+  live BONUS running total.
+- `compute_level_bonus` now uses wolf4sdl's full 500/sec par bonus (previously
+  divided by 10). Test `intermission:par-time-bonus-awarded` updated from
+  score=4500 to score=45000 to match.
+- Space during intermission animation skips to the final "everything shown"
+  state; a second press advances to the next level. The `advance` test
+  command collapses both steps into one so regression tests stay single-hop.
 
 ### Recent additions (this session, part 4)
 - Esc from `gp_playing` now jumps straight to the main menu (no separate
