@@ -156,6 +156,7 @@ Working:
 - [x] BJ face with health-driven expressions (7 frames from healthy to near-dead; dying-phase locks to worst face).
 - [x] Full Wolf3D status bar: STATUSBARPIC, number pics for all fields, weapon icon, key indicators.
 - [x] Weapon icon on status bar.
+- [ ] BJ face idle animation (look left/center/right gaze variants cycling on a timer, per wolf4sdl).
 
 ## Audio
 
@@ -187,6 +188,7 @@ Working:
 - [ ] Consider splitting `main.fc` (render / pickups / weapons / enemies) once enemies land and it grows further
 - [x] Pre-extract sprite column headers (leftpix/rightpix/col_offsets) at load — avoids repeated bytes.u16 reads per draw_sprite_col call. Column-level run-list is still parsed at draw time; further pre-decoding to flat pixel rows is possible but not yet needed.
 - [ ] Widen tilemap to uint16 if more tile states are needed for enemy blocking / secret flags
+- [ ] Audit codebase for appropriate use of FC's `const` feature (promote module-level `let` bindings that are true compile-time constants).
 
 ## Reference
 
