@@ -236,6 +236,12 @@ module digi =
 
     let src_rate = 7042.0
     let max_slots = 4
+    // Per-sample scale for 8-bit signed PCM (-128..+127) → int16 output.
+    // Chosen so center-pan peak (128 * scale * gain 1.0) ≈ ±22000, matching
+    // the OPL2 driver's `out * 22000.0` output scale. OG Sound Blaster had
+    // its PCM and FM channels roughly level-matched in the hardware mixer;
+    // we hit the same balance by tying the two scales together here.
+    let pcm_scale = 172
 
     struct slot =
         data: uint8[]        // heap-owned 8-bit unsigned PCM @ 7042 Hz
@@ -352,12 +358,13 @@ module digi =
                 if p->slots[s].playing then
                     let src_pos = (int32) p->slots[s].pos
                     if src_pos < (int32) p->slots[s].data.len then
-                        // 8-bit unsigned PCM → signed (-128..+127) → fill
-                        // int16 range at gain 1.0. *256 overflows int16 by 1
-                        // on the max-negative sample; the post-mix clamp
-                        // below catches that and any multi-slot stacking.
+                        // 8-bit unsigned PCM → signed (-128..+127) → scaled
+                        // to match the OPL2 driver's peak output so digi and
+                        // AdLib SFX sit at roughly equal loudness (OG SB
+                        // hardware-mixer default). Post-mix clamp below
+                        // catches multi-slot / music-summed overflow.
                         let raw = (int32) p->slots[s].data[(int64) src_pos] - 128
-                        let scaled = raw * 256
+                        let scaled = raw * pcm_scale
                         sl = sl + (int32) ((float64) scaled * p->slots[s].gain_l)
                         sr = sr + (int32) ((float64) scaled * p->slots[s].gain_r)
                         p->slots[s].pos = p->slots[s].pos + resample_ratio
