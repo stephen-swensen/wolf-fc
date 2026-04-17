@@ -16,8 +16,8 @@ FC_BIN="$FC_CACHE/fc"
 mkdir -p "$FC_CACHE"
 if [[ ! -x "$FC_BIN" ]] || \
    [[ -n "$(find "$FC_DIR/src" \( -name '*.c' -o -name '*.h' \) -newer "$FC_BIN" 2>/dev/null | head -1)" ]]; then
-    echo "Building FC compiler at -O2 -> $FC_BIN"
-    cc -std=c11 -O2 -Wall -Wextra -Wpedantic -o "$FC_BIN" "$FC_DIR"/src/*.c
+    echo "Building FC compiler at -O2 -flto -> $FC_BIN"
+    cc -std=c11 -O2 -flto -Wall -Wextra -Wpedantic -o "$FC_BIN" "$FC_DIR"/src/*.c
 fi
 
 SRCS="$WOLF_DIR/sdl2.fc $WOLF_DIR/opl2.fc $WOLF_DIR/sound.fc \
@@ -29,7 +29,7 @@ case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
         OUTDIR="${TEMP:-/tmp}"
         "$FC_BIN" $SRCS -o "$OUTDIR/wolf-fc.c"
-        gcc -std=c11 -Wall -Werror -O2 -Wno-misleading-indentation -Dmain=SDL_main \
+        gcc -std=c11 -Wall -Werror -O2 -Dmain=SDL_main \
             -o "$OUTDIR/wolf-fc.exe" "$OUTDIR/wolf-fc.c" \
             -lmingw32 -lSDL2main -lSDL2 -lm
         echo "Running Wolf-FC..."
@@ -38,7 +38,7 @@ case "$(uname -s)" in
         ;;
     *)
         "$FC_BIN" $SRCS -o /tmp/wolf-fc.c
-        cc -std=c11 -Wall -Werror -O2 -Wno-misleading-indentation -o /tmp/wolf-fc-bin /tmp/wolf-fc.c -lSDL2 -lm
+        cc -std=c11 -Wall -Werror -O2 -o /tmp/wolf-fc-bin /tmp/wolf-fc.c -lSDL2 -lm
         echo "Running Wolf-FC..."
         /tmp/wolf-fc-bin "$@"
         echo "[exit: $?]"
