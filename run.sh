@@ -16,8 +16,8 @@ FC_BIN="$FC_CACHE/fc"
 mkdir -p "$FC_CACHE"
 if [[ ! -x "$FC_BIN" ]] || \
    [[ -n "$(find "$FC_DIR/src" \( -name '*.c' -o -name '*.h' \) -newer "$FC_BIN" 2>/dev/null | head -1)" ]]; then
-    echo "Building FC compiler at -O2 -flto -> $FC_BIN"
-    cc -std=c11 -O2 -flto -Wall -Wextra -Wpedantic -o "$FC_BIN" "$FC_DIR"/src/*.c
+    echo "Building FC compiler at -O2 -flto=auto -> $FC_BIN"
+    cc -std=c11 -O2 -flto=auto -Wall -Wextra -Wpedantic -o "$FC_BIN" "$FC_DIR"/src/*.c
 fi
 
 SRCS="$WOLF_DIR/sdl2.fc $WOLF_DIR/opl2.fc $WOLF_DIR/sound.fc \
