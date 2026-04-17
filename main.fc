@@ -3519,51 +3519,10 @@ let trigger_sound_at = (sound_id: int32, ac: audio_ctx*, g: game*,
         trigger_sound_panned(sound_id, ac, pan)
 
 // Output sample rate for the SDL audio device (Hz). All driver chips run
-// at this rate.
+// at this rate. The int32-mix + soft-clip finalizer lives in
+// `sound.fc::mixer` — the main loop just calls `mixer.fill_frame` and
+// queues the resulting int16 buffer to SDL.
 let sample_rate = 44100
-
-// ============================================================
-// Soft-clip: final mix finalizer
-// ============================================================
-//
-// Samples below ±soft_clip_knee pass through as-is; samples above it are
-// smoothly compressed toward the ±32767 int16 ceiling along a rational
-// curve that asymptotes to the ceiling. Equivalent of a gentle analog
-// saturator — matches how OG Sound Blaster hardware summed FM + PCM in the
-// analog domain without hard-clamping. Keeps loud multi-source moments
-// audible and non-harsh instead of flat-topping into crunchy distortion.
-//
-// Curve (per channel, positive half; negative mirrors):
-//   if |x| <= knee:           y = x                       (linear region)
-//   else:                     y = knee + over * R / (R + over)
-// where over = |x| - knee, R = 32767 - knee = 8767. As over → ∞,
-// `over * R / (R + over)` → R, so y → 32767 (asymptote).
-//
-// Sample points for knee = 24000:
-//   |x| =  24000  → y = 24000   (linear)
-//   |x| =  28000  → y ≈ 26200   (~2 dB compression starts biting)
-//   |x| =  32000  → y ≈ 28100
-//   |x| =  44000  → y ≈ 30500   (two peaking sources summed)
-//   |x| =  66000  → y ≈ 31250   (three peaking sources summed)
-//   |x| → ∞       → y  = 32767  (asymptote; never clips hard)
-//
-// Integer-only, no trig, ~2 conditional branches per sample. Trivially
-// cheap at 88.2 kHz.
-let soft_clip_knee = 24000
-let soft_clip_range = 8767    // 32767 - knee; asymptote reaches max_out
-
-let soft_clip_sample = (s: int32) ->
-    let abs_s = if s < 0 then 0 - s else s
-    if abs_s <= soft_clip_knee then
-        s
-    else
-        let over = abs_s - soft_clip_knee
-        let mag = soft_clip_knee + (over * soft_clip_range) / (soft_clip_range + over)
-        if s < 0 then 0 - mag else mag
-
-let soft_clip_to_int16 = (src: int32[], dst: int16[], count: int32) ->
-    for i in 0..count
-        dst[i] = (int16) soft_clip_sample(src[(int64) i])
 
 // ============================================================
 // VGAGRAPH chunk IDs (Wolf3D WL6). Matches wolf4sdl gfxv_wl6.h.
@@ -6214,21 +6173,8 @@ let main = (args: str[]) ->
         let skip_audio = audio_dev == 0u32 ||
             sdl2.queued_audio_size(audio_dev) >= queue_hi_water
         if !skip_audio then
-            // All drivers mix additively into a zero-initialized int32
-            // buffer: music, then AdLib SFX, then digi SFX. Silencing music
-            // just skips its fill step. No per-stage clipping — a final
-            // `soft_clip_to_int16` pass turns the summed int32 mix into
-            // queue-ready int16 with gentle saturation above ~±24000,
-            // asymptoting to ±32767. Keeps analog-style headroom even when
-            // all three sources peak together, instead of hard-clamping at
-            // each stage and starving later sources.
-            for si in 0..2048
-                mix_buf[si] = 0i32
-            if ms.is_some && music_on then
-                imf.fill(ms!, mix_buf, 1024, sample_rate)
-            adlib.fill(w->ac->sfx, mix_buf, 1024, sample_rate)
-            digi.fill(w->ac->digi, mix_buf, 1024, sample_rate)
-            soft_clip_to_int16(mix_buf, out_buf, 2048)
+            mixer.fill_frame(mix_buf, out_buf, ms, music_on,
+                w->ac->sfx, w->ac->digi, 1024, sample_rate)
             sdl2.queue_audio(audio_dev, (any*) out_buf.ptr, 4096u32)
             void()
 

@@ -373,3 +373,70 @@ module digi =
                         p->slots[s].playing = false
             buf[li] = sl
             buf[ri] = sr
+
+
+// ============================================================
+// Mixer — final audio pipeline
+// ============================================================
+//
+// Orchestrates one audio-fill cycle: zero → music → AdLib SFX → digi PCM,
+// all summed into an int32 scratch buffer, then soft-clipped into the
+// int16 output buffer the caller hands to SDL. Using an int32 intermediate
+// buffer lets the three source fills sum without the per-stage clamping
+// that would otherwise starve later stages of headroom (digi, last in
+// line, was the biggest loser).
+//
+// The soft-clip curve (per-sample, both channels):
+//   |x| <= knee:   y = x                               (linear region)
+//   |x| >  knee:   y = knee + over * range / (range + over)
+// with over = |x| - knee and range = 32767 - knee. As over → ∞, the
+// rational term → range, so y → 32767 (asymptote — never clips hard).
+//
+// Sample points with knee = 24000, range = 8767:
+//   24000 → 24000    (linear)
+//   32000 → ~28100   (~1.5 dB compression, typical single-source peak)
+//   44000 → ~30500   (two sources peaking)
+//   66000 → ~31250   (all three sources peaking)
+//     ∞   → 32767    (asymptote)
+//
+// Integer-only, no trig, trivially cheap at 88.2 kHz. Mirrors how OG
+// Sound Blaster hardware summed FM + PCM in the analog domain — gentle
+// saturation instead of flat-topping into crunchy digital clipping.
+
+module mixer =
+    let knee  = 24000
+    let range = 8767     // 32767 - knee; the asymptote reaches max_out
+
+    let soft_clip_sample = (s: int32) ->
+        let abs_s = if s < 0 then 0 - s else s
+        if abs_s <= knee then
+            s
+        else
+            let over = abs_s - knee
+            let mag = knee + (over * range) / (range + over)
+            if s < 0 then 0 - mag else mag
+
+    // Apply the soft-clip curve elementwise, converting the int32 mix
+    // buffer into the int16 queue buffer. `count` is the total sample
+    // count (stereo frames × 2), matching the buffer lengths.
+    let soft_clip_to_int16 = (src: int32[], dst: int16[], count: int32) ->
+        for i in 0..count
+            dst[i] = (int16) soft_clip_sample(src[(int64) i])
+
+    // One audio-fill cycle: clear the int32 mix buffer, add each active
+    // source, and soft-clip into the int16 output buffer. `frames` is the
+    // stereo frame count (e.g. 1024); buffers must hold at least
+    // `frames * 2` slots. `music` may be none (no track loaded) or
+    // silenced via `music_on=false`; both paths skip the imf.fill step.
+    let fill_frame = (mix_buf: int32[], out_buf: int16[],
+                      music: imf.player*?, music_on: bool,
+                      sfx: adlib.sfx_state*, dg: digi.player*,
+                      frames: int32, sample_rate: int32) ->
+        let samples = frames * 2
+        for i in 0..samples
+            mix_buf[i] = 0i32
+        if music.is_some && music_on then
+            imf.fill(music!, mix_buf, frames, sample_rate)
+        adlib.fill(sfx, mix_buf, frames, sample_rate)
+        digi.fill(dg, mix_buf, frames, sample_rate)
+        soft_clip_to_int16(mix_buf, out_buf, samples)
