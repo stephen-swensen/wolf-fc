@@ -4183,7 +4183,7 @@ let render_title = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
 let main_menu_len = 6
 let main_menu_label = (i: int32) ->
     match i with
-    | 0 -> "RESUME GAME"
+    | 0 -> "RESUME"
     | 1 -> "NEW GAME"
     | 2 -> "LOAD GAME"
     | 3 -> "SAVE GAME"
