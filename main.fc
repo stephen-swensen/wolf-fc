@@ -1728,7 +1728,7 @@ let render_walls = (lv: level*, rc: render_ctx*, g: game*,
 
     // Reset z-buffer.
     for i in 0..game_w
-        rc->zbuf[i] = 1000000.0
+        rc->zbuf[i] = 1e6
 
     // Push-wall sub-tile offset. pw_fx/pw_fy are the world-space lower-
     // left corner of the 1x1 wall AABB during its slide. Constant across
@@ -1754,9 +1754,9 @@ let render_walls = (lv: level*, rc: render_ctx*, g: game*,
         let mut map_y = (int32) g->pos_y
 
         // Length of ray from one grid line to the next
-        let delta_x = if ray_dx == 0.0 then 1000000.0
+        let delta_x = if ray_dx == 0.0 then 1e6
             else math.abs(1.0 / ray_dx)
-        let delta_y = if ray_dy == 0.0 then 1000000.0
+        let delta_y = if ray_dy == 0.0 then 1e6
             else math.abs(1.0 / ray_dy)
 
         // Step direction and initial side-dist
@@ -1784,12 +1784,12 @@ let render_walls = (lv: level*, rc: render_ctx*, g: game*,
         // and sub = progress - floor(progress) is the fractional slide offset.
         // Computed per-ray before the DDA so we can compare distances after.
         let mut pw_hit = false
-        let mut pw_t = 1000000.0
+        let mut pw_t = 1e6
         let mut pw_side = 0
         let mut pw_tex_frac = 0.0
         if pw_active then
-            let big = 1000000000.0
-            let tiny = 0.000000001
+            let big = 1e9
+            let tiny = 1e-9
             let inv_rdx = if math.abs(ray_dx) < tiny then big else 1.0 / ray_dx
             let inv_rdy = if math.abs(ray_dy) < tiny then big else 1.0 / ray_dy
             let tx1 = (pw_fx - g->pos_x) * inv_rdx
@@ -2486,7 +2486,7 @@ let check_line_clear = (lv: level*, x1: float64, y1: float64, x2: float64, y2: f
     let dx = x2 - x1
     let dy = y2 - y1
     let dist = math.sqrt(dx * dx + dy * dy)
-    if dist <= 0.0001 then return true
+    if dist <= 1e-4 then return true
     let steps = (int32) (dist * 8.0) + 1
     let rx = dx / (float64) steps
     let ry = dy / (float64) steps
@@ -2519,13 +2519,17 @@ let check_line_clear = (lv: level*, x1: float64, y1: float64, x2: float64, y2: f
 // Is the player visible to the enemy right now?
 // Combines a forward-cone check (player roughly in front of enemy) with a
 // tilemap LOS ray. Inside ~1.5 tiles, sight is automatic regardless of facing
-// (matches wolf4sdl's MINSIGHT fallback).
+// (matches wolf4sdl's MINSIGHT fallback). An enemy with `dir == dir_nodir`
+// (stationary / blocked-in) skips the cone check and falls through to the
+// raw LOS — wolf4sdl's stand actor wakes the same way. (Indexing dir_vx with
+// dir_nodir == 8 would also be a slice OOB and abort the process.)
 let enemy_sees_player = (lv: level*, g: game*, e: enemy*) ->
     let dx = g->pos_x - e->x
     let dy = g->pos_y - e->y
     let dist = math.sqrt(dx * dx + dy * dy)
     if dist > enemy_sight_range then false
-    else if dist < 1.5 then check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y)
+    else if dist < 1.5 || e->dir == dir_nodir then
+        check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y)
     else
         let fx = dir_vx[e->dir]
         let fy = dir_vy[e->dir]
@@ -2640,7 +2644,7 @@ let select_path_dir = (lv: level*, g: game*, self_idx: int32) ->
 let advance_enemy_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, speed: float64, dt: float64, is_chase: bool) ->
     let mut step = speed * dt
     loop
-        if step <= 0.000001 then break
+        if step <= 1e-6 then break
         let e = &lv->enemies[self_idx]
         if e->dir == dir_nodir then
             if is_chase then select_chase_dir(lv, g, self_idx)
@@ -2981,7 +2985,7 @@ let update_enemies = (w: world*, dt: float64) ->
 // range 1 — scaled up with distance so far-away enemies are still hittable.
 let find_hit_enemy = (lv: level*, g: game*) ->
     let mut best_idx = -1
-    let mut best_dist = 1000000.0
+    let mut best_dist = 1e6
     for i in 0..lv->num_enemies
         let e = &lv->enemies[i]
         match e->state with
@@ -3371,7 +3375,7 @@ let trigger_sound_at = (sound_id: int32, ac: audio_ctx*, g: game*,
     else
         // Camera-plane axis is g->plane; its sign tells us which side.
         let plen = math.sqrt(g->plane_x * g->plane_x + g->plane_y * g->plane_y)
-        let pan_raw = if plen < 0.0001 then 0.0
+        let pan_raw = if plen < 1e-4 then 0.0
             else (dx * g->plane_x + dy * g->plane_y) / (plen * math.sqrt(dist_sq))
         // Attenuate pan by distance factor so nearby sounds pan more than
         // distant ones; at 16 tiles pan settles to ~half of pan_raw.
@@ -4887,6 +4891,68 @@ let refresh_save_slots = () ->
                             difficulty = difficulty, score = score
                         }
 
+// In-game debug dump (D key): print everything we'd want to know to diagnose
+// a "stuck" report — player pos / dir / phase / lives, and for every tile in
+// the player's bbox, what's there (wall / door / sprite / enemy). Output goes
+// to stderr so it doesn't interfere with stdout-based scripts.
+let debug_dump_state = (w: world*) ->
+    let g = w->g
+    let lv = w->lv
+    let phase_s = match g->phase with
+    | gp_title        -> "title"
+    | gp_main_menu    -> "menu"
+    | gp_playing      -> "playing"
+    | gp_dying        -> "dying"
+    | gp_intermission -> "intermission"
+    | gp_game_over    -> "gameover"
+    | gp_episode_end  -> "episode_end"
+    | gp_victory      -> "victory"
+    io.write("\n=== DEBUG DUMP ===\n", stderr)
+    io.write("phase=%s{phase_s} hp=%d{g->health} lives=%d{g->lives} level=%d{g->level_num}\n", stderr)
+    io.write("pos=(%7.4f{g->pos_x}, %7.4f{g->pos_y}) dir=(%7.4f{g->dir_x}, %7.4f{g->dir_y})\n", stderr)
+    io.write("area=%d{g->area_number} keys: gold=%d{if g->has_gold_key then 1 else 0} silver=%d{if g->has_silver_key then 1 else 0}\n", stderr)
+    let xl = (int32) (g->pos_x - player_radius)
+    let xr = (int32) (g->pos_x + player_radius)
+    let yl = (int32) (g->pos_y - player_radius)
+    let yh = (int32) (g->pos_y + player_radius)
+    io.write("bbox tiles: x[%d{xl}..%d{xr}] y[%d{yl}..%d{yh}]\n", stderr)
+    for tx in xl..(xr + 1)
+        for ty in yl..(yh + 1)
+            let ti = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+            let door_kind = if ti >= 128 then
+                match lv->doors[ti - 128].state with
+                | closed  -> "DOOR:closed"
+                | opening -> "DOOR:opening"
+                | open    -> "DOOR:open"
+                | closing -> "DOOR:closing"
+            else ""
+            let kind = if ti >= 1 && ti <= 63 then "WALL"
+                else if ti >= 128 then door_kind
+                else "open"
+            io.write("  tile (%d{tx},%d{ty}) tilemap=%d{ti} -> %s{kind}\n", stderr)
+    io.write("blocking sprites within 2 tiles:\n", stderr)
+    for i in 0..lv->num_sprites
+        let s = &lv->sprites[i]
+        if !s->alive || !s->blocks then continue
+        let dx = s->x - g->pos_x
+        let dy = s->y - g->pos_y
+        let d = math.sqrt(dx * dx + dy * dy)
+        if d < 2.0 then
+            io.write("  sprite[%d{i}] pos=(%6.3f{s->x},%6.3f{s->y}) page=%d{s->shape_page} d=%5.3f{d}\n", stderr)
+    io.write("live enemies within 2 tiles:\n", stderr)
+    for i in 0..lv->num_enemies
+        let e = &lv->enemies[i]
+        match e->state with
+        | es_dead | es_die -> void()
+        | _ ->
+            let dx = e->x - g->pos_x
+            let dy = e->y - g->pos_y
+            let d = math.sqrt(dx * dx + dy * dy)
+            if d < 2.0 then
+                io.write("  enemy[%d{i}] pos=(%6.3f{e->x},%6.3f{e->y}) tile(%d{e->tile_x},%d{e->tile_y}) hp=%d{e->hp} d=%5.3f{d}\n", stderr)
+    io.write("=== END ===\n\n", stderr)
+    void()
+
 // ============================================================
 // Headless test mode — scripted commands for automated testing
 // ============================================================
@@ -5719,6 +5785,7 @@ let main = (args: str[]) ->
                             if !music_on && audio_dev > 0u32 then
                                 sdl2.clear_audio(audio_dev)
                         if k == sdl2.key_s then take_screenshot(w, vs, pal)
+                        if k == sdl2.key_d then debug_dump_state(w)
             if t == sdl2.keyup_event then
                 let k = event.key.keysym.sym
                 // Keyup only clears flags; not phase-sensitive.

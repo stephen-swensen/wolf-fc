@@ -137,7 +137,7 @@ module opl2 =
     // roughly match the YM3812 datasheet — AR=15 attacks in ~0.3 ms, DR/RR=15
     // decays in ~6 ms, AR=1 attacks in ~8 s. Rate 0 = infinite (no change).
     let rate_time_sec = (rate: int32, base_sec: float64) ->
-        if rate <= 0 then 1000000.0
+        if rate <= 0 then 1e6
         else base_sec * math.pow(0.5, (float64) (rate - 1))
 
     // Key-scale value from (block, fnum). Fed into KSR to speed envelopes up
