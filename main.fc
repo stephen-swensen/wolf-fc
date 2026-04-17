@@ -1005,7 +1005,7 @@ let render_message = (rc: render_ctx*, font: font_info*, g: game*) ->
 // timer starts at 0 so the "press space to continue" gate needs at least
 // one frame before it will fire — prevents an in-flight space press from
 // instantly skipping the screen.
-let enter_intermission = (g: game*, ac: audio_ctx*) ->
+let enter_intermission = (g: game*) ->
     g->phase = game_phase.gp_intermission
     g->phase_timer = 0.0
     // Award the computed level-completion bonus to the running score so the
@@ -1023,9 +1023,6 @@ let enter_intermission = (g: game*, ac: audio_ctx*) ->
     g->inter_target_sr = compute_ratio(g->secrets, g->total_secrets)
     g->inter_target_tr = compute_ratio(g->treasures, g->total_treasures)
     g->inter_breathe_timer = 0.0
-    // Kick off the ENDLEVEL music ticker sound so the screen doesn't open
-    // silent; first bonus tick will overlay within ~0.2s.
-    trigger_sound(snd_end_bonus1, ac)
     // Clear held inputs so the player isn't sprinting into a wall when
     // the next level loads.
     g->key_up = false
@@ -1050,14 +1047,21 @@ let finish_intermission_anim = (g: game*) ->
     g->inter_progress = 0.0
     g->inter_bonus_shown = compute_level_bonus(g)
 
+// Lead-in before the counter starts, so LEVELDONESND (the elevator "ding"
+// that played when the switch was thrown) has time to finish cleanly before
+// the bonus counter's tick sounds overlay it. Mirrors the fade-out + fade-in
+// gap wolf4sdl inserts between Cmd_Use and LevelCompleted's counter loop.
+let inter_lead_in = 0.7
+
 // Advance the intermission count-up animation one frame. Fires count-up
 // tick sounds every 10 units and a stage-end sound (100% / non-100% / none)
 // when each counter reaches its target.
 let tick_intermission = (g: game*, ac: audio_ctx*, dt: float64) ->
-    if g->inter_stage >= 4 then
-        g->inter_breathe_timer = g->inter_breathe_timer + dt
-        return
     g->inter_breathe_timer = g->inter_breathe_timer + dt
+    if g->inter_stage >= 4 then return
+    // Hold the counter at 0 during the lead-in so the elevator sound can
+    // play out without the bonus ticker stepping on top.
+    if g->phase_timer < inter_lead_in then return
     let rate = if g->inter_stage == 0 then inter_time_rate else inter_ratio_rate
     let target = match g->inter_stage with
     | 0 -> g->inter_target_timeleft
@@ -1245,7 +1249,7 @@ let update_phase_transitions = (w: world*, vs: vswap.vswap_file*) ->
     let mut level_changed = false
     if g->next_level && g->phase == game_phase.gp_playing then
         g->next_level = false
-        enter_intermission(g, w->ac)
+        enter_intermission(g)
     if g->phase == game_phase.gp_dying && g->phase_timer >= death_anim_time then
         if g->lives > 0 then
             g->lives = g->lives - 1
