@@ -4646,11 +4646,12 @@ let save_png = (w: world*, path: const str) ->
 // starts numbering from 000. Users who want to keep screenshots should copy
 // them elsewhere before starting a new session.
 let clear_screenshots = () ->
-    match sys.home_dir() with
+    match wolf_data_dir() with
     | none -> void()
-    | some(home) ->
-        let ss_dir = "%s{home}/.wolf-fc/screenshots"
-        io.mkdir("%s{home}/.wolf-fc")
+    | some(dir) ->
+        defer free(dir)
+        let ss_dir = "%s{dir}/screenshots"
+        io.mkdir(dir)
         io.mkdir(ss_dir)
         match io.list_dir(ss_dir) with
         | none -> void()
@@ -4667,18 +4668,20 @@ let clear_screenshots = () ->
                 void()
 
 // Take an interactive screenshot: renders, picks the next rotating slot in
-// ~/.wolf-fc/screenshots/, and writes a PNG. Prints the path to stdout.
+// $WOLF_FC_HOME/screenshots (or ~/.wolf-fc/screenshots), writes a PNG, and
+// prints the path to stdout.
 let take_screenshot = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
-    match sys.home_dir() with
+    match wolf_data_dir() with
     | none ->
         io.write("[screenshot] HOME not set; skipping\n", stdout)
         void()
-    | some(home) ->
-        io.mkdir("%s{home}/.wolf-fc")
-        io.mkdir("%s{home}/.wolf-fc/screenshots")
+    | some(dir) ->
+        defer free(dir)
+        io.mkdir(dir)
+        io.mkdir("%s{dir}/screenshots")
         let slot = screenshot_slot
         screenshot_slot = (screenshot_slot + 1) % screenshot_max_slots
-        let path = "%s{home}/.wolf-fc/screenshots/ss_%03d{slot}.png"
+        let path = "%s{dir}/screenshots/ss_%03d{slot}.png"
         render_frame(w, vs, pal)
         save_png(w, path)
         io.write("[screenshot] saved %s{path}\n", stdout)
@@ -4744,21 +4747,35 @@ let free_split = (toks: str[]) ->
         free(toks[(int64) k])
     free(toks)
 
-// Ensure ~/.wolf-fc/saves exists. Returns true if the directory is
-// (now) available.
+// Root directory for wolf-fc user data (saves, screenshots). Respects the
+// WOLF_FC_HOME env override so test runs can point at a throwaway directory
+// instead of scribbling on the real user's saves. Falls back to
+// $HOME/.wolf-fc for normal use.
+let wolf_data_dir = () ->
+    match sys.env("WOLF_FC_HOME") with
+    | some(override) -> some(alloc("%s{override}")!)
+    | none ->
+        match sys.home_dir() with
+        | none -> default(str?)
+        | some(home) -> some(alloc("%s{home}/.wolf-fc")!)
+
+// Ensure $WOLF_FC_HOME/saves (or ~/.wolf-fc/saves) exists. Returns true if
+// the directory is (now) available.
 let ensure_save_dir = () ->
-    match sys.home_dir() with
+    match wolf_data_dir() with
     | none -> false
-    | some(home) ->
-        io.mkdir("%s{home}/.wolf-fc")
-        io.mkdir("%s{home}/.wolf-fc/saves")
+    | some(dir) ->
+        defer free(dir)
+        io.mkdir(dir)
+        io.mkdir("%s{dir}/saves")
         true
 
 let save_slot_path = (slot: int32) ->
-    match sys.home_dir() with
+    match wolf_data_dir() with
     | none -> default(str?)
-    | some(home) ->
-        let p = alloc("%s{home}/.wolf-fc/saves/slot_%02d{slot}.sav")!
+    | some(dir) ->
+        defer free(dir)
+        let p = alloc("%s{dir}/saves/slot_%02d{slot}.sav")!
         some(p)
 
 // Return the current wall-clock seconds (for save-label timestamps).

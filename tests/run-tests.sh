@@ -42,6 +42,16 @@ if [[ ! -x "$BIN" ]]; then
     ./run.sh --test state >/dev/null 2>&1 || { echo "build failed" >&2; exit 2; }
 fi
 
+# Isolate the test's save / screenshot directory so the suite can't stomp on
+# the real user's saves. The binary honours WOLF_FC_HOME as an override for
+# its per-user data root; we point it at a throwaway temp dir and wipe the
+# dir on exit. Previously we rm'd $HOME/.wolf-fc/saves/slot_*.sav directly,
+# which ate real user saves (and the listsaves-occupied test also actively
+# wrote into slot 6 of the real directory).
+WOLF_FC_TEST_HOME="$(mktemp -d -t wolf-fc-tests.XXXXXX)"
+export WOLF_FC_HOME="$WOLF_FC_TEST_HOME"
+trap 'rm -rf "$WOLF_FC_TEST_HOME"' EXIT
+
 pass=0
 fail=0
 skipped=0
@@ -417,9 +427,9 @@ assert_contains "music:final-victory-plays-vicmarch" \
     "audiot offset=25"
 
 section "save / load"
-# Fresh slot state: zap any slot files from a previous session so the
-# "listsaves-empty" assertion below is stable.
-rm -f "$HOME/.wolf-fc/saves/slot_"*.sav
+# Fresh slot state: WOLF_FC_HOME points at a per-run temp dir (see top of
+# this file), so the slot directory starts empty without touching the real
+# ~/.wolf-fc/saves.
 
 # listsaves reports empty slots on a fresh directory.
 assert_contains "save:listsaves-empty" \
@@ -444,8 +454,8 @@ assert_contains "save:counters-level-specific-totals" \
     "setlevel:2 save:5 setlevel:0 load:5 counters" \
     "kills=0/73 secrets=0/10 treasures=0/66"
 # Loading an empty slot is a no-op returning failure — state stays at
-# whatever we had before the load call.
-rm -f "$HOME/.wolf-fc/saves/slot_07.sav"
+# whatever we had before the load call. The temp WOLF_FC_HOME never gets a
+# slot 7 written, so this always exercises the empty path.
 assert_contains "save:load-empty-fails" \
     "setlevel:3 fwd:4 load:7 state" \
     "level=3"

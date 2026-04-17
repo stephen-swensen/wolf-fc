@@ -296,15 +296,17 @@ module digi =
     //   2. First idle (playing = false) slot -> load fresh
     //   3. Steal slot 0 -> halt + load fresh
     //
-    // `pan` is [-1, +1]; 0 = centered. The L/R gains use a linear
-    // crossfade scaled so center pan gives ~0.71 on each side (close to
-    // the classic Sound Blaster equal-power rule).
+    // `pan` is [-1, +1]; 0 = centered. Center plays at full scale on both
+    // channels; panning taper only attenuates the off-side (no equal-power
+    // -3dB dip at center). This matches the OG Sound Blaster loudness —
+    // classic digi SFX like LEVELDONESND need the full int16 headroom to
+    // hit with the "bang" players remember.
     let play_panned = (p: player*, vs: vswap.vswap_file*, sound_num: int32, pan: float64) ->
         let mut pp = pan
         if pp < -1.0 then pp = -1.0
         if pp > 1.0 then pp = 1.0
-        let gl = 0.70710678 * (1.0 - pp)
-        let gr = 0.70710678 * (1.0 + pp)
+        let gl = if pp <= 0.0 then 1.0 else 1.0 - pp
+        let gr = if pp >= 0.0 then 1.0 else 1.0 + pp
         // 1. Already-playing same sound — rewind, repan, return.
         for i in 0..max_slots
             if p->slots[i].playing && p->slots[i].sound_num == sound_num then
@@ -350,8 +352,12 @@ module digi =
                 if p->slots[s].playing then
                     let src_pos = (int32) p->slots[s].pos
                     if src_pos < (int32) p->slots[s].data.len then
+                        // 8-bit unsigned PCM → signed (-128..+127) → fill
+                        // int16 range at gain 1.0. *256 overflows int16 by 1
+                        // on the max-negative sample; the post-mix clamp
+                        // below catches that and any multi-slot stacking.
                         let raw = (int32) p->slots[s].data[(int64) src_pos] - 128
-                        let scaled = raw * 128
+                        let scaled = raw * 256
                         sl = sl + (int32) ((float64) scaled * p->slots[s].gain_l)
                         sr = sr + (int32) ((float64) scaled * p->slots[s].gain_r)
                         p->slots[s].pos = p->slots[s].pos + resample_ratio
