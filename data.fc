@@ -115,13 +115,13 @@ module vswap =
                                  // unused columns (outside [left..right]) stay 0
 
     struct vswap_file =
-        raw: uint8[]
+        raw: const uint8[]
         num_chunks: int32
         sprite_start: int32
         sound_start: int32
         // Index by sprite index (page - sprite_start). Length = sound_start -
         // sprite_start. Always allocated; each entry is either valid or not.
-        sprite_headers: sprite_header[]
+        sprite_headers: const sprite_header[]
 
     let load = (path: const str) ->
         let f = io.open(path, "rb")!
@@ -344,11 +344,11 @@ module vgagraph =
         height: int32
 
     struct vgagraph_file =
-        raw: uint8[]          // entire VGAGRAPH file
-        dict: huffnode[]      // 255 nodes; root is dict[254]
-        offsets: int64[]      // per-chunk file offset; -1 for sparse
+        raw: const uint8[]          // entire VGAGRAPH file
+        dict: const huffnode[]      // 255 nodes; root is dict[254]
+        offsets: const int64[]      // per-chunk file offset; -1 for sparse
         num_chunks: int32
-        pic_dims: pic_dim[]   // indexed by (chunk - start_pics)
+        pic_dims: const pic_dim[]   // indexed by (chunk - start_pics)
         num_pics: int32
 
     // Huffman expand. Mirrors wolf4sdl CAL_HuffExpand exactly:
@@ -515,8 +515,8 @@ module audio =
     import io from std::
 
     struct audio_data =
-        raw: uint8[]         // entire AUDIOT file
-        offsets: uint8[]     // entire AUDIOHED file
+        raw: const uint8[]         // entire AUDIOT file
+        offsets: const uint8[]     // entire AUDIOHED file
         num_chunks: int32
 
     let load = (hed_path: const str, dat_path: const str) ->

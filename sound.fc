@@ -31,7 +31,7 @@ module imf =
 
     struct player =
         chip: opl2.chip*
-        data: uint8[]           // non-owning reference into the AUDIOT blob
+        data: const uint8[]     // non-owning reference into the AUDIOT blob
         pos: int64
         start_pos: int64        // loop point (start of actual music data)
         seq_len: int64
@@ -44,7 +44,7 @@ module imf =
     // Build a player over the AUDIOT bytes starting at `offset` with chunk
     // `length`. Some music chunks prefix the data with a uint16 length
     // header; we detect that by checking if the first word is non-zero.
-    let init_from_chunk = (bytes: uint8[], offset: int64, length: int64,
+    let init_from_chunk = (bytes: const uint8[], offset: int64, length: int64,
                            sample_rate: float64) ->
         let first_word = (int64) bytes[offset] |
                          ((int64) bytes[offset + 1] << 8)
@@ -126,7 +126,7 @@ module adlib =
     // Parsed AdLibSound header. `bytes` is a non-owning reference back
     // into the AUDIOT buffer; do not free it through this struct.
     struct sfx_data =
-        bytes: uint8[]
+        bytes: const uint8[]
         data_off: int64
         data_len: int64
         m_char: int32
@@ -143,7 +143,7 @@ module adlib =
         block: int32
 
     // Parse an AdLibSound chunk starting at `offset` in `bytes`.
-    let parse = (bytes: uint8[], offset: int64) ->
+    let parse = (bytes: const uint8[], offset: int64) ->
         let len = (int64) ((uint32) bytes[offset] |
                            ((uint32) bytes[offset + 1] << 8) |
                            ((uint32) bytes[offset + 2] << 16) |
@@ -171,7 +171,7 @@ module adlib =
     struct sfx_state =
         chip: opl2.chip*
         active: bool
-        data: uint8[]
+        data: const uint8[]
         data_end: int64
         pos: int64
         block: int32
