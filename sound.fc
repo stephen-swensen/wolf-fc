@@ -244,7 +244,7 @@ module digi =
     let pcm_scale = 172
 
     struct slot =
-        data: uint8[]        // heap-owned 8-bit unsigned PCM @ 7042 Hz
+        data: const uint8[]  // non-owning reference into player.cache
         pos: float64         // current source-sample position
         playing: bool
         sound_num: int32     // VSWAP digi index — used to dedup retriggers
@@ -254,11 +254,28 @@ module digi =
         gain_l: float64      // per-channel multiplier computed from pan
         gain_r: float64
 
+    // One cache entry per digi sound_num. `data` holds the reassembled
+    // 8-bit PCM buffer (digi sounds span multiple VSWAP pages, so we copy
+    // into a contiguous buffer at load time). Length 0 means the sound's
+    // length was 0 in the info table (unused slot).
+    struct cached_sound =
+        data: uint8[]
+
     struct player =
         slots: slot[4]
+        cache: cached_sound[]
 
-    let init = () ->
-        let p = alloc(player {})!
+    // Preload every digi sound into `cache` so `play_panned` is alloc-free.
+    // The digi info table sits on the last VSWAP page as an array of
+    // (start_page: u16, length: u16) quads; its byte-length / 4 is the
+    // digi sound count.
+    let init = (vs: vswap.vswap_file*) ->
+        let info_page = vs->num_chunks - 1
+        let count = (int64) vswap.page_length(vs, info_page) / 4
+        let cache = alloc(cached_sound[count] {})!
+        for i in 0..count
+            cache[i] = cached_sound { data = load_sound(vs, (int32) i) }
+        let p = alloc(player { cache = cache })!
         for i in 0..max_slots
             p->slots[i].sound_num = -1
         p
@@ -307,7 +324,7 @@ module digi =
     // -3dB dip at center). This matches the OG Sound Blaster loudness —
     // classic digi SFX like LEVELDONESND need the full int16 headroom to
     // hit with the "bang" players remember.
-    let play_panned = (p: player*, vs: vswap.vswap_file*, sound_num: int32, pan: float64) ->
+    let play_panned = (p: player*, sound_num: int32, pan: float64) ->
         let mut pp = pan
         if pp < -1.0 then pp = -1.0
         if pp > 1.0 then pp = 1.0
@@ -328,10 +345,8 @@ module digi =
                 break
         // 3. All four busy — steal slot 0.
         if idx < 0 then idx = 0
-        if p->slots[idx].data.len > 0 then
-            free(p->slots[idx].data)
         p->slots[idx] = slot {
-            data = load_sound(vs, sound_num),
+            data = p->cache[sound_num].data,
             pos = 0.0,
             playing = true,
             sound_num = sound_num,
@@ -340,8 +355,8 @@ module digi =
         }
 
     // Back-compat: center-panned play.
-    let play = (p: player*, vs: vswap.vswap_file*, sound_num: int32) ->
-        play_panned(p, vs, sound_num, 0.0)
+    let play = (p: player*, sound_num: int32) ->
+        play_panned(p, sound_num, 0.0)
 
     // Mix up to `max_slots` simultaneous 8-bit sounds into `buf` (stereo
     // interleaved L,R,L,R…), resampling nearest-neighbor from 7042 Hz to

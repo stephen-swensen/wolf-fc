@@ -3474,7 +3474,7 @@ let trigger_sound_panned = (sound_id: int32, ac: audio_ctx*, pan: float64) ->
     if sound_id < 0 || sound_id >= snd_count then return
     let digi_idx = snd_digi[sound_id]
     if digi_idx >= 0 then
-        digi.play_panned(ac->digi, ac->vs, digi_idx, pan)
+        digi.play_panned(ac->digi, digi_idx, pan)
     else
         let enum_val = snd_adlib_enum[sound_id]
         if enum_val >= 0 then
@@ -5824,7 +5824,7 @@ let main = (args: str[]) ->
             vs = vs,
             ad = ad,
             sfx = adlib.init((float64) sample_rate),
-            digi = digi.init()
+            digi = digi.init(vs)
         })!,
         vg = vg,
         font = load_font(vg, vg_font_small)
