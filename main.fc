@@ -3630,13 +3630,18 @@ let snd_adlib_enum = int32[63] {
 // Play a sound by wolf-fc sound ID (one of snd_open_door, etc.). Prefers
 // the digitized version (richer audio, matches original Sound Blaster mode)
 // and falls back to the AdLib version loaded from AUDIOT on demand.
-// `pan` is [-1, +1]; 0 = centered. Only the digi path honours pan;
-// AdLib fallback stays centered (it's single-channel by design).
-let trigger_sound_panned = (sound_id: int32, ac: audio_ctx*, pan: float64) ->
+// `pan` is [-1, +1]; 0 = centered. `gain` is a linear multiplier — 1.0
+// plays at the OG Sound Blaster level, <1 attenuates, >1 pushes into the
+// mixer's soft-clip region. Only the digi path honours pan/gain; AdLib
+// fallback routes through the OPL2 chip, which has no cheap per-note
+// attenuation knob (in practice enemy/pickup sounds all have digi
+// versions, so the fall-through is silent for spatial callers).
+let trigger_sound_panned_gain = (sound_id: int32, ac: audio_ctx*,
+                                  pan: float64, gain: float64) ->
     if sound_id < 0 || sound_id >= snd_count then return
     let digi_idx = snd_digi[sound_id]
     if digi_idx >= 0 then
-        digi.play_panned(ac->digi, digi_idx, pan)
+        digi.play_with_gain(ac->digi, digi_idx, pan, gain)
     else
         let enum_val = snd_adlib_enum[sound_id]
         if enum_val >= 0 then
@@ -3647,58 +3652,54 @@ let trigger_sound_panned = (sound_id: int32, ac: audio_ctx*, pan: float64) ->
                 if len >= 23 then
                     adlib.play(ac->sfx, adlib.parse(ac->ad->raw, off))
 
+let trigger_sound_panned = (sound_id: int32, ac: audio_ctx*, pan: float64) ->
+    trigger_sound_panned_gain(sound_id, ac, pan, 1.0)
+
 let trigger_sound = (sound_id: int32, ac: audio_ctx*) ->
-    trigger_sound_panned(sound_id, ac, 0.0)
+    trigger_sound_panned_gain(sound_id, ac, 0.0, 1.0)
 
-// Center-panned play with a per-call gain multiplier. Only the digi path
-// honours the boost — AdLib fallback routes through the OPL2 chip, which has
-// no cheap per-note attenuation knob. In practice the sounds we want to
-// amplify (LEVELDONESND = digi 30) all have a digi version, so the AdLib
-// fall-through is a non-issue for the current use.
 let trigger_sound_loud = (sound_id: int32, ac: audio_ctx*, gain: float64) ->
-    if sound_id < 0 || sound_id >= snd_count then return
-    let digi_idx = snd_digi[sound_id]
-    if digi_idx >= 0 then
-        digi.play_with_gain(ac->digi, digi_idx, 0.0, gain)
-    else
-        let enum_val = snd_adlib_enum[sound_id]
-        if enum_val >= 0 then
-            let chunk = 87 + enum_val
-            if chunk >= 0 && chunk < ac->ad->num_chunks then
-                let off = (int64) audio.chunk_offset(ac->ad, chunk)
-                let len = audio.chunk_length(ac->ad, chunk)
-                if len >= 23 then
-                    adlib.play(ac->sfx, adlib.parse(ac->ad->raw, off))
+    trigger_sound_panned_gain(sound_id, ac, 0.0, gain)
 
-// Spatial variant: computes pan from a source position relative to the
-// player's facing. Takes the player struct so we can look up pos + camera
-// plane — pan is negative when source is on the player's left half-plane.
+// Spatial variant: pans a source in the stereo field AND attenuates by
+// distance, so a guard firing across the level is quiet and off to the
+// side while the same guard at point-blank is loud and centered. Takes
+// the player struct so we can look up pos + camera plane.
 //
-// Mapping: project the source→player vector onto the player's camera-
+// Pan mapping: project the source→player vector onto the player's camera-
 // plane axis (perpendicular to facing). That's exactly how the raycaster
 // decides horizontal screen-x for sprites, so a source sitting right of
-// the player on screen will pan right. Clamped to ±1 and softened by
-// distance so far-off sources don't ping-pong across the soundstage.
+// the player on screen will pan right.
+//
+// Distance mapping: linear rolloff from full volume at the player's tile
+// to silent at ~16 tiles out. Roughly matches the original's attenuation
+// tables (ATABLEMAX=15 in wolf4sdl's PlaySoundLocGlobal), which also
+// silenced sources beyond that radius. Sounds past the cutoff are
+// dropped entirely so distant enemies don't eat mix slots.
 let trigger_sound_at = (sound_id: int32, ac: audio_ctx*, g: game*,
                          x: float64, y: float64) ->
     let dx = x - g->pos_x
     let dy = y - g->pos_y
     let dist_sq = dx * dx + dy * dy
+    let dist = math.sqrt(dist_sq)
+    let max_dist = 16.0
+    let gain = if dist >= max_dist then 0.0
+               else (max_dist - dist) / max_dist
+    if gain <= 0.0 then return
     // Very-close sounds (<1 tile) stay centered so stepping past an
     // enemy doesn't produce a hard stereo flip.
     if dist_sq < 1.0 then
-        trigger_sound_panned(sound_id, ac, 0.0)
+        trigger_sound_panned_gain(sound_id, ac, 0.0, gain)
     else
         // Camera-plane axis is g->plane; its sign tells us which side.
         let plen = math.sqrt(g->plane_x * g->plane_x + g->plane_y * g->plane_y)
         let pan_raw = if plen < 1e-4 then 0.0
-            else (dx * g->plane_x + dy * g->plane_y) / (plen * math.sqrt(dist_sq))
-        // Attenuate pan by distance factor so nearby sounds pan more than
-        // distant ones; at 16 tiles pan settles to ~half of pan_raw.
-        let dist = math.sqrt(dist_sq)
-        let atten = 1.0 / (1.0 + dist / 8.0)
-        let pan = pan_raw * (0.4 + 0.6 * atten)
-        trigger_sound_panned(sound_id, ac, pan)
+            else (dx * g->plane_x + dy * g->plane_y) / (plen * dist)
+        // Soften pan by distance so far-off sources don't ping-pong
+        // across the soundstage; at 16 tiles pan settles to ~half of raw.
+        let pan_atten = 1.0 / (1.0 + dist / 8.0)
+        let pan = pan_raw * (0.4 + 0.6 * pan_atten)
+        trigger_sound_panned_gain(sound_id, ac, pan, gain)
 
 // Output sample rate for the SDL audio device (Hz). All driver chips run
 // at this rate. The int32-mix + soft-clip finalizer lives in
