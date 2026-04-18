@@ -216,7 +216,7 @@ Working:
 - [x] BJ face with health-driven expressions (7 frames from healthy to near-dead; dying-phase locks to worst face).
 - [x] Full Wolf3D status bar: STATUSBARPIC, number pics for all fields, weapon icon, key indicators.
 - [x] Weapon icon on status bar.
-- [ ] BJ face idle animation (look left/center/right gaze variants cycling on a timer, per wolf4sdl).
+- [x] BJ face idle animation: rolls A/B/C variant per wolf4sdl UpdateFace (`facecount += tics`, threshold from US_RndT(), faceframe = `US_RndT()>>6` clamped so 3→1, giving 0=25%/1=50%/2=25%). Separate face_rng so it doesn't disturb enemy rng. Reset on damage so the new health row shows immediately.
 
 ## Audio
 

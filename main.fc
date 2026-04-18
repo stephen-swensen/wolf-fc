@@ -225,6 +225,15 @@ struct game =
     went_secret: bool
     fire_timer: float64    // cooldown timer (>0 means firing animation)
     weapon_frame: int32    // animation frame (0=idle, 1-3=firing)
+    // BJ-face HUD animation (wolf4sdl UpdateFace). face_frame picks the
+    // A/B/C variant (0..2) of the current health-driven expression row;
+    // face_count accumulates ~2 units per 35Hz tick (matching wolf4sdl
+    // `facecount += tics` at 70Hz), and when it exceeds a random 0..255
+    // threshold a new variant is rolled (0=25%, 1=50%, 2=25%, like the
+    // `US_RndT()>>6` clamp). Reset to 0 on damage so the new expression
+    // appears immediately.
+    face_frame: int32
+    face_count: float64
     // Wolf4sdl player->areanumber: index into level->tile_areas for the tile
     // the player is currently standing on. Used to anchor connect_areas's
     // flood. Refreshed each tick by update_player_area.
@@ -958,6 +967,8 @@ let reset_player_for_life = (g: game*) ->
     g->best_weapon = 1
     g->fire_timer = 0.0
     g->weapon_frame = 0
+    g->face_frame = 0
+    g->face_count = 0.0
     g->has_gold_key = false
     g->has_silver_key = false
     g->next_level = false
@@ -2930,6 +2941,10 @@ let damage_player = (g: game*, ac: audio_ctx*, dmg: int32) ->
     | _          -> return
     g->health = g->health - dmg
     g->damage_flash_timer = damage_flash_time
+    // Force the next face roll to fire on the next update_face tick so the
+    // new health row is visible immediately (wolf4sdl resets facecount in
+    // TakeDamage's BJOUCHPIC branch and calls DrawFace right after).
+    g->face_count = 256.0
     if g->health <= 0 then
         g->health = 0
         g->phase = game_phase.gp_dying
@@ -4009,17 +4024,38 @@ let draw_vsep = (rc: render_ctx*, x: int32, y0: int32, y1: int32) ->
             if x + 1 < game_w then
                 rc->fb[(int64) y * 320 + (int64) (x + 1)] = 0xFF909090u32
 
-// Pick the BJ face chunk from health. Wolf4sdl maps (100-health)/16 to one
-// of 7 face expressions (A/B/C variants) with a random per-frame flicker;
-// we simplify to always-A to keep rendering deterministic for tests.
-// Health=0 shows the final "mostly dead" face.
-let face_chunk_for = (health: int32) ->
+// Pick the BJ face chunk from health + animation frame. Wolf4sdl picks the
+// expression row from `(100-health)/16` (clamped 0..7) and the A/B/C variant
+// from `gamestate.faceframe` (0..2). Health=0 shows the final "mostly dead"
+// row. `frame` is clamped to 0..2 by the caller.
+let face_chunk_for = (health: int32, frame: int32) ->
     let mut h = health
     if h > 100 then h = 100
     if h < 0 then h = 0
     let idx = if h == 0 then 6 else (100 - h) / 16
     let clamped = if idx > 6 then 6 else idx
-    vg_face_base + clamped * 3     // pick A-variant (offset 0 in triad)
+    let f = if frame < 0 then 0 else if frame > 2 then 2 else frame
+    vg_face_base + clamped * 3 + f
+
+// Separate RNG for face animation so it doesn't disturb the enemy_rng
+// stream that scripted regression tests depend on. Seed is arbitrary.
+let mut face_rng = random.lcg_random { state = 0xFACE5EED12345678u64 }
+let face_rnd_byte = () -> (int32) (random.lcg_random.next_uint32(&face_rng) & 0xFFu32)
+
+// Wolf4sdl UpdateFace: accumulate `tics` into facecount; when it exceeds a
+// random 0..255 threshold, roll a new faceframe. The roll is `US_RndT()>>6`
+// (giving 0..3) with 3 mapped down to 1, so the distribution is 0=25% /
+// 1=50% / 2=25% — the centre variant is most common, which gives the face a
+// natural "look forward" bias with occasional glances. Our dt is fixed at
+// 1/35s in tests; multiplying by 70 yields ~2 units per tick, matching the
+// wolf4sdl 70Hz tics rate.
+let update_face = (g: game*, dt: float64) ->
+    g->face_count = g->face_count + dt * 70.0
+    if g->face_count > (float64) face_rnd_byte() then
+        let roll = face_rnd_byte() / 64       // 0..3
+        let frame = if roll == 3 then 1 else roll
+        g->face_frame = frame
+        g->face_count = 0.0
 
 // Draw a right-aligned decimal number using the VGAGRAPH number pics.
 // `digits` is the cell count; shorter numbers get N_BLANKPIC padding on
@@ -4066,10 +4102,11 @@ let render_hud = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[], g
     draw_vg_number(rc, vg, pal, 112, num_y, 1, g->lives)
     draw_vg_number(rc, vg, pal, 168, num_y, 3, g->health)
     draw_vg_number(rc, vg, pal, 216, num_y, 2, g->ammo)
-    // BJ face — chosen by health. Dead / dying uses final frame.
+    // BJ face — chosen by health + the rolling A/B/C variant from
+    // update_face. Dead / dying locks to the final row, A-variant only.
     let face = match g->phase with
-    | gp_dying     -> vg_face_base + 6 * 3    // worst face
-    | _            -> face_chunk_for(g->health)
+    | gp_dying     -> vg_face_base + 6 * 3
+    | _            -> face_chunk_for(g->health, g->face_frame)
     draw_vg_pic(rc, vg, pal, face, 136, bar_top + 4)
     // Weapon icon on the right.
     let weapon_chunk = match g->weapon with
@@ -4181,6 +4218,7 @@ let tick = (w: world*, dt: float64) ->
             update_weapon(w, dt)
             update_enemies(w, dt)
             check_pickups(w->lv, g, w->ac)
+            update_face(g, dt)
     | _ ->
         g->phase_timer = g->phase_timer + dt
         if g->phase == game_phase.gp_intermission then
@@ -5965,6 +6003,7 @@ let main = (args: str[]) ->
         next_level = false, next_level_delay = 0.0,
         weapon = 1, best_weapon = 1, went_secret = false,
         fire_timer = 0.0, weapon_frame = 0,
+        face_frame = 0, face_count = 0.0,
         area_number = -1, made_noise = false,
         phase = game_phase.gp_title, phase_timer = 0.0,
         damage_flash_timer = 0.0, respawn_fade_timer = 0.0,
