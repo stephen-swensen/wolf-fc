@@ -33,6 +33,33 @@
   time`, so the screen darkens linearly toward black over the second before
   the tally screen appears. Gives immediate visual feedback that the press
   registered — without it the 1s freeze read like "nothing happened".
+- Intermission cash-register feel, tightened to match the original:
+  - HUD stays visible during the tally. `render_intermission` now only
+    fills the 3D viewport (y < 160) with VIEWCOLOR and calls `render_hud`
+    at the end, matching wolf4sdl's split-screen status bar.
+  - Counters zip to target: `inter_time_rate` bumped to 400 units/s and
+    `inter_ratio_rate` to 140 units/s so a 90s time bonus settles in
+    ~0.23s and a 100% ratio in ~0.7s.
+  - Tick sound cadence matches wolf4sdl: ENDBONUS1SND every 50 units for
+    the time bonus (PAR_AMOUNT/10), every 10 units for the ratio rounds.
+  - New `inter_pause_timer` + `inter_stage_gap = 0.35s` inserts a short
+    hold after each end-of-stage sound before the next counter starts,
+    so the just-finished value stays readable — analogue of wolf4sdl's
+    `VW_WaitVBL(VBLWAIT) + while (SD_SoundPlaying) BJ_Breathe()` gap.
+  - `finish_intermission_anim` also clears the pause timer on skip.
+  - Fixed: the final ENDBONUS1SND tick and the end-of-stage ring sound no
+    longer overlap. When the counter hits target we now freeze it, queue
+    the ring sound behind a short `inter_end_sound_wait = 0.18s` delay,
+    then let `inter_pause_timer` hold for the remainder of the gap before
+    advancing. Also suppresses the tick that would land exactly on target
+    (e.g. the 100 tick at 100% ratio), which otherwise dogpiled onto the
+    ring. wolf4sdl got this implicitly from its `while (SD_SoundPlaying)`
+    wait; we do it explicitly with the two timers.
+  - Fixed: when the player doesn't beat par (`inter_target_timeleft == 0`),
+    skip the time-bonus stage silently instead of firing an ENDBONUS2SND
+    for a zero bonus. Matches wolf4sdl's `if (bonus)` guard around the
+    whole time-bonus block. Before: 4 dings (1 bogus time + 3 ratios).
+    After: 3 dings (ratio ends only).
 
 ### Recent additions (this session, part 5)
 - Elevator switch now plays the classic LEVELDONESND (digi 30 / AdLib 40) when

@@ -275,6 +275,18 @@ struct game =
     inter_target_sr: int32
     inter_target_tr: int32
     inter_breathe_timer: float64   // drives L_GUYPIC/L_GUY2PIC alternation
+    inter_pause_timer: float64     // post-stage pause: holds the just-finished
+                                   // counter's final value on-screen with its
+                                   // end-of-stage sound audible before the
+                                   // next counter starts zipping up. Mirrors
+                                   // wolf4sdl's VBLWAIT(30) + SD_SoundPlaying
+                                   // gap between the three ratio rounds.
+    inter_end_sound_delay: float64 // time left until the queued end-of-stage
+                                   // sound actually fires. Gives the final
+                                   // ENDBONUS1SND tick a moment to clear so
+                                   // it doesn't collide with the ring sound.
+                                   // wolf4sdl's `while (SD_SoundPlaying)` wait
+                                   // served the same purpose.
 
     // Difficulty: 0=Daddy, 1=Don't Hurt Me, 2=Bring 'em On, 3=Death Incarnate.
     // Controls which tile blocks spawn enemies (base/+36/+72 per wolf4sdl
@@ -1040,6 +1052,8 @@ let enter_intermission = (g: game*) ->
     g->inter_target_sr = compute_ratio(g->secrets, g->total_secrets)
     g->inter_target_tr = compute_ratio(g->treasures, g->total_treasures)
     g->inter_breathe_timer = 0.0
+    g->inter_pause_timer = 0.0
+    g->inter_end_sound_delay = 0.0
     // Clear held inputs so the player isn't sprinting into a wall when
     // the next level loads.
     g->key_up = false
@@ -1055,11 +1069,31 @@ let enter_intermission = (g: game*) ->
     // still holding a key through the freeze, letting it instant-advance the
     // animation is natural mash-to-skip behaviour.
 
-// Count-up rates for the intermission animation (units per second).
-// Slow enough that the counter is clearly animating, fast enough that the
-// full screen settles in under ~4 seconds on a long level.
-let inter_time_rate  = 40.0
-let inter_ratio_rate = 25.0
+// Count-up rates for the intermission animation (units per second). Tuned
+// to match the original's "cash-register zip" feel: counter races to its
+// target in well under a second while ENDBONUS1SND fires per chunk.
+//
+// Time bonus counter unit = seconds beaten par (max ~510 on the longest
+// E6M8 par); $500 per unit. At 400 units/sec a 90s bonus ticks up in
+// ~0.23s, the worst case (510s) in ~1.3s.
+//
+// Ratio counter unit = percent (0..100). At 140 units/sec a full 100%
+// settles in ~0.7s — snappy but still readable.
+let inter_time_rate  = 400.0
+let inter_ratio_rate = 140.0
+
+// Per-stage pause inserted after the end-of-stage sound fires, before the
+// next counter starts zipping. Holds the finished counter at its final
+// value so the player can read it. Mirrors wolf4sdl's VBLWAIT(30 VBLs /
+// ~0.43s @ 70Hz) + SD_SoundPlaying wait; we round down a touch since the
+// player can still mash a key to skip.
+let inter_stage_gap = 0.35
+
+// Small gap between the last ENDBONUS1SND tick and the end-of-stage ring
+// sound (ENDBONUS2 / PERCENT100 / NOBONUS). Without this, the tail of the
+// final tick sits on top of the ring — wolf4sdl avoided that with its
+// `while (SD_SoundPlaying ())` wait after each loop iteration.
+let inter_end_sound_wait = 0.18
 
 // Jump the intermission animation to its final "everything shown" state.
 // Invoked when the player hits space mid-animation — mirrors wolf4sdl's
@@ -1068,6 +1102,8 @@ let finish_intermission_anim = (g: game*) ->
     g->inter_stage = 4
     g->inter_counter = 0
     g->inter_progress = 0.0
+    g->inter_pause_timer = 0.0
+    g->inter_end_sound_delay = 0.0
     g->inter_bonus_shown = compute_level_bonus(g)
 
 // Short breath before the counter starts, just enough for the screen swap to
@@ -1076,15 +1112,56 @@ let finish_intermission_anim = (g: game*) ->
 // the longer gap the original inserted between Cmd_Use and LevelCompleted.
 let inter_lead_in = 0.25
 
-// Advance the intermission count-up animation one frame. Fires count-up
-// tick sounds every 10 units and a stage-end sound (100% / non-100% / none)
-// when each counter reaches its target.
+// Advance the intermission count-up animation one frame.
+//
+// Sequencing per stage, matching wolf4sdl's LevelCompleted feel:
+//   1. Counter "zips" from 0 to target at a fast rate (`inter_*_rate`).
+//      ENDBONUS1SND fires on each chunk boundary — /50 for the time bonus
+//      and /10 for ratios (wolf4sdl audiomap + ratios loop constants).
+//   2. When the counter hits target, the counter freezes and we arm a two-
+//      phase hold:
+//        * `inter_end_sound_delay` (short — lets the last tick clear)
+//          → then fire the end-of-stage ring sound.
+//        * `inter_pause_timer` (longer — total hold before advancing)
+//          → when it expires we step to the next stage.
+//      The ring sound is one of PERCENT100SND (100%), NOBONUSSND (0%), or
+//      ENDBONUS2SND (partial / time bonus).
 let tick_intermission = (g: game*, ac: audio_ctx*, dt: float64) ->
     g->inter_breathe_timer = g->inter_breathe_timer + dt
     if g->inter_stage >= 4 then return
     // Hold the counter at 0 during the lead-in so the elevator sound can
     // play out without the bonus ticker stepping on top.
     if g->phase_timer < inter_lead_in then return
+    // Post-stage hold: count down both timers. When the end-sound delay hits
+    // 0 we trigger the ring sound exactly once; when the overall pause hits
+    // 0 we advance to the next stage. Counter stays frozen at target.
+    if g->inter_pause_timer > 0.0 then
+        g->inter_pause_timer = g->inter_pause_timer - dt
+        if g->inter_end_sound_delay > 0.0 then
+            g->inter_end_sound_delay = g->inter_end_sound_delay - dt
+            if g->inter_end_sound_delay <= 0.0 then
+                g->inter_end_sound_delay = 0.0
+                let target = match g->inter_stage with
+                | 0 -> g->inter_target_timeleft
+                | 1 -> g->inter_target_kr
+                | 2 -> g->inter_target_sr
+                | 3 -> g->inter_target_tr
+                | _ -> 0
+                if g->inter_stage == 0 then
+                    trigger_sound(snd_end_bonus2, ac)
+                else if target >= 100 then
+                    g->inter_bonus_shown = g->inter_bonus_shown + percent_100_bonus
+                    trigger_sound(snd_percent100, ac)
+                else if target == 0 then
+                    trigger_sound(snd_no_bonus, ac)
+                else
+                    trigger_sound(snd_end_bonus2, ac)
+        if g->inter_pause_timer <= 0.0 then
+            g->inter_pause_timer = 0.0
+            g->inter_stage = g->inter_stage + 1
+            g->inter_counter = 0
+            g->inter_progress = 0.0
+        return
     let rate = if g->inter_stage == 0 then inter_time_rate else inter_ratio_rate
     let target = match g->inter_stage with
     | 0 -> g->inter_target_timeleft
@@ -1098,31 +1175,35 @@ let tick_intermission = (g: game*, ac: audio_ctx*, dt: float64) ->
     if cur > target then cur = target
     g->inter_counter = cur
     // Update the live "BONUS" line for stage 0 (time). For stages 1..3, the
-    // bonus only jumps when a 100% threshold is crossed — handled below at
-    // stage completion.
+    // bonus only jumps when the 100% threshold triggers, which happens when
+    // the end sound actually fires (inside the pause handler above).
     if g->inter_stage == 0 then
         g->inter_bonus_shown = cur * par_amount_per_sec
-    // Tick sound every time we cross a multiple of 10.
-    if cur > prev && (cur / 10) > (prev / 10) then
+    // Tick sound cadence: wolf4sdl fires ENDBONUS1SND every PAR_AMOUNT/10
+    // (= 50) units for the time bonus, and every 10% for the ratio rounds.
+    // We also suppress the tick that would land exactly on `target`, since
+    // it's about to be followed immediately by the end-of-stage ring sound
+    // — letting both play would dogpile two sounds at the transition.
+    let tick_granule = if g->inter_stage == 0 then 50 else 10
+    if cur > prev && (cur / tick_granule) > (prev / tick_granule) && cur < target then
         trigger_sound(snd_end_bonus1, ac)
-    // Stage finished?
+    // Stage finished — snap bonus_shown to the exact final value (trims
+    // fractional drift), queue the end sound, and arm the combined pause.
+    // Special case: when the time-bonus target is 0 (player didn't beat
+    // par), skip the stage silently. Matches wolf4sdl's `if (bonus)` guard,
+    // which skips the whole time-bonus block — no counter, no end sound —
+    // when there's nothing to award. Otherwise we'd get a spurious
+    // ENDBONUS2SND before the three ratio rounds (4 dings instead of 3).
     if cur >= target then
-        // Sync bonus_shown to the stage's final value (rounds off fractional
-        // drift and applies 100% bonus for the completed ratio stage).
         if g->inter_stage == 0 then
             g->inter_bonus_shown = target * par_amount_per_sec
-            trigger_sound(snd_end_bonus2, ac)
+        if g->inter_stage == 0 && target == 0 then
+            g->inter_stage = 1
+            g->inter_counter = 0
+            g->inter_progress = 0.0
         else
-            if target >= 100 then
-                g->inter_bonus_shown = g->inter_bonus_shown + percent_100_bonus
-                trigger_sound(snd_percent100, ac)
-            else if target == 0 then
-                trigger_sound(snd_no_bonus, ac)
-            else
-                trigger_sound(snd_end_bonus2, ac)
-        g->inter_stage = g->inter_stage + 1
-        g->inter_counter = 0
-        g->inter_progress = 0.0
+            g->inter_end_sound_delay = inter_end_sound_wait
+            g->inter_pause_timer = inter_end_sound_wait + inter_stage_gap
 
 // Free the current level + lv_data and load + build the level at level_num.
 // Shared by every transition path (next-level / restart / new-game). After
@@ -4316,7 +4397,14 @@ let fb_fill_palette = (rc: render_ctx*, pal: uint32[], idx: int32) ->
 // and live kill / secret / treasure ratios animated via tick_intermission.
 let render_intermission = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
                            g: game*) ->
-    fb_fill_palette(rc, pal, 0x7F)
+    // Viewport-only VIEWCOLOR fill — the HUD strip (y >= view_h) is painted
+    // separately by render_hud at the end so the player sees their carried
+    // stats (floor/score/lives/health/ammo/face/weapon) through the tally.
+    // Mirrors wolf4sdl's "split screen mode with the status bar" intermission.
+    let bg = pal[0x7F]
+    for y in 0..view_h
+        for x in 0..game_w
+            rc->fb[(int64) y * (int64) game_w + (int64) x] = bg
 
     // BJ portrait — alternate L_GUYPIC / L_GUY2PIC every ~0.5s for a gentle
     // breathing effect. Positioned at cell (0, 2) = pixel (0, 16) per wolf4sdl.
@@ -4394,6 +4482,11 @@ let render_intermission = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: ui
         write_lpic_number(rc, vg, pal, ratio_right, 16 * 8, sr_shown, true)
     if tr_shown >= 0 then
         write_lpic_number(rc, vg, pal, ratio_right, 18 * 8, tr_shown, true)
+
+    // HUD stays visible — score has already been incremented by the bonus
+    // award in enter_intermission, so the ticker the player sees matches
+    // the running score line at the bottom.
+    render_hud(rc, vg, pal, g)
 
 // Game-over screen: black background, big "GAME OVER", score, prompt.
 let render_game_over = (rc: render_ctx*, g: game*) ->
@@ -5884,6 +5977,8 @@ let main = (args: str[]) ->
         inter_target_timeleft = 0, inter_target_kr = 0,
         inter_target_sr = 0, inter_target_tr = 0,
         inter_breathe_timer = 0.0,
+        inter_pause_timer = 0.0,
+        inter_end_sound_delay = 0.0,
         difficulty = gd_hard,
         menu_sel = 0, menu_level = menu_main,
         music_on = true, want_quit = false,
