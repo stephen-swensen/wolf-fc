@@ -213,7 +213,7 @@ Cross-referenced against wolf4sdl. See the 2026-04-17 chat session for details.
 - [x] **Dog bite damage off-by-one** — dropped the `+1` in `enemy_bite_player`, roll is now `rnd_byte() >> 4` (0-15), matching wolf4sdl's `T_Bite`.
 - [x] **Weapon fire rates** — `fire_rate` now 0.343 / 0.343 / 0.171 / 0.086 s, derived from `attackinfo[4][14]` (6 tics per frame at 70Hz, with per-weapon loop structure).
 - [ ] **Dog bite range is euclidean 1.6 tiles** — wolf4sdl's `T_Bite` uses a per-axis check `|dx| ≤ 2 && |dy| ≤ 2` (wl_act2.cpp:2361-2372). Different shape; ours is stricter on diagonals. Low priority.
-- [ ] **RNG divergence** — we use PCG32 (`random.pcg_random`, two channels off one seed); the original uses the fixed 256-byte `US_RndT` table. Deterministic both ways but distributions differ. Worth porting `US_RndT` for sequence-level fidelity (damage streaks, hit/miss patterns).
+- [x] **RNG divergence accepted** — we use PCG32 (`random.pcg_random`, two channels off one seed) rather than the original's 256-byte `US_RndT` table. Distributions differ, so damage streaks / hit-miss patterns won't match the original frame-for-frame. Intentional: the PCG+channels setup is also an FC stdlib demo, and sequence-level fidelity here isn't worth the porting cost.
 - [ ] **Verify noise/area wake semantics** match `SightPlayer` in wl_state.cpp — how `madenoise` flows through `area_by_player`, particularly around AMBUSH and re-alert suppression. Needs audit, not yet a known bug.
 
 ## Rendering

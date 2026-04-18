@@ -5194,6 +5194,12 @@ let save_game_to_slot = (w: world*, slot: int32) ->
                 let sh = if e->shoot_fired then 1 else 0
                 io.write(
                     "enemy %d{i} %14.6f{e->x} %14.6f{e->y} %d{e->tile_x} %d{e->tile_y} %d{ki} %d{si} %d{e->dir} %d{e->hp} %d{e->anim_frame} %14.6f{e->anim_timer} %d{sh} %14.6f{e->move_remaining} %d{amb} %d{nfd}\n", f)
+            // PRNG state. Bits round-trip through signed int64 (same width as
+            // uint64 under 2's complement); load reinterprets via (uint64).
+            // Older saves lack this line and fall back to a fresh seed-0 stream
+            // (reset at the top of load_game_from_slot).
+            io.write(
+                "rng %d{(int64) g->rng_enemy.state} %d{(int64) g->rng_enemy.inc} %d{(int64) g->rng_face.state} %d{(int64) g->rng_face.inc}\n", f)
             io.write("end\n", f)
             void()
 
@@ -5286,6 +5292,14 @@ let load_game_from_slot = (w: world*, vs: vswap.vswap_file*, slot: int32) ->
             else if !text.starts_with(lines[0], "WLFC ") then false
             else
                 let g = w->g
+                // Reset both PCG streams to a seed-0 baseline before walking
+                // lines. A save written by this build will include an `rng`
+                // line that overwrites the state; older saves lack that line
+                // and keep this deterministic default. Either way, load is
+                // now reproducible rather than inheriting whatever stream
+                // position the live game had reached.
+                g->rng_enemy = random.pcg_random.make_with_channel(0u64, rng_channel_enemy)
+                g->rng_face  = random.pcg_random.make_with_channel(0u64, rng_channel_face)
                 let mut level_loaded = false
                 let mut i = 0
                 loop
@@ -5352,6 +5366,14 @@ let load_game_from_slot = (w: world*, vs: vswap.vswap_file*, slot: int32) ->
                         let toks = split_ws(line)
                         defer free_split(toks)
                         if toks.len >= 2 then g->area_number = unwrap_int(toks[1])
+                    else if text.starts_with(line, "rng ") then
+                        let toks = split_ws(line)
+                        defer free_split(toks)
+                        if toks.len >= 5 then
+                            g->rng_enemy.state = (uint64) unwrap_int64(toks[1])
+                            g->rng_enemy.inc   = (uint64) unwrap_int64(toks[2])
+                            g->rng_face.state  = (uint64) unwrap_int64(toks[3])
+                            g->rng_face.inc    = (uint64) unwrap_int64(toks[4])
                     else if text.starts_with(line, "door ") then
                         let toks = split_ws(line)
                         defer free_split(toks)
@@ -5468,6 +5490,11 @@ let unwrap_int = (s: const str) ->
     match text.parse_int32(s) with
     | some(n) -> n
     | none    -> 0
+
+let unwrap_int64 = (s: const str) ->
+    match text.parse_int64(s) with
+    | some(n) -> n
+    | none    -> 0i64
 
 let unwrap_float = (s: const str) ->
     match text.parse_float64(s) with

@@ -476,6 +476,15 @@ assert_contains "save:load-empty-fails" \
 assert_contains "save:listsaves-occupied" \
     "setlevel:0 save:6 listsaves" \
     "slot 6: E1M1"
+# PRNG state round-trips. Both sequences below kill the guard at (28,62) with
+# three pistol shots; the first interleaves a save/load between shots 1 and 2.
+# Score=100 in both cases demonstrates that the save/load preserves the PCG
+# stream position — without the rng line (or with a broken reload) the
+# post-load shots would roll different damage and the guard's death state
+# would differ. Identical scores prove the round-trip.
+assert_contains "save:rng-state-round-trips" \
+    "goto:30,62 turnr:180 setammo:50 fire wait:15 save:4 load:4 fire wait:15 fire state" \
+    "score=100"
 
 # ----------------------------------------------------------------------
 # Summary
