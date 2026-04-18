@@ -3115,9 +3115,15 @@ let wake_enemy = (g: game*, e: enemy*, ac: audio_ctx*) ->
 //   hit chance  = 256 - dist*8 (SS get a 2/3 distance discount; more accurate)
 //   damage      = (rnd >> 2) if dist<2, (rnd >> 3) if dist<4, else (rnd >> 4)
 let enemy_fire_at_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
+    // Per-kind firing sound — mirrors the original's T_Shoot switch. Gretel
+    // is not listed in the original switch and falls through to NAZIFIRESND.
     let snd = match e->kind with
-    | ek_ss -> snd_ss_fire
-    | _     -> snd_nazi_fire
+    | ek_ss                        -> snd_ss_fire
+    | ek_hans | ek_hitler          -> snd_boss_fire
+    | ek_schabbs                   -> snd_schabbs_throw
+    | ek_hitler_fake               -> snd_flamethrower
+    | ek_giftmacher | ek_fat       -> snd_missile_fire
+    | _                            -> snd_nazi_fire
     trigger_sound_at(snd, ac, g, e->x, e->y)
     if !check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then return
     let dxi = (int32) g->pos_x - e->tile_x
@@ -3490,11 +3496,26 @@ let snd_end_bonus1     = 59   // ENDBONUS1SND — per-tick counter during countu
 let snd_end_bonus2     = 60   // ENDBONUS2SND — counter stopped (non-100%)
 let snd_percent100     = 61   // PERCENT100SND — 100% ratio bonus
 let snd_no_bonus       = 62   // NOBONUSSND — 0% ratio
-let snd_count      = 63
+// --- Boss-specific attack sounds. Original game dispatches T_Shoot's
+//     firing sound per obclass; wolf-fc previously routed every non-SS
+//     boss to snd_nazi_fire, which sounded wrong for bosses.
+let snd_boss_fire      = 63   // BOSSFIRESND — Hans, Mecha/Real Hitler gun
+let snd_schabbs_throw  = 64   // SCHABBSTHROWSND — Schabbs syringe (AdLib only)
+let snd_flamethrower   = 65   // FLAMETHROWERSND — Fake Hitler (AdLib only)
+let snd_missile_fire   = 66   // MISSILEFIRESND — Giftmacher / Fat Face rocket
+                              //     (AdLib only in Wolf3D VSWAP)
+// --- Placeholders: mapping is filled in so callers that land later don't
+//     have to revisit this table. No current trigger site — snd_mech_step
+//     waits on a separate Mecha Hitler stage (ek_hitler currently jumps
+//     straight to Real Hitler sprites) and snd_yeah waits on the BJ
+//     victory-jump actor sequence (T_BJYell on s_bjjump2).
+let snd_mech_step      = 67   // MECHSTEPSND — Mecha Hitler walk stomp
+let snd_yeah           = 68   // YEAHSND — BJ victory-jump exclamation
+let snd_count      = 69
 
 // Digi-pack index for each snd_* (-1 = no digitized version). The mapping
 // comes from wolf4sdl's wolfdigimap[] for Wolf3D; Spear of Destiny differs.
-let snd_digi = int32[63] {
+let snd_digi = int32[69] {
      3,   // open_door    (OPENDOORSND  -> digi 3)
      2,   // close_door   (CLOSEDOORSND -> digi 2)
      5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
@@ -3557,12 +3578,18 @@ let snd_digi = int32[63] {
     -1,   // end_bonus1   (no digi — AdLib only)
     -1,   // end_bonus2   (no digi — AdLib only)
     -1,   // percent100   (no digi — AdLib only)
-    -1    // no_bonus     (no digi — AdLib only)
+    -1,   // no_bonus     (no digi — AdLib only)
+    10,   // boss_fire    (BOSSFIRESND -> digi 10)
+    -1,   // schabbs_throw (no digi — AdLib only)
+    -1,   // flamethrower (no digi — AdLib only)
+    -1,   // missile_fire (no digi — AdLib only)
+    31,   // mech_step    (MECHSTEPSND -> digi 31)
+    32    // yeah         (YEAHSND -> digi 32)
 }
 
 // AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this). -1 to
 // disable. Enum values taken from wolf4sdl's audiowl6.h.
-let snd_adlib_enum = int32[63] {
+let snd_adlib_enum = int32[69] {
     18,   // open_door    (OPENDOORSND)
     19,   // close_door   (CLOSEDOORSND)
     24,   // atk_pistol   (ATKPISTOLSND)
@@ -3625,7 +3652,13 @@ let snd_adlib_enum = int32[63] {
     42,   // end_bonus1   (ENDBONUS1SND)
     43,   // end_bonus2   (ENDBONUS2SND)
     48,   // percent100   (PERCENT100SND)
-    47    // no_bonus     (NOBONUSSND)
+    47,   // no_bonus     (NOBONUSSND)
+    59,   // boss_fire    (BOSSFIRESND)
+     8,   // schabbs_throw (SCHABBSTHROWSND)
+    69,   // flamethrower (FLAMETHROWERSND)
+    85,   // missile_fire (MISSILEFIRESND)
+    70,   // mech_step    (MECHSTEPSND)
+    72    // yeah         (YEAHSND)
 }
 
 // Play a sound by wolf-fc sound ID (one of snd_open_door, etc.). Prefers
