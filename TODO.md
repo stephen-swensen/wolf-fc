@@ -27,6 +27,12 @@
   save does nothing" (elevator switch, or re-opening a door). The held-key
   guard that old intermission code relied on is no longer needed: keydown
   events themselves latch the handled flag on the first usage.
+- Pre-intermission fade-to-black: during the `elevator_wait_time` freeze
+  (set when the switch is pulled or a boss dies), `render_frame` now applies
+  `viewport_tint_full` with `alpha = 1 - next_level_delay / elevator_wait_
+  time`, so the screen darkens linearly toward black over the second before
+  the tally screen appears. Gives immediate visual feedback that the press
+  registered — without it the 1s freeze read like "nothing happened".
 
 ### Recent additions (this session, part 5)
 - Elevator switch now plays the classic LEVELDONESND (digi 30 / AdLib 40) when

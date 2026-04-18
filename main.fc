@@ -4684,6 +4684,15 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
     dissolve_stipple(w->rc, red_tint, stipple_progress)
     render_hud(w->rc, w->vg, pal, w->g)
     render_message(w->rc, w->font, w->g)
+    // Pre-intermission fade-to-black: while `next_level` is latched and
+    // gameplay is frozen, darken the entire frame linearly as next_level_delay
+    // ticks down. Gives the player immediate visual feedback that the
+    // elevator/boss activation registered, rather than a silent 1s hitch
+    // followed by a sudden jump to the tally screen.
+    if w->g->next_level && elevator_wait_time > 0.0 then
+        let frac = 1.0 - w->g->next_level_delay / elevator_wait_time
+        let alpha = if frac < 0.0 then 0.0 else if frac > 1.0 then 1.0 else frac
+        viewport_tint_full(w->rc, 0x000000u32, alpha)
 
 // Save the current fb as a PNG at `path` with game-state metadata embedded
 // as a tEXt chunk (one field per line, grep-able).
