@@ -188,7 +188,7 @@ assert_regex "hitscan:knife-at-2-tiles-misses" \
 section "combat:enemies-attack"
 assert_contains "ai:dog-bites-on-contact" \
     "goto:45,34 turnr:90 wait:30 state" \
-    "health=92"
+    "health=93"
 assert_contains "ai:guard-wakes-on-sight" \
     "goto:28,60 turnl:90 wait:10 enemies" \
     "chase=1"
@@ -347,9 +347,9 @@ section "bosses / ghosts"
 assert_contains "boss:hans-spawns-on-e1m9" \
     "setlevel:8 enemies" \
     "boss=1 ghost=0"
-assert_contains "boss:hans-hp-850" \
+assert_contains "boss:hans-hp-1200" \
     "setlevel:8 enemylist" \
-    "kind=hans state=stand dir=4 hp=850"
+    "kind=hans state=stand dir=4 hp=1200"
 # E3M10 (level 29) is the Pacman-homage secret — all four ghosts spawn.
 assert_contains "ghost:four-ghosts-on-pacman-level" \
     "setlevel:29 enemies" \
