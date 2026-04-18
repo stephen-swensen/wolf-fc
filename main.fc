@@ -693,23 +693,27 @@ let kind_is_rotating = (k: enemy_kind) ->
     | ek_blinky | ek_pinky | ek_clyde | ek_inky -> false
     | _ -> true
 
-// Per-kind HP. Difficulty isn't modeled yet — use "Bring 'em on" (gd_hard)
-// values to keep encounters readable. Dogs die in one shot. Boss HP from
-// wolf4sdl's StartBonus table.
-let hp_for_kind = (k: enemy_kind) ->
+// Per-kind starting HP, indexed by difficulty. Mirrors wolf4sdl's
+// `starthitpoints[4][NUMENEMIES]` (wl_act2.cpp). Mutants, fake Hitler, and
+// every boss scale up from baby → death incarnate; grunts and dogs are
+// constant across difficulties.
+let hp_for_kind = (k: enemy_kind, d: int32) ->
+    let diff_pick = (baby: int32, easy: int32, med: int32, hard: int32) ->
+        if d == 0 then baby else if d == 1 then easy
+        else if d == 2 then med else hard
     match k with
     | ek_guard        -> 25
     | ek_officer      -> 50
     | ek_ss           -> 100
     | ek_dog          -> 1
-    | ek_mutant       -> 55
-    | ek_hans         -> 850
-    | ek_schabbs      -> 850
-    | ek_gretel       -> 850
-    | ek_giftmacher   -> 850
-    | ek_fat          -> 850
-    | ek_hitler_fake  -> 200
-    | ek_hitler       -> 800
+    | ek_mutant       -> diff_pick(45, 55, 55, 65)
+    | ek_hans         -> diff_pick(850, 950, 1050, 1200)
+    | ek_schabbs      -> diff_pick(850, 950, 1550, 2400)
+    | ek_gretel       -> diff_pick(850, 950, 1050, 1200)
+    | ek_giftmacher   -> diff_pick(850, 950, 1050, 1200)
+    | ek_fat          -> diff_pick(850, 950, 1050, 1200)
+    | ek_hitler_fake  -> diff_pick(200, 300, 400, 500)
+    | ek_hitler       -> diff_pick(800, 950, 1050, 1200)
     | ek_blinky | ek_pinky | ek_clyde | ek_inky -> 1000  // unkillable-ish
 
 // Score granted to the player on kill. Wolf3D values.
@@ -1709,13 +1713,13 @@ let classify_enemy_tile = (tile: int32) ->
 
 // Allocate one enemy entry from plane-1 data. dir4 0..3 is east/north/west/south;
 // multiplied by 2 to land on the cardinal dirs of the 8-dir `dirtype` encoding.
-let spawn_one_enemy = (lv: level*, tx: int32, ty: int32, info: enemy_spawn_info) ->
+let spawn_one_enemy = (lv: level*, tx: int32, ty: int32, info: enemy_spawn_info, difficulty: int32) ->
     if lv->num_enemies >= max_enemies then return
     let dir8 = info.dir4 * 2   // 0,2,4,6
     let initial_state = if info.dead then enemy_state.es_dead
         else if info.patrol then enemy_state.es_path
         else enemy_state.es_stand
-    let hp = if info.dead then 0 else hp_for_kind(info.kind)
+    let hp = if info.dead then 0 else hp_for_kind(info.kind, difficulty)
     let anim_frame = if info.dead then
         sprites_for_kind(info.kind).num_die_frames - 1
     else 0
@@ -1765,7 +1769,7 @@ let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: int32) ->
             | some(info) ->
                 if info.dead || spawn_tier_allowed(info.tier, difficulty) then
                     let before = lv->num_enemies
-                    spawn_one_enemy(lv, x, y, info)
+                    spawn_one_enemy(lv, x, y, info, difficulty)
                     if lv->num_enemies > before then
                         // Promote the just-spawned enemy to FL_AMBUSH if its tile
                         // is the AMBUSHTILE marker, and patch tile_areas to the
@@ -3177,7 +3181,8 @@ let enemy_bite_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
     if dist > enemy_melee_range then return
     if !check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then return
     if rnd_byte() < 180 then
-        let dmg = (rnd_byte() >> 4) + 1
+        // Matches wolf4sdl T_Bite: US_RndT() >> 4 → 0-15 (can graze for 0).
+        let dmg = rnd_byte() >> 4
         damage_player(g, ac, dmg)
 
 // Per-frame AI step for one enemy. Dispatches on state; advances animation
@@ -4223,8 +4228,13 @@ let render_hud = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[], g
 // Weapon overlay — VSWAP weapon sprite at bottom center
 // ============================================================
 
-// Weapon fire rates (seconds between shots). Index by g->weapon.
-let fire_rate = float64[4] { 0.5, 0.3, 0.15, 0.1 }
+// Weapon fire rates (seconds per shot cycle). Index by g->weapon. Derived
+// from wolf4sdl's `attackinfo[4][14]` (wl_agent.cpp:56) with 6-tic frames
+// at the 70Hz tic rate. Knife/pistol: 4 full frames = 24 tics ≈ 0.343s per
+// swing/shot. MG: frames 2↔3 loop while held = 12 tics ≈ 0.171s/shot.
+// Chaingun: fires on both frame 2 and 3 of the 2-frame loop = 6 tics ≈
+// 0.086s/shot.
+let fire_rate = float64[4] { 0.343, 0.343, 0.171, 0.086 }
 
 // Per-weapon firing sound. Values are snd_atk_knife / snd_atk_pistol /
 // snd_atk_mg / snd_atk_gat (the literals, since snd_* let-bindings can't

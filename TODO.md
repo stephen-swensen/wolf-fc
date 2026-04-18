@@ -206,6 +206,16 @@ Working:
 - [x] Per-episode music table for episodes 4–6 — songs[] table matches wolf4sdl: Wolf3D's six episodes share the three music sets, so the "duplication" is correct.
 - [x] Bonus score calculations: par-beaten bonus (500 pts per unused 10s) + 10000 pts each for 100% kills / secrets / treasures. Applied when entering intermission, reflected in score line.
 
+### Fidelity audit findings (2026-04-17)
+Cross-referenced against wolf4sdl. See the 2026-04-17 chat session for details.
+- [x] Gate `advance_enemy_move` door-opening on kind — dogs / fake-Hitlers / pacman ghosts used CHECKDIAG in the original and treat doors as walls.
+- [x] **HP scaling by difficulty** — `hp_for_kind` now takes difficulty; mutant/fake-Hitler/all bosses/mecha Hitler scale per wolf4sdl's `starthitpoints[4][NUMENEMIES]`. Grunts and dogs stay constant as in the original.
+- [x] **Dog bite damage off-by-one** — dropped the `+1` in `enemy_bite_player`, roll is now `rnd_byte() >> 4` (0-15), matching wolf4sdl's `T_Bite`.
+- [x] **Weapon fire rates** — `fire_rate` now 0.343 / 0.343 / 0.171 / 0.086 s, derived from `attackinfo[4][14]` (6 tics per frame at 70Hz, with per-weapon loop structure).
+- [ ] **Dog bite range is euclidean 1.6 tiles** — wolf4sdl's `T_Bite` uses a per-axis check `|dx| ≤ 2 && |dy| ≤ 2` (wl_act2.cpp:2361-2372). Different shape; ours is stricter on diagonals. Low priority.
+- [ ] **RNG divergence** — we use an LCG (`random.lcg_random`); the original uses the fixed 256-byte `US_RndT` table. Deterministic both ways but distributions differ. Worth porting `US_RndT` for sequence-level fidelity (damage streaks, hit/miss patterns).
+- [ ] **Verify noise/area wake semantics** match `SightPlayer` in wl_state.cpp — how `madenoise` flows through `area_by_player`, particularly around AMBUSH and re-alert suppression. Needs audit, not yet a known bug.
+
 ## Rendering
 
 ### Polish
