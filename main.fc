@@ -3001,9 +3001,10 @@ let add_dropped_item = (lv: level*, x: float64, y: float64, page: int32, item: i
 // Pool of guard death screams. wolf4sdl A_DeathScream picks one of eight
 // at random for guard-class enemies so repeated kills don't sound identical.
 let guard_death_sounds = int32[8] {
-    29, 30, 31, 33, 34, 35, 36, 37
-    // snd_death_1..9 except the #6 slot (special-case in wolf4sdl); we
-    // include all eight regularly-used screams.
+    29, 30, 31, 33, 34, 36, 37, 38
+    // snd_death_1..9 without #6 — DEATHSCREAM6SND is the map-9 "fart"
+    // easter egg in the original (1/256 roll, not part of the regular
+    // pool), not currently emulated here.
 }
 
 let kill_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, sprite_start: int32) ->
@@ -3317,7 +3318,6 @@ let fire_player_hitscan = (w: world*) ->
     let dmg = weapon_damage_roll(g->weapon, dist)
     if dmg <= 0 then return
     damage_enemy(lv, g, ac, e, dmg, sprite_start)
-    trigger_sound(snd_hit_enemy, ac)
 
 // ============================================================
 // Door animation
@@ -3451,7 +3451,10 @@ let snd_dog_death  = 28
 let snd_death_1    = 29   // guard death scream (aka DEATHSCREAM1SND)
 let snd_death_2    = 30   // officer death scream (aka DEATHSCREAM2SND)
 let snd_death_3    = 31   // SS death scream (aka DEATHSCREAM3SND)
-let snd_hit_enemy  = 32   // bullet impact on flesh
+// HITENEMYSND exists in the original's audio enum but is never played
+// anywhere — no caller in the shipped game. Kept as a table slot for
+// completeness of the enum mapping; not triggered from wolf-fc code.
+let snd_hit_enemy  = 32   // bullet impact on flesh — unused (see note)
 // --- Expanded guard death scream pool (wolf4sdl A_DeathScream picks one
 //     of 8 at random for guardobj). The first three are snd_death_1..3.
 let snd_death_4    = 33   // DEATHSCREAM4SND
