@@ -36,6 +36,12 @@ data/AUDIOT.WL6     Music and sound data
 
 This compiles the FC source to C, then to a native binary, and runs it. The game expects to find its data files relative to the working directory (`data/*.WL6`).
 
+### Options
+
+| Flag | Effect |
+|------|--------|
+| `--no-dogs` | Skip spawning all dog enemies (for sensitive players). Works in both interactive and `--test` modes; may appear before or after `--test`. |
+
 ## Controls
 
 Classic Wolfenstein 3D controls:

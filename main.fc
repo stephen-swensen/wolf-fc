@@ -802,6 +802,11 @@ let drop_shape_for_kind = (k: enemy_kind) ->
 let mut enemy_rng = random.lcg_random { state = 0xDEADBEEF5EED1234u64 }
 let rnd_byte = () -> (int32) (random.lcg_random.next_uint32(&enemy_rng) & 0xFFu32)
 
+// CLI flag `--no-dogs`: when true, spawn_enemies skips every ek_dog. Pre-dead
+// dog corpses don't exist in the data (the "dead guard" marker is tile 124,
+// a guard), so no carve-out is needed for those.
+let mut no_dogs = false
+
 // Per-level state: tile grid, dynamic entities, in-progress animations.
 // Built once per level via build_level and destroyed via free_level on
 // transition. Everything that a save-state would need to preserve lives here.
@@ -1767,6 +1772,10 @@ let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: int32) ->
             match classify_enemy_tile(obj) with
             | none -> void()
             | some(info) ->
+                let is_dog = match info.kind with
+                    | ek_dog -> true
+                    | _      -> false
+                if no_dogs && is_dog then continue
                 if info.dead || spawn_tier_allowed(info.tier, difficulty) then
                     let before = lv->num_enemies
                     spawn_one_enemy(lv, x, y, info, difficulty)
@@ -6070,6 +6079,11 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
 // ============================================================
 
 let main = (args: str[]) ->
+    // CLI flags. Scan all args (so flags can appear before or after --test)
+    // and set the relevant module-level switches before any level is built.
+    for i in 1..(int32) args.len
+        if args[(int64) i] == "--no-dogs" then no_dogs = true
+
     // Load game data (no SDL needed)
     io.write("Loading palette...\n", stdout)
     let pal = palette.init()
@@ -6178,11 +6192,18 @@ let main = (args: str[]) ->
     // title/menu entry flow — tests start directly in gp_playing so
     // existing regression scripts behave the same as before the UI
     // overhaul.
-    if args.len > 1 && args[1] == "--test" then
+    // Find --test and enter test mode if present. Flags like --no-dogs may
+    // appear before or after --test; in the command loop, we skip anything
+    // matching a known flag so it isn't reported as "Unknown test command".
+    let mut test_idx = -1
+    for i in 1..(int32) args.len
+        if test_idx < 0 && args[(int64) i] == "--test" then test_idx = i
+    if test_idx >= 0 then
         g->phase = game_phase.gp_playing
         g->has_active_game = true
         let test_dt = 1.0 / 35.0
-        for ti in 2..(int32) args.len
+        for ti in (test_idx + 1)..(int32) args.len
+            if args[(int64) ti] == "--no-dogs" then continue
             run_test_cmd(w, args[(int64) ti], pal, test_dt)
         return 0
 
