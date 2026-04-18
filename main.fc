@@ -1451,6 +1451,9 @@ union door_action =
     | door_opened    // closed door started opening
     | door_locked    // closed door needs a key the player doesn't have
 
+// Returns what happened — the caller owns the NOWAYSND cue so it can
+// edge-trigger on initial key-press rather than spamming while space is
+// held (see update_player's space handler).
 let try_open_door = (lv: level*, x: int32, y: int32, g: game*, ac: audio_ctx*) ->
     if x < 0 || x >= map_size || y < 0 || y >= map_size then door_action.no_door
     else
@@ -1461,12 +1464,8 @@ let try_open_door = (lv: level*, x: int32, y: int32, g: game*, ac: audio_ctx*) -
             if lv->doors[dn].state != door_state.closed then door_action.no_door
             else
                 let lock = lv->doors[dn].lock_type
-                if lock == 1 && !g->has_gold_key then
-                    trigger_sound(snd_no_way, ac)
-                    door_action.door_locked
-                else if lock == 2 && !g->has_silver_key then
-                    trigger_sound(snd_no_way, ac)
-                    door_action.door_locked
+                if lock == 1 && !g->has_gold_key then door_action.door_locked
+                else if lock == 2 && !g->has_silver_key then door_action.door_locked
                 else
                     start_door_opening(lv, dn, g, ac)
                     door_action.door_opened
@@ -2380,36 +2379,30 @@ let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
         trigger_sound(snd_hit_wall, ac)
         g->wall_hit_cooldown = 0.4   // ~400 ms before we'll re-announce
 
-    // Open doors / activate elevator with space (latched — SDL sends repeat
-    // KEYDOWN events while held, and we'd retrigger the use-action on every
-    // one of them otherwise, which causes stray sounds).
-    if g->key_space && !g->key_space_handled then
+    // Use-action dispatch — mirrors wolf4sdl's Cmd_Use (wl_agent.cpp).
+    //   • Push-wall runs every frame while space is held; try_push_wall is
+    //     idempotent (early-returns if one is already sliding or the tile
+    //     isn't a push-wall marker), so the behaviour is "hold space and
+    //     walk along a row of walls to find secrets" — the hallmark Wolf3D
+    //     use-key ergonomic.
+    //   • Elevator and door are edge-triggered on the press itself, exactly
+    //     like wolf4sdl's `!buttonheld[bt_use]` gate. NOWAYSND (locked
+    //     door) rides along inside the edge branch so it can't stutter.
+    //   • DONOTHINGSND fires every frame when nothing else did, matching
+    //     the wolf4sdl else-branch. Because the AdLib driver retriggers
+    //     the same note each frame the player hears a sustained "do-do-do"
+    //     while holding space at an empty wall, and on release the chip
+    //     plays out whatever bytes remained from the last retrigger — the
+    //     tail you'd hear on original SB16 hardware.
+    if g->key_space then
+        let edge = !g->key_space_handled
         g->key_space_handled = true
         let fx = (int32) (g->pos_x + g->dir_x)
         let fy = (int32) (g->pos_y + g->dir_y)
         let mut did_anything = false
-        // Check for elevator switch (tile 21). If the player is standing on
-        // ALTELEVATORTILE (plane-0 raw value 107 == area 0) when they flip
-        // it, route to the secret level instead (wolf4sdl ex_secretlevel).
-        // Wolf3D levels are designed so an area-0 floor is only adjacent to
-        // an elevator-21 tile along a hidden push-wall route; the positional
-        // gating falls out of the map layout, not extra code.
-        if fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
-            let face_tile = (int32) lv->tilemap[(int64) fx * 64 + (int64) fy]
-            if face_tile == 21 then
-                let stand_area = (int32) lv->tile_areas[
-                    (int64) ((int32) g->pos_x) * 64 + (int64) ((int32) g->pos_y)]
-                if stand_area == 0 then g->went_secret = true
-                g->next_level = true
-                g->next_level_delay = elevator_wait_time
-                // Boost LEVELDONESND into the mixer's soft-clip region so the
-                // elevator-switch "bam!" lands the way it did on OG Sound
-                // Blaster hardware (subjectively more distinctive than the
-                // unity-gain default). ~1.8× is just under the hard-clip
-                // threshold for the digi's typical peak.
-                trigger_sound_loud(snd_level_done, ac, 1.8)
-                did_anything = true
-        // Try push-wall (only if facing cardinally).
+        // Push-wall first so sliding a held space along a wall activates
+        // secret tiles even when an edge event isn't fresh (cardinal-only;
+        // diagonals wouldn't map to a single push direction).
         let push_dx = if g->dir_x > 0.5 then 1 else if g->dir_x < -0.5 then -1 else 0
         let push_dy = if g->dir_y > 0.5 then 1 else if g->dir_y < -0.5 then -1 else 0
         if push_dx != 0 || push_dy != 0 then
@@ -2417,13 +2410,32 @@ let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
                 trigger_sound(snd_push_wall, ac)
                 g->secrets = g->secrets + 1
                 did_anything = true
-        match try_open_door(lv, fx, fy, g, ac) with
-        | no_door      -> void()
-        | door_opened
-        | door_locked  -> did_anything = true
-        // Matches wolf4sdl's fall-through to DONOTHINGSND when no use-action
-        // fired. Locked-no-key plays NOWAYSND inside try_open_door and is
-        // reported back as door_locked so we don't also play DONOTHINGSND.
+        // Elevator + door fire once per press. Tile 21 == ELEVATORTILE;
+        // standing on ALTELEVATORTILE (area 0) at switch-flip routes to
+        // the secret level (mirrors wolf4sdl ex_secretlevel). The
+        // !g->next_level guard is belt-and-braces so a fresh press during
+        // the elevator-wait window doesn't restack the LEVELDONESND cue.
+        if edge && fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
+            let face_tile = (int32) lv->tilemap[(int64) fx * 64 + (int64) fy]
+            if face_tile == 21 && !g->next_level then
+                let stand_area = (int32) lv->tile_areas[
+                    (int64) ((int32) g->pos_x) * 64 + (int64) ((int32) g->pos_y)]
+                if stand_area == 0 then g->went_secret = true
+                g->next_level = true
+                g->next_level_delay = elevator_wait_time
+                // Boost LEVELDONESND into the mixer's soft-clip region so
+                // the elevator-switch "bam!" lands the way it did on OG
+                // Sound Blaster hardware. ~1.8× sits just under the hard-
+                // clip threshold for the digi's typical peak.
+                trigger_sound_loud(snd_level_done, ac, 1.8)
+                did_anything = true
+            else
+                match try_open_door(lv, fx, fy, g, ac) with
+                | no_door      -> void()
+                | door_opened  -> did_anything = true
+                | door_locked  ->
+                    trigger_sound(snd_no_way, ac)
+                    did_anything = true
         if !did_anything then
             trigger_sound(snd_no_action, ac)
     // Refresh g->area_number from whatever tile the player is now standing
