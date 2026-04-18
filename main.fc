@@ -48,6 +48,12 @@ let music_endlevel = 16    // intermission (level-completed jingle)
 let music_urahero  = 24    // per-episode victory screen
 let music_vicmarch = 25    // final game-clear victory
 
+// Seconds to hold gameplay frozen after the player pulls the elevator switch
+// (or a boss dies) before the intermission screen appears. Stands in for the
+// original game's fade-out/fade-in between Cmd_Use and LevelCompleted — lets
+// LEVELDONESND play out in the world before the score tally takes over.
+let elevator_wait_time = 1.0
+
 // Per-level music: songs[episode * 10 + level] = music enum index.
 // STARTMUSIC = 261. Chunk = 261 + songs[i].
 // GETTHEM=3, SEARCHN=11, POW=9, SUSPENSE=12, WARMARCH=2, CORNER=0,
@@ -183,6 +189,12 @@ struct game =
     // keyup. Without this the SDL key-repeat stream retriggers the door/
     // push-wall handlers on every frame, producing stray sounds.
     key_space_handled: bool
+    // "Any key" ack for IN_Ack-style screens (intermission, episode-end,
+    // victory, game-over). Set on any non-repeat KEYDOWN while in one of
+    // those phases; cleared when all ack keys are released. Same latch/
+    // handled pattern as key_space so a held key only advances once.
+    key_ack: bool
+    key_ack_handled: bool
     key_fire: bool
     // Wall-scrape sound cooldown (seconds). Prevents HITWALLSND from firing
     // every frame while the player grinds along a wall. Counts down in
@@ -198,6 +210,10 @@ struct game =
     has_gold_key: bool
     has_silver_key: bool
     next_level: bool
+    // Counts down in gp_playing while `next_level` is latched; when it reaches
+    // 0 the intermission phase is entered. Gives LEVELDONESND time to play in
+    // the world (elevator "ding" / boss death) before the tally screen pops.
+    next_level_delay: float64
     weapon: int32          // 0=knife, 1=pistol, 2=machine gun, 3=chain gun
     best_weapon: int32     // highest-tier firearm owned (pistol..chain). When
                            // ammo runs out we drop to knife; picking ammo up
@@ -933,6 +949,7 @@ let reset_player_for_life = (g: game*) ->
     g->has_gold_key = false
     g->has_silver_key = false
     g->next_level = false
+    g->next_level_delay = 0.0
     g->made_noise = false
     g->damage_flash_timer = 0.0
     g->respawn_fade_timer = 0.0
@@ -1030,7 +1047,13 @@ let enter_intermission = (g: game*) ->
     g->key_left = false
     g->key_right = false
     g->key_fire = false
-    g->key_space_handled = true    // suppress accidental instant-advance
+    // Don't pre-handle key_space or key_ack here: the pre-intermission freeze
+    // has already given the player a full second to release any key they had
+    // down at the elevator, so by the time we arrive here their next press is
+    // a deliberate "advance" that should fire on the first cycle. Pre-setting
+    // the handled flags would silently eat that press (past bug). If they are
+    // still holding a key through the freeze, letting it instant-advance the
+    // animation is natural mash-to-skip behaviour.
 
 // Count-up rates for the intermission animation (units per second).
 // Slow enough that the counter is clearly animating, fast enough that the
@@ -1047,11 +1070,11 @@ let finish_intermission_anim = (g: game*) ->
     g->inter_progress = 0.0
     g->inter_bonus_shown = compute_level_bonus(g)
 
-// Lead-in before the counter starts, so LEVELDONESND (the elevator "ding"
-// that played when the switch was thrown) has time to finish cleanly before
-// the bonus counter's tick sounds overlay it. Mirrors the fade-out + fade-in
-// gap wolf4sdl inserts between Cmd_Use and LevelCompleted's counter loop.
-let inter_lead_in = 0.7
+// Short breath before the counter starts, just enough for the screen swap to
+// feel deliberate. LEVELDONESND (the elevator "ding") already played out
+// during the pre-intermission freeze (elevator_wait_time), so we don't need
+// the longer gap the original inserted between Cmd_Use and LevelCompleted.
+let inter_lead_in = 0.25
 
 // Advance the intermission count-up animation one frame. Fires count-up
 // tick sounds every 10 units and a stage-end sound (100% / non-100% / none)
@@ -1156,7 +1179,11 @@ let advance_next_level = (w: world*, vs: vswap.vswap_file*) ->
 let enter_episode_end = (g: game*) ->
     g->phase = game_phase.gp_episode_end
     g->phase_timer = 0.0
-    g->key_space_handled = true
+    // See enter_intermission: pre-handling the key latches here ends up
+    // swallowing the player's first legitimate "advance" press, because the
+    // KEYUP from the intermission-advance press has already cleared their
+    // held key before we arrive. Let the natural keydown latch the handled
+    // flag on the first real press instead.
     g->went_secret = false
     // Strip keys now; next-episode map load would do it anyway.
     g->has_gold_key = false
@@ -1166,7 +1193,8 @@ let enter_episode_end = (g: game*) ->
 let enter_final_victory = (g: game*) ->
     g->phase = game_phase.gp_victory
     g->phase_timer = 0.0
-    g->key_space_handled = true
+    // (Same rationale as enter_intermission / enter_episode_end — letting the
+    // natural KEYDOWN latch the handled flag avoids eating the first press.)
 
 // From gp_episode_end, move into the first map of the next episode. If this
 // was the last episode, go to the final victory screen instead.
@@ -1247,7 +1275,8 @@ let start_new_game_here = (w: world*, vs: vswap.vswap_file*) ->
 let update_phase_transitions = (w: world*, vs: vswap.vswap_file*) ->
     let g = w->g
     let mut level_changed = false
-    if g->next_level && g->phase == game_phase.gp_playing then
+    if g->next_level && g->phase == game_phase.gp_playing
+       && g->next_level_delay <= 0.0 then
         g->next_level = false
         enter_intermission(g)
     if g->phase == game_phase.gp_dying && g->phase_timer >= death_anim_time then
@@ -2270,6 +2299,7 @@ let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
                     (int64) ((int32) g->pos_x) * 64 + (int64) ((int32) g->pos_y)]
                 if stand_area == 0 then g->went_secret = true
                 g->next_level = true
+                g->next_level_delay = elevator_wait_time
                 trigger_sound(snd_level_done, ac)
                 did_anything = true
         // Try push-wall (only if facing cardinally).
@@ -2904,6 +2934,7 @@ let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, dmg: int32,
         // LevelCompleted trigger on boss-death + elevator-reveal).
         if was_boss then
             g->next_level = true
+            g->next_level_delay = elevator_wait_time
             show_message(g, "YOU GOT THE BOSS KEY!")
     else
         // Pain flinch (except dogs, which don't display pain frames).
@@ -4020,18 +4051,30 @@ let tick = (w: world*, dt: float64) ->
     // doors, pickups, weapon, player: all frozen.
     match g->phase with
     | gp_playing ->
-        // Wolf4sdl PlayLoop resets madenoise at the top of each frame; we
-        // follow suit so noise from one tick only wakes enemies on the same
-        // tick. update_weapon raises it again when the player fires a gun,
-        // and damage_enemy raises it on a knife hit.
-        g->made_noise = false
-        g->level_time = g->level_time + dt
-        update_player(w->lv, g, dt, w->ac)
-        update_doors(w->lv, g, dt, w->ac)
-        update_pushwall(w->lv, dt)
-        update_weapon(w, dt)
-        update_enemies(w, dt)
-        check_pickups(w->lv, g, w->ac)
+        // Elevator/boss-death pre-intermission wait: freeze all gameplay for
+        // `next_level_delay` seconds so LEVELDONESND plays out in the world
+        // before the tally screen takes over. update_phase_transitions won't
+        // enter the intermission phase until the delay has elapsed. We keep
+        // gameplay frozen for the whole `next_level` window (even on the tick
+        // where delay reaches 0) so the phase transition fires cleanly at end
+        // of tick without one stray gameplay frame sneaking in.
+        if g->next_level then
+            if g->next_level_delay > 0.0 then
+                g->next_level_delay = g->next_level_delay - dt
+                if g->next_level_delay < 0.0 then g->next_level_delay = 0.0
+        else
+            // Wolf4sdl PlayLoop resets madenoise at the top of each frame; we
+            // follow suit so noise from one tick only wakes enemies on the same
+            // tick. update_weapon raises it again when the player fires a gun,
+            // and damage_enemy raises it on a knife hit.
+            g->made_noise = false
+            g->level_time = g->level_time + dt
+            update_player(w->lv, g, dt, w->ac)
+            update_doors(w->lv, g, dt, w->ac)
+            update_pushwall(w->lv, dt)
+            update_weapon(w, dt)
+            update_enemies(w, dt)
+            check_pickups(w->lv, g, w->ac)
     | _ ->
         g->phase_timer = g->phase_timer + dt
         if g->phase == game_phase.gp_intermission then
@@ -5117,7 +5160,15 @@ let load_game_from_slot = (w: world*, vs: vswap.vswap_file*, slot: int32) ->
                 g->key_right = false
                 g->key_fire = false
                 g->key_space = false
-                g->key_space_handled = true
+                // Leave key_space_handled at false: the user confirmed the
+                // load by pressing space/enter in the menu, and if we mark it
+                // handled here their *next* press on a door/elevator (after
+                // the intervening KEYUP) would be silently eaten. Matches the
+                // enter_intermission / enter_episode_end fix for the same
+                // symptom.
+                g->key_space_handled = false
+                g->key_ack = false
+                g->key_ack_handled = false
                 g->damage_flash_timer = 0.0
                 g->msg_timer = 0.0
                 true
@@ -5778,12 +5829,13 @@ let main = (args: str[]) ->
         key_up = false, key_down = false,
         key_left = false, key_right = false,
         key_shift = false, key_alt = false,
-        key_ctrl = false, key_space = false, key_space_handled = false, key_fire = false,
+        key_ctrl = false, key_space = false, key_space_handled = false,
+        key_ack = false, key_ack_handled = false, key_fire = false,
         wall_hit_cooldown = 0.0,
         health = 100, ammo = 8, score = 0, lives = 3,
         level_num = 0,
         has_gold_key = false, has_silver_key = false,
-        next_level = false,
+        next_level = false, next_level_delay = 0.0,
         weapon = 1, best_weapon = 1, went_secret = false,
         fire_timer = 0.0, weapon_frame = 0,
         area_number = -1, made_noise = false,
@@ -6100,6 +6152,12 @@ let main = (args: str[]) ->
                                 sdl2.clear_audio(audio_dev)
                         if k == sdl2.key_s then take_screenshot(w, vs, pal)
                         if k == sdl2.key_d then debug_dump_state(w)
+                        // IN_Ack: any keydown during the intermission screen
+                        // counts as "acknowledge and advance". The advance
+                        // itself runs below (after tick) and is gated by
+                        // key_ack_handled so a held key only fires once.
+                        if g->phase == game_phase.gp_intermission then
+                            g->key_ack = true
             if t == sdl2.keyup_event then
                 let k = event.key.keysym.sym
                 // Keyup only clears flags; not phase-sensitive.
@@ -6113,6 +6171,9 @@ let main = (args: str[]) ->
                 if k == sdl2.key_space then
                     g->key_space = false
                     g->key_space_handled = false
+                // Any keyup rearms the IN_Ack latch so the next press can fire.
+                g->key_ack = false
+                g->key_ack_handled = false
 
         // Update
         tick(w, dt)
@@ -6126,8 +6187,8 @@ let main = (args: str[]) ->
         // First press of space while the count-up is running skips animation
         // to the final "everything shown" state; next press advances.
         if g->phase == game_phase.gp_intermission && g->phase_timer > 0.0
-           && g->key_space && !g->key_space_handled then
-            g->key_space_handled = true
+           && g->key_ack && !g->key_ack_handled then
+            g->key_ack_handled = true
             if g->inter_stage < 4 then
                 finish_intermission_anim(g)
             else if g->level_num % levels_per_episode == 8 then

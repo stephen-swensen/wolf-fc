@@ -102,7 +102,7 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `setphase:X` | Force phase: `title` / `menu` / `epmenu` / `diffmenu` / `savemenu` / `loadmenu` / `playing` |
 | `music` | Print the AUDIOT chunk that should be playing for the current phase (no audio device required) |
 | `endepisode` | Set `next_level` on current level (quick path to intermission/episode-end screens) |
-| `advance` | Simulate "press space" on intermission / episode-end / victory / game-over |
+| `advance` | Simulate the ack-key press on intermission / episode-end / victory / game-over (intermission accepts any key in interactive mode) |
 | `save:N` | Write the running world to save slot N (0..9) under `~/.wolf-fc/saves/` |
 | `load:N` | Read save slot N back into the world (level reloaded, state overlaid) |
 | `listsaves` | Dump each save slot (`slot N: E<ep>M<lvl> diff=... score=... label=...` or `EMPTY`) |

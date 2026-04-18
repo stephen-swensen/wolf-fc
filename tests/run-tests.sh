@@ -158,7 +158,7 @@ assert_contains "static:blocks-player" \
     "pos=( 36.8000,  22.5000)"
 
 section "doors"
-assert_contains "door:elevator-switch"        "goto:25,47 turnl:90 space facetile phase" "phase=intermission"
+assert_contains "door:elevator-switch"        "goto:25,47 turnl:90 space wait:40 facetile phase" "phase=intermission"
 assert_contains "door:walk-all-the-way-through" \
     "fwd:15 space wait:40 fwd:20 state" "pos=( 33.0000,  57.5000)"
 # Door straddle used to trap the player: walk through a door but stop with
@@ -275,26 +275,31 @@ assert_contains "death:advance-from-game-over-resets" \
     "score=0 lives=3 level=0"
 
 section "intermission / level progression"
-# Stepping onto the elevator + space transitions to intermission phase.
+# Stepping onto the elevator + space transitions to intermission phase, but
+# only after the ~1s pre-intermission freeze (elevator_wait_time) during
+# which gameplay pauses so LEVELDONESND can play out in-world.
 assert_contains "intermission:elevator-enters-intermission" \
-    "goto:25,47 turnl:90 space phase" \
+    "goto:25,47 turnl:90 space wait:40 phase" \
     "phase=intermission"
 # Level time accumulates in gp_playing and freezes during intermission.
+# (wait:70 here straddles both the pre-delay freeze and the intermission
+# itself; neither advances level_time, so the total stays at the fwd:70
+# accumulation of 70/35 ticks plus the one `space` tick = ~2.03s.)
 assert_regex "intermission:time-freezes-during-intermission" \
     "fwd:70 goto:25,47 turnl:90 space wait:70 counters" \
     'time=[ ]*2\.0[0-9]+'
 # `advance` on intermission loads the next level (level_num increments).
 assert_contains "intermission:advance-loads-next-level" \
-    "goto:25,47 turnl:90 space advance state" \
+    "goto:25,47 turnl:90 space wait:40 advance state" \
     "level=1"
 # New level has its own enemy/secret/treasure totals.
 assert_contains "intermission:new-level-resets-counters" \
-    "goto:25,47 turnl:90 space advance counters" \
+    "goto:25,47 turnl:90 space wait:40 advance counters" \
     "kills=0/82 secrets=0/4 treasures=0/62"
 # Entering intermission with time 0 awards full par-time bonus: par=90s →
 # (90 - 0) * 500 = 45000 (wolf4sdl LevelCompleted, PAR_AMOUNT = 500/sec).
 assert_contains "intermission:par-time-bonus-awarded" \
-    "goto:25,47 turnl:90 space state" \
+    "goto:25,47 turnl:90 space wait:40 state" \
     "score=45000"
 
 section "counters"

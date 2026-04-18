@@ -2,6 +2,32 @@
 
 ## Current State (2026-04-17)
 
+### Recent additions (this session, part 6)
+- Pre-intermission wait: pulling the elevator switch (or killing a boss) now
+  freezes gameplay for `elevator_wait_time` (1.0s) while LEVELDONESND plays
+  out in the world before the tally screen pops. `g->next_level_delay` ticks
+  down in the gp_playing branch of `tick` and `update_phase_transitions` only
+  enters intermission once it hits 0. `inter_lead_in` trimmed from 0.7s →
+  0.25s since the ding already had a full second to breathe.
+- Intermission advance is now any-key (IN_Ack), not just space. New
+  `g->key_ack` / `g->key_ack_handled` pair is set on any KEYDOWN while in
+  `gp_intermission`; the advance check at end of the main loop uses that
+  latch instead of `key_space`. The `advance` test command is unchanged.
+- Fixed: `enter_intermission` no longer pre-sets `key_ack_handled = true`.
+  That was a carry-over of the old `key_space_handled` pattern, but with the
+  new 1s pre-intermission freeze already absorbing any held elevator press,
+  the pre-handled guard only served to swallow the player's first legitimate
+  "advance" keypress. (Symptom: speed-through / advance felt like it needed
+  two presses — the first was silently eaten.)
+- Fixed: same anti-pattern removed from `enter_intermission` (`key_space_
+  handled`), `enter_episode_end`, `enter_final_victory`, and `load_game_
+  from_slot`. All four were defensively pre-setting `key_space_handled =
+  true` on phase entry, which swallowed the first real space press after
+  each transition. Symptom surfaced as "first space press after loading a
+  save does nothing" (elevator switch, or re-opening a door). The held-key
+  guard that old intermission code relied on is no longer needed: keydown
+  events themselves latch the handled flag on the first usage.
+
 ### Recent additions (this session, part 5)
 - Elevator switch now plays the classic LEVELDONESND (digi 30 / AdLib 40) when
   the player uses it — added `snd_level_done` + `snd_end_bonus1` / `_bonus2` /
@@ -18,9 +44,10 @@
 - `compute_level_bonus` now uses wolf4sdl's full 500/sec par bonus (previously
   divided by 10). Test `intermission:par-time-bonus-awarded` updated from
   score=4500 to score=45000 to match.
-- Space during intermission animation skips to the final "everything shown"
-  state; a second press advances to the next level. The `advance` test
-  command collapses both steps into one so regression tests stay single-hop.
+- First keypress during intermission animation skips to the final "everything
+  shown" state; a second press advances to the next level. (Originally space-
+  only; part 6 widened this to any key.) The `advance` test command collapses
+  both steps into one so regression tests stay single-hop.
 
 ### Recent additions (this session, part 4)
 - Esc from `gp_playing` now jumps straight to the main menu (no separate
