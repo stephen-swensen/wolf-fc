@@ -84,7 +84,7 @@ The `goto:X,Y` command is deliberately NOT a full tick — it just teleports and
 
 ### Regression test suite
 
-`tests/run-tests.sh` runs a set of scripted `--test` scenarios and asserts on their stdout. Enemy RNG is a fixed-seed LCG, so scripted outputs reproduce bit-identically. When you change AI or any RNG-consuming path, expect to update expected HP / state values — the failures are loud, not silent.
+`tests/run-tests.sh` runs a set of scripted `--test` scenarios and asserts on their stdout. In `--test` mode both PCG32 RNG streams are seeded with 0, so scripted outputs reproduce bit-identically. When you change AI or any RNG-consuming path, expect to update expected HP / state values — the failures are loud, not silent.
 
 Helpers defined in the script: `assert_contains NAME "CMD" "SUBSTRING"`, `assert_not_contains`, `assert_regex` (posix-extended). Tests are grouped with `section "name"` headers. Add new tests at the bottom of the relevant section; each test should be a single assertion that fails for one clear reason.
 
@@ -114,7 +114,7 @@ All project modules are declared at the top level (no namespaces), so they're ac
   - `struct render_ctx` — `{fb, dbuf, zbuf, billboards}` renderer scratch buffers, process-wide. `billboards[]` is rebuilt/sorted each frame from live enemies + live sprites.
   - `struct audio_ctx` — `{vs, ad, sfx, digi}` bundle so `trigger_sound` / pickup / door code can fire sounds without globals.
   - `struct sprite_obj` — static objects (position, VSWAP page, distance)
-  - `struct enemy` — active actors (position, tile_x/y, kind, state, dir, HP, animation timer, shoot-fired latch). Direction encoding matches wolf4sdl `dirtype` (east=0, northeast=1, ..., southeast=7, nodir=8). Uses the shared `enemy_rng` (random.lcg_random, fixed seed) so scripted test runs reproduce across builds.
+  - `struct enemy` — active actors (position, tile_x/y, kind, state, dir, HP, animation timer, shoot-fired latch). Direction encoding matches wolf4sdl `dirtype` (east=0, northeast=1, ..., southeast=7, nodir=8). Enemy AI rolls draw from `game.rng_enemy` (a `random.pcg_random` on channel 1); the HUD face animation uses `game.rng_face` on channel 2 so HUD rendering doesn't perturb the AI sequence. Both are seeded with the same value, 0 in `--test` mode and `sys.time()` otherwise.
   - Factories: `build_render_ctx()`, `build_level(lv_data, sprite_start)` (now also calls `spawn_enemies`), `free_level(lv)`.
   - DDA raycaster (`render_walls`) writing to `rc->fb` (320x200 framebuffer)
   - Billboard renderer: `build_billboards` merges `lv->sprites` + `lv->enemies` into one back-to-front list, `render_billboards` draws each via `draw_sprite_col`. Non-rotating enemy states (pain/die/dead/shoot) use fixed VSWAP pages; stand/walk/chase use `enemy_angle_sprite` to pick one of 8 facing variants.

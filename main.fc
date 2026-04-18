@@ -336,6 +336,14 @@ struct game =
     msg_len: int32
     msg_timer: float64    // seconds remaining; decays during gp_playing
 
+    // PRNG state. Two pcg32 streams from the same seed but different channels:
+    // enemy AI rolls (sight, hit chance, damage) and BJ face idle animation.
+    // Keeping face on its own channel means rendering the HUD doesn't perturb
+    // the enemy sequence that scripted tests depend on. Seed is 0 in --test
+    // for reproducibility, sys.time() otherwise — set in main.
+    rng_enemy: random.pcg_random
+    rng_face: random.pcg_random
+
 // ============================================================
 // Per-level dynamic entities and geometry
 // ============================================================
@@ -795,12 +803,18 @@ let drop_shape_for_kind = (k: enemy_kind) ->
     | ek_hitler_fake | ek_hitler -> 2 + (43 - 23)  // gold key
     | _ -> 0
 
-// Shared RNG for all enemy behavior (sight rolls, hit chance, damage). A single
-// fixed-seed sequence so scripted test runs are reproducible across builds.
-// Function calls aren't allowed in file-scope initializers, so we construct the
-// struct literal directly (random.lcg_random.make does the same thing).
-let mut enemy_rng = random.lcg_random { state = 0xDEADBEEF5EED1234u64 }
-let rnd_byte = () -> (int32) (random.lcg_random.next_uint32(&enemy_rng) & 0xFFu32)
+// PCG channel IDs. One seed fans out to independent streams per channel; we
+// keep AI rolls and HUD-face rolls on different channels so HUD rendering
+// can't perturb the enemy sequence scripted tests depend on.
+let rng_channel_enemy = 1u64
+let rng_channel_face  = 2u64
+
+// Shared byte roll for all enemy behaviour (sight, hit chance, damage). The
+// RNG state lives on the game struct (initialised in main) rather than as a
+// module-level global so tests can pin the seed to 0 while interactive runs
+// seed from sys.time().
+let rnd_byte = (g: game*) ->
+    (int32) (random.pcg_random.next_uint32(&g->rng_enemy) & 0xFFu32)
 
 // CLI flag `--no-dogs`: when true, spawn_enemies skips every ek_dog. Pre-dead
 // dog corpses don't exist in the data (the "dead guard" marker is tile 124,
@@ -2901,7 +2915,7 @@ let select_chase_dir = (lv: level*, g: game*, self_idx: int32) ->
         e->dir = old_dir
         if try_enemy_walk(lv, g, self_idx, old_dir) then return
     let cardinals = int32[4] { dir_east, dir_north, dir_west, dir_south }
-    let start = rnd_byte() % 4
+    let start = rnd_byte(g) % 4
     for k in 0..4
         let d = cardinals[(start + k) % 4]
         if d == turnaround then continue
@@ -3047,7 +3061,7 @@ let kill_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, sprite_start:
     | ek_ss           -> snd_leben        // "Mein Leben!"
     | ek_officer      -> snd_nein_sovass
     | ek_mutant       -> snd_ahhhg
-    | ek_guard        -> guard_death_sounds[rnd_byte() & 7]
+    | ek_guard        -> guard_death_sounds[rnd_byte(g) & 7]
     | ek_hans         -> snd_mutti        // "Mutti!"
     | ek_gretel       -> snd_mein
     | ek_giftmacher   -> snd_donner
@@ -3165,8 +3179,8 @@ let enemy_fire_at_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
     | _     -> dist_tiles
     let mut hitchance = 256 - (int32) (dist_adj * 8.0)
     if hitchance < 20 then hitchance = 20
-    if rnd_byte() < hitchance then
-        let roll = rnd_byte()
+    if rnd_byte(g) < hitchance then
+        let roll = rnd_byte(g)
         let dmg = if dist_adj < 2.0 then roll / 4
                   else if dist_adj < 4.0 then roll / 8
                   else roll / 16
@@ -3183,9 +3197,9 @@ let enemy_bite_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
     let dist = math.sqrt(dx * dx + dy * dy)
     if dist > enemy_melee_range then return
     if !check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then return
-    if rnd_byte() < 180 then
-        // Matches wolf4sdl T_Bite: US_RndT() >> 4 → 0-15 (can graze for 0).
-        let dmg = rnd_byte() >> 4
+    if rnd_byte(g) < 180 then
+        // Matches T_Bite in the original: US_RndT() >> 4 → 0-15 (can graze for 0).
+        let dmg = rnd_byte(g) >> 4
         damage_player(g, ac, dmg)
 
 // Per-frame AI step for one enemy. Dispatches on state; advances animation
@@ -3252,7 +3266,7 @@ let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, dt: f
                 let dist_tiles = if adx > ady then adx else ady
                 let d = if dist_tiles < 1 then 1 else dist_tiles
                 let chance = (int32) (dt * 1400.0) / d   // ~40/tile/sec at 35Hz
-                if rnd_byte() < chance then
+                if rnd_byte(g) < chance then
                     e->state = enemy_state.es_shoot
                     e->anim_frame = 0
                     e->anim_timer = shoot_frame_time
@@ -3322,14 +3336,14 @@ let find_hit_enemy = (lv: level*, g: game*) ->
 // MG / chain: similar damage per shot; rate-of-fire is what distinguishes
 // them (handled by fire_rate[] in update_weapon). Adapted from wolf4sdl
 // GunAttack: damage = (US_RndT() / 4) + base, tuned for our hp values.
-let weapon_damage_roll = (weapon: int32, dist: float64) ->
+let weapon_damage_roll = (g: game*, weapon: int32, dist: float64) ->
     if weapon == 0 then
         // Knife — fixed damage, only in melee.
         if dist > 1.5 then 0
-        else (rnd_byte() >> 3) + 10
+        else (rnd_byte(g) >> 3) + 10
     else
         // Firearms — damage fades with distance (hitchance roll).
-        let roll = rnd_byte()
+        let roll = rnd_byte(g)
         if dist < 2.0 then (roll >> 2) + 8
         else if dist < 4.0 then (roll >> 3) + 5
         else if dist < 8.0 then (roll >> 4) + 2
@@ -3354,7 +3368,7 @@ let fire_player_hitscan = (w: world*) ->
     let rx = e->x - g->pos_x
     let ry = e->y - g->pos_y
     let dist = math.sqrt(rx * rx + ry * ry)
-    let dmg = weapon_damage_roll(g->weapon, dist)
+    let dmg = weapon_damage_roll(g, g->weapon, dist)
     if dmg <= 0 then return
     damage_enemy(lv, g, ac, e, dmg, sprite_start)
 
@@ -4141,10 +4155,10 @@ let face_chunk_for = (health: int32, frame: int32) ->
     let f = if frame < 0 then 0 else if frame > 2 then 2 else frame
     vg_face_base + clamped * 3 + f
 
-// Separate RNG for face animation so it doesn't disturb the enemy_rng
-// stream that scripted regression tests depend on. Seed is arbitrary.
-let mut face_rng = random.lcg_random { state = 0xFACE5EED12345678u64 }
-let face_rnd_byte = () -> (int32) (random.lcg_random.next_uint32(&face_rng) & 0xFFu32)
+// Face-animation byte roll. Uses its own pcg channel (see struct game) so HUD
+// rendering doesn't perturb the enemy RNG stream that scripted tests rely on.
+let face_rnd_byte = (g: game*) ->
+    (int32) (random.pcg_random.next_uint32(&g->rng_face) & 0xFFu32)
 
 // Wolf4sdl UpdateFace: accumulate `tics` into facecount; when it exceeds a
 // random 0..255 threshold, roll a new faceframe. The roll is `US_RndT()>>6`
@@ -4155,8 +4169,8 @@ let face_rnd_byte = () -> (int32) (random.lcg_random.next_uint32(&face_rng) & 0x
 // wolf4sdl 70Hz tics rate.
 let update_face = (g: game*, dt: float64) ->
     g->face_count = g->face_count + dt * 70.0
-    if g->face_count > (float64) face_rnd_byte() then
-        let roll = face_rnd_byte() / 64       // 0..3
+    if g->face_count > (float64) face_rnd_byte(g) then
+        let roll = face_rnd_byte(g) / 64       // 0..3
         let frame = if roll == 3 then 1 else roll
         g->face_frame = frame
         g->face_count = 0.0
@@ -6075,8 +6089,16 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
 let main = (args: str[]) ->
     // CLI flags. Scan all args (so flags can appear before or after --test)
     // and set the relevant module-level switches before any level is built.
+    let mut test_mode = false
     for i in 1..(int32) args.len
         if args[(int64) i] == "--no-dogs" then no_dogs = true
+        if args[(int64) i] == "--test" then test_mode = true
+
+    // PRNG seed: deterministic 0 in --test mode so scripted scenarios
+    // reproduce bit-identically; wall-clock milliseconds otherwise. A single
+    // seed fans out to two pcg_random channels (enemy AI, face animation)
+    // when the game struct is initialised below.
+    let rng_seed = if test_mode then 0u64 else (uint64) sys.time()
 
     // Load game data (no SDL needed)
     io.write("Loading palette...\n", stdout)
@@ -6137,7 +6159,9 @@ let main = (args: str[]) ->
         music_on = true, want_quit = false,
         has_active_game = false,
         msg_buf = alloc(uint8[64] {})!,
-        msg_len = 0, msg_timer = 0.0
+        msg_len = 0, msg_timer = 0.0,
+        rng_enemy = random.pcg_random.make_with_channel(rng_seed, rng_channel_enemy),
+        rng_face = random.pcg_random.make_with_channel(rng_seed, rng_channel_face)
     })!
     find_player_start(lv_data, g)
     io.write("  player at (%4.1f{g->pos_x}, %4.1f{g->pos_y})\n", stdout)
@@ -6179,14 +6203,13 @@ let main = (args: str[]) ->
     // Test mode: process scripted commands, no SDL needed. Skip the
     // title/menu entry flow — tests start directly in gp_playing so
     // existing regression scripts behave the same as before the UI
-    // overhaul.
-    // Find --test and enter test mode if present. Flags like --no-dogs may
-    // appear before or after --test; in the command loop, we skip anything
-    // matching a known flag so it isn't reported as "Unknown test command".
+    // overhaul. Flags like --no-dogs may appear before or after --test; in
+    // the command loop, we skip anything matching a known flag so it isn't
+    // reported as "Unknown test command".
     let mut test_idx = -1
     for i in 1..(int32) args.len
         if test_idx < 0 && args[(int64) i] == "--test" then test_idx = i
-    if test_idx >= 0 then
+    if test_mode then
         g->phase = game_phase.gp_playing
         g->has_active_game = true
         let test_dt = 1.0 / 35.0

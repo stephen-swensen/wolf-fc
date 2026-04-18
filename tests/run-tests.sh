@@ -12,12 +12,12 @@
 #   ./tests/run-tests.sh -v           # verbose: print every output
 #   ./tests/run-tests.sh -k doors     # only tests whose name contains 'doors'
 #
-# Determinism: the enemy RNG is a file-scope LCG with a fixed seed, so
-# scripted scenarios reproduce bit-identically across runs. Tests that
-# assert on exact HP / position values rely on this; when you change
-# enemy-AI code in a way that shifts the RNG-call order, expect to update
-# the expected values below. This is easier than making every test robust
-# to RNG order, and the failure is loud rather than silent.
+# Determinism: in --test mode the game seeds both PCG32 streams (enemy AI
+# and face animation) with 0, so scripted scenarios reproduce bit-identically
+# across runs. Tests that assert on exact HP / position values rely on this;
+# when you change enemy-AI code in a way that shifts the RNG-call order,
+# expect to update the expected values below. This is easier than making
+# every test robust to RNG order, and the failure is loud rather than silent.
 
 set -u
 
@@ -177,7 +177,7 @@ assert_contains "hitscan:pistol-point-blank-kills-guard" \
     "score=100"
 assert_contains "hitscan:knife-at-1-tile-damages-guard" \
     "goto:29,62 turnr:180 setweapon:0 fire wait:10 enemylist" \
-    "kind=guard state=shoot dir=2 hp=9"
+    "kind=guard state=die dir=8 hp=-6"
 # Knife is a 1.5-tile-range melee. At 2-tile distance the hitscan misses
 # but the guard wakes to sight — verify HP is unchanged (25) rather than
 # asserting a specific post-wake AI state (those RNG-roll into shoot/chase).
@@ -188,7 +188,7 @@ assert_regex "hitscan:knife-at-2-tiles-misses" \
 section "combat:enemies-attack"
 assert_contains "ai:dog-bites-on-contact" \
     "goto:45,34 turnr:90 wait:30 state" \
-    "health=93"
+    "health=87"
 assert_contains "ai:guard-wakes-on-sight" \
     "goto:28,60 turnl:90 wait:10 enemies" \
     "chase=1"

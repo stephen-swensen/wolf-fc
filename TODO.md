@@ -213,7 +213,7 @@ Cross-referenced against wolf4sdl. See the 2026-04-17 chat session for details.
 - [x] **Dog bite damage off-by-one** — dropped the `+1` in `enemy_bite_player`, roll is now `rnd_byte() >> 4` (0-15), matching wolf4sdl's `T_Bite`.
 - [x] **Weapon fire rates** — `fire_rate` now 0.343 / 0.343 / 0.171 / 0.086 s, derived from `attackinfo[4][14]` (6 tics per frame at 70Hz, with per-weapon loop structure).
 - [ ] **Dog bite range is euclidean 1.6 tiles** — wolf4sdl's `T_Bite` uses a per-axis check `|dx| ≤ 2 && |dy| ≤ 2` (wl_act2.cpp:2361-2372). Different shape; ours is stricter on diagonals. Low priority.
-- [ ] **RNG divergence** — we use an LCG (`random.lcg_random`); the original uses the fixed 256-byte `US_RndT` table. Deterministic both ways but distributions differ. Worth porting `US_RndT` for sequence-level fidelity (damage streaks, hit/miss patterns).
+- [ ] **RNG divergence** — we use PCG32 (`random.pcg_random`, two channels off one seed); the original uses the fixed 256-byte `US_RndT` table. Deterministic both ways but distributions differ. Worth porting `US_RndT` for sequence-level fidelity (damage streaks, hit/miss patterns).
 - [ ] **Verify noise/area wake semantics** match `SightPlayer` in wl_state.cpp — how `madenoise` flows through `area_by_player`, particularly around AMBUSH and re-alert suppression. Needs audit, not yet a known bug.
 
 ## Rendering
@@ -226,7 +226,7 @@ Cross-referenced against wolf4sdl. See the 2026-04-17 chat session for details.
 - [x] BJ face with health-driven expressions (7 frames from healthy to near-dead; dying-phase locks to worst face).
 - [x] Full Wolf3D status bar: STATUSBARPIC, number pics for all fields, weapon icon, key indicators.
 - [x] Weapon icon on status bar.
-- [x] BJ face idle animation: rolls A/B/C variant per wolf4sdl UpdateFace (`facecount += tics`, threshold from US_RndT(), faceframe = `US_RndT()>>6` clamped so 3→1, giving 0=25%/1=50%/2=25%). Separate face_rng so it doesn't disturb enemy rng. Reset on damage so the new health row shows immediately.
+- [x] BJ face idle animation: rolls A/B/C variant per wolf4sdl UpdateFace (`facecount += tics`, threshold from US_RndT(), faceframe = `US_RndT()>>6` clamped so 3→1, giving 0=25%/1=50%/2=25%). Drawn from `rng_face` (its own pcg channel) so HUD rendering doesn't disturb the enemy AI stream. Reset on damage so the new health row shows immediately.
 
 ## Audio
 
