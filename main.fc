@@ -2483,37 +2483,31 @@ let check_pickups = (lv: level*, g: game*, ac: audio_ctx*) ->
         // stays on the floor for later instead of being wasted.
         let picked_up = match it with
         | decoration -> false
+        | dog_food | food | first_aid when (g->health >= 100) -> false
         | dog_food ->
-            if g->health >= 100 then false
-            else
-                g->health = g->health + 4
-                if g->health > 100 then g->health = 100
-                true
+            g->health = g->health + 4
+            if g->health > 100 then g->health = 100
+            true
         | food ->
-            if g->health >= 100 then false
-            else
-                g->health = g->health + 10
-                if g->health > 100 then g->health = 100
-                true
+            g->health = g->health + 10
+            if g->health > 100 then g->health = 100
+            true
         | first_aid ->
-            if g->health >= 100 then false
-            else
-                g->health = g->health + 25
-                if g->health > 100 then g->health = 100
-                true
+            g->health = g->health + 25
+            if g->health > 100 then g->health = 100
+            true
         | extra_life ->
             g->health = 100
             g->lives = g->lives + 1
             true
+        | clip when (g->ammo >= 99) -> false
         | clip ->
-            if g->ammo >= 99 then false
-            else
-                // wolf4sdl GiveAmmo: if player was out of ammo (dropped to
-                // knife), restore their best firearm when the clip comes in.
-                if g->ammo == 0 && g->weapon == 0 then g->weapon = g->best_weapon
-                g->ammo = g->ammo + 8
-                if g->ammo > 99 then g->ammo = 99
-                true
+            // GiveAmmo: if player was out of ammo (dropped to knife),
+            // restore their best firearm when the clip comes in.
+            if g->ammo == 0 && g->weapon == 0 then g->weapon = g->best_weapon
+            g->ammo = g->ammo + 8
+            if g->ammo > 99 then g->ammo = 99
+            true
         | machine_gun ->
             if g->ammo == 0 && g->weapon == 0 then g->weapon = 2
             g->ammo = g->ammo + 6
