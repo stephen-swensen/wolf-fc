@@ -3528,33 +3528,31 @@ let snd_digi = int32[63] {
     13,   // death_2      (DEATHSCREAM2SND -> digi 13)
     13,   // death_3      (DEATHSCREAM3SND -> digi 13, shares slot)
     -1,   // hit_enemy    (HITENEMYSND has no digi in Wolf3D)
-    // Extended sounds — digi mapping unknown without scanning VSWAP's
-    // per-sound header; fall through to AdLib via snd_adlib_enum.
-    -1,   // death_4
-    -1,   // death_5
-    -1,   // death_6
-    -1,   // death_7
-    -1,   // death_8
-    -1,   // death_9
-    -1,   // spion
-    -1,   // nein_sovass
-    -1,   // leben
-    -1,   // ahhhg
-    -1,   // gutentag
-    -1,   // mutti
-    -1,   // kein
-    -1,   // mein
-    -1,   // eine
-    -1,   // donner
-    -1,   // erlauben
-    -1,   // rose
-    -1,   // schabbsha
-    -1,   // meingott
-    -1,   // tot_hund
-    -1,   // hitlerha
-    -1,   // die
-    -1,   // scheist
-    -1,   // eva
+    34,   // death_4      (DEATHSCREAM4SND -> digi 34, "AIIEEE")
+    35,   // death_5      (DEATHSCREAM5SND -> digi 35, "DEE-DEE")
+    39,   // death_6      (DEATHSCREAM6SND -> digi 39, "FART" — not in guard pool)
+    40,   // death_7      (DEATHSCREAM7SND -> digi 40, "GASP")
+    41,   // death_8      (DEATHSCREAM8SND -> digi 41, "GUH-BOY!")
+    42,   // death_9      (DEATHSCREAM9SND -> digi 42, "AH GEEZ!")
+    27,   // spion        (SPIONSND -> digi 27)
+    28,   // nein_sovass  (NEINSOVASSND -> digi 28)
+    20,   // leben        (LEBENSND -> digi 20)
+    17,   // ahhhg        (AHHHGSND -> digi 17)
+     8,   // gutentag     (GUTENTAGSND -> digi 8)
+     9,   // mutti        (MUTTISND -> digi 9)
+    43,   // kein         (KEINSND -> digi 43)
+    44,   // mein         (MEINSND -> digi 44)
+    37,   // eine         (EINESND -> digi 37)
+    36,   // donner       (DONNERSND -> digi 36)
+    38,   // erlauben     (ERLAUBENSND -> digi 38)
+    45,   // rose         (ROSESND -> digi 45)
+    25,   // schabbsha    (SCHABBSHASND -> digi 25)
+    24,   // meingott     (MEINGOTTSND -> digi 24)
+    23,   // tot_hund     (TOT_HUNDSND -> digi 23)
+    26,   // hitlerha     (HITLERHASND -> digi 26)
+    18,   // die          (DIESND -> digi 18)
+    33,   // scheist      (SCHEISTSND -> digi 33)
+    19,   // eva          (EVASND -> digi 19)
     30,   // level_done   (LEVELDONESND -> digi 30)
     -1,   // end_bonus1   (no digi — AdLib only)
     -1,   // end_bonus2   (no digi — AdLib only)
