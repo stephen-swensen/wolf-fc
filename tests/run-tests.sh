@@ -195,12 +195,18 @@ assert_contains "ai:guard-wakes-on-sight" \
 assert_contains "ai:sustained-fire-kills-player" \
     "goto:28,60 wait:600 state" \
     "lives=2"
-# Wake the dog at (45,34), teleport to the far side of the door at (43,33),
-# then wait for the dog's chase path to push through — the door should no
-# longer be closed (wolf4sdl T_Chase OpenDoor behaviour).
-assert_regex "ai:enemies-open-doors-while-chasing" \
-    "goto:45,34 wait:5 goto:42,33 wait:60 goto:43,33 probe" \
+# Wake guard [18] at (38,33), teleport to the far side of the door at (43,33),
+# then wait for its chase path to push through — the door should no longer be
+# closed (wolf4sdl T_Chase OpenDoor behaviour).
+assert_regex "ai:guards-open-doors-while-chasing" \
+    "goto:37,33 wait:5 goto:44,33 wait:150 goto:43,33 probe" \
     'tile \(43,33\) = 137 \(DOOR:(opening|open)\)'
+# Dogs use CHECKDIAG in the original game and treat closed doors as walls.
+# Wake the dog at (45,34) and place the player past the door — the dog should
+# pace near the door but never open it, so (43,33) stays closed.
+assert_contains "ai:dogs-cannot-open-doors" \
+    "goto:45,34 wait:5 goto:42,33 wait:150 goto:43,33 probe" \
+    "tile (43,33) = 137 (DOOR:closed)"
 # ICONARROWS path markers (plane-1 90..97) redirect patrolling enemies to the
 # encoded direction. Dog [19] spawns at (45,34) walking west; arrows at (44,34)
 # and (46,34) bounce it back and forth. After 200 ticks (~5.7s) it should be

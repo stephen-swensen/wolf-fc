@@ -749,6 +749,14 @@ let kind_is_ghost = (k: enemy_kind) ->
     | ek_blinky | ek_pinky | ek_clyde | ek_inky -> true
     | _ -> false
 
+// True iff the kind opens doors on walk. In the original, dogs, fake-Hitlers,
+// and ghosts/spectres use CHECKDIAG on all sides (doors block them); only
+// humans and mutants/real-bosses use CHECKSIDE and trigger OpenDoor.
+let kind_opens_doors = (k: enemy_kind) ->
+    match k with
+    | ek_dog | ek_hitler_fake | ek_blinky | ek_pinky | ek_clyde | ek_inky -> false
+    | _ -> true
+
 // Bitmask: bit N set = fire (or bite) on entering shoot-frame N. Mutants use
 // a double-shot pattern (T_Shoot on s_mutshoot1 and s_mutshoot3 in wolf4sdl);
 // everyone else fires once at the windup midpoint (frame 2 in our 3-frame
@@ -2815,7 +2823,12 @@ let enemy_tile_passable = (lv: level*, g: game*, self_idx: int32, tx: int32, ty:
     if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
     else
         let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+        let e = &lv->enemies[self_idx]
         if t >= 1 && t <= 63 then false
+        // Door tiles block kinds that can't open doors unless fully open
+        // (matches wolf4sdl CHECKDIAG: actorat is cleared only when open).
+        else if t >= 128 && !kind_opens_doors(e->kind)
+                && lv->doors[t - 128].state != door_state.open then false
         else if (int32) g->pos_x == tx && (int32) g->pos_y == ty then false
         else
             let mut blocked = false
@@ -2923,11 +2936,19 @@ let advance_enemy_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32,
         if ntx >= 0 && ntx < map_size && nty >= 0 && nty < map_size then
             let nt = (int32) lv->tilemap[(int64) ntx * 64 + (int64) nty]
             if nt >= 128 && lv->doors[nt - 128].state != door_state.open then
-                if lv->doors[nt - 128].state == door_state.closed then
-                    start_door_opening(lv, nt - 128, g, ac)
-                e->x = (float64) e->tile_x + 0.5
-                e->y = (float64) e->tile_y + 0.5
-                break
+                if kind_opens_doors(e->kind) then
+                    if lv->doors[nt - 128].state == door_state.closed then
+                        start_door_opening(lv, nt - 128, g, ac)
+                    e->x = (float64) e->tile_x + 0.5
+                    e->y = (float64) e->tile_y + 0.5
+                    break
+                else
+                    // Door is a solid wall to this kind — abort the step and
+                    // force a new direction choice from the current tile.
+                    e->x = (float64) e->tile_x + 0.5
+                    e->y = (float64) e->tile_y + 0.5
+                    e->dir = dir_nodir
+                    break
         let target_x = (float64) ntx + 0.5
         let target_y = (float64) nty + 0.5
         let dx = target_x - e->x
