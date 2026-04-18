@@ -3515,11 +3515,19 @@ let snd_missile_fire   = 66   // MISSILEFIRESND — Giftmacher / Fat Face rocket
 //     victory-jump actor sequence (T_BJYell on s_bjjump2).
 let snd_mech_step      = 67   // MECHSTEPSND — Mecha Hitler walk stomp
 let snd_yeah           = 68   // YEAHSND — BJ victory-jump exclamation
-let snd_count      = 69
+// --- Menu UI sounds. Original game uses these for cursor navigation and
+//     menu dialog feedback (AdLib-only — none have digi versions). The
+//     original also has a gun-cursor half-step animation that plays both
+//     MOVEGUN1 (intermediate) and MOVEGUN2 (final click); wolf-fc's menu
+//     snaps instantly, so we only use MOVEGUN1 for nav.
+let snd_move_gun1      = 69   // MOVEGUN1SND — menu cursor move
+let snd_shoot          = 70   // SHOOTSND — menu item confirm (enter/space)
+let snd_esc_pressed    = 71   // ESCPRESSEDSND — menu cancel / back
+let snd_count      = 72
 
 // Digi-pack index for each snd_* (-1 = no digitized version). The mapping
 // comes from wolf4sdl's wolfdigimap[] for Wolf3D; Spear of Destiny differs.
-let snd_digi = int32[69] {
+let snd_digi = int32[72] {
      3,   // open_door    (OPENDOORSND  -> digi 3)
      2,   // close_door   (CLOSEDOORSND -> digi 2)
      5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
@@ -3588,12 +3596,15 @@ let snd_digi = int32[69] {
     -1,   // flamethrower (no digi — AdLib only)
     -1,   // missile_fire (no digi — AdLib only)
     31,   // mech_step    (MECHSTEPSND -> digi 31)
-    32    // yeah         (YEAHSND -> digi 32)
+    32,   // yeah         (YEAHSND -> digi 32)
+    -1,   // move_gun1    (no digi — AdLib only)
+    -1,   // shoot        (no digi — AdLib only)
+    -1    // esc_pressed  (no digi — AdLib only)
 }
 
 // AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this). -1 to
 // disable. Enum values taken from wolf4sdl's audiowl6.h.
-let snd_adlib_enum = int32[69] {
+let snd_adlib_enum = int32[72] {
     18,   // open_door    (OPENDOORSND)
     19,   // close_door   (CLOSEDOORSND)
     24,   // atk_pistol   (ATKPISTOLSND)
@@ -3662,7 +3673,10 @@ let snd_adlib_enum = int32[69] {
     69,   // flamethrower (FLAMETHROWERSND)
     85,   // missile_fire (MISSILEFIRESND)
     70,   // mech_step    (MECHSTEPSND)
-    72    // yeah         (YEAHSND)
+    72,   // yeah         (YEAHSND)
+     5,   // move_gun1    (MOVEGUN1SND)
+    32,   // shoot        (SHOOTSND)
+    39    // esc_pressed  (ESCPRESSEDSND)
 }
 
 // Play a sound by wolf-fc sound ID (one of snd_open_door, etc.). Prefers
@@ -6238,6 +6252,18 @@ let main = (args: str[]) ->
                     g->menu_sel = 1
                     g->phase_timer = 0.0
                 | gp_main_menu ->
+                    // Classic menu-cursor feedback: MOVEGUN1SND on up/down
+                    // nav (mirrors the gun-cursor click in the original),
+                    // SHOOTSND on confirm, ESCPRESSEDSND on cancel. Plays on
+                    // every menu level — the dispatch below just mutates
+                    // menu_sel / menu_level, so a single site up here covers
+                    // all sub-menus without sprinkling calls per branch.
+                    if k == sdl2.key_up || k == sdl2.key_down then
+                        trigger_sound(snd_move_gun1, w->ac)
+                    else if k == sdl2.key_return || k == sdl2.key_space then
+                        trigger_sound(snd_shoot, w->ac)
+                    else if k == sdl2.key_escape then
+                        trigger_sound(snd_esc_pressed, w->ac)
                     if g->menu_level == menu_main then
                         // Up/down navigation skips locked rows so RESUME and
                         // SAVE without an active game don't get in the way.
