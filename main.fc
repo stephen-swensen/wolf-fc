@@ -2389,11 +2389,12 @@ let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
     //     like wolf4sdl's `!buttonheld[bt_use]` gate. NOWAYSND (locked
     //     door) rides along inside the edge branch so it can't stutter.
     //   • DONOTHINGSND fires every frame when nothing else did, matching
-    //     the wolf4sdl else-branch. Because the AdLib driver retriggers
-    //     the same note each frame the player hears a sustained "do-do-do"
-    //     while holding space at an empty wall, and on release the chip
-    //     plays out whatever bytes remained from the last retrigger — the
-    //     tail you'd hear on original SB16 hardware.
+    //     the wolf4sdl else-branch. The AdLib driver dedups same-chunk
+    //     retriggers (see adlib.play in sound.fc), so the "do-do-do"
+    //     hold-at-wall rhythm comes back at the chunk's natural ~300 ms
+    //     length instead of the frame rate — a cold OPL2 reset every
+    //     frame would otherwise cut the envelope short and degrade into
+    //     clicks over a few seconds.
     if g->key_space then
         let edge = !g->key_space_handled
         g->key_space_handled = true

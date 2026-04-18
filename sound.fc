@@ -172,6 +172,7 @@ module adlib =
         chip: opl2.chip*
         active: bool
         data: const uint8[]
+        data_start: int64       // start offset (for same-chunk dedup in play)
         data_end: int64
         pos: int64
         block: int32
@@ -182,18 +183,37 @@ module adlib =
         alloc(sfx_state {
             chip = opl2.init(sample_rate),
             active = false, data = default(uint8[]),
-            data_end = 0, pos = 0, block = 0, tick_accum = 0.0
+            data_start = 0, data_end = 0, pos = 0, block = 0, tick_accum = 0.0
         })!
 
-    // Start (or restart) playback of `s` on channel 0. Silences any
-    // in-progress sound first.
+    // Start (or restart) playback of `s` on channel 0. Mirrors the digi
+    // driver's same-sound dedup: if the same AdLib chunk is already
+    // streaming, skip the chip reset and let the current instance finish.
+    //
+    // AdLib chunks tick at 140 Hz and typically run 200–400 ms. Frame-rate
+    // callers (e.g. the hold-to-use path firing DONOTHINGSND every ~16 ms
+    // at 60 fps) would otherwise hard-restart the OPL2 envelope mid-attack
+    // on every call, which produces clicking and a progressive trail-off
+    // as the chip's internal state gets slammed from a cold load. With
+    // dedup, the chunk plays to its natural end, `advance_tick` clears
+    // `active`, and the next caller retrigger lands cleanly — the "do-do-
+    // do" hold rhythm comes back paced by the chunk length, not the frame
+    // rate.
+    //
+    // A different chunk always preempts — important so e.g. picking up a
+    // bonus while holding use doesn't get swallowed by an active
+    // DONOTHINGSND stream.
     let play = (st: sfx_state*, s: sfx_data) ->
+        if st->active && s.bytes.ptr == st->data.ptr
+           && s.data_off == st->data_start then
+            return
         opl2.note_off(st->chip, 0)
         opl2.load_instrument(st->chip, 0,
             s.m_char, s.c_char, s.m_scale, s.c_scale,
             s.m_atk, s.c_atk, s.m_sus, s.c_sus,
             s.m_wave, s.c_wave, s.n_conn)
         st->data = s.bytes
+        st->data_start = s.data_off
         st->data_end = s.data_off + s.data_len
         st->pos = s.data_off
         st->block = s.block
