@@ -3145,8 +3145,11 @@ let enemy_fire_at_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
         damage_player(g, ac, dmg + 1)
 
 // Dog melee bite — called from the jump-frame of es_shoot for ek_dog. Damage
-// is a flat ~0..16 roll inside melee range.
+// is a flat ~0..16 roll inside melee range. The bark/snarl plays
+// unconditionally at the top of the frame (mirrors T_Bite in the original)
+// so the lunge is audible even when the dog misses.
 let enemy_bite_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
+    trigger_sound_at(snd_dog_attack, ac, g, e->x, e->y)
     let dx = g->pos_x - e->x
     let dy = g->pos_y - e->y
     let dist = math.sqrt(dx * dx + dy * dy)
