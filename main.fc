@@ -27,6 +27,14 @@ let tile_area = 107    // first non-solid tile (area floors)
 
 let move_speed = 3.5    // tiles/sec at walk
 let run_mult = 2.0
+// Per-direction multipliers on top of move_speed. Forward is 1.0 (baseline);
+// the original Wolf3D applied a 100/150 ≈ 0.67 BACKMOVESCALE to backward and
+// no asymmetry to strafe (strafe == forward). We diverge slightly: backward
+// is 0.75× and alt-strafe is 1.25×, picked for handling feel — strafe a hair
+// quicker than forward rewards using the alt-strafe key in fights, and the
+// gentler back-pedal nerf still leaves backing-out usable.
+let back_mult   = 0.75
+let strafe_mult = 1.25
 let turn_speed = 2.5    // rad/sec at walk
 let fov_factor = 0.66   // tan(33 deg) for ~66 deg FOV
 
@@ -2353,13 +2361,15 @@ let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
     // Track whether any attempted move was fully blocked — if so and the
     // AdLib SFX chip is idle, play the wall-bump sound (matches wolf4sdl's
     // `if (!SD_SoundPlaying()) SD_PlaySound(HITWALLSND)` in T_Player).
+    let back_spd   = spd * back_mult
+    let strafe_spd = spd * strafe_mult
     let mut wall_hit = false
     if g->key_up && try_move(lv, g, g->dir_x * spd, g->dir_y * spd) then wall_hit = true
-    if g->key_down && try_move(lv, g, 0.0 - g->dir_x * spd, 0.0 - g->dir_y * spd) then wall_hit = true
+    if g->key_down && try_move(lv, g, 0.0 - g->dir_x * back_spd, 0.0 - g->dir_y * back_spd) then wall_hit = true
 
     if g->key_alt then
-        if g->key_left && try_move(lv, g, 0.0 - g->plane_x * spd, 0.0 - g->plane_y * spd) then wall_hit = true
-        if g->key_right && try_move(lv, g, g->plane_x * spd, g->plane_y * spd) then wall_hit = true
+        if g->key_left && try_move(lv, g, 0.0 - g->plane_x * strafe_spd, 0.0 - g->plane_y * strafe_spd) then wall_hit = true
+        if g->key_right && try_move(lv, g, g->plane_x * strafe_spd, g->plane_y * strafe_spd) then wall_hit = true
     else
         if g->key_left then rotate_camera(g, rot)
         if g->key_right then rotate_camera(g, 0.0 - rot)
