@@ -4820,16 +4820,16 @@ struct save_slot_info =
 let mut title_bg_cache = default(uint32[])
 
 // Cache of slot info for the active save/load menu. Refreshed by
-// refresh_save_slots on menu entry; allocated once inside `main`. Only
-// one save/load menu can be open at a time so a single static cache is
-// enough.
-let mut save_slots = default(save_slot_info[])
+// refresh_save_slots on menu entry. Only one save/load menu can be open
+// at a time so a single static cache is enough. Length must equal
+// num_save_slots; file-level allocs can't reference other let bindings.
+let save_slots = alloc(save_slot_info[10] {})!
 
 // 32-byte reusable scratch used to render slot-label substrings as const str.
-let mut label_scratch = default(uint8[])
+let label_scratch = alloc(uint8[32] {})!
 
 // Scratch for writing one hex nibble at a time into a save file.
-let mut hex_scratch = default(uint8[])
+let hex_scratch = alloc(uint8[1] {})!
 
 // Render the save or load slot menu. Each row shows "N <label>" or
 // "N EMPTY". The save-picker highlights all slots (writable); the load-
@@ -6148,12 +6148,6 @@ let main = (args: str[]) ->
     find_player_start(lv_data, g)
     io.write("  player at (%4.1f{g->pos_x}, %4.1f{g->pos_y})\n", stdout)
 
-    // Allocate the save/load menu scratch buffers. File-scope alloc isn't a
-    // constant expression in FC, so they're late-init'd here before any
-    // save/load path can run.
-    save_slots = alloc(save_slot_info[num_save_slots] {})!
-    label_scratch = alloc(uint8[32] {})!
-    hex_scratch = alloc(uint8[1] {})!
     // Pre-decode the title backdrop once. Re-decoding it every menu frame
     // (Huffman-expand of 64KB + per-pixel scale) caused frame-rate drops
     // big enough to underrun the SDL audio queue, which on PulseAudio /
