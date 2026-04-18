@@ -324,12 +324,16 @@ module digi =
     // -3dB dip at center). This matches the OG Sound Blaster loudness —
     // classic digi SFX like LEVELDONESND need the full int16 headroom to
     // hit with the "bang" players remember.
-    let play_panned = (p: player*, sound_num: int32, pan: float64) ->
+    // Primary entry: pan + a per-call gain multiplier. gain > 1.0 boosts the
+    // slot into the mixer's soft-clip region (see mixer.soft_clip_sample) so
+    // one-off "bam!" sounds like LEVELDONESND can punch harder than the
+    // ambient SB-mixer loudness without hard-clipping.
+    let play_with_gain = (p: player*, sound_num: int32, pan: float64, gain: float64) ->
         let mut pp = pan
         if pp < -1.0 then pp = -1.0
         if pp > 1.0 then pp = 1.0
-        let gl = if pp <= 0.0 then 1.0 else 1.0 - pp
-        let gr = if pp >= 0.0 then 1.0 else 1.0 + pp
+        let gl = (if pp <= 0.0 then 1.0 else 1.0 - pp) * gain
+        let gr = (if pp >= 0.0 then 1.0 else 1.0 + pp) * gain
         // 1. Already-playing same sound — rewind, repan, return.
         for i in 0..max_slots
             if p->slots[i].playing && p->slots[i].sound_num == sound_num then
@@ -354,9 +358,12 @@ module digi =
             gain_r = gr
         }
 
+    let play_panned = (p: player*, sound_num: int32, pan: float64) ->
+        play_with_gain(p, sound_num, pan, 1.0)
+
     // Back-compat: center-panned play.
     let play = (p: player*, sound_num: int32) ->
-        play_panned(p, sound_num, 0.0)
+        play_with_gain(p, sound_num, 0.0, 1.0)
 
     // Mix up to `max_slots` simultaneous 8-bit sounds into `buf` (stereo
     // interleaved L,R,L,R…), resampling nearest-neighbor from 7042 Hz to

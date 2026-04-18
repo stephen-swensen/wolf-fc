@@ -2300,7 +2300,12 @@ let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
                 if stand_area == 0 then g->went_secret = true
                 g->next_level = true
                 g->next_level_delay = elevator_wait_time
-                trigger_sound(snd_level_done, ac)
+                // Boost LEVELDONESND into the mixer's soft-clip region so the
+                // elevator-switch "bam!" lands the way it did on OG Sound
+                // Blaster hardware (subjectively more distinctive than the
+                // unity-gain default). ~1.8× is just under the hard-clip
+                // threshold for the digi's typical peak.
+                trigger_sound_loud(snd_level_done, ac, 1.8)
                 did_anything = true
         // Try push-wall (only if facing cardinally).
         let push_dx = if g->dir_x > 0.5 then 1 else if g->dir_x < -0.5 then -1 else 0
@@ -3526,6 +3531,26 @@ let trigger_sound_panned = (sound_id: int32, ac: audio_ctx*, pan: float64) ->
 
 let trigger_sound = (sound_id: int32, ac: audio_ctx*) ->
     trigger_sound_panned(sound_id, ac, 0.0)
+
+// Center-panned play with a per-call gain multiplier. Only the digi path
+// honours the boost — AdLib fallback routes through the OPL2 chip, which has
+// no cheap per-note attenuation knob. In practice the sounds we want to
+// amplify (LEVELDONESND = digi 30) all have a digi version, so the AdLib
+// fall-through is a non-issue for the current use.
+let trigger_sound_loud = (sound_id: int32, ac: audio_ctx*, gain: float64) ->
+    if sound_id < 0 || sound_id >= snd_count then return
+    let digi_idx = snd_digi[sound_id]
+    if digi_idx >= 0 then
+        digi.play_with_gain(ac->digi, digi_idx, 0.0, gain)
+    else
+        let enum_val = snd_adlib_enum[sound_id]
+        if enum_val >= 0 then
+            let chunk = 87 + enum_val
+            if chunk >= 0 && chunk < ac->ad->num_chunks then
+                let off = (int64) audio.chunk_offset(ac->ad, chunk)
+                let len = audio.chunk_length(ac->ad, chunk)
+                if len >= 23 then
+                    adlib.play(ac->sfx, adlib.parse(ac->ad->raw, off))
 
 // Spatial variant: computes pan from a source position relative to the
 // player's facing. Takes the player struct so we can look up pos + camera
