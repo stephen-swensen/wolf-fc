@@ -957,6 +957,25 @@ struct audio_ctx =
     sfx: adlib.sfx_state*      // AdLib SFX playback (owns its own OPL2 chip)
     digi: digi.player*         // 8-bit PCM playback (up to 4 slots)
 
+// Save-slot info, materialized once at entry into the save / load menus so
+// render + input don't touch the filesystem on every frame. Empty slots have
+// `empty=true`.
+struct save_slot_info =
+    empty: bool
+    label: uint8[]      // heap — "label" field parsed from the save file;
+                        // zero-length for empty slots
+    level_num: int32
+    difficulty: int32
+    score: int32
+
+// Save/load menu scratch. One instance per process — only one menu is open
+// at a time, so sharing is fine. `slots` is refreshed by refresh_save_slots
+// on menu entry; the two scratch buffers are reused across renders / writes.
+struct save_menu_ctx =
+    slots: save_slot_info[]    // length = num_save_slots
+    label_scratch: uint8[]     // 32-byte reusable buffer for slot-label substrings
+    hex_scratch: uint8[]       // 1-byte buffer for per-nibble save-file writes
+
 // Everything the running game needs in one handle. Functions that only need
 // one sub-context (e.g. `render_walls` only touches level + render_ctx) keep
 // their narrow signatures so their dependencies are visible in their types;
@@ -971,6 +990,7 @@ struct world =
                           // without another disk load)
     rc: render_ctx*     // renderer scratch buffers
     ac: audio_ctx*      // sound pipeline
+    sm: save_menu_ctx*  // save/load menu cache + scratch
     vg: vgagraph.vgagraph_file*  // VGAGRAPH: fonts, status bar, BJ face,
                                  // title screen, menu graphics.
     font: font_info*             // small menu/UI font (chunk 1)
@@ -989,6 +1009,16 @@ let build_render_ctx = () ->
         num_billboards = 0
     })!
     rc
+
+// Allocate the save/load menu cache + scratch buffers. One instance per
+// process (only one save/load menu can be open at a time).
+let build_save_menu_ctx = () ->
+    let sm = alloc(save_menu_ctx {
+        slots = alloc(save_slot_info[num_save_slots] {})!,
+        label_scratch = alloc(uint8[32] {})!,
+        hex_scratch = alloc(uint8[1] {})!
+    })!
+    sm
 
 // Allocate a level from the decoded wolf3d map data. Builds tilemap,
 // spawns static sprites, and marks push-wall tiles. Caller must call
@@ -5384,17 +5414,6 @@ let draw_list_menu = (rc: render_ctx*, font: font_info*, title: const str,
             draw_font_text(rc, font, cx - 14, y, ">", yellow)
             draw_font_text(rc, font, cx + w + 6, y, "<", yellow)
 
-// Save-slot info, materialized once at entry into the save / load menus so
-// render + input don't touch the filesystem on every frame. metadata_* fields
-// describe the save file (empty slots have `empty=true`).
-struct save_slot_info =
-    empty: bool
-    label: uint8[]      // heap — "label" field parsed from the save file;
-                        // zero-length for empty slots
-    level_num: int32
-    difficulty: int32
-    score: int32
-
 // Cache of the title screen, pre-decoded and palette-applied at startup.
 // Used as the backdrop for both gp_title and gp_main_menu — without this
 // cache, every menu frame re-Huffman-decompresses TITLEPIC (~64KB of
@@ -5404,23 +5423,11 @@ struct save_slot_info =
 // Allocated once in `main` after VGAGRAPH loads.
 let mut title_bg_cache = default(uint32[])
 
-// Cache of slot info for the active save/load menu. Refreshed by
-// refresh_save_slots on menu entry. Only one save/load menu can be open
-// at a time so a single static cache is enough. Length must equal
-// num_save_slots; file-level allocs can't reference other let bindings.
-let save_slots = alloc(save_slot_info[10] {})!
-
-// 32-byte reusable scratch used to render slot-label substrings as const str.
-let label_scratch = alloc(uint8[32] {})!
-
-// Scratch for writing one hex nibble at a time into a save file.
-let hex_scratch = alloc(uint8[1] {})!
-
 // Render the save or load slot menu. Each row shows "N <label>" or
 // "N EMPTY". The save-picker highlights all slots (writable); the load-
 // picker greys empty slots so they're visually unselectable.
-let render_slot_menu = (rc: render_ctx*, font: font_info*, title: const str,
-                        sel: int32, load_mode: bool) ->
+let render_slot_menu = (rc: render_ctx*, sm: save_menu_ctx*, font: font_info*,
+                        title: const str, sel: int32, load_mode: bool) ->
     let yellow = 0xFFFFD700u32
     let white  = 0xFFFFFFFFu32
     let dull   = 0xFF707070u32
@@ -5428,7 +5435,7 @@ let render_slot_menu = (rc: render_ctx*, font: font_info*, title: const str,
     draw_font_centered(rc, font, 20, title, yellow)
     let items_y = 44
     for i in 0..num_save_slots
-        let s = &save_slots[i]
+        let s = &sm->slots[i]
         let y = items_y + i * (font->height + 3)
         let is_sel = sel == i
         let is_locked = load_mode && s->empty
@@ -5451,9 +5458,9 @@ let render_slot_menu = (rc: render_ctx*, font: font_info*, title: const str,
                 if limit > 22 then limit = 22
                 // Copy to a tiny scratch buffer so we can treat it as const str.
                 for j in 0..limit
-                    label_scratch[j] = s->label[j]
-                label_scratch[limit] = 0u8
-                let slab = (const str) label_scratch[0..(int64) limit]
+                    sm->label_scratch[j] = s->label[j]
+                sm->label_scratch[limit] = 0u8
+                let slab = (const str) sm->label_scratch[0..(int64) limit]
                 draw_font_text(rc, font, row_x + 60, y, slab, color)
             draw_font_text(rc, font, row_x + 180, y, "%d{s->score}", color)
         if is_sel then
@@ -5462,7 +5469,8 @@ let render_slot_menu = (rc: render_ctx*, font: font_info*, title: const str,
     draw_font_centered(rc, font, game_h - 24,
         "UP/DOWN  ENTER  ESC", gray)
 
-let render_main_menu = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+let render_main_menu = (rc: render_ctx*, sm: save_menu_ctx*,
+                        vg: vgagraph.vgagraph_file*, pal: uint32[],
                         font: font_info*, g: game*) ->
     // Tint the title as a backdrop (slightly dimmed so the menu pops).
     blit_title_bg(rc)
@@ -5490,9 +5498,9 @@ let render_main_menu = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint3
             (i: int32) -> diff_menu_label(i),
             (_: int32) -> false)
     else if g->menu_level == menu_savelist then
-        render_slot_menu(rc, font, "SAVE GAME", g->menu_sel, false)
+        render_slot_menu(rc, sm, font, "SAVE GAME", g->menu_sel, false)
     else if g->menu_level == menu_loadlist then
-        render_slot_menu(rc, font, "LOAD GAME", g->menu_sel, true)
+        render_slot_menu(rc, sm, font, "LOAD GAME", g->menu_sel, true)
 
 // Render the full game frame to fb (used before saving a screenshot).
 let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
@@ -5501,7 +5509,7 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
         render_title(w->rc, w->vg, pal, w->font, w->g->phase_timer)
         return
     | gp_main_menu ->
-        render_main_menu(w->rc, w->vg, pal, w->font, w->g)
+        render_main_menu(w->rc, w->sm, w->vg, pal, w->font, w->g)
         return
     | gp_intermission ->
         render_intermission(w->rc, w->vg, pal, w->g)
@@ -5761,8 +5769,8 @@ let save_game_to_slot = (w: world*, slot: int32) ->
                     if idx < ns && lv->sprites[idx].alive then
                         nibble = nibble | (1 << bit)
                 let ch = if nibble < 10 then 48 + nibble else 87 + nibble
-                hex_scratch[0] = (uint8) ch
-                io.write(hex_scratch[0..1], f)
+                w->sm->hex_scratch[0] = (uint8) ch
+                io.write(w->sm->hex_scratch[0..1], f)
             io.write("\n", f)
             // Enemies.
             io.write("enemies %d{lv->num_enemies}\n", f)
@@ -6086,15 +6094,15 @@ let unwrap_float = (s: const str) ->
     | some(x) -> x
     | none    -> 0.0
 
-// Rebuild the save_slots cache from disk. Called when entering the save/load
+// Rebuild the save-slots cache from disk. Called when entering the save/load
 // menu. Reads only the header + label of each file (not the full body) by
 // streaming line-by-line until we've seen the `game` line.
-let refresh_save_slots = () ->
+let refresh_save_slots = (sm: save_menu_ctx*) ->
     for i in 0..num_save_slots
         // Free any label from a previous refresh.
-        let old_label = save_slots[i].label
+        let old_label = sm->slots[i].label
         if old_label.len > 0 then free(old_label)
-        save_slots[i] = save_slot_info {
+        sm->slots[i] = save_slot_info {
             empty = true,
             label = default(uint8[]),
             level_num = 0, difficulty = 0, score = 0
@@ -6137,7 +6145,7 @@ let refresh_save_slots = () ->
                                 buf[k] = s[k]
                             buf
                         | none -> default(uint8[])
-                        save_slots[i] = save_slot_info {
+                        sm->slots[i] = save_slot_info {
                             empty = false, label = lbl,
                             level_num = level_num,
                             difficulty = difficulty, score = score
@@ -6485,9 +6493,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         | none -> bad("integer slot")
     else if arg == "listsaves" then
         // Dump the on-disk save slots (label + level + score).
-        refresh_save_slots()
+        refresh_save_slots(w->sm)
         for i in 0..num_save_slots
-            let s = &save_slots[i]
+            let s = &w->sm->slots[i]
             if s->empty then
                 io.write("slot %d{i}: EMPTY\n", stdout)
                 void()
@@ -6532,11 +6540,11 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         else if p == "savemenu" then
             g->phase = game_phase.gp_main_menu
             g->menu_level = menu_savelist
-            refresh_save_slots()
+            refresh_save_slots(w->sm)
         else if p == "loadmenu" then
             g->phase = game_phase.gp_main_menu
             g->menu_level = menu_loadlist
-            refresh_save_slots()
+            refresh_save_slots(w->sm)
         else if p == "playing" then g->phase = game_phase.gp_playing
         else bad("title/menu/epmenu/mapmenu/diffmenu/savemenu/loadmenu/playing")
     else if arg == "phase" then
@@ -6857,6 +6865,7 @@ let main = (args: str[]) ->
             sfx = adlib.init((float64) sample_rate),
             digi = digi.init(vs)
         })!,
+        sm = build_save_menu_ctx(),
         vg = vg,
         font = load_font(vg, vg_font_small)
     })!
@@ -7051,13 +7060,13 @@ let main = (args: str[]) ->
                                 g->menu_sel = 0
                             | 2 ->
                                 // LOAD GAME → load slot menu (reads slot cache)
-                                refresh_save_slots()
+                                refresh_save_slots(w->sm)
                                 g->menu_level = menu_loadlist
                                 g->menu_sel = 0
                             | 3 ->
                                 // SAVE GAME (locked without an active game)
                                 if g->has_active_game then
-                                    refresh_save_slots()
+                                    refresh_save_slots(w->sm)
                                     g->menu_level = menu_savelist
                                     g->menu_sel = 0
                             | 4 ->
@@ -7135,7 +7144,7 @@ let main = (args: str[]) ->
                             g->menu_sel = (g->menu_sel + 1) % num_save_slots
                         else if k == sdl2.key_return || k == sdl2.key_space then
                             save_game_to_slot(w, g->menu_sel)
-                            refresh_save_slots()
+                            refresh_save_slots(w->sm)
                             // Return to main menu after save (back to the
                             // SAVE GAME row).
                             g->menu_level = menu_main
@@ -7149,7 +7158,7 @@ let main = (args: str[]) ->
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % num_save_slots
                         else if k == sdl2.key_return || k == sdl2.key_space then
-                            if !save_slots[g->menu_sel].empty then
+                            if !w->sm->slots[g->menu_sel].empty then
                                 if load_game_from_slot(w, vs, g->menu_sel) then
                                     g->has_active_game = true
                         else if k == sdl2.key_escape then
