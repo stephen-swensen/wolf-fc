@@ -845,14 +845,14 @@ let shoot_fire_mask_for_kind = (k: enemy_kind) ->
     | _         -> 4    // 0b0100 — frame 2
 
 // Pickup item to drop on death (item_kind.decoration = nothing). SS drop a
-// machine gun; everyone else drops a clip. Dogs and mutants don't carry weapons.
+// machine gun; guards, officers, and mutants drop a clip. Dogs drop nothing.
 let drop_for_kind = (k: enemy_kind) ->
     match k with
     | ek_guard   -> item_kind.clip
     | ek_officer -> item_kind.clip
     | ek_ss      -> item_kind.machine_gun
     | ek_dog     -> item_kind.decoration
-    | ek_mutant  -> item_kind.decoration
+    | ek_mutant  -> item_kind.clip
     // Bosses drop gold keys (wolf4sdl — unlocks the exit elevator).
     | ek_hans | ek_schabbs | ek_gretel | ek_giftmacher | ek_fat
     | ek_hitler_fake | ek_hitler -> item_kind.gold_key
@@ -863,6 +863,7 @@ let drop_shape_for_kind = (k: enemy_kind) ->
     match k with
     | ek_guard   -> 2 + (49 - 23)   // clip shape
     | ek_officer -> 2 + (49 - 23)
+    | ek_mutant  -> 2 + (49 - 23)
     | ek_ss      -> 2 + (50 - 23)   // MG shape
     | ek_hans | ek_schabbs | ek_gretel | ek_giftmacher | ek_fat
     | ek_hitler_fake | ek_hitler -> 2 + (43 - 23)  // gold key
