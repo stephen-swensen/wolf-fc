@@ -18,10 +18,6 @@ next-up candidates; everything below is nice-to-have polish or a survey pass.
   Sound, and Screen Size submenus under Options. Lots of UI, modest gameplay
   impact. Could include a simple keybind editor plus the PC-speaker/AdLib/
   SoundBlaster radio buttons (even if all three route to our mixer today).
-- [ ] **Floor-code for the secret level in the intermission title.** Wolf3D
-  prints `FLOOR ?` on the tally screen when you're exiting the secret level,
-  not the numeric floor. Minor quality-of-life; the secret-level routing
-  itself already works.
 
 ### Fidelity
 - [ ] **Survey pass against wolf4sdl.** The last two survey passes each
@@ -56,6 +52,12 @@ next-up candidates; everything below is nice-to-have polish or a survey pass.
   startup path after the level loads. New `menu_map` submenu shows
   MAP 1..10 plus BOSS FIGHT, sitting between the episode picker and the
   difficulty picker.
+- Secret-floor intermission: exiting E?M10 (`level_num % 10 == 9`) now
+  draws a "SECRET FLOOR / COMPLETED!" caption with a flat 15000-point
+  bonus instead of the normal time/par/ratio tally. Matches wolf4sdl's
+  `LevelCompleted` else-branch. The ticker is parked at stage 4 and the
+  score is bumped inside `enter_intermission` so the advance / next-level
+  wiring stays unchanged.
 
 ### Recent additions (this session, part 6)
 - Pre-intermission wait: pulling the elevator switch (or killing a boss) now

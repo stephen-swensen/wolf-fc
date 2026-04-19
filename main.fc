@@ -1091,6 +1091,15 @@ let reset_player_for_new_game = (g: game*) ->
 //   100% treasures: +10000
 let par_amount_per_sec = 500
 let percent_100_bonus  = 10000
+// Flat bonus awarded for completing a secret level. Matches wolf4sdl's
+// LevelCompleted (`GivePoints(15000)` in the !normal-floor branch).
+let secret_floor_bonus = 15000
+
+// True iff `level_num` is the secret level (map 10 / index 9) of its
+// episode. Secret intermissions show a different layout and award a flat
+// bonus instead of ticking through kill / secret / treasure ratios.
+let is_secret_level = (level_num: int32) ->
+    level_num % levels_per_episode == 9
 
 let compute_time_left = (g: game*) ->
     let par = if g->level_num < 60 then par_times[g->level_num] else 0
@@ -1144,6 +1153,24 @@ let render_message = (rc: render_ctx*, font: font_info*, g: game*) ->
 let enter_intermission = (g: game*) ->
     g->phase = game_phase.gp_intermission
     g->phase_timer = 0.0
+    // Secret-level intermissions short-circuit the whole ticker: a flat
+    // 15000-point bonus, the stage counter parked at 4 (animation done),
+    // and a static "SECRET FLOOR / COMPLETED!" screen (see
+    // render_intermission). Matches wolf4sdl's LevelCompleted else-branch.
+    if is_secret_level(g->level_num) then
+        g->score = g->score + secret_floor_bonus
+        g->inter_stage = 4
+        g->inter_counter = 0
+        g->inter_progress = 0.0
+        g->inter_bonus_shown = secret_floor_bonus
+        g->inter_target_timeleft = 0
+        g->inter_target_kr = 0
+        g->inter_target_sr = 0
+        g->inter_target_tr = 0
+        g->inter_breathe_timer = 0.0
+        g->inter_pause_timer = 0.0
+        g->inter_end_sound_delay = 0.0
+        return
     // Award the computed level-completion bonus to the running score so the
     // intermission total reflects it immediately and carries into the next
     // level. The classic screen animates the ticker counting up to this
@@ -4965,6 +4992,14 @@ let render_intermission = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: ui
     let breathe = ((int32) (g->inter_breathe_timer * 2.0)) % 2
     let guy_pic = if breathe == 0 then vg_l_guy else vg_l_guy2
     draw_vg_pic(rc, vg, pal, guy_pic, 0, 16)
+
+    // Secret-floor layout: no floor number, no time / par / ratio tally.
+    // Static "SECRET FLOOR / COMPLETED!" caption + flat "15000 BONUS!"
+    // line, matching wolf4sdl LevelCompleted's !normal-floor branch.
+    if is_secret_level(g->level_num) then
+        write_lpic_text(rc, vg, pal, 14 * 8, 4 * 8, "SECRET FLOOR\n COMPLETED!")
+        write_lpic_text(rc, vg, pal, 10 * 8, 16 * 8, "15000 BONUS!")
+        return
 
     // Caption: "floor\ncompleted" drawn at cell (14, 2) per wolf4sdl.
     write_lpic_text(rc, vg, pal, 14 * 8, 2 * 8, "FLOOR\nCOMPLETED")

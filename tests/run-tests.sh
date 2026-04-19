@@ -307,6 +307,17 @@ assert_contains "intermission:new-level-resets-counters" \
 assert_contains "intermission:par-time-bonus-awarded" \
     "goto:25,47 turnl:90 space wait:40 state" \
     "score=45000"
+# Secret-level intermission (exiting E3M10, map index 9 of episode 3) uses
+# a completely different layout: flat 15000 bonus, no par / ratio tally.
+# Matches wolf4sdl's LevelCompleted else-branch (`GivePoints(15000)`).
+assert_contains "intermission:secret-floor-awards-15000" \
+    "setlevel:29 endepisode wait:10 state" \
+    "score=15000"
+# Advancing from the secret-floor intermission routes back via the
+# elevator_back_to table rather than into map 10 of the next episode.
+assert_contains "intermission:secret-floor-advances-back" \
+    "setlevel:29 endepisode wait:10 advance state" \
+    "level=27"
 
 section "counters"
 # A kill increments the kills counter and awards score.
