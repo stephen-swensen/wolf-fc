@@ -187,10 +187,10 @@ assert_regex "hitscan:knife-at-2-tiles-misses" \
 
 section "combat:enemies-attack"
 assert_contains "ai:dog-bites-on-contact" \
-    "goto:45,34 turnr:90 wait:30 state" \
-    "health=87"
+    "goto:45,34 turnr:90 wait:120 state" \
+    "health=85"
 assert_contains "ai:guard-wakes-on-sight" \
-    "goto:28,60 turnl:90 wait:10 enemies" \
+    "goto:28,60 turnl:90 wait:40 enemies" \
     "chase=1"
 assert_contains "ai:sustained-fire-kills-player" \
     "goto:28,60 wait:600 state" \
@@ -225,7 +225,7 @@ assert_contains "ai:no-wake-without-noise-or-sight" \
     "wait:10 enemies" \
     "chase=0"
 assert_contains "ai:firing-wakes-guards-in-connected-area" \
-    "setammo:50 fire wait:10 enemies" \
+    "setammo:50 fire wait:40 enemies" \
     "chase=2"
 
 section "weapons:auto-restore"

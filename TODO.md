@@ -214,13 +214,10 @@ Cross-referenced against wolf4sdl. See the 2026-04-17 chat session for details.
 - [x] **Weapon fire rates** — `fire_rate` now 0.343 / 0.343 / 0.171 / 0.086 s, derived from `attackinfo[4][14]` (6 tics per frame at 70Hz, with per-weapon loop structure).
 - [ ] **Dog bite range is euclidean 1.6 tiles** — wolf4sdl's `T_Bite` uses a per-axis check `|dx| ≤ 2 && |dy| ≤ 2` (wl_act2.cpp:2361-2372). Different shape; ours is stricter on diagonals. Low priority.
 - [x] **RNG divergence accepted** — we use PCG32 (`random.pcg_random`, two channels off one seed) rather than the original's 256-byte `US_RndT` table. Distributions differ, so damage streaks / hit-miss patterns won't match the original frame-for-frame. Intentional: the PCG+channels setup is also an FC stdlib demo, and sequence-level fidelity here isn't worth the porting cost.
-- [ ] **Verify noise/area wake semantics** match `SightPlayer` in wl_state.cpp — how `madenoise` flows through `area_by_player`, particularly around AMBUSH and re-alert suppression. Needs audit, not yet a known bug.
+- [x] **Noise/area wake semantics verified** against `SightPlayer` (wl_state.cpp:1467) + `ConnectAreas` (wl_act1.cpp:319) + `DamageActor` (wl_state.cpp:1004) + `GunAttack`/`KnifeAttack` (wl_agent.cpp:1198/1232). All paths match: iterative fixed-point `connect_areas` computes the same transitive closure as `RecursiveConnect`; `area_connect[][]` ref-counting is bumped once on the opened→opening transition and decremented once on closing→closed (closing→opening re-entry correctly skips both, since the close never completed); `made_noise` resets at the top of tick before `update_enemies`, so intra-tick propagation (enemy-i pain raising noise → enemy-j wakes) matches wolf4sdl's sequential `DoActor` chain; knife stealth preserved (only firearms raise noise on fire, knife hits raise via `damage_enemy`'s unconditional set). AMBUSH tiles honor LOS-only wake correctly.
+- [x] **Reaction delay (`temp2`) added** — `enemy.reaction_timer` plus `reaction_delay_for_kind` give first-detection a per-kind countdown before the transition to chase fires (guards `1+rnd/4` tics, officers 2, mutants/SS `1+rnd/6`, dogs `1+rnd/8`, bosses/ghosts 1). Split the old wake into "detect → seed timer" (stand/path stays patrolling) and "timer expires → `wake_enemy`", so LOS lost mid-countdown still commits to the wake as in the original. `reaction_timer` round-trips through save slots (backward-compatible: missing token defaults to 0).
 
 ## Rendering
-
-### Polish
-- [ ] Textured floors and ceilings (optional — not part of OG Wolf3D; deferred).
-- [ ] Any-angle door-frame texture fixes if regressions surface after enemy rendering lands
 
 ### HUD
 - [x] BJ face with health-driven expressions (7 frames from healthy to near-dead; dying-phase locks to worst face).
@@ -233,7 +230,6 @@ Cross-referenced against wolf4sdl. See the 2026-04-17 chat session for details.
 - [x] Spatial panning for SFX based on source angle relative to player — enemy voices/gunfire/death pan per-source; player-originated sounds stay centered. Stereo output via digi per-slot pan; adlib/imf duplicated to both channels.
 - [x] Music fade-out on level end / game over: 0.5s ramp via imf player volume field.
 - [x] Per-kind / per-boss vocal variety — wolf4sdl's FirstSighting + A_DeathScream behaviour. Guards now pick one of 8 random death screams; officers / SS / mutants / dogs have distinct death vocals (NEINSOVASSND / LEBENSND / AHHHGSND / DOGDEATHSND). Each boss has signature sighting + death lines (Gutentag/Mutti, Schabbs-ha/Mein Gott, Tot-hund/Hitler-ha, Die/Scheist, Die/Eva, Kein/Mein, Eine/Donner, Erlauben/Rose).
-- [ ] Tile-based ambient sounds (periodic fountain drip, torch crackle, etc.) — not in OG Wolf3D; would be an addition, not a port.
 
 ## Data Loading
 
@@ -251,14 +247,10 @@ Cross-referenced against wolf4sdl. See the 2026-04-17 chat session for details.
 - [x] In-game text messages (pickup names, boss-key banner, fade-out timer).
 - [x] Episode selection submenu (6 episodes, under NEW GAME).
 - [x] Save Game / Load Game menus (10 slots, ~/.wolf-fc/saves/slot_NN.sav, text format).
-- [ ] Controls remapping menu (wolf4sdl parity; optional).
 
 ## Code Quality
 
-- [ ] Consider splitting `main.fc` (render / pickups / weapons / enemies) once enemies land and it grows further
 - [x] Pre-extract sprite column headers (leftpix/rightpix/col_offsets) at load — avoids repeated bytes.u16 reads per draw_sprite_col call. Column-level run-list is still parsed at draw time; further pre-decoding to flat pixel rows is possible but not yet needed.
-- [ ] Widen tilemap to uint16 if more tile states are needed for enemy blocking / secret flags
-- [ ] Audit codebase for appropriate use of FC's `const` feature (promote module-level `let` bindings that are true compile-time constants).
 
 ## Reference
 
