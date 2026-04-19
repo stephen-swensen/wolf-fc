@@ -340,6 +340,10 @@ struct game =
     // behaviour; setdifficulty test command can dial it down for coverage.
     difficulty: int32
 
+    // --no-dogs CLI flag: skip spawning ek_dog actors. Latched at startup
+    // from main's argv scan; read by spawn_enemies.
+    no_dogs: bool
+
     // Menu selection state.
     menu_sel: int32
     menu_level: int32
@@ -885,7 +889,6 @@ let rnd_byte = (g: game*) ->
 // CLI flag `--no-dogs`: when true, spawn_enemies skips every ek_dog. Pre-dead
 // dog corpses don't exist in the data (the "dead guard" marker is tile 124,
 // a guard), so no carve-out is needed for those.
-let mut no_dogs = false
 
 // Per-level state: tile grid, dynamic entities, in-progress animations.
 // Built once per level via build_level and destroyed via free_level on
@@ -949,6 +952,14 @@ struct render_ctx =
     zbuf: float64[]    // per-column wall perp-distance, for sprite clipping
     billboards: billboard[]    // back-to-front draw list (statics + enemies)
     num_billboards: int32
+    // Cache of the title screen, pre-decoded and palette-applied at startup.
+    // Used as the backdrop for both gp_title and gp_main_menu — without this
+    // cache, every menu frame re-Huffman-decompresses TITLEPIC (~64KB of
+    // per-bit tree-walk) and re-palettizes 64,000 pixels, which dropped the
+    // frame rate enough to underrun the audio queue and kill the music.
+    title_bg: uint32[]
+    // Rotating screenshot slot counter (wraps at screenshot_max_slots).
+    screenshot_slot: int32
 
 // Sound system handle: loaded-asset refs + SFX playback state.
 struct audio_ctx =
@@ -999,14 +1010,18 @@ struct world =
 // Factories
 // ============================================================
 
-// Allocate renderer scratch buffers. One instance per process.
-let build_render_ctx = () ->
+// Allocate renderer scratch buffers. One instance per process. Decodes the
+// title-screen backdrop once so blit_title_bg is a cheap memcpy on every
+// menu frame.
+let build_render_ctx = (vg: vgagraph.vgagraph_file*, pal: uint32[]) ->
     let rc = alloc(render_ctx {
         fb = alloc(uint32[game_w * game_h] {})!,
         dbuf = alloc(uint32[screen_w * screen_h] {})!,
         zbuf = alloc(float64[game_w] {})!,
         billboards = alloc(billboard[max_sprites + max_enemies + max_projectiles] {})!,
-        num_billboards = 0
+        num_billboards = 0,
+        title_bg = build_title_bg_cache(vg, pal),
+        screenshot_slot = 0
     })!
     rc
 
@@ -1023,7 +1038,7 @@ let build_save_menu_ctx = () ->
 // Allocate a level from the decoded wolf3d map data. Builds tilemap,
 // spawns static sprites, and marks push-wall tiles. Caller must call
 // free_level when the level is no longer needed.
-let build_level = (lv_data: maps.level*, sprite_start: int32, difficulty: int32) ->
+let build_level = (lv_data: maps.level*, sprite_start: int32, difficulty: int32, no_dogs: bool) ->
     let lv = alloc(level {
         tilemap = alloc(uint8[map_size * map_size] {})!,
         pushwall_tiles = alloc(bool[map_size * map_size] {})!,
@@ -1049,7 +1064,7 @@ let build_level = (lv_data: maps.level*, sprite_start: int32, difficulty: int32)
     mark_pushwalls(lv, lv_data)
     mark_path_arrows(lv, lv_data)
     build_areas(lv, lv_data)
-    spawn_enemies(lv, lv_data, difficulty)
+    spawn_enemies(lv, lv_data, difficulty, no_dogs)
     // Tally totals for the intermission screen (enemies that are not
     // pre-dead corpses; push-wall marker tiles; treasure pickups).
     let mut enemies_live = 0
@@ -1476,7 +1491,7 @@ let reload_level_data = (w: world*, vs: vswap.vswap_file*) ->
     free(w->lv_data->objects)
     free(w->lv_data)
     w->lv_data = maps.load("data/MAPHEAD.WL6", "data/GAMEMAPS.WL6", w->g->level_num)
-    w->lv = build_level(w->lv_data, vs->sprite_start, w->g->difficulty)
+    w->lv = build_level(w->lv_data, vs->sprite_start, w->g->difficulty, w->g->no_dogs)
 
 // Compute where the next elevator trip should land, given current level and
 // the `went_secret` latch. Wolf4sdl routing:
@@ -2061,7 +2076,7 @@ let spawn_tier_allowed = (tier: int32, difficulty: int32) ->
     else if tier == 1 then difficulty >= gd_medium
     else difficulty >= gd_hard
 
-let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: int32) ->
+let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: int32, no_dogs: bool) ->
     lv->num_enemies = 0
     for y in 0..map_size
         for x in 0..map_size
@@ -4493,9 +4508,9 @@ let build_title_bg_cache = (vg: vgagraph.vgagraph_file*, pal: uint32[]) ->
 
 // Blit the cached title backdrop into the framebuffer.
 let blit_title_bg = (rc: render_ctx*) ->
-    if title_bg_cache.len == 0 then return
+    if rc->title_bg.len == 0 then return
     for i in 0..(game_w * game_h)
-        rc->fb[i] = title_bg_cache[i]
+        rc->fb[i] = rc->title_bg[i]
 
 // ============================================================
 // Wolf3D font rendering
@@ -5007,7 +5022,6 @@ let upscale_2x = (rc: render_ctx*) ->
 // ============================================================
 
 let screenshot_max_slots = 100
-let mut screenshot_slot = 0
 
 // Overlay a color tint over the 3D viewport by blending each pixel toward
 // `tint` at `alpha` (0..1). alpha=0 is a no-op; alpha=1 paints the tint
@@ -5414,14 +5428,6 @@ let draw_list_menu = (rc: render_ctx*, font: font_info*, title: const str,
             draw_font_text(rc, font, cx - 14, y, ">", yellow)
             draw_font_text(rc, font, cx + w + 6, y, "<", yellow)
 
-// Cache of the title screen, pre-decoded and palette-applied at startup.
-// Used as the backdrop for both gp_title and gp_main_menu — without this
-// cache, every menu frame re-Huffman-decompresses TITLEPIC (~64KB of
-// per-bit tree-walk) and re-palettizes 64,000 pixels, which dropped the
-// frame rate enough to underrun the audio queue and kill the music. With
-// the cache, render_title / render_main_menu just blit 320×200 uint32s.
-// Allocated once in `main` after VGAGRAPH loads.
-let mut title_bg_cache = default(uint32[])
 
 // Render the save or load slot menu. Each row shows "N <label>" or
 // "N EMPTY". The save-picker highlights all slots (writable); the load-
@@ -5609,8 +5615,8 @@ let take_screenshot = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
         defer free(dir)
         io.mkdir(dir)
         io.mkdir("%s{dir}/screenshots")
-        let slot = screenshot_slot
-        screenshot_slot = (screenshot_slot + 1) % screenshot_max_slots
+        let slot = w->rc->screenshot_slot
+        w->rc->screenshot_slot = (w->rc->screenshot_slot + 1) % screenshot_max_slots
         let path = "%s{dir}/screenshots/ss_%03d{slot}.png"
         render_frame(w, vs, pal)
         save_png(w, path)
@@ -6432,7 +6438,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
             // only affects which plane-1 enemy tiles spawn, we can clear
             // lv->num_enemies and re-scan without rebuilding the tilemap.
             w->lv->num_enemies = 0
-            spawn_enemies(w->lv, w->lv_data, g->difficulty)
+            spawn_enemies(w->lv, w->lv_data, g->difficulty, g->no_dogs)
             // Recount total_enemies so the counters tally correctly.
             let mut alive = 0
             for i in 0..w->lv->num_enemies
@@ -6757,9 +6763,10 @@ let main = (args: str[]) ->
     let mut start_level = -1
     let mut start_difficulty = -1
     let mut start_near_boss = false
+    let mut arg_no_dogs = false
     for i in 1..(int32) args.len
         let a = args[(int64) i]
-        if a == "--no-dogs" then no_dogs = true
+        if a == "--no-dogs" then arg_no_dogs = true
         if a == "--test" then test_mode = true
         if a == "--near-boss" then start_near_boss = true
         if text.starts_with(a, "--level=") then
@@ -6834,6 +6841,7 @@ let main = (args: str[]) ->
         inter_pause_timer = 0.0,
         inter_end_sound_delay = 0.0,
         difficulty = gd_hard,
+        no_dogs = arg_no_dogs,
         menu_sel = 0, menu_level = menu_main,
         music_on = true, want_quit = false,
         has_active_game = false,
@@ -6845,20 +6853,14 @@ let main = (args: str[]) ->
     find_player_start(lv_data, g)
     io.write("  player at (%4.1f{g->pos_x}, %4.1f{g->pos_y})\n", stdout)
 
-    // Pre-decode the title backdrop once. Re-decoding it every menu frame
-    // (Huffman-expand of 64KB + per-pixel scale) caused frame-rate drops
-    // big enough to underrun the SDL audio queue, which on PulseAudio /
-    // PipeWire could disconnect the stream entirely (silent music + SFX).
-    title_bg_cache = build_title_bg_cache(vg, pal)
-
     // Sound system (valid in all modes; in --test and --screenshot nothing
     // actually reaches the speakers because SDL audio isn't opened, but
     // trigger_sound / digi.fill work over this same ctx either way).
     let w = alloc(world {
         g = g,
-        lv = build_level(lv_data, vs->sprite_start, g->difficulty),
+        lv = build_level(lv_data, vs->sprite_start, g->difficulty, g->no_dogs),
         lv_data = lv_data,
-        rc = build_render_ctx(),
+        rc = build_render_ctx(vg, pal),
         ac = alloc(audio_ctx {
             vs = vs,
             ad = ad,

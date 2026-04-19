@@ -185,7 +185,7 @@ The tests rely on the enemy RNG's fixed seed for reproducibility — scripted sc
 
 Wolf-fc depends only on the FC compiler and stdlib (`../fc-lang/`). Every other dependency — SDL2 bindings, the OPL2 emulator, the PNG writer — is vendored into this repo. All project modules are declared at the top level (no namespaces), so they're reachable from any file by qualified name without imports.
 
-- **`main.fc`** — Game engine. DDA raycaster + sprite/weapon/HUD renderer, tick-driven game loop, input handling, player movement with collision radius, item pickups, animated doors, push-walls, weapons, level transitions, screenshot capture. Game state, level data, renderer scratch buffers, and audio pipeline are grouped into a `world` struct (`{g, lv, rc, ac}`); orchestrators take `world*`, narrower functions take just the sub-contexts they touch.
+- **`main.fc`** — Game engine. DDA raycaster + sprite/weapon/HUD renderer, tick-driven game loop, input handling, player movement with collision radius, item pickups, animated doors, push-walls, weapons, level transitions, screenshot capture. Game state, level data, renderer scratch/caches, audio pipeline, and save-menu scratch are grouped into a `world` struct (`{g, lv, rc, ac, sm}`); orchestrators take `world*`, narrower functions take just the sub-contexts they touch. No file-scope mutable state — buffers, caches, counters, and launch-time config all live on one of these context structs.
 - **`data.fc`** — Wolf3D asset loading, 5 top-level modules:
   - `bytes` — little-endian uint16/uint32/int32 readers
   - `palette` — 256-entry VGA palette (6-bit → 8-bit ARGB)

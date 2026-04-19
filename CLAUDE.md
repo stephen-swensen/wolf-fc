@@ -39,11 +39,32 @@ Game state, level data, renderer, and audio live in a single `world` struct. Orc
 struct world =
     g: game*            // player, input, session state
     lv: level*          // tile grid + doors + sprites + push-wall (per-level, rebuilt on transition)
-    rc: render_ctx*     // renderer scratch buffers (fb, dbuf, zbuf)
+    rc: render_ctx*     // renderer scratch buffers (fb, dbuf, zbuf, title_bg, ...)
     ac: audio_ctx*      // sound pipeline (vs, ad, sfx chip, digi slots)
+    sm: save_menu_ctx*  // save/load menu cache + scratch
 ```
 
-Factories: `build_level(lv_data, sprite_start)` allocates and initializes a level; `free_level(lv)` tears it down (called on level transition). `build_render_ctx()` allocates the scratch buffers once per process.
+Factories: `build_level(lv_data, sprite_start, difficulty, no_dogs)` allocates and initializes a level; `free_level(lv)` tears it down (called on level transition). `build_render_ctx(vg, pal)` allocates the scratch buffers + pre-decodes the title backdrop once per process. `build_save_menu_ctx()` allocates the save-slot cache + label/hex scratch.
+
+### No file-scope mutable state
+
+Process-wide mutable state must live **on one of the context structs** (`game`, `level`, `render_ctx`, `audio_ctx`, `save_menu_ctx`, ...), reachable through `world`. **Do not add `let mut` at file scope.** The rule applies to:
+
+- **Scratch buffers / caches** reused across frames or calls (e.g. `render_ctx.title_bg`, `save_menu_ctx.label_scratch`). Put them on the context that owns the feature, and initialize them in the context's factory.
+- **Launch-time config** parsed from CLI / env (e.g. `game.no_dogs` set from `--no-dogs`). Put them on `game` and set them when the game is allocated in `main`.
+- **Counters** that persist across calls (e.g. `render_ctx.screenshot_slot`).
+
+True constants — fixed tables (`songs`, `ceil_table`, `dir_vx`), tuning parameters (`door_speed`, `move_speed`), sound-ID enums — stay as file-level `let`s. The rule is about *mutability*, not file scope.
+
+This keeps dependencies visible in function signatures: if a function reads `rc->title_bg`, its `render_ctx*` parameter makes that dependency explicit, whereas reaching for a file-level global hides it. It also unlocks multi-world scenarios (save/load state round-tripping, future split-screen or replay) without having to disentangle hidden globals.
+
+Existing file-level `let mut` bindings were migrated in sequence:
+- `save_slots` / `label_scratch` / `hex_scratch` → `save_menu_ctx` on `world`.
+- `title_bg_cache` → `render_ctx.title_bg`.
+- `screenshot_slot` → `render_ctx.screenshot_slot`.
+- `no_dogs` → `game.no_dogs`.
+
+When you add a new buffer or config, follow the same pattern: find (or add) the right context struct, give it a field, and initialize it in the factory.
 
 ### The `tick()` function
 
@@ -108,15 +129,16 @@ All project modules are declared at the top level (no namespaces), so they're ac
 
 - **`main.fc`** — Game engine, no namespace:
   - Constants (game_w=320, game_h=200, screen_w=640, screen_h=400, actual_h=480, view_h=160, sample_rate=44100)
-  - `struct world` — the god-handle: `{g: game*, lv: level*, rc: render_ctx*, ac: audio_ctx*}`. Only orchestrators take `world*`; narrow functions take just the fields they touch.
-  - `struct game` — player state (position, direction, camera plane, input, health/ammo/score)
+  - `struct world` — the god-handle: `{g: game*, lv: level*, rc: render_ctx*, ac: audio_ctx*, sm: save_menu_ctx*}`. Only orchestrators take `world*`; narrow functions take just the fields they touch.
+  - `struct game` — player state (position, direction, camera plane, input, health/ammo/score, `no_dogs` CLI flag)
   - `struct level` — per-level mutable state: tilemap, pushwall_tiles, path_arrows (ICONARROWS direction per tile, 8=none), sprites[], doors[] (each storing the two areas it connects), door_pos[], pushwall animation, enemies[], tile_areas (wolf4sdl AREATILE numbering, 255=no area), area_connect (NUMAREAS² counter of currently-open doors per pair), area_by_player (per-area "reachable from player by open doors"). Rebuilt on level transition.
-  - `struct render_ctx` — `{fb, dbuf, zbuf, billboards}` renderer scratch buffers, process-wide. `billboards[]` is rebuilt/sorted each frame from live enemies + live sprites.
+  - `struct render_ctx` — `{fb, dbuf, zbuf, billboards, title_bg, screenshot_slot}` renderer scratch + caches, process-wide. `billboards[]` is rebuilt/sorted each frame from live enemies + live sprites; `title_bg` is the pre-decoded TITLEPIC backdrop (blitted by `blit_title_bg` on every menu frame); `screenshot_slot` wraps at `screenshot_max_slots`.
   - `struct audio_ctx` — `{vs, ad, sfx, digi}` bundle so `trigger_sound` / pickup / door code can fire sounds without globals.
+  - `struct save_menu_ctx` — `{slots, label_scratch, hex_scratch}` for the save/load menu. `slots[]` is refreshed by `refresh_save_slots` on menu entry; `label_scratch`/`hex_scratch` are reusable buffers for slot-label rendering and per-nibble save-file writes.
   - `struct sprite_obj` — static objects (position, VSWAP page, distance)
   - `struct enemy` — active actors (position, tile_x/y, kind, state, dir, HP, animation timer, shoot-fired latch). Direction encoding matches wolf4sdl `dirtype` (east=0, northeast=1, ..., southeast=7, nodir=8). Enemy AI rolls draw from `game.rng_enemy` (a `random.pcg_random` on channel 1); the HUD face animation uses `game.rng_face` on channel 2 so HUD rendering doesn't perturb the AI sequence. Both are seeded with the same value, 0 in `--test` mode and `sys.time()` otherwise.
   - `struct projectile` — enemy-fired dodgeable object (Schabbs needle, Giftmacher/Fat rocket with explosion, fake Hitler flame). Stored in `level.projectiles[max_projectiles]`, slot-allocated via `alive` flag. Angles are stored y-up (standard trig) so the rotating-rocket sprite picker and the `enemy_angle_sprite` helper share a convention; movement applies a `-sin` flip to return to the world's y-down frame. Ports `T_SchabbThrow` / `T_GiftThrow` / `T_Launch` / `T_FakeFire` (spawn paths) + `T_Projectile` (per-tic step).
-  - Factories: `build_render_ctx()`, `build_level(lv_data, sprite_start)` (now also calls `spawn_enemies`), `free_level(lv)`.
+  - Factories: `build_render_ctx(vg, pal)` (also pre-decodes the title backdrop), `build_save_menu_ctx()`, `build_level(lv_data, sprite_start, difficulty, no_dogs)` (also calls `spawn_enemies`), `free_level(lv)`.
   - DDA raycaster (`render_walls`) writing to `rc->fb` (320x200 framebuffer)
   - Billboard renderer: `build_billboards` merges `lv->sprites` + `lv->enemies` into one back-to-front list, `render_billboards` draws each via `draw_sprite_col`. Non-rotating enemy states (pain/die/dead/shoot) use fixed VSWAP pages; stand/walk/chase use `enemy_angle_sprite` to pick one of 8 facing variants.
   - Enemy AI: `check_line_clear` (tilemap LOS), `enemy_sees_player` (LOS + 90° forward cone), `enemy_should_wake` (area_by_player gate + AMBUSH-honoring noise/sight check, mirrors wolf4sdl SightPlayer), `select_chase_dir` / `select_path_dir`, `advance_enemy_move` (tile-center grid motion), `update_enemy` (state-machine dispatch), `enemy_fire_at_player` / `enemy_bite_player`, `damage_enemy` / `kill_enemy` / `wake_enemy`. `fire_player_hitscan` is invoked from `update_weapon` on trigger pull and raises `g->made_noise` for non-knife weapons; `damage_enemy` raises it on every hit (knife included). `start_door_opening` is the single transition point that increments `area_connect` and re-runs `connect_areas`; `update_doors` decrements + re-floods on the closing→closed transition.
