@@ -5217,7 +5217,7 @@ let render_game_over = (rc: render_ctx*, g: game*) ->
     draw_centered_text(rc, 70, "OVER", red, 3)
     draw_text(rc, 80, 120, "FINAL SCORE", white, 1)
     draw_number(rc, 220, 120, g->score, white, 1)
-    draw_centered_text(rc, 140, "PRESS SPACE", white, 1)
+    draw_centered_text(rc, 140, "PRESS ANY KEY", white, 1)
 
 // Per-episode victory screen (gp_episode_end): shown after the intermission
 // on level 8 (boss / finale) of each episode. Simple text screen — no
@@ -5245,7 +5245,7 @@ let render_episode_end = (rc: render_ctx*, font: font_info*, g: game*) ->
     draw_number(rc, 220, 120, g->score, yellow, 1)
     // Prompt.
     draw_font_centered(rc, font, game_h - 32,
-        if ep + 1 >= num_episodes then "PRESS SPACE TO CONTINUE" else "PRESS SPACE FOR NEXT EPISODE",
+        if ep + 1 >= num_episodes then "PRESS ANY KEY TO CONTINUE" else "PRESS ANY KEY FOR NEXT EPISODE",
         gray)
 
 // Final victory (gp_victory): shown after clearing all six episodes. Space
@@ -5261,7 +5261,7 @@ let render_final_victory = (rc: render_ctx*, font: font_info*, g: game*) ->
     draw_font_centered(rc, font, 104, "BJ HAS ESCAPED THE CASTLE", white)
     draw_text(rc, 70, 124, "FINAL SCORE", white, 1)
     draw_number(rc, 220, 124, g->score, gold, 1)
-    draw_font_centered(rc, font, game_h - 32, "PRESS SPACE", gray)
+    draw_font_centered(rc, font, game_h - 32, "PRESS ANY KEY", gray)
 
 // ============================================================
 // Title / Main menu / Pause
@@ -7194,11 +7194,15 @@ let main = (args: str[]) ->
                                 sdl2.clear_audio(audio_dev)
                         if k == sdl2.key_s then take_screenshot(w, vs, pal)
                         if k == sdl2.key_d then debug_dump_state(w)
-                        // IN_Ack: any keydown during the intermission screen
-                        // counts as "acknowledge and advance". The advance
-                        // itself runs below (after tick) and is gated by
+                        // IN_Ack: any keydown during an acknowledge screen
+                        // (intermission / episode-end / final victory) counts
+                        // as "acknowledge and advance". The advance itself
+                        // runs below (after tick) and is gated by
                         // key_ack_handled so a held key only fires once.
-                        if g->phase == game_phase.gp_intermission then
+                        if g->phase == game_phase.gp_intermission
+                           || g->phase == game_phase.gp_episode_end
+                           || g->phase == game_phase.gp_victory
+                           || g->phase == game_phase.gp_game_over then
                             g->key_ack = true
             if t == sdl2.keyup_event then
                 let k = event.key.keysym.sym
@@ -7239,21 +7243,21 @@ let main = (args: str[]) ->
                 advance_next_level(w, vs)
         // Episode-end → next episode's first map (or final victory).
         if g->phase == game_phase.gp_episode_end && g->phase_timer > 0.0
-           && g->key_space && !g->key_space_handled then
-            g->key_space_handled = true
+           && g->key_ack && !g->key_ack_handled then
+            g->key_ack_handled = true
             advance_next_episode(w, vs)
         // Final victory → return to main menu.
         if g->phase == game_phase.gp_victory && g->phase_timer > 0.0
-           && g->key_space && !g->key_space_handled then
-            g->key_space_handled = true
+           && g->key_ack && !g->key_ack_handled then
+            g->key_ack_handled = true
             g->phase = game_phase.gp_main_menu
             g->menu_level = menu_main
             g->menu_sel = 1     // NEW GAME — game ended, RESUME is locked
             g->has_active_game = false
-        // Game-over: space restarts from level 0 with a fresh game.
+        // Game-over: any key restarts from level 0 with a fresh game.
         if g->phase == game_phase.gp_game_over
-           && g->key_space && !g->key_space_handled then
-            g->key_space_handled = true
+           && g->key_ack && !g->key_ack_handled then
+            g->key_ack_handled = true
             restart_full_game(w, vs)
         // Sync the active music to whatever phase we're now in. Only swap
         // when the chunk actually changed, so we don't restart the IMF
