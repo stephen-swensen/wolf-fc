@@ -513,7 +513,6 @@ let shoot_frame_time    = 0.20  // humanoid shoot-windup frame duration
 let pain_time           = 0.20  // pain flinch duration
 let die_frame_time      = 0.18  // per frame during death animation
 let enemy_sight_range   = 16.0  // tiles — max LOS distance for sight check
-let enemy_melee_range   = 1.6   // tiles — dogs bite inside this distance
 
 // Per-kind sprite-page offsets relative to VSWAP sprite_start. Derived from
 // wolf4sdl's sprite enum (wl_def.h): SPR_GRD_S_1..SPR_GRD_SHOOT3 block at 50,
@@ -3214,8 +3213,12 @@ let enemy_bite_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
     trigger_sound_at(snd_dog_attack, ac, g, e->x, e->y)
     let dx = g->pos_x - e->x
     let dy = g->pos_y - e->y
-    let dist = math.sqrt(dx * dx + dy * dy)
-    if dist > enemy_melee_range then return
+    // Per-axis box matching T_Bite in the original: each axis must be within
+    // 2 tiles of the player center (|dx|-1 ≤ 1 after the TILEGLOBAL/MINACTORDIST
+    // subtraction in the original). This is more permissive on diagonals than
+    // a euclidean check — a dog centered on the tile-corner opposite the
+    // player at (1.9, 1.9) still lands a bite.
+    if math.abs(dx) > 2.0 || math.abs(dy) > 2.0 then return
     if !check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then return
     if rnd_byte(g) < 180 then
         // Matches T_Bite in the original: US_RndT() >> 4 → 0-15 (can graze for 0).
@@ -3273,10 +3276,13 @@ let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, dt: f
     | es_chase ->
         match e->kind with
         | ek_dog ->
-            let dx = g->pos_x - e->x
-            let dy = g->pos_y - e->y
-            let dist = math.sqrt(dx * dx + dy * dy)
-            if dist < enemy_melee_range && check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then
+            // T_DogChase's lunge gate: |dx|-move ≤ 1 && |dy|-move ≤ 1 in
+            // tiles. `move` is the dog's distance-to-travel this frame, so
+            // the effective range is 1 + step on each axis.
+            let step = dog_chase_speed * dt
+            let adx = math.abs(g->pos_x - e->x)
+            let ady = math.abs(g->pos_y - e->y)
+            if adx <= 1.0 + step && ady <= 1.0 + step && check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then
                 e->state = enemy_state.es_shoot
                 e->anim_frame = 0
                 e->anim_timer = shoot_frame_time
@@ -3286,11 +3292,12 @@ let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, dt: f
                 advance_walk_anim(e)
         | ek_blinky | ek_pinky | ek_clyde | ek_inky ->
             // Pacman ghosts — chase silently and damage on contact; no
-            // shoot animation, no projectile.
-            let dx = g->pos_x - e->x
-            let dy = g->pos_y - e->y
-            let dist = math.sqrt(dx * dx + dy * dy)
-            if dist < 0.8 then
+            // shoot animation, no projectile. Contact test matches
+            // ClipMove's ghost branch in the original: |dx|, |dy| each
+            // within MINACTORDIST (1 tile) of the player center.
+            let adx = math.abs(g->pos_x - e->x)
+            let ady = math.abs(g->pos_y - e->y)
+            if adx <= 1.0 && ady <= 1.0 then
                 damage_player(g, ac, 1)
             advance_enemy_move(lv, g, ac, self_idx, enemy_chase_speed, dt, true)
             advance_walk_anim(e)
