@@ -958,6 +958,13 @@ struct render_ctx =
     // per-bit tree-walk) and re-palettizes 64,000 pixels, which dropped the
     // frame rate enough to underrun the audio queue and kill the music.
     title_bg: uint32[]
+    // Lazy cache of VGAGRAPH pic chunks as pre-palettized ARGB buffers.
+    // Indexed by chunk id; `.len == 0` means not yet cached. Populated on
+    // first draw via `draw_vg_pic` — turns every subsequent draw of the
+    // same chunk (HUD background, digits, face, weapon, intermission
+    // L-font, etc.) into a plain memcpy. Palette is fixed for the process
+    // lifetime, so caching is safe.
+    pic_cache: uint32[][]
     // Rotating screenshot slot counter (wraps at screenshot_max_slots).
     screenshot_slot: int32
 
@@ -1012,7 +1019,8 @@ struct world =
 
 // Allocate renderer scratch buffers. One instance per process. Decodes the
 // title-screen backdrop once so blit_title_bg is a cheap memcpy on every
-// menu frame.
+// menu frame, and sizes pic_cache to hold one ARGB buffer per VGAGRAPH chunk
+// (lazily populated on first draw).
 let build_render_ctx = (vg: vgagraph.vgagraph_file*, pal: uint32[]) ->
     let rc = alloc(render_ctx {
         fb = alloc(uint32[game_w * game_h] {})!,
@@ -1021,6 +1029,7 @@ let build_render_ctx = (vg: vgagraph.vgagraph_file*, pal: uint32[]) ->
         billboards = alloc(billboard[max_sprites + max_enemies + max_projectiles] {})!,
         num_billboards = 0,
         title_bg = build_title_bg_cache(vg, pal),
+        pic_cache = alloc(uint32[][vg->num_chunks] {})!,
         screenshot_slot = 0
     })!
     rc
@@ -4447,12 +4456,24 @@ let vg_l_bjwins      = 85   // BJ-wins art for the episode-end screen
 // Draw a decoded VGA-planar pic at (dst_x, dst_y) in the framebuffer.
 // Pixels outside the fb are clipped. `pal` is the 256-entry ARGB palette.
 // Palette index 255 is magenta but treated as opaque here — VGAGRAPH
-// images don't use transparency (only sprites do).
+// images don't use transparency (only sprites do). First call for a given
+// chunk decodes + palette-applies into rc->pic_cache; subsequent calls are
+// a plain ARGB memcpy.
 let draw_vg_pic = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
                    chunk: int32, dst_x: int32, dst_y: int32) ->
-    let pic = vgagraph.load_pic(vg, chunk)
-    defer free(pic)
-    if pic.len == 0 then return
+    if chunk < 0 || chunk >= (int32) rc->pic_cache.len then return
+    if rc->pic_cache[chunk].len == 0 then
+        let pic = vgagraph.load_pic(vg, chunk)
+        defer free(pic)
+        if pic.len == 0 then return
+        let w = vgagraph.pic_width(vg, chunk)
+        let h = vgagraph.pic_height(vg, chunk)
+        if w <= 0 || h <= 0 then return
+        let buf = alloc(uint32[w * h] {})!
+        for i in 0..(w * h)
+            buf[(int64) i] = pal[(int32) pic[(int64) i]]
+        rc->pic_cache[chunk] = buf
+    let buf = rc->pic_cache[chunk]
     let w = vgagraph.pic_width(vg, chunk)
     let h = vgagraph.pic_height(vg, chunk)
     for y in 0..h
@@ -4461,35 +4482,11 @@ let draw_vg_pic = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
         for x in 0..w
             let dx = dst_x + x
             if dx < 0 || dx >= game_w then continue
-            let pix = pic[(int64) y * (int64) w + (int64) x]
-            rc->fb[(int64) dy * 320 + (int64) dx] = pal[(int32) pix]
-
-// Draw a VG pic scaled to fit a destination rectangle. Used for fit-to-
-// viewport rendering (title screen, credits) — nearest-neighbor scaling.
-let draw_vg_pic_scaled = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
-                          chunk: int32, dst_x: int32, dst_y: int32,
-                          dst_w: int32, dst_h: int32) ->
-    let pic = vgagraph.load_pic(vg, chunk)
-    defer free(pic)
-    if pic.len == 0 then return
-    let w = vgagraph.pic_width(vg, chunk)
-    let h = vgagraph.pic_height(vg, chunk)
-    if w <= 0 || h <= 0 then return
-    for py in 0..dst_h
-        let dy = dst_y + py
-        if dy < 0 || dy >= game_h then continue
-        let sy = (int64) py * (int64) h / (int64) dst_h
-        for px in 0..dst_w
-            let dx = dst_x + px
-            if dx < 0 || dx >= game_w then continue
-            let sx = (int64) px * (int64) w / (int64) dst_w
-            let pix = pic[sy * (int64) w + sx]
-            rc->fb[(int64) dy * 320 + (int64) dx] = pal[(int32) pix]
+            rc->fb[(int64) dy * 320 + (int64) dx] = buf[(int64) y * (int64) w + (int64) x]
 
 // One-time decode + nearest-neighbor scale of TITLEPIC into a 320×200 ARGB
 // buffer. Returns a heap slice the caller must hold for the process
-// lifetime. Builds the same pixels draw_vg_pic_scaled would emit, so the
-// cached blit is visually identical to the slow path.
+// lifetime.
 let build_title_bg_cache = (vg: vgagraph.vgagraph_file*, pal: uint32[]) ->
     let buf = alloc(uint32[game_w * game_h] {})!
     let pic = vgagraph.load_pic(vg, vg_title)
