@@ -452,10 +452,20 @@ assert_contains "episode:setepisode-0-starts-e1m1" \
 assert_contains "episode:setepisode-2-starts-e3m1" \
     "setepisode:2 state" \
     "level=20"
-# Level 8 (boss / finale) of an episode ends the episode on space, not a
-# normal level advance. advance should land in gp_episode_end, not playing.
+# Level 8 (boss / finale) of an episode enters the BJ victory cutscene
+# instead of the regular intermission. `advance` skips straight to the
+# episode-end screen, collapsing what the interactive main loop does via
+# the auto-transition + space press.
+assert_contains "episode:level-8-enters-bj-victory" \
+    "setlevel:8 endepisode wait:2 phase" \
+    "phase=bj_victory"
 assert_contains "episode:level-8-advance-enters-episode-end" \
     "setlevel:8 endepisode wait:2 advance phase" \
+    "phase=episode_end"
+# BJ cutscene auto-advances to episode_end after the 6-tile run + jump +
+# final hold (~4.5 seconds, so wait:180 is comfortably past the end).
+assert_contains "episode:bj-victory-auto-advances" \
+    "setlevel:8 endepisode wait:200 phase" \
     "phase=episode_end"
 # Pressing advance again on episode_end starts the next episode's map 0.
 assert_contains "episode:episode-end-advance-to-next-ep" \
@@ -497,8 +507,13 @@ assert_contains "music:title-plays-wonderin"      "setphase:title music"      "a
 assert_contains "music:menu-plays-wonderin"       "setphase:menu music"       "audiot offset=14"
 assert_contains "music:gameplay-uses-songs-table" "music"                     "audiot offset=3"
 assert_contains "music:intermission-plays-endlevel" \
-    "setlevel:8 endepisode wait:2 music" \
+    "setlevel:0 endepisode wait:2 music" \
     "audiot offset=16"
+# Boss-map intermission is replaced by the BJ victory cutscene, which
+# shares the episode-end URAHERO track.
+assert_contains "music:bj-victory-plays-urahero" \
+    "setlevel:8 endepisode wait:2 music" \
+    "audiot offset=24"
 assert_contains "music:episode-end-plays-urahero" \
     "setlevel:8 endepisode wait:2 advance music" \
     "audiot offset=24"

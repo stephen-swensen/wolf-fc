@@ -146,6 +146,9 @@ union game_phase =
     | gp_dying
     | gp_intermission
     | gp_game_over
+    | gp_bj_victory    // BJ runs forward + jumps + yells after an episode
+                       // boss kill. Replaces the regular intermission for
+                       // boss maps (wolf4sdl's SpawnBJVictory → ex_victorious).
     | gp_episode_end   // per-episode victory screen (after boss level 8)
     | gp_victory       // all six episodes cleared; space returns to main menu
 
@@ -265,6 +268,18 @@ struct game =
     // on entry). Consumed by `start_new_game_here` to call
     // `teleport_near_boss` after the map loads, then cleared.
     want_near_boss: bool
+
+    // BJ victory cutscene actor state — active only during gp_bj_victory.
+    // Spawned one tile south of the player at entry; runs north for 6
+    // tiles, then jumps 4 frames with YEAHSND on frame 2. See
+    // enter_bj_victory / tick_bj_victory.
+    bj_x: float64
+    bj_y: float64
+    bj_anim_frame: int32
+    bj_anim_timer: float64
+    bj_phase: int32      // 0 = running, 1 = jumping, 2 = holding final frame
+    bj_dist_run: float64 // tiles run so far
+    bj_yelled: bool      // YEAHSND latch (fires on entering jump frame 1)
 
     // Phase state (death / intermission / game-over). Most of tick() skips
     // when phase != gp_playing; rendering paints the appropriate overlay.
@@ -1146,6 +1161,87 @@ let render_message = (rc: render_ctx*, font: font_info*, g: game*) ->
     for i in 0..g->msg_len
         cx = cx + draw_font_char(rc, font, cx, y, (int32) g->msg_buf[i], color)
 
+// BJ victory cutscene tuning. Speeds come from wolf4sdl's BJRUNSPEED /
+// BJJUMPSPEED fixed-point-per-tic constants at 70 Hz: 2048*70/0x10000 ≈
+// 2.19 tiles/s and 680*70/0x10000 ≈ 0.727 tiles/s. Frame times match the
+// `tics` column in states.cpp s_bjrun*/s_bjjump* entries (12/8/12/8 tics
+// for running, 14 for jumps). The final jump frame is held briefly —
+// shorter than wolf4sdl's 300 tics / ~4.3 s so the episode-end screen
+// doesn't feel stuck.
+let bj_run_speed        = 2.19
+let bj_jump_speed       = 0.73
+let bj_walk_frame_time  = 0.15   // avg of 12 / 8 tic run frames
+let bj_jump_frame_time  = 0.20
+let bj_final_hold_time  = 1.2
+let bj_run_distance     = 6.0    // tiles — matches wolf4sdl temp1=6
+
+// Begin the BJ victory cutscene. Invoked in place of `next_level =
+// true` when the player kills a boss on the last regular map of an
+// episode (map 8 / level_num % 10 == 8). BJ is spawned 1 tile south of
+// the player and runs north past them; we don't animate them through
+// the map's actual geometry, so collision is skipped — the actor drifts
+// through walls if the player was boxed in by one. Applies the level-
+// completion bonus before the screen change so the episode-end total
+// reflects the boss run even though the regular tally is skipped.
+let enter_bj_victory = (g: game*) ->
+    g->phase = game_phase.gp_bj_victory
+    g->phase_timer = 0.0
+    g->score = g->score + compute_level_bonus(g)
+    // Spawn BJ 1 tile south of the player and run him north.
+    g->bj_x = g->pos_x
+    g->bj_y = g->pos_y + 1.0
+    g->bj_anim_frame = 0
+    g->bj_anim_timer = bj_walk_frame_time
+    g->bj_phase = 0
+    g->bj_dist_run = 0.0
+    g->bj_yelled = false
+    // Freeze gameplay input. Pre-handle space so a still-held elevator
+    // press doesn't race an early episode-end transition.
+    g->key_up = false
+    g->key_down = false
+    g->key_left = false
+    g->key_right = false
+    g->key_fire = false
+    g->key_space_handled = true
+    g->key_ack_handled = true
+
+// Advance the BJ actor one tick. Called from tick() while in
+// gp_bj_victory. Transitions to gp_episode_end once the actor has
+// finished running, jumping, and holding the final jump frame.
+let tick_bj_victory = (g: game*, ac: audio_ctx*, dt: float64) ->
+    g->bj_anim_timer = g->bj_anim_timer - dt
+    if g->bj_phase == 0 then
+        // Running north — 4-frame walk cycle, world-space move at bj_run_speed.
+        let step = bj_run_speed * dt
+        g->bj_y = g->bj_y - step
+        g->bj_dist_run = g->bj_dist_run + step
+        if g->bj_anim_timer <= 0.0 then
+            g->bj_anim_frame = (g->bj_anim_frame + 1) & 3
+            g->bj_anim_timer = bj_walk_frame_time
+        if g->bj_dist_run >= bj_run_distance then
+            g->bj_phase = 1
+            g->bj_anim_frame = 0
+            g->bj_anim_timer = bj_jump_frame_time
+    else if g->bj_phase == 1 then
+        // Jumping — 4 sequential frames, YEAHSND on entering frame 1.
+        g->bj_y = g->bj_y - bj_jump_speed * dt
+        if g->bj_anim_timer <= 0.0 then
+            let next_frame = g->bj_anim_frame + 1
+            if next_frame == 1 && !g->bj_yelled then
+                trigger_sound(snd_yeah, ac)
+                g->bj_yelled = true
+            if next_frame >= 4 then
+                g->bj_anim_frame = 3
+                g->bj_phase = 2
+                g->bj_anim_timer = bj_final_hold_time
+            else
+                g->bj_anim_frame = next_frame
+                g->bj_anim_timer = bj_jump_frame_time
+    else
+        // Holding final frame; then transition to episode-end.
+        if g->bj_anim_timer <= 0.0 then
+            enter_episode_end(g)
+
 // Begin the intermission phase (stats screen between levels). The phase
 // timer starts at 0 so the "press space to continue" gate needs at least
 // one frame before it will fire — prevents an in-flight space press from
@@ -1501,7 +1597,15 @@ let update_phase_transitions = (w: world*, vs: vswap.vswap_file*) ->
     if g->next_level && g->phase == game_phase.gp_playing
        && g->next_level_delay <= 0.0 then
         g->next_level = false
-        enter_intermission(g)
+        // Episode-boss kills on the last regular map play the BJ victory
+        // cutscene, which feeds directly into the episode-end screen and
+        // skips the tally. Every other `next_level` transition (elevator
+        // switch, secret exit, non-boss map 8) goes through the regular
+        // intermission → advance flow.
+        if g->level_num % levels_per_episode == 8 then
+            enter_bj_victory(g)
+        else
+            enter_intermission(g)
     if g->phase == game_phase.gp_dying && g->phase_timer >= death_anim_time then
         if g->lives > 0 then
             g->lives = g->lives - 1
@@ -2068,6 +2172,24 @@ let build_billboards = (lv: level*, rc: render_ctx*, g: game*, sprite_start: int
             x = p->x,
             y = p->y,
             shape_page = projectile_sprite_page(sprite_start, p),
+            dist_sq = dx * dx + dy * dy
+        }
+        n = n + 1
+    // BJ victory cutscene actor. Only present during gp_bj_victory; uses
+    // the BJ walk / jump sprite block at sprite_start + 408..415.
+    if g->phase == game_phase.gp_bj_victory then
+        let walk_pages = int32[4] { 408, 409, 410, 411 }
+        let jump_pages = int32[4] { 412, 413, 414, 415 }
+        let idx = if g->bj_anim_frame < 0 then 0
+                  else if g->bj_anim_frame > 3 then 3
+                  else g->bj_anim_frame
+        let page_rel = if g->bj_phase == 0 then walk_pages[idx] else jump_pages[idx]
+        let dx = g->bj_x - g->pos_x
+        let dy = g->bj_y - g->pos_y
+        rc->billboards[n] = billboard {
+            x = g->bj_x,
+            y = g->bj_y,
+            shape_page = sprite_start + page_rel,
             dist_sq = dx * dx + dy * dy
         }
         n = n + 1
@@ -3281,9 +3403,13 @@ let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, dmg: int32,
         // Killing a boss ends the level immediately (wolf4sdl's
         // LevelCompleted trigger on boss-death + elevator-reveal).
         if was_boss then
-            g->next_level = true
             g->next_level_delay = elevator_wait_time
             show_message(g, "YOU GOT THE BOSS KEY!")
+            // Episode-boss kill (map 8 of each episode) triggers the BJ
+            // victory cutscene instead of the regular intermission. The
+            // `next_level` latch still drives the elevator-wait freeze;
+            // update_phase_transitions routes to BJ on that frame.
+            g->next_level = true
     else
         // Pain flinch (except dogs, which don't display pain frames).
         e->state = enemy_state.es_pain
@@ -4446,6 +4572,7 @@ let music_chunk_for_phase = (phase: game_phase, level_num: int32) ->
     let mus = match phase with
     | gp_title | gp_main_menu -> music_wonderin
     | gp_intermission         -> music_endlevel
+    | gp_bj_victory           -> music_urahero   // same cue as the episode-end screen
     | gp_episode_end          -> music_urahero
     | gp_victory              -> music_vicmarch
     | _ -> if level_num >= 0 && level_num < 60 then songs[level_num] else 0
@@ -4766,6 +4893,8 @@ let tick = (w: world*, dt: float64) ->
         g->phase_timer = g->phase_timer + dt
         if g->phase == game_phase.gp_intermission then
             tick_intermission(g, w->ac, dt)
+        else if g->phase == game_phase.gp_bj_victory then
+            tick_bj_victory(g, w->ac, dt)
     // Phase transitions (death collapse → restart / game-over). Main loop
     // layers music switching on top of this; test mode doesn't need music
     // so it can ignore the return value.
@@ -6027,6 +6156,7 @@ let debug_dump_state = (w: world*) ->
     | gp_dying        -> "dying"
     | gp_intermission -> "intermission"
     | gp_game_over    -> "gameover"
+    | gp_bj_victory   -> "bj_victory"
     | gp_episode_end  -> "episode_end"
     | gp_victory      -> "victory"
     io.write("\n=== DEBUG DUMP ===\n", stderr)
@@ -6191,6 +6321,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         | gp_dying        -> "dying"
         | gp_intermission -> "intermission"
         | gp_game_over    -> "gameover"
+        | gp_bj_victory   -> "bj_victory"
         | gp_episode_end  -> "episode_end"
         | gp_victory      -> "victory"
         let par = if g->level_num < 60 then par_times[g->level_num] else 0
@@ -6267,6 +6398,12 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
                 enter_episode_end(g)
             else
                 advance_next_level(w, w->ac->vs)
+        else if g->phase == game_phase.gp_bj_victory then
+            // BJ cutscene collapses straight to the episode-end screen.
+            // Interactive mode auto-advances on its own after the final
+            // hold, but tests skip to the end so scripted sequences don't
+            // need to pad with wait:200.
+            enter_episode_end(g)
         else if g->phase == game_phase.gp_episode_end then
             advance_next_episode(w, w->ac->vs)
         else if g->phase == game_phase.gp_victory then
@@ -6409,6 +6546,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         | gp_dying        -> "dying"
         | gp_intermission -> "intermission"
         | gp_game_over    -> "gameover"
+        | gp_bj_victory   -> "bj_victory"
         | gp_episode_end  -> "episode_end"
         | gp_victory      -> "victory"
         io.write("phase=%s{phase_s} timer=%6.3f{g->phase_timer} lives=%d{g->lives}\n", stdout)
@@ -6671,6 +6809,8 @@ let main = (args: str[]) ->
         fire_timer = 0.0, weapon_frame = 0,
         face_frame = 0, face_count = 0.0,
         area_number = -1, made_noise = false, player_running = false, want_near_boss = false,
+        bj_x = 0.0, bj_y = 0.0, bj_anim_frame = 0, bj_anim_timer = 0.0,
+        bj_phase = 0, bj_dist_run = 0.0, bj_yelled = false,
         phase = game_phase.gp_title, phase_timer = 0.0,
         damage_flash_timer = 0.0, respawn_fade_timer = 0.0,
         kills = 0, total_kills = 0,

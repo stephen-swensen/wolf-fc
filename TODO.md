@@ -6,13 +6,6 @@ Remaining items, in rough priority order. Items closer to the top are the
 next-up candidates; everything below is nice-to-have polish or a survey pass.
 
 ### Gameplay
-- [ ] **BJ victory-cutscene animation.** After killing an episode boss, the
-  original plays BJ running onto the screen (`T_BJRun` + `T_BJJump` + yell)
-  before the episode-end screen. Currently we cut straight to the tally.
-  Sprites are `SPR_BJ_W1..W4 / JUMP1..4` in VSWAP; `YEAHSND` is already
-  mapped (`snd_yeah`). Wolf4sdl reference: `SpawnBJVictory` in `wl_act2.cpp`
-  and the `s_bjrun*` state chain.
-
 ### UI / Menus
 - [ ] **Configurable input / options menus.** Original has dedicated Control,
   Sound, and Screen Size submenus under Options. Lots of UI, modest gameplay
@@ -58,6 +51,16 @@ next-up candidates; everything below is nice-to-have polish or a survey pass.
   `LevelCompleted` else-branch. The ticker is parked at stage 4 and the
   score is bumped inside `enter_intermission` so the advance / next-level
   wiring stays unchanged.
+- BJ victory cutscene: killing a boss on map 8 of an episode now enters
+  a new `gp_bj_victory` phase (replacing the regular intermission) where
+  BJ runs north for 6 tiles, jumps 4 frames, yells YEAHSND on frame 2,
+  then auto-advances to the episode-end screen. Ports wolf4sdl's
+  `SpawnBJVictory` + `T_BJRun`/`T_BJJump`/`T_BJYell` → `ex_victorious`
+  chain using an inline actor on `game` (bj_x/y/anim/phase) rather than
+  a full enemy slot. Sprites from `SPR_BJ_W1..W4 / JUMP1..4` (sprite_start
+  + 408..415). Music routes to URAHERO_MUS for the cutscene and the
+  following episode-end screen. `advance` test command skips the
+  cutscene directly to episode_end for scripted tests.
 
 ### Recent additions (this session, part 6)
 - Pre-intermission wait: pulling the elevator switch (or killing a boss) now
