@@ -251,6 +251,11 @@ struct game =
     // path enemies in the player-connected area set without needing LOS.
     // Reset at the top of each tick so it only fires for one frame.
     made_noise: bool
+    // Wolf4sdl `thrustspeed >= RUNSPEED`: set in update_player to mark a
+    // frame in which the player was actively moving (run modifier held +
+    // any movement key). Enemy T_Shoot reads this to pick the lower
+    // base-160 hitchance — player-can-dodge branch.
+    player_running: bool
 
     // Phase state (death / intermission / game-over). Most of tick() skips
     // when phase != gp_playing; rendering paints the appropriate overlay.
@@ -502,6 +507,7 @@ struct enemy =
     ambush: bool              // tile 106 (AMBUSH) — don't wake on sound, only LOS
     notified: bool            // has entered active pursuit at least once (suppresses re-alert sound)
     reaction_timer: float64   // seconds left between first detection and actual wake; 0 when not yet detected (mirrors wolf4sdl SightPlayer's temp2)
+    last_visible: bool        // set by build_billboards when the enemy was drawn in the previous frame (mirrors wolf4sdl FL_VISABLE); read by enemy_fire_at_player to pick the steeper hitchance falloff
 
 // Tunables — see update_enemies for how each is used.
 let max_enemies = 150
@@ -1759,7 +1765,8 @@ let spawn_one_enemy = (lv: level*, tx: int32, ty: int32, info: enemy_spawn_info,
         dist_flat = 0.0,
         ambush = false,
         notified = false,
-        reaction_timer = 0.0
+        reaction_timer = 0.0,
+        last_visible = false
     }
     lv->num_enemies = lv->num_enemies + 1
 
@@ -1893,6 +1900,16 @@ let build_billboards = (lv: level*, rc: render_ctx*, g: game*, sprite_start: int
         let page_rel = enemy_sprite_page(e, g->pos_x, g->pos_y)
         let dx = e->x - g->pos_x
         let dy = e->y - g->pos_y
+        // Wolf4sdl-equivalent FL_VISABLE flag: roughly "enemy is in the
+        // player's forward view cone this frame". Uses a camera-forward
+        // dot product for depth and a lateral tolerance of 1.2x the depth
+        // to include actors adjacent to the edge of view (the original
+        // sets FL_VISABLE on any actor whose tile or a neighbour was
+        // visited by a wall ray). Enemy_fire_at_player reads this next
+        // frame to pick the steeper base-minus-16×dist hitchance.
+        let fd = dx * g->dir_x + dy * g->dir_y
+        let ld = dx * g->plane_x + dy * g->plane_y
+        e->last_visible = fd > 0.1 && math.abs(ld) <= fd * 1.2
         rc->billboards[n] = billboard {
             x = e->x,
             y = e->y,
@@ -2392,6 +2409,15 @@ let rotate_camera = (g: game*, angle: float64) ->
 let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
     let spd = move_speed * dt * (if g->key_shift then run_mult else 1.0)
     let rot = turn_speed * dt * (if g->key_shift then run_mult else 1.0)
+
+    // Wolf4sdl thrustspeed-vs-RUNSPEED check that T_Shoot uses to pick the
+    // base-160 "player can dodge" hitchance. True this frame iff shift is
+    // held AND the player is actually attempting a move (fwd/back, or
+    // alt+left/right strafe). Turning in place doesn't count — neither does
+    // holding shift without a direction.
+    g->player_running = g->key_shift && (
+        g->key_up || g->key_down ||
+        (g->key_alt && (g->key_left || g->key_right)))
 
     // Track whether any attempted move was fully blocked — if so and the
     // AdLib SFX chip is idle, play the wall-bump sound (matches wolf4sdl's
@@ -3173,9 +3199,16 @@ let wake_enemy = (g: game*, e: enemy*, ac: audio_ctx*) ->
         if snd >= 0 then trigger_sound_at(snd, ac, g, e->x, e->y)
 
 // Enemy firing an attack at the player, called from T_Shoot frames. Ports
-// wolf4sdl T_Shoot's distance-based hit chance and damage roll:
-//   hit chance  = 256 - dist*8 (SS get a 2/3 distance discount; more accurate)
-//   damage      = (rnd >> 2) if dist<2, (rnd >> 3) if dist<4, else (rnd >> 4)
+// wolf4sdl T_Shoot's distance-based hit chance and damage roll. Hitchance
+// picks one of four formulas based on whether the player is running this
+// frame and whether the enemy was drawn last frame (FL_VISABLE):
+//   still + hidden   : 256 - dist*8
+//   still + visible  : 256 - dist*16  (player can see to dodge)
+//   running + hidden : 160 - dist*8
+//   running + visible: 160 - dist*16
+// SS and Hans (`bossobj` in the original — only Hans uses that obclass)
+// apply a 2/3 distance discount before this lookup — they're more accurate
+// shooters. Other bosses fire with their own obclass and do not get it.
 let enemy_fire_at_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
     // Per-kind firing sound — mirrors the original's T_Shoot switch. Gretel
     // is not listed in the original switch and falls through to NAZIFIRESND.
@@ -3192,18 +3225,22 @@ let enemy_fire_at_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
     let dyi = (int32) g->pos_y - e->tile_y
     let adx = if dxi < 0 then -dxi else dxi
     let ady = if dyi < 0 then -dyi else dyi
-    let dist_tiles = (float64) (if adx > ady then adx else ady)
+    let dist_tiles = if adx > ady then adx else ady
+    // Only ssobj and bossobj get the 2/3 discount in the original T_Shoot —
+    // bossobj is Hans Grosse specifically; Schabbs / Gretel / Giftmacher /
+    // Fat / Hitler(fake/real) use their own obclass and miss the shortcut.
     let dist_adj = match e->kind with
-    | ek_ss -> dist_tiles * 2.0 / 3.0
-    | _     -> dist_tiles
-    let mut hitchance = 256 - (int32) (dist_adj * 8.0)
-    if hitchance < 20 then hitchance = 20
+    | ek_ss | ek_hans -> dist_tiles * 2 / 3
+    | _               -> dist_tiles
+    let base = if g->player_running then 160 else 256
+    let falloff = if e->last_visible then 16 else 8
+    let hitchance = base - dist_adj * falloff
     if rnd_byte(g) < hitchance then
         let roll = rnd_byte(g)
-        let dmg = if dist_adj < 2.0 then roll / 4
-                  else if dist_adj < 4.0 then roll / 8
+        let dmg = if dist_adj < 2 then roll / 4
+                  else if dist_adj < 4 then roll / 8
                   else roll / 16
-        damage_player(g, ac, dmg + 1)
+        damage_player(g, ac, dmg)
 
 // Dog melee bite — called from the jump-frame of es_shoot for ek_dog. Damage
 // is a flat ~0..16 roll inside melee range. The bark/snarl plays
@@ -6218,7 +6255,7 @@ let main = (args: str[]) ->
         weapon = 1, best_weapon = 1, went_secret = false,
         fire_timer = 0.0, weapon_frame = 0,
         face_frame = 0, face_count = 0.0,
-        area_number = -1, made_noise = false,
+        area_number = -1, made_noise = false, player_running = false,
         phase = game_phase.gp_title, phase_timer = 0.0,
         damage_flash_timer = 0.0, respawn_fade_timer = 0.0,
         kills = 0, total_kills = 0,
