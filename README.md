@@ -41,6 +41,24 @@ This compiles the FC source to C, then to a native binary, and runs it. The game
 | Flag | Effect |
 |------|--------|
 | `--no-dogs` | Skip spawning all dog enemies (for sensitive players). Works in both interactive and `--test` modes; may appear before or after `--test`. |
+| `--level=N` | Skip the title / menu and drop straight into map N in playing phase. `N` is `0..59` (six episodes of ten maps). Handy for jumping to a specific boss fight — see table below. |
+| `--difficulty=N` | Override the starting difficulty: `0` = Can I play Daddy, `1` = Don't Hurt Me, `2` = Bring 'Em On, `3` = I Am Death Incarnate (default). Combines with `--level`. |
+| `--near-boss` | After the level loads, teleport the player to an open tile adjacent to the first boss enemy on the map, facing the boss. No-op on maps without a boss. Combine with `--level=N` to start a specific boss fight immediately. |
+
+### Jump-to-boss cheat sheet
+
+Each episode ends on map 8 (map 9 is the secret level). Add `--near-boss` to also teleport directly in front of the boss instead of landing at the map's designed spawn point:
+
+| Boss | Episode | Map (0-indexed) | CLI |
+|------|---------|-----------------|-----|
+| Hans Grosse | E1 | 8 | `./run.sh --level=8 --near-boss` |
+| Dr. Schabbs | E2 | 18 | `./run.sh --level=18 --near-boss` |
+| Adolf Hitler | E3 | 28 | `./run.sh --level=28 --near-boss` |
+| Otto Giftmacher | E4 | 38 | `./run.sh --level=38 --near-boss` |
+| Gretel Grosse | E5 | 48 | `./run.sh --level=48 --near-boss` |
+| General Fettgesicht | E6 | 58 | `./run.sh --level=58 --near-boss` |
+
+The same functionality is available from the main menu: **NEW GAME → Episode → Map → BOSS FIGHT** picks map 9 of the chosen episode and teleports you next to the boss. Picking a regular map (1–10) starts at the map's designed spawn.
 
 ## Controls
 

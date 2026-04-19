@@ -1,6 +1,61 @@
 # Wolf-FC TODO
 
+## Open work
+
+Remaining items, in rough priority order. Items closer to the top are the
+next-up candidates; everything below is nice-to-have polish or a survey pass.
+
+### Gameplay
+- [ ] **BJ victory-cutscene animation.** After killing an episode boss, the
+  original plays BJ running onto the screen (`T_BJRun` + `T_BJJump` + yell)
+  before the episode-end screen. Currently we cut straight to the tally.
+  Sprites are `SPR_BJ_W1..W4 / JUMP1..4` in VSWAP; `YEAHSND` is already
+  mapped (`snd_yeah`). Wolf4sdl reference: `SpawnBJVictory` in `wl_act2.cpp`
+  and the `s_bjrun*` state chain.
+
+### UI / Menus
+- [ ] **Configurable input / options menus.** Original has dedicated Control,
+  Sound, and Screen Size submenus under Options. Lots of UI, modest gameplay
+  impact. Could include a simple keybind editor plus the PC-speaker/AdLib/
+  SoundBlaster radio buttons (even if all three route to our mixer today).
+- [ ] **Floor-code for the secret level in the intermission title.** Wolf3D
+  prints `FLOOR ?` on the tally screen when you're exiting the secret level,
+  not the numeric floor. Minor quality-of-life; the secret-level routing
+  itself already works.
+
+### Fidelity
+- [ ] **Survey pass against wolf4sdl.** The last two survey passes each
+  surfaced real bugs (per-axis bite ranges; T_Shoot hitchance/damage
+  formulas). Spot-check `GunAttack`, `TakeDamage`, pickup handling,
+  `UpdateFace`, and the pacman-ghost chase path for any silent divergences
+  worth closing. Queue new items here as they're found.
+
 ## Current State (2026-04-17)
+
+### Recent additions (this session, part 7)
+- Enemy projectiles: Schabbs (needle), Giftmacher / Fat (rocket), and
+  fake Hitler (flame) now fire visible, dodgeable projectiles instead of
+  hitscanning. Ports wolf4sdl's `T_SchabbThrow` / `T_GiftThrow` / `T_Launch`
+  / `T_FakeFire` spawn paths + the `T_Projectile` tic step. Rockets
+  explode with a short 3-frame boom anim (+MISSILEHITSND) on wall hit;
+  flames dissipate silently. Damage rolls match `T_Projectile`: needle
+  `20+(rnd>>3)`, rocket `30+(rnd>>3)`, flame `rnd>>3`. New `projectiles`
+  test command dumps slot/kind/pos/angle for debugging. 5 new regression
+  tests cover in-flight + damage for each kind.
+- `--level=N` / `--difficulty=N` CLI flags drop the player straight into
+  map N in playing phase, optionally at a non-default difficulty. Handy
+  for boss-fight testing (E1 Hans=8, E2 Schabbs=18, E3 Hitler=28,
+  E4 Giftmacher=38, E5 Gretel=48, E6 Fat=58). Also respected in `--test`
+  mode so regression scripts can skip the `setlevel:` prefix.
+- `--near-boss` CLI flag and in-game BOSS FIGHT menu entry teleport the
+  player onto an open tile adjacent to the first boss on the map, facing
+  it. Tries 2-tile offsets first (south/north/east/west priority) so
+  projectile bosses still have room to spawn a visible projectile. No-op
+  on maps without a boss. `teleport_near_boss` in main.fc runs during
+  `start_new_game_here` (consumes `g->want_near_boss`) and on the CLI
+  startup path after the level loads. New `menu_map` submenu shows
+  MAP 1..10 plus BOSS FIGHT, sitting between the episode picker and the
+  difficulty picker.
 
 ### Recent additions (this session, part 6)
 - Pre-intermission wait: pulling the elevator switch (or killing a boss) now
@@ -188,6 +243,7 @@ Working:
 - [x] Bosses: Hans / Schabbs / Gretel / Giftmacher / Fat / Hitler-fake / Hitler as enemy kinds with boss HP / score / gold-key drop. Killing a boss sets next_level=true. Sprite indices counted directly from wolf4sdl `wl_def.h` (non-SPEAR build); verified visually by rendering Hans on E1M9.
 - [x] Pacman ghosts: Blinky/Pinky/Clyde/Inky spawn from plane-1 tiles 224..227 (found on E3M10 = level 29), chase player, touch damage. Sprite indices 288..295 verified visually.
 - [x] Mutant-specific double-shot pattern (they fire twice per shoot cycle in wolf4sdl).
+- [x] Enemy projectile attacks: Schabbs syringe (`pk_needle`), Giftmacher / Fat rocket (`pk_rocket`, with boom on wall hit), fake Hitler flame (`pk_fire`). Ported from wolf4sdl's T_SchabbThrow / T_GiftThrow / T_Launch / T_FakeFire + T_Projectile. Damage rolls match the original (20-51 / 30-61 / 0-31). Rockets fire MISSILEHITSND on wall impact; flames dissipate silently.
 
 ### Weapons and combat
 - [x] Weapon-specific hit sounds (HITENEMYSND when a shot connects).

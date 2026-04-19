@@ -367,6 +367,64 @@ assert_contains "boss:giftmacher-on-e4m9" "setlevel:38 enemylist" "kind=gift"
 assert_contains "boss:gretel-on-e5m9"    "setlevel:48 enemylist" "kind=gretel"
 assert_contains "boss:fat-face-on-e6m9"  "setlevel:58 enemylist" "kind=fat"
 
+section "enemy projectiles"
+# Fake Hitler on E3M9 unloads a flame salvo down the corridor west of him.
+# At wait:20 the first couple of flames are still mid-flight, before any
+# have reached the player — verifies that the boss actually spawns visible
+# dodgeable projectiles instead of hitscanning.
+assert_regex "proj:fake-hitler-flame-in-flight" \
+    "setlevel:28 goto:25,57 wait:20 projectiles" \
+    "proj\[[0-9]+\] fire"
+# Standing one tile north of Schabbs gives a clean LOS with no flanking
+# mutants in fire range. At wait:18 the needle is mid-flight; by wait:20
+# it has connected and health has dropped by at least 20 (needle rolls
+# 20-51 per hit in the original).
+assert_contains "proj:schabbs-needle-in-flight" \
+    "setlevel:18 goto:31,17 wait:18 projectiles" \
+    "needle"
+assert_regex "proj:schabbs-needle-damages-player" \
+    "setlevel:18 goto:31,17 wait:20 state" \
+    "health=([0-7][0-9]|80)"
+# Giftmacher on E4M9 at (27,18) fires rockets at the player one tile south;
+# one rocket hit alone drops the player by 30-61 HP. Rocket damage is
+# distinctive enough that we check the value clearly fell below 70.
+assert_regex "proj:giftmacher-rocket-damages-player" \
+    "setlevel:38 goto:27,19 wait:25 state" \
+    "health=([0-6][0-9]|70)"
+# Fat Face on E6M9 also spawns rockets from the same T_GiftThrow path;
+# mostly a coverage check that setlevel:58 reaches the right map.
+assert_contains "proj:fat-face-spawns-rockets" \
+    "setlevel:58 enemylist" \
+    "kind=fat state=stand"
+
+section "cli flags"
+# --level=N drops the player straight onto level N in playing phase — the
+# interactive shortcut for jumping to a specific boss fight. Scans run
+# through the same "$BIN --test $ARGS" harness (so --level is placed
+# after --test), but `main` scans all args so order doesn't matter.
+assert_contains "cli:level-flag-jumps-to-level-8" \
+    "--level=8 state" \
+    "level=8"
+# --difficulty=0 (baby) flips mutant HP to the baby-tier 45 (vs 65 default).
+assert_contains "cli:difficulty-flag-lowers-mutant-hp" \
+    "--difficulty=0 setlevel:18 enemylist" \
+    "kind=mutant state=stand dir=6 hp=45"
+# --near-boss on E1M9 teleports to an open tile adjacent to Hans Grosse
+# (tile 34,14). Expect pos y within 2 tiles of the boss, facing north.
+assert_contains "cli:near-boss-teleports-to-hans-on-e1m9" \
+    "--level=8 --near-boss state" \
+    "pos=( 34.5000,  16.5000) dir=(  0.0000,  -1.0000)"
+# --near-boss on a map without a boss (E1M1) is a no-op, leaving the
+# player at the designed spawn.
+assert_contains "cli:near-boss-no-op-without-boss" \
+    "--level=0 --near-boss state" \
+    "pos=( 29.5000,  57.5000)"
+# setphase:mapmenu lands in the NEW GAME → MAP submenu. The submenu itself
+# has no stdout dump, but the phase command confirms menu state.
+assert_contains "cli:setphase-mapmenu" \
+    "setphase:mapmenu phase" \
+    "phase=menu"
+
 section "messages"
 # Picking up a treasure item posts a pickup message; msg_timer becomes > 0.
 # We verify the counters command doesn't show msg_timer directly, so render

@@ -160,6 +160,11 @@ let menu_difficulty = 1
 let menu_episode    = 2
 let menu_savelist   = 3
 let menu_loadlist   = 4
+// Submenu that follows Episode: picks the starting map within the episode.
+// Rows 0..9 are maps 1..10 (maps 9 and 10 annotated with BOSS / SECRET);
+// row 10 is a BOSS FIGHT shortcut that loads map 9 + teleports the player
+// next to the boss (sets g->want_near_boss, consumed on game start).
+let menu_map        = 5
 
 // Number of save slots available in the save/load menus.
 let num_save_slots = 10
@@ -256,6 +261,10 @@ struct game =
     // any movement key). Enemy T_Shoot reads this to pick the lower
     // base-160 hitchance — player-can-dodge branch.
     player_running: bool
+    // Latched by the BOSS FIGHT menu entry (and the --near-boss CLI flag,
+    // on entry). Consumed by `start_new_game_here` to call
+    // `teleport_near_boss` after the map loads, then cleared.
+    want_near_boss: bool
 
     // Phase state (death / intermission / game-over). Most of tick() skips
     // when phase != gp_playing; rendering paints the appropriate overlay.
@@ -509,8 +518,37 @@ struct enemy =
     reaction_timer: float64   // seconds left between first detection and actual wake; 0 when not yet detected (mirrors wolf4sdl SightPlayer's temp2)
     last_visible: bool        // set by build_billboards when the enemy was drawn in the previous frame (mirrors wolf4sdl FL_VISABLE); read by enemy_fire_at_player to pick the steeper hitchance falloff
 
+// Enemy projectile attacks — Schabbs (syringe), Giftmacher / Fat (rocket),
+// and fake Hitler (flame) fire visible dodgeable objects instead of
+// hitscans. Ports wolf4sdl's needleobj / rocketobj / fireobj state machines
+// driven by T_Projectile (wl_act2.cpp:243).
+union projectile_kind =
+    | pk_needle    // Schabbs syringe: 4-frame flip-book, non-rotating
+    | pk_rocket    // Giftmacher / Fat missile: 8 rotating angles, explodes
+    | pk_fire      // Fake Hitler flamethrower: 2-frame animation, dissipates
+    | pk_boom      // Short-lived explosion sprite spawned on rocket wall hit
+
+struct projectile =
+    kind: projectile_kind
+    x: float64
+    y: float64
+    angle: float64            // radians, direction of travel
+    alive: bool               // false = slot is free
+    anim_frame: int32         // cycling 0..3 for needle, 0..1 for fire, 0..2 for boom
+    anim_timer: float64       // seconds until next frame
+
 // Tunables — see update_enemies for how each is used.
 let max_enemies = 150
+let max_projectiles = 32   // generous cap — wolf4sdl's MAXACTORS is shared pool; few projectiles actually fly at once
+// Projectile speeds in tiles/sec, derived from wolf4sdl's fixed-point 0x2000
+// (needle/rocket) and 0x1200 (flame) per-tic speeds at the 70Hz tic rate.
+let proj_needle_speed = 8.75   // 0x2000 * 70 / 0x10000
+let proj_rocket_speed = 8.75
+let proj_fire_speed   = 4.92   // 0x1200 * 70 / 0x10000
+let proj_hit_radius   = 0.75   // PROJECTILESIZE / TILEGLOBAL — per-axis player hit box
+let proj_wall_radius  = 0.125  // PROJSIZE / TILEGLOBAL — wall collision half-extent
+let proj_anim_time    = 0.10   // seconds per needle/fire animation frame
+let proj_boom_time    = 0.12   // seconds per explosion frame
 let enemy_chase_speed   = 1.5   // tiles/sec — walking chase for all humanoids
 let enemy_patrol_speed  = 0.9   // tiles/sec — patrol pace before player is spotted
 let dog_chase_speed     = 3.2   // tiles/sec — dogs roughly player-run speed
@@ -777,12 +815,18 @@ let kind_opens_doors = (k: enemy_kind) ->
 
 // Bitmask: bit N set = fire (or bite) on entering shoot-frame N. Mutants use
 // a double-shot pattern (T_Shoot on s_mutshoot1 and s_mutshoot3 in wolf4sdl);
-// everyone else fires once at the windup midpoint (frame 2 in our 3-frame
-// shoot cycle, matching the timing of the previous single-fire convention).
+// most other hitscan enemies fire once at frame 2 of their 3-frame shoot
+// cycle. Projectile bosses have shorter or longer shoot-frame tables and
+// are mapped to match wolf4sdl's states.cpp entries: Schabbs / Giftmacher
+// throw once on their 2nd frame (bit 1), Fat throws on frame 2 (bit 1)
+// with the rest of his frames left idle, and fake Hitler launches a flame
+// on every frame of his 2-frame approximation of wolf4sdl's 8-frame salvo.
 let shoot_fire_mask_for_kind = (k: enemy_kind) ->
     match k with
     | ek_mutant -> 5    // 0b0101 — frames 0 and 2
     | ek_hans | ek_gretel -> 5    // bosses fire on both shoot frames (chain gun)
+    | ek_schabbs | ek_giftmacher | ek_fat -> 2  // 0b0010 — frame 1
+    | ek_hitler_fake -> 3   // 0b0011 — both frames (flame salvo)
     | _         -> 4    // 0b0100 — frame 2
 
 // Pickup item to drop on death (item_kind.decoration = nothing). SS drop a
@@ -852,6 +896,11 @@ struct level =
     // Active + dead enemies spawned from plane-1 tiles 108+.
     enemies: enemy[]
     num_enemies: int32
+    // Active enemy-fired projectiles (Schabbs syringes, Giftmacher / Fat
+    // rockets + their boom sprites, fake-Hitler flames). Slot-allocated in a
+    // fixed-size array; `alive = false` means free. No separate count — the
+    // array is scanned on every update / build_billboards pass.
+    projectiles: projectile[]
     // Wolf4sdl area system: per-tile area index (no_area for walls / other
     // non-area tiles); a num_areas² counter of how many open doors connect
     // each pair (>0 means connected); a per-area "reachable from player by
@@ -920,7 +969,7 @@ let build_render_ctx = () ->
         fb = alloc(uint32[game_w * game_h] {})!,
         dbuf = alloc(uint32[screen_w * screen_h] {})!,
         zbuf = alloc(float64[game_w] {})!,
-        billboards = alloc(billboard[max_sprites + max_enemies] {})!,
+        billboards = alloc(billboard[max_sprites + max_enemies + max_projectiles] {})!,
         num_billboards = 0
     })!
     rc
@@ -941,6 +990,7 @@ let build_level = (lv_data: maps.level*, sprite_start: int32, difficulty: int32)
         pushwall = default(pushwall_state),
         enemies = alloc(enemy[max_enemies] {})!,
         num_enemies = 0,
+        projectiles = alloc(projectile[max_projectiles] {})!,
         tile_areas = alloc(uint8[map_size * map_size] {})!,
         area_connect = alloc(uint8[num_areas * num_areas] {})!,
         area_by_player = alloc(bool[num_areas] {})!,
@@ -982,6 +1032,7 @@ let free_level = (lv: level*) ->
     free(lv->doors)
     free(lv->door_pos)
     free(lv->enemies)
+    free(lv->projectiles)
     free(lv->tile_areas)
     free(lv->area_connect)
     free(lv->area_by_player)
@@ -1393,6 +1444,14 @@ let start_new_game_here = (w: world*, vs: vswap.vswap_file*) ->
     find_player_start(w->lv_data, g)
     reset_level_counters(g, w->lv)
     reset_player_for_new_game(g)
+    // Consume the BOSS FIGHT latch: teleport to the boss if the map has one.
+    // Done after find_player_start + reset_level_counters so the teleport
+    // overrides the map's default spawn while the level state is otherwise
+    // fresh. update_player_area / connect_areas below anchor the flood to
+    // the post-teleport tile.
+    if g->want_near_boss then
+        teleport_near_boss(w->lv, g)
+        g->want_near_boss = false
     update_player_area(w->lv, g)
     connect_areas(w->lv, g->area_number)
     g->phase = game_phase.gp_playing
@@ -1550,6 +1609,61 @@ let find_player_start = (lv: maps.level*, g: game*) ->
 
 // Wolf3D static-sprite blocking flags. Mirrors wolf4sdl wl_act1.cpp
 // statinfo[].block — barrels, tables, lamps, pillars, wells, etc. block the
+// Move the player to an open tile adjacent to the level's boss (if any)
+// and face them toward the boss. Tries 2-tile offsets first (gives a bit
+// of breathing room for projectiles to spawn), then falls back to 1-tile.
+// Silently no-ops when the level has no boss kind. Invoked by the
+// --near-boss CLI flag and the BOSS FIGHT menu entry.
+let teleport_near_boss = (lv: level*, g: game*) ->
+    // Find the first boss enemy on the level, if any.
+    let mut bx = -1
+    let mut by = -1
+    for i in 0..lv->num_enemies
+        if bx < 0 then
+            let e = &lv->enemies[i]
+            let is_boss = match e->kind with
+            | ek_hans | ek_schabbs | ek_gretel | ek_giftmacher | ek_fat
+            | ek_hitler_fake | ek_hitler -> true
+            | _ -> false
+            if is_boss then
+                bx = e->tile_x
+                by = e->tile_y
+    if bx < 0 then return
+    // Candidate placements: (offset_x, offset_y, dir_x, dir_y, plane_x, plane_y).
+    // Order prefers "stand in front of the boss" so the player doesn't
+    // get slapped in the back the moment the level loads.
+    let offs_dx = int32[8] {  0,  0,  0,  0,  2,  1, -2, -1 }
+    let offs_dy = int32[8] {  2,  1, -2, -1,  0,  0,  0,  0 }
+    let face_dx = float64[8] {  0.0,  0.0,  0.0,  0.0, -1.0, -1.0,  1.0,  1.0 }
+    let face_dy = float64[8] { -1.0, -1.0,  1.0,  1.0,  0.0,  0.0,  0.0,  0.0 }
+    let plane_x = float64[8] {
+        fov_factor, fov_factor,
+        0.0 - fov_factor, 0.0 - fov_factor,
+        0.0, 0.0, 0.0, 0.0 }
+    let plane_y = float64[8] {
+        0.0, 0.0, 0.0, 0.0,
+        0.0 - fov_factor, 0.0 - fov_factor,
+        fov_factor, fov_factor }
+    let mut placed = false
+    for i in 0..8
+        if !placed then
+            let tx = bx + offs_dx[i]
+            let ty = by + offs_dy[i]
+            let in_bounds = tx >= 0 && tx < map_size && ty >= 0 && ty < map_size
+            if in_bounds then
+                let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+                // Walkable = empty floor. Closed doors (t >= 128) are
+                // skipped so the teleport doesn't park the player on top
+                // of one — the boss LOS path usually has an open tile too.
+                if t == 0 then
+                    g->pos_x = (float64) tx + 0.5
+                    g->pos_y = (float64) ty + 0.5
+                    g->dir_x = face_dx[i]
+                    g->dir_y = face_dy[i]
+                    g->plane_x = plane_x[i]
+                    g->plane_y = plane_y[i]
+                    placed = true
+
 // player and enemies; pickups, lights, gibs, and skeletons are walk-through.
 // Tile = 23 + statinfo index (so SPR_STAT_1 "green barrel" = tile 24).
 let tile_blocks_player = (tile: int32) ->
@@ -1914,6 +2028,19 @@ let build_billboards = (lv: level*, rc: render_ctx*, g: game*, sprite_start: int
             x = e->x,
             y = e->y,
             shape_page = sprite_start + page_rel,
+            dist_sq = dx * dx + dy * dy
+        }
+        n = n + 1
+    // Enemy projectiles (needles / rockets / flames / boom puffs).
+    for i in 0..max_projectiles
+        let p = &lv->projectiles[i]
+        if !p->alive then continue
+        let dx = p->x - g->pos_x
+        let dy = p->y - g->pos_y
+        rc->billboards[n] = billboard {
+            x = p->x,
+            y = p->y,
+            shape_page = projectile_sprite_page(sprite_start, p),
             dist_sq = dx * dx + dy * dy
         }
         n = n + 1
@@ -3242,6 +3369,182 @@ let enemy_fire_at_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
                   else roll / 16
         damage_player(g, ac, dmg)
 
+// ============================================================
+// Enemy projectile attacks — visible dodgeable objects fired by Schabbs,
+// Giftmacher, Fat, and fake Hitler. Ports wolf4sdl T_SchabbThrow /
+// T_GiftThrow / T_Launch / T_FakeFire (spawn) + T_Projectile (per-tic step).
+// ============================================================
+
+// Sprite-page offsets into VSWAP (relative to `sprite_start`). Derived from
+// the wolf4sdl sprite enum (wl_def.h): HYPO follows SCHABB_DEAD at 317,
+// FIRE follows FAKE_SHOOT at 326, ROCKET/SMOKE/BOOM are a block right after
+// Giftmacher at 370/378/382.
+let spr_hypo_base   = 317
+let spr_fire_base   = 326
+let spr_rocket_base = 370
+let spr_boom_base   = 382
+
+// Angle wrap helper. Keeps `a` in [0, 2π).
+let angle_tau = 6.283185307179586
+
+let wrap_angle = (a: float64) ->
+    let mut r = a
+    loop
+        if r >= 0.0 then break
+        r = r + angle_tau
+    loop
+        if r < angle_tau then break
+        r = r - angle_tau
+    r
+
+// VSWAP page for a projectile in its current state. Rockets rotate through
+// 8 angles keyed off travel direction; needle/fire/boom use sequential
+// animation frames from their respective base pages.
+let projectile_sprite_page = (sprite_start: int32, p: projectile*) ->
+    match p->kind with
+    | pk_needle -> sprite_start + spr_hypo_base + (p->anim_frame & 3)
+    | pk_rocket ->
+        // 8 rotation frames spanning [0, 2π). Quantize angle → frame index.
+        let a = wrap_angle(p->angle)
+        let idx = (int32) (a * 8.0 / angle_tau) & 7
+        sprite_start + spr_rocket_base + idx
+    | pk_fire -> sprite_start + spr_fire_base + (p->anim_frame & 1)
+    | pk_boom ->
+        let f = if p->anim_frame > 2 then 2 else p->anim_frame
+        sprite_start + spr_boom_base + f
+
+// Find a free projectile slot, or -1 if the array is saturated. Callers
+// silently drop the spawn when full (mirrors wolf4sdl's MAXACTORS guard in
+// T_FakeFire).
+let alloc_projectile_slot = (lv: level*) ->
+    let mut slot = -1
+    for i in 0..max_projectiles
+        if slot < 0 && !lv->projectiles[i].alive then slot = i
+    slot
+
+// Spawn a projectile at the enemy's current position, pointed at the
+// player's current position. Angle is stored in standard-trig y-up
+// convention so the rotating-rocket sprite picker can share the same
+// convention as enemy_angle_sprite.
+let spawn_projectile = (lv: level*, ac: audio_ctx*, g: game*, e: enemy*, kind: projectile_kind) ->
+    let slot = alloc_projectile_slot(lv)
+    if slot < 0 then return
+    let dx = g->pos_x - e->x
+    let dy = e->y - g->pos_y     // flip to y-up so atan2 gives standard trig angle
+    let ang = math.atan2(dy, dx)
+    lv->projectiles[slot] = projectile {
+        kind = kind,
+        x = e->x,
+        y = e->y,
+        angle = wrap_angle(ang),
+        alive = true,
+        anim_frame = 0,
+        anim_timer = proj_anim_time
+    }
+    let snd = match kind with
+    | pk_needle -> snd_schabbs_throw
+    | pk_rocket -> snd_missile_fire
+    | pk_fire   -> snd_flamethrower
+    | pk_boom   -> -1
+    if snd >= 0 then trigger_sound_at(snd, ac, g, e->x, e->y)
+
+// Wall / closed-door collision for a projectile point at (x, y). Mirrors
+// wolf4sdl ProjectileTryMove's 3x3 tile scan within ±PROJSIZE (wl_act2.cpp:206).
+// Returns true if any tile in the scanned range blocks — walls (1..63) and
+// door tiles that aren't fully open.
+let projectile_hits_wall = (lv: level*, x: float64, y: float64) ->
+    let xl = (int32) math.floor(x - proj_wall_radius)
+    let yl = (int32) math.floor(y - proj_wall_radius)
+    let xh = (int32) math.floor(x + proj_wall_radius)
+    let yh = (int32) math.floor(y + proj_wall_radius)
+    let mut hit = false
+    for tx in xl..(xh + 1)
+        for ty in yl..(yh + 1)
+            if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then
+                hit = true
+            else
+                let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+                if t >= 1 && t <= 63 then hit = true
+                if t >= 128 then
+                    let door_idx = t - 128
+                    if door_idx >= 0 && door_idx < lv->num_doors
+                        && lv->door_pos[door_idx] < 0.95 then hit = true
+    hit
+
+// Damage per projectile kind — wolf4sdl T_Projectile's per-class rolls.
+let projectile_damage = (kind: projectile_kind, g: game*) ->
+    let roll = rnd_byte(g)
+    match kind with
+    | pk_needle -> (roll >> 3) + 20    // 20-51
+    | pk_rocket -> (roll >> 3) + 30    // 30-61
+    | pk_fire   -> roll >> 3           // 0-31
+    | pk_boom   -> 0
+
+// Per-frame update for one projectile slot. Advances animation, steps the
+// position, checks wall/player collision, mutates into a boom sprite on
+// rocket wall-hit, or frees the slot on other terminal events.
+let update_projectile = (lv: level*, g: game*, ac: audio_ctx*, p: projectile*, dt: float64) ->
+    if !p->alive then return
+    let frame_time = match p->kind with
+    | pk_boom -> proj_boom_time
+    | _       -> proj_anim_time
+    p->anim_timer = p->anim_timer - dt
+    if p->anim_timer <= 0.0 then
+        p->anim_frame = p->anim_frame + 1
+        p->anim_timer = frame_time
+    match p->kind with
+    | pk_boom ->
+        // Short 3-frame explosion, then free the slot.
+        if p->anim_frame >= 3 then p->alive = false
+    | _ ->
+        let speed = match p->kind with
+        | pk_needle -> proj_needle_speed
+        | pk_rocket -> proj_rocket_speed
+        | pk_fire   -> proj_fire_speed
+        | pk_boom   -> 0.0
+        let step = speed * dt
+        // Y-up angle → y-down world motion: flip the sin term.
+        let nx = p->x + math.cos(p->angle) * step
+        let ny = p->y - math.sin(p->angle) * step
+        if projectile_hits_wall(lv, nx, ny) then
+            match p->kind with
+            | pk_rocket ->
+                // Mutate the slot into a short-lived explosion sprite at
+                // the last pre-hit position, so the fireball appears
+                // against the wall rather than inside it.
+                p->kind = projectile_kind.pk_boom
+                p->anim_frame = 0
+                p->anim_timer = proj_boom_time
+                trigger_sound_at(snd_missile_hit, ac, g, p->x, p->y)
+            | _ -> p->alive = false
+        else
+            p->x = nx
+            p->y = ny
+            if math.abs(p->x - g->pos_x) < proj_hit_radius
+                && math.abs(p->y - g->pos_y) < proj_hit_radius then
+                damage_player(g, ac, projectile_damage(p->kind, g))
+                p->alive = false
+
+let update_projectiles = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
+    for i in 0..max_projectiles
+        update_projectile(lv, g, ac, &lv->projectiles[i], dt)
+
+// True iff this enemy kind fires a visible, dodgeable projectile instead
+// of using T_Shoot's hitscan. Checked in the es_shoot dispatch.
+let kind_uses_projectile = (k: enemy_kind) ->
+    match k with
+    | ek_schabbs | ek_giftmacher | ek_fat | ek_hitler_fake -> true
+    | _ -> false
+
+// The projectile kind this enemy fires. Call only when kind_uses_projectile is true.
+let projectile_kind_for_enemy = (k: enemy_kind) ->
+    match k with
+    | ek_schabbs      -> projectile_kind.pk_needle
+    | ek_giftmacher   -> projectile_kind.pk_rocket
+    | ek_fat          -> projectile_kind.pk_rocket
+    | ek_hitler_fake  -> projectile_kind.pk_fire
+    | _               -> projectile_kind.pk_needle  // unreachable
+
 // Dog melee bite — called from the jump-frame of es_shoot for ek_dog. Damage
 // is a flat ~0..16 roll inside melee range. The bark/snarl plays
 // unconditionally at the top of the frame (mirrors T_Bite in the original)
@@ -3377,6 +3680,8 @@ let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, dt: f
             e->shoot_fired = true
             match e->kind with
             | ek_dog -> enemy_bite_player(lv, g, ac, e)
+            | ek_schabbs | ek_giftmacher | ek_fat | ek_hitler_fake ->
+                spawn_projectile(lv, ac, g, e, projectile_kind_for_enemy(e->kind))
             | _      -> enemy_fire_at_player(lv, g, ac, e)
 
 let update_enemies = (w: world*, dt: float64) ->
@@ -3650,11 +3955,12 @@ let snd_yeah           = 68   // YEAHSND — BJ victory-jump exclamation
 let snd_move_gun1      = 69   // MOVEGUN1SND — menu cursor move
 let snd_shoot          = 70   // SHOOTSND — menu item confirm (enter/space)
 let snd_esc_pressed    = 71   // ESCPRESSEDSND — menu cancel / back
-let snd_count      = 72
+let snd_missile_hit    = 72   // MISSILEHITSND — rocket wall explosion
+let snd_count      = 73
 
 // Digi-pack index for each snd_* (-1 = no digitized version). The mapping
 // comes from wolf4sdl's wolfdigimap[] for Wolf3D; Spear of Destiny differs.
-let snd_digi = int32[72] {
+let snd_digi = int32[73] {
      3,   // open_door    (OPENDOORSND  -> digi 3)
      2,   // close_door   (CLOSEDOORSND -> digi 2)
      5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
@@ -3726,12 +4032,13 @@ let snd_digi = int32[72] {
     32,   // yeah         (YEAHSND -> digi 32)
     -1,   // move_gun1    (no digi — AdLib only)
     -1,   // shoot        (no digi — AdLib only)
-    -1    // esc_pressed  (no digi — AdLib only)
+    -1,   // esc_pressed  (no digi — AdLib only)
+    -1    // missile_hit  (no digi — AdLib only; wolfdigimap omits it)
 }
 
 // AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this). -1 to
 // disable. Enum values taken from wolf4sdl's audiowl6.h.
-let snd_adlib_enum = int32[72] {
+let snd_adlib_enum = int32[73] {
     18,   // open_door    (OPENDOORSND)
     19,   // close_door   (CLOSEDOORSND)
     24,   // atk_pistol   (ATKPISTOLSND)
@@ -3803,7 +4110,8 @@ let snd_adlib_enum = int32[72] {
     72,   // yeah         (YEAHSND)
      5,   // move_gun1    (MOVEGUN1SND)
     32,   // shoot        (SHOOTSND)
-    39    // esc_pressed  (ESCPRESSEDSND)
+    39,   // esc_pressed  (ESCPRESSEDSND)
+    86    // missile_hit  (MISSILEHITSND — AdLib-only rocket explosion)
 }
 
 // Play a sound by wolf-fc sound ID (one of snd_open_door, etc.). Prefers
@@ -4424,6 +4732,7 @@ let tick = (w: world*, dt: float64) ->
             update_pushwall(w->lv, dt)
             update_weapon(w, dt)
             update_enemies(w, dt)
+            update_projectiles(w->lv, g, w->ac, dt)
             check_pickups(w->lv, g, w->ac)
             update_face(g, dt)
     | _ ->
@@ -4866,6 +5175,25 @@ let episode_menu_label = (i: int32) ->
     | 5 -> "EPISODE 6  CONFRONTATION"
     | _ -> ""
 
+// Map picker sub-submenu: 10 maps per episode plus a BOSS FIGHT shortcut
+// that starts on map 9 and teleports the player next to the boss. Maps
+// 9 and 10 get annotations to highlight the boss / secret routing.
+let map_menu_len = 11
+let map_menu_label = (i: int32) ->
+    match i with
+    | 0 -> "MAP 1"
+    | 1 -> "MAP 2"
+    | 2 -> "MAP 3"
+    | 3 -> "MAP 4"
+    | 4 -> "MAP 5"
+    | 5 -> "MAP 6"
+    | 6 -> "MAP 7"
+    | 7 -> "MAP 8"
+    | 8 -> "MAP 9  (BOSS)"
+    | 9 -> "MAP 10  (SECRET)"
+    | 10 -> "BOSS FIGHT"
+    | _ -> ""
+
 // Draw a list-style menu: centered title, one highlighted row per item,
 // chevrons around the selected row. `label_fn` returns the text for item i.
 // Used by the main / episode / difficulty submenus; save-load slots paint
@@ -4987,6 +5315,10 @@ let render_main_menu = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint3
     else if g->menu_level == menu_episode then
         draw_list_menu(rc, font, "CHOOSE EPISODE", 44, num_episodes, g->menu_sel,
             (i: int32) -> episode_menu_label(i),
+            (_: int32) -> false)
+    else if g->menu_level == menu_map then
+        draw_list_menu(rc, font, "CHOOSE MAP", 32, map_menu_len, g->menu_sel,
+            (i: int32) -> map_menu_label(i),
             (_: int32) -> false)
     else if g->menu_level == menu_difficulty then
         draw_list_menu(rc, font, "CHOOSE DIFFICULTY", 56, 4, g->menu_sel,
@@ -6021,6 +6353,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         else if p == "epmenu" then
             g->phase = game_phase.gp_main_menu
             g->menu_level = menu_episode
+        else if p == "mapmenu" then
+            g->phase = game_phase.gp_main_menu
+            g->menu_level = menu_map
         else if p == "savemenu" then
             g->phase = game_phase.gp_main_menu
             g->menu_level = menu_savelist
@@ -6030,7 +6365,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
             g->menu_level = menu_loadlist
             refresh_save_slots()
         else if p == "playing" then g->phase = game_phase.gp_playing
-        else bad("title/menu/epmenu/diffmenu/savemenu/loadmenu/playing")
+        else bad("title/menu/epmenu/mapmenu/diffmenu/savemenu/loadmenu/playing")
     else if arg == "phase" then
         let phase_s = match g->phase with
         | gp_title        -> "title"
@@ -6193,6 +6528,24 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         io.write("  kind: guard=%d{by_kind[0]} officer=%d{by_kind[1]} ss=%d{by_kind[2]} dog=%d{by_kind[3]} mutant=%d{by_kind[4]} boss=%d{by_kind[5]} ghost=%d{by_kind[6]}\n", stdout)
         io.write("  state: stand=%d{by_state[0]} path=%d{by_state[1]} chase=%d{by_state[2]} shoot=%d{by_state[3]} pain=%d{by_state[4]} die=%d{by_state[5]} dead=%d{by_state[6]}\n", stdout)
         void()
+    else if arg == "projectiles" then
+        // Dump all active (alive) enemy projectiles: kind, position, travel
+        // angle in radians, animation frame. Used by the boss regression
+        // tests to verify Schabbs / Giftmacher / fake-Hitler actually
+        // spawn visible projectiles instead of hitscanning.
+        let mut alive = 0
+        for i in 0..max_projectiles
+            let p = &w->lv->projectiles[i]
+            if !p->alive then continue
+            alive = alive + 1
+            let ks = match p->kind with
+            | pk_needle -> "needle"
+            | pk_rocket -> "rocket"
+            | pk_fire   -> "fire"
+            | pk_boom   -> "boom"
+            io.write("  proj[%d{i}] %s{ks} pos(%6.3f{p->x},%6.3f{p->y}) ang=%5.3f{p->angle} frame=%d{p->anim_frame}\n", stdout)
+        io.write("projectiles: alive=%d{alive}\n", stdout)
+        void()
     else
         io.write("Unknown test command: %s{arg}\n", stdout)
         void()
@@ -6204,10 +6557,37 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
 let main = (args: str[]) ->
     // CLI flags. Scan all args (so flags can appear before or after --test)
     // and set the relevant module-level switches before any level is built.
+    //   --no-dogs             — skip spawning ek_dog actors
+    //   --test                — enter scripted-command mode (no SDL)
+    //   --level N             — skip the title screen and start at level N
+    //                           (0..59). Handy for boss testing:
+    //                           E1 Hans=8, E2 Schabbs=18, E3 Hitler=28,
+    //                           E4 Giftmacher=38, E5 Gretel=48, E6 Fat=58.
+    //   --difficulty N        — override difficulty (0 baby, 3 hard).
+    //                           Combines with --level; also affects menu
+    //                           default for NEW GAME if set alone.
+    //   --near-boss           — after applying --level (or the default
+    //                           level 0), teleport the player to an open
+    //                           tile adjacent to the first boss enemy on
+    //                           the map, facing the boss. No-op on maps
+    //                           without a boss.
     let mut test_mode = false
+    let mut start_level = -1
+    let mut start_difficulty = -1
+    let mut start_near_boss = false
     for i in 1..(int32) args.len
-        if args[(int64) i] == "--no-dogs" then no_dogs = true
-        if args[(int64) i] == "--test" then test_mode = true
+        let a = args[(int64) i]
+        if a == "--no-dogs" then no_dogs = true
+        if a == "--test" then test_mode = true
+        if a == "--near-boss" then start_near_boss = true
+        if text.starts_with(a, "--level=") then
+            match text.parse_int32(a[8..a.len]) with
+            | some(n) -> if n >= 0 && n < 60 then start_level = n
+            | none    -> void()
+        if text.starts_with(a, "--difficulty=") then
+            match text.parse_int32(a[13..a.len]) with
+            | some(n) -> if n >= 0 && n < 4 then start_difficulty = n
+            | none    -> void()
 
     // PRNG seed: deterministic 0 in --test mode so scripted scenarios
     // reproduce bit-identically; wall-clock milliseconds otherwise. A single
@@ -6255,7 +6635,7 @@ let main = (args: str[]) ->
         weapon = 1, best_weapon = 1, went_secret = false,
         fire_timer = 0.0, weapon_frame = 0,
         face_frame = 0, face_count = 0.0,
-        area_number = -1, made_noise = false, player_running = false,
+        area_number = -1, made_noise = false, player_running = false, want_near_boss = false,
         phase = game_phase.gp_title, phase_timer = 0.0,
         damage_flash_timer = 0.0, respawn_fade_timer = 0.0,
         kills = 0, total_kills = 0,
@@ -6314,6 +6694,32 @@ let main = (args: str[]) ->
     // marked reachable, since all doors begin closed and area_connect is 0.
     update_player_area(w->lv, g)
     connect_areas(w->lv, g->area_number)
+
+    // --difficulty N / --level N: skip the title sequence and jump the
+    // player straight into the specified map. Also respected in --test
+    // mode so scripts can start on any level without a `setlevel:` prefix.
+    if start_difficulty >= 0 then
+        g->difficulty = start_difficulty
+        // Rebuild enemies with the new difficulty tier. reload_level_data
+        // reads g->difficulty, so it's enough to just re-run it.
+        reload_level_data(w, vs)
+        find_player_start(w->lv_data, g)
+        reset_level_counters(g, w->lv)
+        update_player_area(w->lv, g)
+        connect_areas(w->lv, g->area_number)
+    if start_level >= 0 then
+        g->level_num = start_level
+        reload_level_data(w, vs)
+        find_player_start(w->lv_data, g)
+        reset_level_counters(g, w->lv)
+        update_player_area(w->lv, g)
+        connect_areas(w->lv, g->area_number)
+        g->phase = game_phase.gp_playing
+        g->has_active_game = true
+    if start_near_boss then
+        teleport_near_boss(w->lv, w->g)
+        update_player_area(w->lv, g)
+        connect_areas(w->lv, g->area_number)
 
     // Test mode: process scripted commands, no SDL needed. Skip the
     // title/menu entry flow — tests start directly in gp_playing so
@@ -6497,14 +6903,33 @@ let main = (args: str[]) ->
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % num_episodes
                         else if k == sdl2.key_return || k == sdl2.key_space then
-                            // Remember chosen episode in menu_episode_sel via level_num
-                            // placeholder; the difficulty sub-menu consumes it on enter.
+                            // Remember chosen episode in level_num (as its
+                            // starting map). Map picker will refine this.
                             g->level_num = g->menu_sel * levels_per_episode
-                            g->menu_level = menu_difficulty
-                            g->menu_sel = g->difficulty
+                            g->menu_level = menu_map
+                            g->menu_sel = 0    // default to MAP 1
                         else if k == sdl2.key_escape then
                             g->menu_level = menu_main
                             g->menu_sel = 1     // back to NEW GAME
+                    else if g->menu_level == menu_map then
+                        if k == sdl2.key_up then
+                            g->menu_sel = (g->menu_sel + map_menu_len - 1) % map_menu_len
+                        else if k == sdl2.key_down then
+                            g->menu_sel = (g->menu_sel + 1) % map_menu_len
+                        else if k == sdl2.key_return || k == sdl2.key_space then
+                            // menu_sel 0..9 = map index within episode.
+                            // menu_sel 10 = BOSS FIGHT shortcut: map 9 +
+                            // near-boss teleport, consumed in start_new_
+                            // game_here after the level loads.
+                            let ep = g->level_num / levels_per_episode
+                            let picked_map = if g->menu_sel == 10 then 8 else g->menu_sel
+                            g->level_num = ep * levels_per_episode + picked_map
+                            g->want_near_boss = g->menu_sel == 10
+                            g->menu_level = menu_difficulty
+                            g->menu_sel = g->difficulty
+                        else if k == sdl2.key_escape then
+                            g->menu_level = menu_episode
+                            g->menu_sel = g->level_num / levels_per_episode
                     else if g->menu_level == menu_difficulty then
                         if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + 3) % 4
@@ -6512,13 +6937,21 @@ let main = (args: str[]) ->
                             g->menu_sel = (g->menu_sel + 1) % 4
                         else if k == sdl2.key_return || k == sdl2.key_space then
                             g->difficulty = g->menu_sel
-                            // g->level_num already holds ep*10 from the episode
-                            // picker. Start the selected episode fresh.
+                            // g->level_num already holds the full ep*10+map
+                            // index from the map picker. g->want_near_boss
+                            // is consumed inside start_new_game_here.
                             start_new_game_here(w, vs)
                             g->has_active_game = true
                         else if k == sdl2.key_escape then
-                            g->menu_level = menu_episode
-                            g->menu_sel = g->level_num / levels_per_episode
+                            // Preserve map / boss-fight picker selection:
+                            // if the user had BOSS FIGHT selected (which
+                            // sets want_near_boss and level_num = ep*10+8),
+                            // land them back on row 10 so Escape-loops
+                            // don't drop that choice.
+                            g->menu_level = menu_map
+                            g->menu_sel = if g->want_near_boss then 10
+                                else g->level_num % levels_per_episode
+                            g->want_near_boss = false
                     else if g->menu_level == menu_savelist then
                         if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + num_save_slots - 1) % num_save_slots
