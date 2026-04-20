@@ -11,7 +11,9 @@ FC_DIR="$WOLF_DIR/../fc-lang"
 # .fc-cache/ so it doesn't interfere with fc-lang's own development build
 # (which stays at whatever OPT its owner prefers). Only rebuilds when the
 # FC source changes.
-FC_CACHE="$WOLF_DIR/.fc-cache"
+# Key the cache by uname so WSL (Linux ELF) and MSYS2/MinGW (Windows PE)
+# builds off the same source tree don't stomp each other.
+FC_CACHE="$WOLF_DIR/.fc-cache/$(uname -s)"
 FC_BIN="$FC_CACHE/fc"
 mkdir -p "$FC_CACHE"
 if [[ ! -x "$FC_BIN" ]] || \
