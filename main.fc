@@ -1517,6 +1517,28 @@ let compute_next_level_num = (level_num: int32, went_secret: bool) ->
     else if lvl == 9 then ep * levels_per_episode + elevator_back_to[ep]
     else ep * levels_per_episode + lvl + 1
 
+// Clear held gameplay-input flags. Called on ack-screen exits (intermission /
+// episode-end advance) so the "any key" press that dismissed the screen
+// doesn't carry into gp_playing as a held movement / fire — e.g. a ctrl-press
+// to advance the episode-end screen would otherwise leave the gatling firing
+// as soon as the next episode's map 0 loads.
+let clear_gameplay_input_keys = (g: game*) ->
+    g->key_up = false
+    g->key_down = false
+    g->key_left = false
+    g->key_right = false
+    g->key_fire = false
+    g->key_space = false
+    g->key_space_handled = false
+    // Also reset the weapon cooldown. update_weapon doesn't run outside
+    // gp_playing, so a fire_timer left mid-cycle by the last shot before the
+    // boss died survives the whole next_level_delay → BJ → gp_episode_end
+    // freeze and then decays over the first ~86 ms of the next episode — a
+    // phantom gatling animation plus the tail of the queued digi samples
+    // sounding like a stray burst of fire at level start.
+    g->fire_timer = 0.0
+    g->weapon_frame = 0
+
 // Advance to the next map per episode routing. Called after the intermission
 // space-press on levels 0..7 and level 9; level 8 → episode-end is handled
 // by `enter_episode_end` at the caller. Preserves score, lives, weapon; clears
@@ -1536,6 +1558,7 @@ let advance_next_level = (w: world*, vs: vswap.vswap_file*) ->
     g->phase = game_phase.gp_playing
     g->phase_timer = 0.0
     g->made_noise = false
+    clear_gameplay_input_keys(g)
 
 // Transition to the per-episode victory screen. Called when the intermission
 // is dismissed on level 8 (boss/finale) of the current episode. Doesn't
@@ -1545,11 +1568,14 @@ let advance_next_level = (w: world*, vs: vswap.vswap_file*) ->
 let enter_episode_end = (g: game*) ->
     g->phase = game_phase.gp_episode_end
     g->phase_timer = 0.0
-    // See enter_intermission: pre-handling the key latches here ends up
-    // swallowing the player's first legitimate "advance" press, because the
-    // KEYUP from the intermission-advance press has already cleared their
-    // held key before we arrive. Let the natural keydown latch the handled
-    // flag on the first real press instead.
+    // Reset the ack latches: enter_bj_victory pre-set key_ack_handled=true to
+    // freeze BJ input, and no keyup during the cutscene clears it — carrying
+    // that stale `true` into gp_episode_end would silently swallow the first
+    // press on the screen. Clearing key_ack too blocks a held key from auto-
+    // advancing past the screen when we're called mid-handler from the
+    // intermission path (where key_ack is already true).
+    g->key_ack = false
+    g->key_ack_handled = false
     g->went_secret = false
     // Strip keys now; next-episode map load would do it anyway.
     g->has_gold_key = false
@@ -1581,6 +1607,7 @@ let advance_next_episode = (w: world*, vs: vswap.vswap_file*) ->
         g->phase = game_phase.gp_playing
         g->phase_timer = 0.0
         g->made_noise = false
+        clear_gameplay_input_keys(g)
 
 // Restart the current level (death with lives remaining). Resets player
 // health / ammo / weapon; preserves score; decrements lives at the caller
@@ -1612,6 +1639,7 @@ let restart_full_game = (w: world*, vs: vswap.vswap_file*) ->
     connect_areas(w->lv, g->area_number)
     g->phase = game_phase.gp_playing
     g->phase_timer = 0.0
+    clear_gameplay_input_keys(g)
 
 // Start a new game at the current level_num (set by the episode picker).
 // Identical to restart_full_game except it doesn't reset level_num to 0 —
@@ -7050,6 +7078,14 @@ let main = (args: str[]) ->
             if t == sdl2.quit_event then running = false
             if t == sdl2.keydown_event then
                 let k = event.key.keysym.sym
+                // OS key-autorepeat fires SDL_KEYDOWN every ~30 ms while a key
+                // is held; `repeat != 0` flags the duplicates. We want repeats
+                // for menu nav (hold ↓ to scroll save slots) but NOT for
+                // gameplay keys — a ctrl held through the episode-end screen
+                // would otherwise re-raise key_fire after advance_next_episode
+                // clears it, so the gatling fires on the first frame of the
+                // next level. Checked per-branch below.
+                let is_key_repeat = event.key.repeat != 0u8
                 // F11 fullscreen toggle always works (even from menu/pause).
                 if k == sdl2.key_f11 then
                     fullscreen = !fullscreen
@@ -7236,7 +7272,7 @@ let main = (args: str[]) ->
                         g->key_left = false
                         g->key_right = false
                         g->key_fire = false
-                    else
+                    else if !is_key_repeat then
                         if k == sdl2.key_up then g->key_up = true
                         if k == sdl2.key_down then g->key_down = true
                         if k == sdl2.key_left then g->key_left = true
