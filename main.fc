@@ -5452,16 +5452,16 @@ let episode_menu_label = (i: int32) ->
 let map_menu_len = 11
 let map_menu_label = (i: int32) ->
     match i with
-    | 0 -> "MAP 1"
-    | 1 -> "MAP 2"
-    | 2 -> "MAP 3"
-    | 3 -> "MAP 4"
-    | 4 -> "MAP 5"
-    | 5 -> "MAP 6"
-    | 6 -> "MAP 7"
-    | 7 -> "MAP 8"
-    | 8 -> "MAP 9  (BOSS)"
-    | 9 -> "MAP 10  (SECRET)"
+    | 0 -> "FLOOR 1"
+    | 1 -> "FLOOR 2"
+    | 2 -> "FLOOR 3"
+    | 3 -> "FLOOR 4"
+    | 4 -> "FLOOR 5"
+    | 5 -> "FLOOR 6"
+    | 6 -> "FLOOR 7"
+    | 7 -> "FLOOR 8"
+    | 8 -> "FLOOR 9  (BOSS)"
+    | 9 -> "FLOOR 10  (SECRET)"
     | 10 -> "BOSS FIGHT"
     | _ -> ""
 
@@ -5558,7 +5558,7 @@ let render_main_menu = (rc: render_ctx*, sm: save_menu_ctx*,
             (i: int32) -> episode_menu_label(i),
             (_: int32) -> false)
     else if g->menu_level == menu_map then
-        draw_list_menu(rc, font, "CHOOSE MAP", 32, map_menu_len, g->menu_sel,
+        draw_list_menu(rc, font, "CHOOSE FLOOR", 32, map_menu_len, g->menu_sel,
             (i: int32) -> map_menu_label(i),
             (_: int32) -> false)
     else if g->menu_level == menu_difficulty then
