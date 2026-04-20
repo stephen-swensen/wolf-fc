@@ -4437,6 +4437,11 @@ let vg_pistol = 92
 let vg_mg     = 93
 let vg_chain  = 94
 
+// Status-bar key slots: NOKEYPIC (empty), GOLDKEYPIC, SILVERKEYPIC.
+let vg_no_key     = 95
+let vg_gold_key   = 96
+let vg_silver_key = 97
+
 // Number digits at the status bar: N_BLANKPIC (98) + N_0PIC (99) .. N_9PIC (108).
 let vg_n_blank = 98
 
@@ -4822,12 +4827,12 @@ let render_hud = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[], g
     | 3 -> vg_chain
     | _ -> vg_knife
     draw_vg_pic(rc, vg, pal, weapon_chunk, 256, bar_top + 8)
-    // Key indicators — two 16x16-ish cells on the right edge. The status
-    // bar pic has blank slots; paint coloured squares only when held.
+    // Key indicators — two slots on the right edge. Positions match the
+    // original StatusDrawPic coords (30,4) and (30,20) → x=240.
     if g->has_gold_key then
-        fill_rect(rc, 240, bar_top + 4, 254, bar_top + 18, 0xFFFFD700u32)
+        draw_vg_pic(rc, vg, pal, vg_gold_key, 240, bar_top + 4)
     if g->has_silver_key then
-        fill_rect(rc, 240, bar_top + 22, 254, bar_top + 36, 0xFFC0C0C0u32)
+        draw_vg_pic(rc, vg, pal, vg_silver_key, 240, bar_top + 20)
 
 // Upscale fb (320x200) to dbuf (640x400) with nearest-neighbor 2x.
 // ============================================================
