@@ -1850,6 +1850,48 @@ let teleport_near_boss = (lv: level*, g: game*) ->
                     g->plane_y = plane_y[i]
                     placed = true
 
+// Debug teleport: drop the player on an open tile adjacent to the first gold
+// key pickup on the level, facing it. No-op on maps without one.
+let teleport_near_goldkey = (lv: level*, g: game*) ->
+    let mut kx = -1
+    let mut ky = -1
+    for i in 0..lv->num_sprites
+        if kx < 0 && lv->sprites[i].alive then
+            match lv->sprites[i].item_type with
+            | gold_key ->
+                kx = (int32) lv->sprites[i].x
+                ky = (int32) lv->sprites[i].y
+            | _ -> void()
+    if kx < 0 then return
+    let offs_dx = int32[8] {  0,  0,  0,  0,  2,  1, -2, -1 }
+    let offs_dy = int32[8] {  2,  1, -2, -1,  0,  0,  0,  0 }
+    let face_dx = float64[8] {  0.0,  0.0,  0.0,  0.0, -1.0, -1.0,  1.0,  1.0 }
+    let face_dy = float64[8] { -1.0, -1.0,  1.0,  1.0,  0.0,  0.0,  0.0,  0.0 }
+    let plane_x = float64[8] {
+        fov_factor, fov_factor,
+        0.0 - fov_factor, 0.0 - fov_factor,
+        0.0, 0.0, 0.0, 0.0 }
+    let plane_y = float64[8] {
+        0.0, 0.0, 0.0, 0.0,
+        0.0 - fov_factor, 0.0 - fov_factor,
+        fov_factor, fov_factor }
+    let mut placed = false
+    for i in 0..8
+        if !placed then
+            let tx = kx + offs_dx[i]
+            let ty = ky + offs_dy[i]
+            let in_bounds = tx >= 0 && tx < map_size && ty >= 0 && ty < map_size
+            if in_bounds then
+                let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+                if t == 0 then
+                    g->pos_x = (float64) tx + 0.5
+                    g->pos_y = (float64) ty + 0.5
+                    g->dir_x = face_dx[i]
+                    g->dir_y = face_dy[i]
+                    g->plane_x = plane_x[i]
+                    g->plane_y = plane_y[i]
+                    placed = true
+
 // player and enemies; pickups, lights, gibs, and skeletons are walk-through.
 // Tile = 23 + statinfo index (so SPR_STAT_1 "green barrel" = tile 24).
 let tile_blocks_player = (tile: int32) ->
@@ -6761,16 +6803,21 @@ let main = (args: str[]) ->
     //                           tile adjacent to the first boss enemy on
     //                           the map, facing the boss. No-op on maps
     //                           without a boss.
+    //   --near-goldkey        — same idea, but teleport next to the first
+    //                           gold-key pickup. Useful for HUD testing.
+    //                           No-op on maps without one (E1L1).
     let mut test_mode = false
     let mut start_level = -1
     let mut start_difficulty = -1
     let mut start_near_boss = false
+    let mut start_near_goldkey = false
     let mut arg_no_dogs = false
     for i in 1..(int32) args.len
         let a = args[(int64) i]
         if a == "--no-dogs" then arg_no_dogs = true
         if a == "--test" then test_mode = true
         if a == "--near-boss" then start_near_boss = true
+        if a == "--near-goldkey" then start_near_goldkey = true
         if text.starts_with(a, "--level=") then
             match text.parse_int32(a[8..a.len]) with
             | some(n) -> if n >= 0 && n < 60 then start_level = n
@@ -6907,6 +6954,10 @@ let main = (args: str[]) ->
         g->has_active_game = true
     if start_near_boss then
         teleport_near_boss(w->lv, w->g)
+        update_player_area(w->lv, g)
+        connect_areas(w->lv, g->area_number)
+    if start_near_goldkey then
+        teleport_near_goldkey(w->lv, w->g)
         update_player_area(w->lv, g)
         connect_areas(w->lv, g->area_number)
 
