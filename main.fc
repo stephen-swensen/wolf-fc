@@ -1753,13 +1753,18 @@ let tick_death_cam = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
             g->dc_fade = 0.0
             // Now that the viewport is fully revealed, restart the death
             // animation so the player watches the corpse die a second
-            // time in the zoomed-in frame.
+            // time in the zoomed-in frame — and replay the death scream
+            // so the audio beat lands on the new animation, matching the
+            // original's A_DeathScream at the start of the death-cam's
+            // re-entered die-cascade.
             if g->dc_boss_idx >= 0 && g->dc_boss_idx < lv->num_enemies then
                 let e = &lv->enemies[g->dc_boss_idx]
                 e->state = enemy_state.es_die
                 e->anim_frame = 0
                 e->anim_timer = die_frame_time
                 e->dir = dir_nodir
+                let snd = death_scream_for_kind(e->kind, g)
+                if snd >= 0 then trigger_sound_at(snd, ac, g, e->x, e->y)
             g->dc_sub = dc_sub_replay_anim
             g->dc_timer = 0.0
     else if sub == dc_sub_replay_anim then
@@ -4013,13 +4018,11 @@ let guard_death_sounds = int32[8] {
     // pool), not currently emulated here.
 }
 
-let kill_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, sprite_start: int32) ->
-    e->state = enemy_state.es_die
-    e->anim_frame = 0
-    e->anim_timer = die_frame_time
-    e->dir = dir_nodir
-    // Per-kind death vocal — mirrors wolf4sdl A_DeathScream.
-    let snd = match e->kind with
+// Per-kind death vocal (A_DeathScream in the original). Mutants are
+// silent; ghosts (pacman) are silent. Returns -1 for those cases so
+// callers can skip the trigger_sound_at call.
+let death_scream_for_kind = (k: enemy_kind, g: game*) ->
+    match k with
     | ek_dog          -> snd_dog_death
     | ek_ss           -> snd_leben        // "Mein Leben!"
     | ek_officer      -> snd_nein_sovass
@@ -4032,7 +4035,14 @@ let kill_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, sprite_start:
     | ek_schabbs      -> snd_meingott     // "Mein Gott!"
     | ek_hitler_fake  -> snd_hitlerha
     | ek_hitler       -> snd_eva
-    | ek_blinky | ek_pinky | ek_clyde | ek_inky -> -1    // ghosts are silent
+    | ek_blinky | ek_pinky | ek_clyde | ek_inky -> -1
+
+let kill_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, sprite_start: int32) ->
+    e->state = enemy_state.es_die
+    e->anim_frame = 0
+    e->anim_timer = die_frame_time
+    e->dir = dir_nodir
+    let snd = death_scream_for_kind(e->kind, g)
     if snd >= 0 then trigger_sound_at(snd, ac, g, e->x, e->y)
     let drop = drop_for_kind(e->kind)
     match drop with
@@ -6097,9 +6107,15 @@ let render_game_over = (rc: render_ctx*, g: game*) ->
     draw_number(rc, 220, 120, g->score, white, 1)
     draw_centered_text(rc, 140, "PRESS ANY KEY", white, 1)
 
+// Backdrop color behind the taunt card — palette index 0x7F (6-bit VGA
+// (0, 16, 16) → 8-bit ARGB (0, 64, 64)). In the original this is
+// `bordercol = VIEWCOLOR`, the dark teal that the status-bar frame also
+// uses; dissolving to pure black looks too abrupt compared to the OG.
+let dc_backdrop_color = 0xFF004040u32
+
 // Render one frame of the gp_death_cam cutscene. Normal viewport during
-// the pre-fade hold and the replay; a dissolve-to-black during fade_out
-// and fade_in (progress 0..1 from g->dc_fade); a black card with the
+// the pre-fade hold and the replay; a dissolve-to-backdrop during fade_out
+// and fade_in (progress 0..1 from g->dc_fade); a solid backdrop with the
 // taunt text during the taunt sub-phase.
 let render_death_cam = (w: world*, vs: vswap.vswap_file*, pal: uint32[],
                         font: font_info*) ->
@@ -6107,12 +6123,13 @@ let render_death_cam = (w: world*, vs: vswap.vswap_file*, pal: uint32[],
     let rc = w->rc
     let sub = g->dc_sub
     if sub == dc_sub_taunt then
-        // Fully black viewport (dc_fade is 1.0 here) with the taunt text.
-        // Y position roughly matches the original's upper-third placement;
+        // Fully covered viewport (dc_fade is 1.0 here) with the taunt.
+        // Text is left-aligned at x=68, y=45 and rendered in white — the
+        // original calls US_Print with PrintX=68/PrintY=45/fontcolor=15.
         // HUD stays visible underneath.
-        dissolve_stipple(rc, 0x00000000u32, 1.0)
-        let yellow = 0xFFFFD700u32
-        draw_font_centered(rc, font, 45, "LET'S SEE YOU IN HELL!", yellow)
+        dissolve_stipple(rc, dc_backdrop_color, 1.0)
+        let white = 0xFFFFFFFFu32
+        draw_font_text(rc, font, 68, 45, "Let's see that again!", white)
     else
         render_walls(w->lv, rc, g, vs, pal)
         build_billboards(w->lv, rc, g, vs->sprite_start)
@@ -6120,7 +6137,7 @@ let render_death_cam = (w: world*, vs: vswap.vswap_file*, pal: uint32[],
         render_weapon(rc, vs, pal, g)
         // dc_fade is 0 during pre-fade and replay, so dissolve_stipple is
         // a no-op there (it early-returns on progress <= 0).
-        dissolve_stipple(rc, 0x00000000u32, g->dc_fade)
+        dissolve_stipple(rc, dc_backdrop_color, g->dc_fade)
 
 // Per-episode victory screen (gp_episode_end): shown after the intermission
 // on level 8 (boss / finale) of each episode. Simple text screen — no
