@@ -116,6 +116,8 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `setweapon:N` | Select weapon slot 0-3 (knife/pistol/MG/chain) |
 | `fire` | Press fire once (1 tick); hitscans enemies, decrements ammo, plays weapon SFX |
 | `givekeys` | Grant gold and silver keys (debug) |
+| `psyched` | Force the "GET PSYCHED!" full-screen load overlay timer (debug — bypasses the test-mode gate so `ss:` can capture it) |
+| `gotgatling` | Force the GOTGATLINGPIC face-cell swap timer (debug — paints over the BJ face slot in render_hud for the duration) |
 | `facetile` | Print the tile the player is facing and the `next_level` flag (debug) |
 | `enemies` | Print totals per enemy kind and per state |
 | `enemylist` | Print each enemy: index, tile, kind, state, direction, hp, area number |

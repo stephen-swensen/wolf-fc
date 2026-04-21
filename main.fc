@@ -48,13 +48,63 @@ let ceil_table = int32[60] {
     0x1D,0x1D,0x1D,0x1D,0xDD,0xDD,0x7D,0xDD,0xDD,0xDD
 }
 
-// Wolf3D music chunk numbers (relative to STARTMUSIC=261).
-// Used by music_chunk_for_phase to override the per-level song table on
-// menu / intermission / victory phases.
-let music_wonderin = 14    // MENUSONG: title + main menu
-let music_endlevel = 16    // intermission (level-completed jingle)
-let music_urahero  = 24    // per-episode victory screen
-let music_vicmarch = 25    // final game-clear victory
+// Wolf3D music enum values (relative to STARTMUSIC=261; AUDIOT chunk is
+// 261 + value). Full inventory from wolf4sdl audiowl6.h. The per-level
+// `songs[]` table below and `music_chunk_for_phase` pick from these.
+// Entries tagged "(per level)" are only referenced through `songs[]`;
+// "(phase)" ones are used directly by music_chunk_for_phase; "(unused)"
+// are documented for future wiring (demos, boss cut-ins, etc.).
+let music_corner   =  0    // CORNER_MUS    (per level — E1L10 Pac-Man secret ambient)
+let music_dungeon  =  1    // DUNGEON_MUS   (per level — E2L10 secret floor)
+let music_warmarch =  2    // WARMARCH_MUS  (per level — boss levels)
+let music_getthem  =  3    // GETTHEM_MUS   (per level — E1L1 etc.)
+let music_headache =  4    // HEADACHE_MUS  (per level — E2 tracks)
+let music_hitlwltz =  5    // HITLWLTZ_MUS  (unused — Hitler waltz; not referenced)
+let music_introcw3 =  6    // INTROCW3_MUS  (per level — E3 opener)
+let music_nazi_nor =  7    // NAZI_NOR_MUS  (unused — alt normal-enemy theme)
+let music_nazi_omi =  8    // NAZI_OMI_MUS  (per level — E2 ominous track)
+let music_pow      =  9    // POW_MUS       (per level — E1 tracks)
+let music_salute   = 10    // SALUTE_MUS    (unused — marching salute fanfare)
+let music_searchn  = 11    // SEARCHN_MUS   (per level — E1 search theme)
+let music_suspense = 12    // SUSPENSE_MUS  (per level — E1 suspense)
+let music_victors  = 13    // VICTORS_MUS   (unused — alt victory theme)
+let music_wonderin = 14    // WONDERIN_MUS  (phase: title + main menu)
+let music_funkyou  = 15    // FUNKYOU_MUS   (unused — funky outro)
+let music_endlevel = 16    // ENDLEVEL_MUS  (phase: intermission)
+let music_goingaft = 17    // GOINGAFT_MUS  (per level — E2 chase)
+let music_pregnant = 18    // PREGNANT_MUS  (per level — E2 tracks)
+let music_ultimate = 19    // ULTIMATE_MUS  (per level — E3L9 secret)
+let music_nazi_rap = 20    // NAZI_RAP_MUS  (per level — E3 tracks)
+let music_zerohour = 21    // ZEROHOUR_MUS  (per level — E3 tracks)
+let music_twelfth  = 22    // TWELFTH_MUS   (per level — E3 tracks)
+let music_roster   = 23    // ROSTER_MUS    (unused — high-score roll)
+let music_urahero  = 24    // URAHERO_MUS   (phase: per-episode victory)
+let music_vicmarch = 25    // VICMARCH_MUS  (phase: final game-clear victory)
+let music_pacman   = 26    // PACMAN_MUS    (per level — Pac-Man secret rooms)
+
+// "GET PSYCHED!" overlay duration (seconds). Matches wolf4sdl
+// `PreloadGraphics` → `IN_UserInput(70)` which waits up to 70 tics at
+// 70 Hz. The original game shows GETPSYCHEDPIC over a grey field (filled
+// with VIEWCOLOR / border palette index 0x7f) with a progress bar across
+// the bottom of the pic. Our level load is instant, so we hold the same
+// screen for the same duration.
+let get_psyched_time = 1.0
+
+// Background palette index behind the GETPSYCHEDPIC overlay. wolf4sdl's
+// `bordercol = VIEWCOLOR = 0x7f` — a mid-grey.
+let get_psyched_bg_index = 0x7f
+
+// Window dimensions for the GET PSYCHED frame, matching wolf4sdl
+// `PreloadGraphics` WindowW/H. The pic is 224x48 centered in the 3D
+// viewport; the progress bar occupies the bottom strip of this window.
+let get_psyched_pic_w = 224
+let get_psyched_pic_h = 48
+
+// "Got Gatling!" face-slot swap duration (seconds). Wolf4sdl's DrawFace
+// keeps the pic up while GETGATLINGSND is still playing (the digitized
+// voice line); the cached audio sample runs about a second, so we hold
+// the pic for the same interval.
+let got_gatling_time = 1.0
 
 // Seconds to hold gameplay frozen after the player pulls the elevator switch
 // (or a boss dies) before the intermission screen appears. Stands in for the
@@ -289,6 +339,17 @@ struct game =
     // Red stipple that uncovers back to the new scene after a death-restart.
     // Set to `respawn_fade_time` by restart_current_level; decays each tick.
     respawn_fade_timer: float64
+    // "GET PSYCHED!" overlay shown briefly on level entry. Ticks down each
+    // frame; while > 0 the world is frozen (tick skips all subsystems) and
+    // render_frame paints GETPSYCHEDPIC over a grey background with a
+    // progress bar, covering the disk-load pause the original game had.
+    get_psyched_timer: float64
+
+    // Chain-gun pickup face-slot swap. While > 0, render_hud paints
+    // GOTGATLINGPIC in the BJ-face cell instead of the normal face frame
+    // (matches wolf4sdl DrawFace's "SD_SoundPlaying() == GETGATLINGSND"
+    // check). Does NOT freeze gameplay.
+    got_gatling_timer: float64
 
     // Per-level counters. Totals come from build_level; current values
     // increment during play. All three are displayed on the intermission
@@ -343,6 +404,12 @@ struct game =
     // --no-dogs CLI flag: skip spawning ek_dog actors. Latched at startup
     // from main's argv scan; read by spawn_enemies.
     no_dogs: bool
+    // --test CLI flag: suppresses UX-only flourishes that would otherwise
+    // freeze gameplay by a fixed duration (GET PSYCHED overlay, pickup
+    // overlay). Tests advance the world `dt = 1/35` per tick, so a 0.7s
+    // overlay would eat ~24 ticks and break determinism for every test
+    // that crosses a level boundary.
+    test_mode: bool
 
     // Menu selection state.
     menu_sel: int32
@@ -1539,6 +1606,13 @@ let clear_gameplay_input_keys = (g: game*) ->
     g->fire_timer = 0.0
     g->weapon_frame = 0
 
+// Kick off the brief "GET PSYCHED!" overlay on the next frame of gameplay.
+// Gated on test_mode so scripted regressions stay deterministic (a 0.7s
+// freeze would swallow ~24 `fwd:` ticks of every cross-level test).
+let trigger_get_psyched = (g: game*) ->
+    if !g->test_mode then
+        g->get_psyched_timer = get_psyched_time
+
 // Advance to the next map per episode routing. Called after the intermission
 // space-press on levels 0..7 and level 9; level 8 → episode-end is handled
 // by `enter_episode_end` at the caller. Preserves score, lives, weapon; clears
@@ -1559,6 +1633,7 @@ let advance_next_level = (w: world*, vs: vswap.vswap_file*) ->
     g->phase_timer = 0.0
     g->made_noise = false
     clear_gameplay_input_keys(g)
+    trigger_get_psyched(g)
 
 // Transition to the per-episode victory screen. Called when the intermission
 // is dismissed on level 8 (boss/finale) of the current episode. Doesn't
@@ -1608,6 +1683,7 @@ let advance_next_episode = (w: world*, vs: vswap.vswap_file*) ->
         g->phase_timer = 0.0
         g->made_noise = false
         clear_gameplay_input_keys(g)
+        trigger_get_psyched(g)
 
 // Restart the current level (death with lives remaining). Resets player
 // health / ammo / weapon; preserves score; decrements lives at the caller
@@ -1625,6 +1701,7 @@ let restart_current_level = (w: world*, vs: vswap.vswap_file*) ->
     // Seed the respawn uncover: the new scene renders under a full red
     // stipple that thins out rapidly, rather than a hard cut to gameplay.
     g->respawn_fade_timer = respawn_fade_time
+    trigger_get_psyched(g)
 
 // Full game reset after game-over. level_num → 0; player state back to
 // fresh-start (3 lives, score 0, full HP, pistol 8 ammo).
@@ -1640,6 +1717,7 @@ let restart_full_game = (w: world*, vs: vswap.vswap_file*) ->
     g->phase = game_phase.gp_playing
     g->phase_timer = 0.0
     clear_gameplay_input_keys(g)
+    trigger_get_psyched(g)
 
 // Start a new game at the current level_num (set by the episode picker).
 // Identical to restart_full_game except it doesn't reset level_num to 0 —
@@ -1663,6 +1741,7 @@ let start_new_game_here = (w: world*, vs: vswap.vswap_file*) ->
     g->phase = game_phase.gp_playing
     g->phase_timer = 0.0
     g->went_secret = false
+    trigger_get_psyched(g)
 
 // Game-state phase transitions triggered by timers / flags. Called every
 // frame from both the interactive loop and (between test commands) the
@@ -2990,8 +3069,16 @@ let check_pickups = (lv: level*, g: game*, ac: audio_ctx*) ->
             trigger_sound(snd_get_mg, ac)
             show_message(g, "MACHINE GUN")
         | chain_gun ->
-            trigger_sound(snd_get_gat, ac)
+            trigger_sound(snd_get_gat, ac)   // GETGATLINGSND — digi voice line
             show_message(g, "GATLING GUN")
+            // Face-slot swap: render_hud paints GOTGATLINGPIC in the BJ
+            // face cell while this timer is active. Matches wolf4sdl's
+            // DrawFace (`if SD_SoundPlaying() == GETGATLINGSND then show
+            // GOTGATLINGPIC else show face`). Gameplay continues uninter-
+            // rupted. Gated on !test_mode so scripted pickups don't hold
+            // the pic across subsequent test commands.
+            if !g->test_mode then
+                g->got_gatling_timer = got_gatling_time
         | clip ->
             trigger_sound(snd_get_ammo, ac)
         | cross ->
@@ -4226,6 +4313,30 @@ let snd_esc_pressed    = 71   // ESCPRESSEDSND — menu cancel / back
 let snd_missile_hit    = 72   // MISSILEHITSND — rocket wall explosion
 let snd_count      = 73
 
+// --- Original-enum sound IDs we don't currently trigger. These are
+//     AUDIOT enum values from wolf4sdl audiowl6.h (0..86). To play one,
+//     append a new snd_* constant above, bump snd_count, extend snd_digi
+//     and snd_adlib_enum with the right lookup row, then call
+//     trigger_sound(snd_new_one, ac). Kept here for documentation and so
+//     the intent of each sound is discoverable without hopping to
+//     audiowl6.h. Digi slot numbers in the comments come from wolf4sdl's
+//     wolfdigimap[].
+let src_select_wpn     = 1    // SELECTWPNSND     — weapon-slot switch blip (digi 46)
+let src_select_item    = 2    // SELECTITEMSND    — menu "item selected" blip (no digi)
+let src_heartbeat      = 3    // HEARTBEATSND     — low-health heartbeat loop (no digi)
+let src_move_gun2      = 4    // MOVEGUN2SND      — menu cursor "click" (no digi)
+let src_nazi_hit_player = 7   // NAZIHITPLAYERSND — enemy bullet hit on player (no digi)
+let src_player_death   = 9    // PLAYERDEATHSND   — BJ's dying scream (no digi; we
+                              //   currently freeze the world silently on death)
+let src_no_item        = 13   // NOITEMSND        — pickup refused (no digi)
+let src_walk1          = 14   // WALK1SND         — footstep A (no digi)
+let src_walk2          = 15   // WALK2SND         — footstep B (no digi)
+let src_game_over      = 17   // GAMEOVERSND      — "game over" AdLib jingle (no digi)
+let src_shoot_door     = 28   // SHOOTDOORSND     — knife/bullet striking a door (no digi)
+let src_boss_active    = 49   // BOSSACTIVESND    — boss-room wake-up sting (no digi)
+let src_slurpie        = 61   // SLURPIESND       — BJ slurping bonus chalice (no digi)
+let src_goobs          = 71   // GOOBSSND         — extra goop/gore on enemy death (no digi)
+
 // Digi-pack index for each snd_* (-1 = no digitized version). The mapping
 // comes from wolf4sdl's wolfdigimap[] for Wolf3D; Spear of Destiny differs.
 let snd_digi = int32[73] {
@@ -4463,60 +4574,128 @@ let trigger_sound_at = (sound_id: int32, ac: audio_ctx*, g: game*,
 let sample_rate = 44100
 
 // ============================================================
-// VGAGRAPH chunk IDs (Wolf3D WL6). Matches wolf4sdl gfxv_wl6.h.
+// VGAGRAPH chunk IDs (Wolf3D WL6). Full inventory of all 149 chunks
+// from wolf4sdl gfxv_wl6.h, grouped by lump. Constants annotated
+// "(unused)" are not drawn by any current code path — they exist for
+// documentation / future features (see TODO.md "VGAGRAPH art not yet
+// surfaced"). `vg_*` is the canonical prefix; anyone hooking up one of
+// the unused pics should reach for the existing name here first.
 // ============================================================
 
-// Fonts — font 1 is the small menu font, font 2 (if present) is the
-// larger status-bar font. We use font 1 for all text.
+// --- STARTFONT (chunks 1..2). NUMFONT=2. Chunk 0 is the STRUCTPIC
+// directory, not a pic. Font 1 is the small variable-width menu / HUD
+// font used for all our text rendering. Font 2 is a larger fixed-width
+// status-bar font the original uses for floor-complete headings — we
+// render those with LEVELEND_LUMP art instead, so font 2 is (unused).
 let vg_font_small = 1
+let vg_font_big   = 2        // (unused) larger secondary font
 
-// Hit graphics
-let vg_statusbar   = 86
-let vg_title       = 87
-let vg_pg13        = 88
-let vg_credits     = 89
-let vg_highscores  = 90
+// --- README_LUMP (chunks 3..9). Backdrop art for the "Read This!" in-
+// game help screen (IN_Help). The help screen itself isn't implemented.
+let vg_h_bj          = 3     // (unused) BJ holding the castle keys
+let vg_h_castle      = 4     // (unused) blazing castle silhouette
+let vg_h_blaze       = 5     // (unused) flame ring behind the castle
+let vg_h_topwindow   = 6     // (unused) help-window top border
+let vg_h_leftwindow  = 7     // (unused) help-window left border
+let vg_h_rightwindow = 8     // (unused) help-window right border
+let vg_h_bottominfo  = 9     // (unused) help-window bottom info strip
 
-// Digits 0..9 + extras for status-bar countdowns. N_0PIC..N_9PIC.
-let vg_n_0 = 99
-let vg_n_9 = 108
+// --- CONTROLS_LUMP (chunks 10..42). Menu / options art used by the
+// original's Options → Control / Sound / Customize submenus and by the
+// episode / difficulty / load / save / high-scores pickers. Wolf-fc
+// ships a text-only menu so all of these are (unused) today.
+let vg_c_options      = 10   // (unused) "OPTIONS" header
+let vg_c_cursor1      = 11   // (unused) menu cursor frame A (blinking)
+let vg_c_cursor2      = 12   // (unused) menu cursor frame B
+let vg_c_notselected  = 13   // (unused) non-highlighted row backdrop
+let vg_c_selected     = 14   // (unused) highlighted row backdrop
+let vg_c_fx_title     = 15   // (unused) "SOUND EFFECTS" header
+let vg_c_digi_title   = 16   // (unused) "DIGITIZED SOUND" header
+let vg_c_music_title  = 17   // (unused) "MUSIC" header
+let vg_c_mouselback   = 18   // (unused) "MOUSE LOOK" toggle art
+let vg_c_baby         = 19   // (unused) "CAN I PLAY DADDY?" difficulty card
+let vg_c_easy         = 20   // (unused) "DON'T HURT ME" difficulty card
+let vg_c_normal       = 21   // (unused) "BRING 'EM ON!" difficulty card
+let vg_c_hard         = 22   // (unused) "I AM DEATH INCARNATE" difficulty card
+let vg_c_loadsavedisk = 23   // (unused) floppy icon on the load/save screen
+let vg_c_diskloading1 = 24   // (unused) floppy spin frame 1
+let vg_c_diskloading2 = 25   // (unused) floppy spin frame 2
+let vg_c_control      = 26   // (unused) "CONTROL" header
+let vg_c_customize    = 27   // (unused) "CUSTOMIZE CONTROLS" header
+let vg_c_loadgame     = 28   // (unused) "LOAD GAME" header
+let vg_c_savegame     = 29   // (unused) "SAVE GAME" header
+let vg_c_episode1     = 30   // (unused) ep-1 card: "ESCAPE FROM WOLFENSTEIN"
+let vg_c_episode2     = 31   // (unused) ep-2 card: "OPERATION EISENFAUST"
+let vg_c_episode3     = 32   // (unused) ep-3 card: "DIE, FUHRER, DIE!"
+let vg_c_episode4     = 33   // (unused) ep-4 card: "A DARK SECRET"
+let vg_c_episode5     = 34   // (unused) ep-5 card: "TRAIL OF THE MADMAN"
+let vg_c_episode6     = 35   // (unused) ep-6 card: "CONFRONTATION"
+let vg_c_code         = 36   // (unused) "ENTER CODE" (cheat entry)
+let vg_c_timecode     = 37   // (unused) "TIME CODE" (cheat entry)
+let vg_c_level        = 38   // (unused) "LEVEL" high-scores column
+let vg_c_name         = 39   // (unused) "NAME" high-scores column
+let vg_c_score        = 40   // (unused) "SCORE" high-scores column
+let vg_c_joy1         = 41   // (unused) joystick option A
+let vg_c_joy2         = 42   // (unused) joystick option B
 
-// Face pics — 8 expressions × 3 variants each (A/B/C). FACE1APIC = 109.
-// Expression index 0 = healthy grin, 7 = dead/severely injured.
-let vg_face_base = 109
-
-// Misc.
-let vg_got_gatling = 133
-let vg_mutant_bj   = 134
-let vg_paused      = 143     // "PAUSED" title graphic (if present)
-
-// Weapon icons for status bar: KNIFEPIC, PISTOLPIC, MGPIC, CHAINPIC.
-// 48x24 pics at chunks 91..94 (per vgtable).
-let vg_knife  = 91
-let vg_pistol = 92
-let vg_mg     = 93
-let vg_chain  = 94
-
-// Status-bar key slots: NOKEYPIC (empty), GOLDKEYPIC, SILVERKEYPIC.
-let vg_no_key     = 95
-let vg_gold_key   = 96
-let vg_silver_key = 97
-
-// Number digits at the status bar: N_BLANKPIC (98) + N_0PIC (99) .. N_9PIC (108).
-let vg_n_blank = 98
-
-// LEVELEND_LUMP pics (wolf4sdl gfxv_wl6.h chunks 43..85): BJ portrait,
-// large-font letters / digits / punctuation, and BJ-wins art. Used by the
-// classic Wolf3D intermission "floor completed" screen.
-let vg_l_guy         = 43   // BJ portrait (breathing frame A)
+// --- LEVELEND_LUMP (chunks 43..85). Intermission-screen BJ portrait
+// and the large-font alphabet / digits / punctuation used by our
+// draw_font (see draw_vg_pic calls in the intermission path).
+let vg_l_guy         = 43    // BJ portrait (breathing frame A)
 let vg_l_colon       = 44
-let vg_l_num0        = 45   // L_NUM0PIC..L_NUM9PIC = 45..54
+let vg_l_num0        = 45    // L_NUM0PIC..L_NUM9PIC = 45..54
 let vg_l_percent     = 55
-let vg_l_a           = 56   // L_APIC..L_ZPIC = 56..81
+let vg_l_a           = 56    // L_APIC..L_ZPIC = 56..81
 let vg_l_expoint     = 82
 let vg_l_apostrophe  = 83
-let vg_l_guy2        = 84   // BJ portrait (breathing frame B)
-let vg_l_bjwins      = 85   // BJ-wins art for the episode-end screen
+let vg_l_guy2        = 84    // BJ portrait (breathing frame B)
+let vg_l_bjwins      = 85    // BJ-wins art for the episode-end screen
+
+// --- Title lump (chunks 86..90). One-off full-screen / banner art.
+let vg_statusbar  = 86       // 320x40 in-game status bar
+let vg_title      = 87       // title screen (TITLEPIC)
+let vg_pg13       = 88       // (unused) parental-advisory splash
+let vg_credits    = 89       // (unused) credits screen
+let vg_highscores = 90       // (unused) high-scores screen header
+
+// --- LATCHPICS_LUMP (chunks 91..134). HUD, pickup pop-ups, pause /
+// level-load overlays. Anything that gets blitted on top of gameplay.
+let vg_knife       = 91      // weapon icon — KNIFEPIC
+let vg_pistol      = 92      // weapon icon — GUNPIC
+let vg_mg          = 93      // weapon icon — MACHINEGUNPIC
+let vg_chain       = 94      // weapon icon — GATLINGGUNPIC
+let vg_no_key      = 95      // empty key slot (NOKEYPIC, part of statusbar art)
+let vg_gold_key    = 96
+let vg_silver_key  = 97
+let vg_n_blank     = 98      // blank digit (clears a leading digit cell)
+let vg_n_0         = 99      // digits N_0PIC..N_9PIC = 99..108
+let vg_n_9         = 108
+let vg_face_base   = 109     // FACE1APIC..FACE8APIC; 8 expressions × 3
+                             //   A/B/C variants. Chunk = base + expr*3 + var.
+                             //   expr 0 = 100% health grin,
+                             //   expr 7 = dead / severely wounded.
+let vg_got_gatling = 131     // (unused) "YOU GOT THE GATLING GUN!" pickup
+let vg_mutant_bj   = 132     // (unused) mutant-BJ transformation cut-scene
+let vg_paused      = 133     // (unused) "PAUSED" overlay (wolf-fc removed
+                             //  the pause phase; still here for parity)
+let vg_get_psyched = 134     // (unused) "GET PSYCHED!" level-load overlay
+
+// Chunk 135 is the STARTPICM / STARTSPRITES marker — no pic data.
+
+// --- Demo / order-screen lump (chunks 136..148).
+let vg_order       = 136     // (unused) shareware order screen
+let vg_error       = 137     // (unused) generic error screen
+let vg_t_helpart   = 138     // (unused) alt "Read This!" help art
+let vg_t_demo0     = 139     // (unused) demo-playback art slot 0
+let vg_t_demo1     = 140     // (unused) demo slot 1
+let vg_t_demo2     = 141     // (unused) demo slot 2
+let vg_t_demo3     = 142     // (unused) demo slot 3
+let vg_t_endart1   = 143     // (unused) episode-1 ending text page
+let vg_t_endart2   = 144     // (unused) episode-2 ending text page
+let vg_t_endart3   = 145     // (unused) episode-3 ending text page
+let vg_t_endart4   = 146     // (unused) episode-4 ending text page
+let vg_t_endart5   = 147     // (unused) episode-5 ending text page
+let vg_t_endart6   = 148     // (unused) episode-6 ending text page
 
 // Draw a decoded VGA-planar pic at (dst_x, dst_y) in the framebuffer.
 // Pixels outside the fb are clipped. `pal` is the 256-entry ARGB palette.
@@ -4548,6 +4727,61 @@ let draw_vg_pic = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
             let dx = dst_x + x
             if dx < 0 || dx >= game_w then continue
             rc->fb[(int64) dy * 320 + (int64) dx] = buf[(int64) y * (int64) w + (int64) x]
+
+// "GET PSYCHED!" level-load overlay. Matches wolf4sdl PreloadGraphics:
+// fill the 3D view area with VIEWCOLOR (palette 0x7f), draw GETPSYCHEDPIC
+// centered horizontally at y = (view_h - pic_h) / 2, then paint a two-
+// tone progress bar (colors 0x37 / 0x32 over a BLACK trough) across the
+// bottom of the pic frame. Our progress animates 0→100% as the timer
+// counts down, which is a tiny embellishment on top of wolf4sdl (which
+// pins the bar at 100% the whole second).
+let render_get_psyched_overlay = (rc: render_ctx*, vg: vgagraph.vgagraph_file*,
+                                   pal: uint32[],
+                                   timer_remaining: float64,
+                                   timer_total: float64) ->
+    // Blank the 3D viewport with the grey border color. Leave the status
+    // bar (y >= view_h) untouched.
+    let bg = pal[get_psyched_bg_index]
+    for y in 0..view_h
+        let base = y * game_w
+        for x in 0..game_w
+            rc->fb[base + x] = bg
+    // Center the pic within the viewport. Use the VGAGRAPH-reported size
+    // in case the pic is ever re-packed; wolf3d's is 224x48.
+    let pw = vgagraph.pic_width(vg, vg_get_psyched)
+    let ph = vgagraph.pic_height(vg, vg_get_psyched)
+    let pic_w = if pw > 0 then pw else get_psyched_pic_w
+    let pic_h = if ph > 0 then ph else get_psyched_pic_h
+    let pic_x = (game_w - pic_w) / 2
+    let pic_y = (view_h - pic_h) / 2
+    draw_vg_pic(rc, vg, pal, vg_get_psyched, pic_x, pic_y)
+    // Progress bar: wolf4sdl offsets it to (WindowX+5, WindowY+WindowH-3)
+    // with width WindowW-10. We use the pic bounds as the window.
+    let bar_x = pic_x + 5
+    let bar_y = pic_y + pic_h - 3
+    let bar_full_w = pic_w - 10
+    let bg_col = pal[0x00]
+    let bar_col = pal[0x37]
+    let bar_hilight = pal[0x32]
+    // Trough (always full-width black strip 2px tall).
+    for by in 0..2
+        let row = (bar_y + by) * game_w
+        for bx in 0..bar_full_w
+            rc->fb[row + bar_x + bx] = bg_col
+    // Filled portion: 0 → 100% as timer_remaining goes from total → 0.
+    let elapsed = timer_total - timer_remaining
+    let frac = if timer_total <= 0.0 then 1.0 else elapsed / timer_total
+    let fill_w_f = frac * (float64) bar_full_w
+    let fill_w = if fill_w_f < 0.0 then 0
+        else if fill_w_f > (float64) bar_full_w then bar_full_w
+        else (int32) fill_w_f
+    for by in 0..2
+        let row = (bar_y + by) * game_w
+        let col = if by == 0 then bar_hilight else bar_col
+        // wolf4sdl draws the main bar full-width then the highlight one
+        // pixel shorter. For simplicity we paint both at the same width.
+        for bx in 0..fill_w
+            rc->fb[row + bar_x + bx] = col
 
 // One-time decode + nearest-neighbor scale of TITLEPIC into a 320×200 ARGB
 // buffer. Returns a heap slice the caller must hold for the process
@@ -4876,9 +5110,12 @@ let render_hud = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[], g
     draw_vg_number(rc, vg, pal, 216, num_y, 2, g->ammo)
     // BJ face — chosen by health + the rolling A/B/C variant from
     // update_face. Dead / dying locks to the final row, A-variant only.
-    let face = match g->phase with
-    | gp_dying     -> vg_face_base + 6 * 3
-    | _            -> face_chunk_for(g->health, g->face_frame)
+    // got_gatling_timer overrides everything while active, matching the
+    // original's DrawFace check against SD_SoundPlaying(GETGATLINGSND).
+    let face = if g->got_gatling_timer > 0.0 then vg_got_gatling
+        else match g->phase with
+        | gp_dying     -> vg_face_base + 6 * 3
+        | _            -> face_chunk_for(g->health, g->face_frame)
     draw_vg_pic(rc, vg, pal, face, 136, bar_top + 4)
     // Weapon icon on the right.
     let weapon_chunk = match g->weapon with
@@ -4966,11 +5203,25 @@ let tick = (w: world*, dt: float64) ->
     if g->msg_timer > 0.0 then
         g->msg_timer = g->msg_timer - dt
         if g->msg_timer < 0.0 then g->msg_timer = 0.0
+    // "Got Gatling!" face swap decays regardless of phase — the face cell
+    // keeps refreshing even during frozen phases, and the original's
+    // SD_SoundPlaying check is timer-based here.
+    if g->got_gatling_timer > 0.0 then
+        g->got_gatling_timer = g->got_gatling_timer - dt
+        if g->got_gatling_timer < 0.0 then g->got_gatling_timer = 0.0
     // Outside gp_playing only phase_timer advances + the phase-transition
     // handler runs (so death collapse → restart, etc. can fire). Enemies,
     // doors, pickups, weapon, player: all frozen.
     match g->phase with
     | gp_playing ->
+        // "GET PSYCHED!" load overlay: freeze everything while visible so
+        // the player can't walk into a wall on the first frame after a
+        // level transition. Processed before `next_level` so a player who
+        // hits the elevator during the overlay (impossible, but defensive)
+        // still sees the level-done flow resume cleanly once it finishes.
+        if g->get_psyched_timer > 0.0 then
+            g->get_psyched_timer = g->get_psyched_timer - dt
+            if g->get_psyched_timer < 0.0 then g->get_psyched_timer = 0.0
         // Elevator/boss-death pre-intermission wait: freeze all gameplay for
         // `next_level_delay` seconds so LEVELDONESND plays out in the world
         // before the tally screen takes over. update_phase_transitions won't
@@ -4978,7 +5229,7 @@ let tick = (w: world*, dt: float64) ->
         // gameplay frozen for the whole `next_level` window (even on the tick
         // where delay reaches 0) so the phase transition fires cleanly at end
         // of tick without one stray gameplay frame sneaking in.
-        if g->next_level then
+        else if g->next_level then
             if g->next_level_delay > 0.0 then
                 g->next_level_delay = g->next_level_delay - dt
                 if g->next_level_delay < 0.0 then g->next_level_delay = 0.0
@@ -5620,6 +5871,16 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
     dissolve_stipple(w->rc, red_tint, stipple_progress)
     render_hud(w->rc, w->vg, pal, w->g)
     render_message(w->rc, w->font, w->g)
+    // "GET PSYCHED!" level-entry overlay. The original fills the 3D
+    // viewport with VIEWCOLOR (palette 0x7f), draws the pic centered, and
+    // paints a progress bar across the bottom of the pic frame. We
+    // replicate the same layout and animate the bar 0→100% over the hold
+    // duration so the static "always-full" look of wolf4sdl's simplified
+    // port still reads as genuine progress. Drawn AFTER render_hud so the
+    // status bar stays visible underneath, matching the original.
+    if w->g->get_psyched_timer > 0.0 then
+        render_get_psyched_overlay(w->rc, w->vg, pal,
+            w->g->get_psyched_timer, get_psyched_time)
     // Pre-intermission fade-to-black: while `next_level` is latched and
     // gameplay is frozen, darken the entire frame linearly as next_level_delay
     // ticks down. Gives the player immediate visual feedback that the
@@ -6365,6 +6626,16 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
     else if arg == "givekeys" then
         g->has_gold_key = true
         g->has_silver_key = true
+    else if arg == "psyched" then
+        // Force the GET PSYCHED overlay timer so a following ss: captures
+        // the full-screen load graphic. Bypasses the normal test_mode gate
+        // in trigger_get_psyched.
+        g->get_psyched_timer = get_psyched_time
+    else if arg == "gotgatling" then
+        // Force the GOTGATLINGPIC face-cell swap so ss: can capture it.
+        // Bypasses test_mode. The pic replaces the BJ face in render_hud
+        // while the timer is active.
+        g->got_gatling_timer = got_gatling_time
     else if arg == "space" then
         g->key_space = true
         g->key_space_handled = false
@@ -6900,6 +7171,7 @@ let main = (args: str[]) ->
         bj_phase = 0, bj_dist_run = 0.0, bj_yelled = false,
         phase = game_phase.gp_title, phase_timer = 0.0,
         damage_flash_timer = 0.0, respawn_fade_timer = 0.0,
+        get_psyched_timer = 0.0, got_gatling_timer = 0.0,
         kills = 0, total_kills = 0,
         secrets = 0, total_secrets = 0,
         treasures = 0, total_treasures = 0,
@@ -6913,6 +7185,7 @@ let main = (args: str[]) ->
         inter_end_sound_delay = 0.0,
         difficulty = gd_hard,
         no_dogs = arg_no_dogs,
+        test_mode = test_mode,
         menu_sel = 0, menu_level = menu_main,
         music_on = true, want_quit = false,
         has_active_game = false,
@@ -6974,6 +7247,7 @@ let main = (args: str[]) ->
         connect_areas(w->lv, g->area_number)
         g->phase = game_phase.gp_playing
         g->has_active_game = true
+        trigger_get_psyched(g)
     if start_near_boss then
         teleport_near_boss(w->lv, w->g)
         update_player_area(w->lv, g)

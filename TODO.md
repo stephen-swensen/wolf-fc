@@ -12,6 +12,105 @@ next-up candidates; everything below is nice-to-have polish or a survey pass.
   impact. Could include a simple keybind editor plus the PC-speaker/AdLib/
   SoundBlaster radio buttons (even if all three route to our mixer today).
 
+### VGAGRAPH art not yet surfaced
+
+Constants for every chunk exist in main.fc under the `vg_*` prefix (with
+`(unused)` tags on unwired ones). Items here are ordered roughly by visibility
+of the gap and implementation size. Many are grouped because they share a
+lump and would naturally land together.
+
+- [ ] **`vg_pg13` (chunk 88) — PG-13 parental-advisory splash.** Shown between
+  the startup logos and the title screen in the original (brief timed
+  full-screen pic, any key advances). New phase `gp_pg13` before `gp_title`,
+  short timer, same ack-key handling as the title.
+- [ ] **`vg_credits` (89) — credits screen.** Main-menu entry (CREDITS) that
+  draws the full-screen pic and waits for any key. Needs a new menu slot and
+  a tiny phase.
+- [ ] **`vg_highscores` (90) — high-scores screen + high-score system.**
+  Bigger: persist a 10-row high-score table (`~/.wolf-fc/highscores`), render
+  the HIGHSCORESPIC header plus `vg_c_level` / `vg_c_name` / `vg_c_score`
+  columns with 3-letter name entry after a game finishes. Shown from the
+  main menu and at the end of each episode.
+- [ ] **`vg_mutant_bj` (132) — mutant-BJ transformation cut-scene.** Brief
+  full-screen overlay during E2's Schabbs finale when the injection hits
+  (wolf4sdl ties it to the same flow that ends with ENDART text).
+- [ ] **`vg_t_endart1`..`vg_t_endart6` (143..148) — per-episode ending text
+  pages.** Shown after BJ wins a given episode (between the bj-victory and
+  the episode-end screen). New `gp_endart` phase that draws the art + waits
+  for ack, then falls through to the current `gp_episode_end`.
+- [ ] **"Read This!" help screen (3..9 + 138).** Original Help menu option
+  pages through a layered backdrop (`vg_h_castle` + `vg_h_blaze` + `vg_h_bj`
+  inside the `vg_h_*window` frame, or the alternate `vg_t_helpart`) showing
+  controls / items / enemies. Needs a new menu entry, a pageable text/image
+  renderer, and static strings from id_in's help tables.
+- [ ] **Menu art lump (10..42) — replace text menus with original graphics.**
+  Largest UI item. Every submenu in the original (Options / Sound / Control
+  / Customize / Load / Save / Episode / Difficulty / Codes / High Scores) has
+  dedicated art: headers, a blinking 2-frame cursor (`vg_c_cursor1/2`), and
+  per-row selected / not-selected backdrops. Pairs naturally with the
+  configurable-input TODO above.
+- [ ] **`vg_order` (136) / `vg_error` (137).** Shareware order screen
+  (probably skip or redirect to a short credits note — wolf-fc isn't
+  shareware) and a generic error screen we could route fatal data-load
+  failures through.
+- [ ] **`vg_t_demo0`..`vg_t_demo3` (139..142) — demo-playback art.** Only
+  meaningful if we add a demo / attract-mode recorder & player; likely the
+  lowest-priority item in this section.
+
+### Sound effects not yet triggered
+
+Documented as `src_*` constants in main.fc. Each is a Wolf3D enum value
+(0..86 per `audiowl6.h`); to wire one up, add a `snd_*` binding, bump
+`snd_count`, extend `snd_digi` / `snd_adlib_enum`, and call `trigger_sound`.
+
+- [ ] **`src_select_wpn` (1) / `src_move_gun2` (4) — menu polish.** Add the
+  second half of the cursor-move click (MOVEGUN1 → MOVEGUN2) so navigation
+  sounds like the original, and play SELECTWPNSND when the player changes
+  weapon slot with 1..4 keys (wolf-fc is silent on slot change today).
+- [ ] **`src_walk1` / `src_walk2` (14 / 15) — footstep loop.** Alternating
+  footsteps while the player is moving. Tune the interval to match run /
+  walk speed.
+- [ ] **`src_player_death` (9) — BJ death scream.** We already play the
+  damage-flash + collapse animation silently; GAMEOVERSND fits here too
+  (PLAYERDEATHSND on the killing blow, `src_game_over` after the collapse).
+- [ ] **`src_game_over` (17) — game-over jingle** on lives-exhausted transition.
+- [ ] **`src_boss_active` (49) — boss-room wake-up sting.** Fire once when
+  the first boss enemy on a level wakes (enemy_should_wake transition).
+- [ ] **`src_nazi_hit_player` (7) — enemy-bullet hit on player.** We only
+  play the AdLib TAKEDAMAGE sound today; NAZIHITPLAYERSND layers on top and
+  gives the incoming shot a discrete cue.
+- [ ] **`src_no_item` (13) — refused pickup.** Couldn't-pick-up cue (e.g.
+  ammo at max, full-health pickup denied). Audible feedback only — the
+  message banner already covers the visual.
+- [ ] **`src_shoot_door` (28) — knife/bullet striking a door.** Original
+  plays this when a weapon lands on a door tile; we currently eat the hit
+  silently.
+- [ ] **`src_heartbeat` (3) — low-health heartbeat.** Looped cue that plays
+  when the player's HP drops below a threshold (matches the red face
+  variant). Needs a steady re-trigger or a short looping digi.
+- [ ] **`src_slurpie` (61) / `src_goobs` (71).** Pickup-flavour extras —
+  slurp on chalice / crown, goop on enemy death. Lower priority.
+
+### Music tracks not yet surfaced
+
+The per-level `songs[]` table uses 18 of the 27 available tracks. The
+following are packaged in AUDIOT and have `music_*` constants but no caller
+triggers them:
+
+- [ ] **`music_hitlwltz` (5) — Hitler Waltz.** Intended for the real-Hitler
+  boss room. Fine-grained music routing (current boss-room override) could
+  pick it up when `enemy.kind == ek_hitler` is alive on the level.
+- [ ] **`music_nazi_nor` (7) — alt normal-enemy theme.** Potential
+  replacement for one of the per-level slots if we later tune cadence.
+- [ ] **`music_salute` (10) — marching salute.** Could cue a boss-intro
+  moment or an episode-intro screen.
+- [ ] **`music_victors` (13) — alt victory track.** Alternative for
+  per-episode victory (currently URAHERO).
+- [ ] **`music_funkyou` (15) — funky outro.** Could play over the
+  credits screen once that ships.
+- [ ] **`music_roster` (23) — high-score roll.** Pairs with the high-scores
+  screen TODO.
+
 ### Fidelity
 - [ ] **Survey pass against wolf4sdl.** The last two survey passes each
   surfaced real bugs (per-axis bite ranges; T_Shoot hitchance/damage
