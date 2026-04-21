@@ -1609,16 +1609,21 @@ let dc_sub_pre_fade    = 0   // hold on final death frame (post-animation)
 let dc_sub_fade_out    = 1   // dissolve viewport to black (dc_fade 0 → 1)
 let dc_sub_taunt       = 2   // "Let's see you in hell!" card on black
 let dc_sub_fade_in     = 3   // camera teleported, dissolve back in (1 → 0)
-let dc_sub_replay_hold = 4   // boss death animation replays
-let dc_sub_done        = 5   // transient — next tick enters intermission
+let dc_sub_replay_anim = 4   // boss reset to es_die, animation plays
+let dc_sub_replay_hold = 5   // hold on the final dead pose so it registers
+let dc_sub_done        = 6   // transient — next tick enters intermission
 
 // Timing (seconds). Held at the same beats as the original so the flow
 // feels right — a short pause on the corpse, a one-second dissolve each
 // way, a taunt card the player can space through within ~4 seconds.
-let dc_pre_fade_time   = 1.43
-let dc_fade_time       = 1.00
-let dc_taunt_timeout   = 4.30
-let dc_replay_hold_max = 3.00
+// The replay hold buys the player a clear look at the final dead pose
+// *after* the animation finishes; without it the scene cuts to
+// intermission the moment the corpse lands and feels clipped.
+let dc_pre_fade_time     = 1.43
+let dc_fade_time         = 1.00
+let dc_taunt_timeout     = 4.30
+let dc_replay_anim_max   = 2.00     // safety cap if anim somehow sticks
+let dc_replay_hold_time  = 1.50     // dwell on the final dead frame
 
 // Begin the death-cam cutscene. Records the kill position (for the camera
 // teleport later), the corpse's enemy-array index, starts the death anim,
@@ -1659,29 +1664,35 @@ let enter_death_cam = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*,
 // of a tile until the camera bbox clears walls. Sets pos + dir vectors;
 // the raycaster picks up the new view automatically.
 let teleport_death_cam = (lv: level*, g: game*, boss_x: float64, boss_y: float64) ->
-    // Direction from boss to kill-position, in world (y-down) coords.
+    // Unit vector from the boss toward where the player was standing when
+    // the fatal shot landed, in world (y-down) coords.
     let dx = g->dc_kill_x - boss_x
     let dy = g->dc_kill_y - boss_y
     let len = math.sqrt(dx * dx + dy * dy)
     let ux = if len > 1e-6 then dx / len else 1.0
     let uy = if len > 1e-6 then dy / len else 0.0
-    // Back off from the corpse until the player bbox clears walls. The
-    // original starts at 0x14000 fixed-point (≈ 1.25 tiles) and grows by
-    // 0x1000 per retry.
-    let mut dist = 1.25
-    let mut nx = boss_x + ux * dist
-    let mut ny = boss_y + uy * dist
-    let mut guard = 0
+    // Walk outward from the boss in small steps, stopping as soon as the
+    // next step would clip a wall. This keeps the camera on the same
+    // side of any walls as the corpse — a naïve "start at 1.25 tiles and
+    // retry if blocked" algorithm can skip past a wall into an adjacent
+    // room, which leaves the boss occluded from the death-cam view.
+    let max_dist = 1.25
+    let step = 0.0625
+    let mut dist = 0.0
+    let mut nx = boss_x
+    let mut ny = boss_y
     loop
-        if !player_blocked_by_map(lv, nx, ny) then break
-        if guard >= 64 then break         // safety — shouldn't happen
-        dist = dist + 0.0625               // 1/16 tile per retry
-        nx = boss_x + ux * dist
-        ny = boss_y + uy * dist
-        guard = guard + 1
+        if dist >= max_dist then break
+        let trial = dist + step
+        let tx = boss_x + ux * trial
+        let ty = boss_y + uy * trial
+        if player_blocked_by_map(lv, tx, ty) then break
+        dist = trial
+        nx = tx
+        ny = ty
     g->pos_x = nx
     g->pos_y = ny
-    // Face the corpse (opposite of the back-off direction).
+    // Face the corpse (opposite of the outward direction).
     g->dir_x = 0.0 - ux
     g->dir_y = 0.0 - uy
     // Camera plane is dir rotated 90° CW with FOV ≈ 2 * atan(0.66). Matches
@@ -1724,18 +1735,15 @@ let tick_death_cam = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
             g->key_ack_handled = false      // allow the taunt card to dismiss
     else if sub == dc_sub_taunt then
         // Wait for space acknowledge (key_ack) or the timeout. When
-        // dismissed, teleport the camera and start the fade-in.
+        // dismissed, teleport the camera and start the fade-in. The boss
+        // stays in es_dead during the fade-in so the player sees the
+        // final death pose emerge from black before the animation replays.
         let dismissed = (g->key_ack && !g->key_ack_handled) || g->dc_timer >= dc_taunt_timeout
         if dismissed then
             g->key_ack_handled = true
             if g->dc_boss_idx >= 0 && g->dc_boss_idx < lv->num_enemies then
                 let e = &lv->enemies[g->dc_boss_idx]
                 teleport_death_cam(lv, g, e->x, e->y)
-                // Replay the death animation: back to es_die, first frame.
-                e->state = enemy_state.es_die
-                e->anim_frame = 0
-                e->anim_timer = die_frame_time
-                e->dir = dir_nodir
             g->dc_sub = dc_sub_fade_in
             g->dc_timer = 0.0
             g->dc_fade = 1.0
@@ -1743,17 +1751,32 @@ let tick_death_cam = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
         g->dc_fade = 1.0 - g->dc_timer / dc_fade_time
         if g->dc_fade <= 0.0 then
             g->dc_fade = 0.0
-            g->dc_sub = dc_sub_replay_hold
+            // Now that the viewport is fully revealed, restart the death
+            // animation so the player watches the corpse die a second
+            // time in the zoomed-in frame.
+            if g->dc_boss_idx >= 0 && g->dc_boss_idx < lv->num_enemies then
+                let e = &lv->enemies[g->dc_boss_idx]
+                e->state = enemy_state.es_die
+                e->anim_frame = 0
+                e->anim_timer = die_frame_time
+                e->dir = dir_nodir
+            g->dc_sub = dc_sub_replay_anim
             g->dc_timer = 0.0
-    else if sub == dc_sub_replay_hold then
-        // Hold until the corpse animation completes again, with a hard
-        // cap so we can't wedge. Then transition to intermission.
+    else if sub == dc_sub_replay_anim then
+        // Let the boss's die-frame cascade run. Advance once the corpse
+        // reaches es_dead, or after a hard cap if something wedges.
         let anim_done = if g->dc_boss_idx >= 0 && g->dc_boss_idx < lv->num_enemies then
             match lv->enemies[g->dc_boss_idx].state with
             | es_dead -> true
             | _ -> false
         else true
-        if anim_done || g->dc_timer >= dc_replay_hold_max then
+        if anim_done || g->dc_timer >= dc_replay_anim_max then
+            g->dc_sub = dc_sub_replay_hold
+            g->dc_timer = 0.0
+    else if sub == dc_sub_replay_hold then
+        // Dwell on the final dead frame so the scene doesn't cut the
+        // instant the animation lands. Then hand off to intermission.
+        if g->dc_timer >= dc_replay_hold_time then
             g->dc_sub = dc_sub_done
 
 // Begin the intermission phase (stats screen between levels). The phase
