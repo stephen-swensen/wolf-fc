@@ -82,13 +82,12 @@ let music_urahero  = 24    // URAHERO_MUS   (phase: per-episode victory)
 let music_vicmarch = 25    // VICMARCH_MUS  (phase: final game-clear victory)
 let music_pacman   = 26    // PACMAN_MUS    (per level — Pac-Man secret rooms)
 
-// "GET PSYCHED!" overlay duration (seconds). Matches wolf4sdl
-// `PreloadGraphics` → `IN_UserInput(70)` which waits up to 70 tics at
-// 70 Hz. The original game shows GETPSYCHEDPIC over a grey field (filled
-// with VIEWCOLOR / border palette index 0x7f) with a progress bar across
-// the bottom of the pic. Our level load is instant, so we hold the same
-// screen for the same duration.
-let get_psyched_time = 1.0
+// "GET PSYCHED!" overlay duration (seconds). Wolf4sdl's PreloadGraphics
+// calls `IN_UserInput(70)` (1s at 70Hz); we hold slightly longer so the
+// progress bar doesn't flash by. The original shows GETPSYCHEDPIC over a
+// grey field (VIEWCOLOR / palette 0x7f) with a progress bar across the
+// bottom of the pic. Our level load is instant, so this is pure beat.
+let get_psyched_time = 1.4
 
 // Background palette index behind the GETPSYCHEDPIC overlay. wolf4sdl's
 // `bordercol = VIEWCOLOR = 0x7f` — a mid-grey.
