@@ -100,10 +100,12 @@ let get_psyched_pic_w = 224
 let get_psyched_pic_h = 48
 
 // "Got Gatling!" face-slot swap duration (seconds). Wolf4sdl's DrawFace
-// keeps the pic up while GETGATLINGSND is still playing (the digitized
-// voice line); the cached audio sample runs about a second, so we hold
-// the pic for the same interval.
-let got_gatling_time = 1.0
+// keeps the pic up while GETGATLINGSND is still playing. In WL6 that's
+// the AdLib chunk only (305 notes at 140 Hz = ~2.18 s of FM guitar-riff
+// pickup jingle — SOD has a digitized replacement but WL6 doesn't). We
+// hold the face a touch beyond the sound so it doesn't snap away the
+// instant the last note trails off.
+let got_gatling_time = 2.2
 
 // Seconds to hold gameplay frozen after the player pulls the elevator switch
 // (or a boss dies) before the intermission screen appears. Stands in for the
@@ -4337,7 +4339,12 @@ let src_slurpie        = 61   // SLURPIESND       — BJ slurping bonus chalice 
 let src_goobs          = 71   // GOOBSSND         — extra goop/gore on enemy death (no digi)
 
 // Digi-pack index for each snd_* (-1 = no digitized version). The mapping
-// comes from wolf4sdl's wolfdigimap[] for Wolf3D; Spear of Destiny differs.
+// is the WL6 branch of wolf4sdl's wolfdigimap[] (wl_main.cpp:927). SOD's
+// branch differs — in particular, SOD remaps digi 38 to GETGATLINGSND as
+// a "Got Gat replacement", but in WL6 digi 38 is ERLAUBENSND (Fat Face
+// sighting voice line). Verified entry-by-entry 2026-04-20: every row
+// here matches InitDigiMap's table for WL6; missing enum entries resolve
+// to -1 in wolf4sdl too (SD_PlaySound then falls back to AdLib).
 let snd_digi = int32[73] {
      3,   // open_door    (OPENDOORSND  -> digi 3)
      2,   // close_door   (CLOSEDOORSND -> digi 2)
@@ -4351,7 +4358,9 @@ let snd_digi = int32[73] {
     14,   // pain         (TAKEDAMAGESND -> digi 14)
     15,   // push_wall    (PUSHWALLSND  -> digi 15)
     -1,   // get_mg       (no digi)
-    -1,   // get_gat      (no digi)
+    -1,   // get_gat      (WL6 has no digi for GETGATLINGSND — plays via
+          //                AdLib only. SOD's wolfdigimap remaps digi 38 to
+          //                GETGATLINGSND, but in WL6 digi 38 is ERLAUBENSND.)
     -1,   // hit_wall     (no digi)
     -1,   // no_action    (no digi)
     -1,   // no_way       (no digi)
