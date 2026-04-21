@@ -2376,6 +2376,16 @@ let spawn_one_enemy = (lv: level*, tx: int32, ty: int32, info: enemy_spawn_info,
     let anim_frame = if info.dead then
         sprites_for_kind(info.kind).num_die_frames - 1
     else 0
+    // Bosses spawn with dir=nodir and FL_AMBUSH in the original (SpawnBoss /
+    // SpawnSchabbs / SpawnGift / SpawnFat / SpawnFakeHitler / SpawnHitler).
+    // Without AMBUSH they'd be auto-woken by any noise in the connected area
+    // set the moment their door opens; without nodir their forward-cone
+    // check in enemy_sees_player can leave them blind to the player standing
+    // in the doorway.
+    let is_boss = kind_is_boss(info.kind)
+    let spawn_dir = if info.dead then dir_nodir
+        else if is_boss then dir_nodir
+        else dir8
     lv->enemies[lv->num_enemies] = enemy {
         x = (float64) tx + 0.5,
         y = (float64) ty + 0.5,
@@ -2383,7 +2393,7 @@ let spawn_one_enemy = (lv: level*, tx: int32, ty: int32, info: enemy_spawn_info,
         tile_y = ty,
         kind = info.kind,
         state = initial_state,
-        dir = if info.dead then dir_nodir else dir8,
+        dir = spawn_dir,
         hp = hp,
         anim_frame = anim_frame,
         anim_timer = walk_frame_time,
@@ -2391,7 +2401,7 @@ let spawn_one_enemy = (lv: level*, tx: int32, ty: int32, info: enemy_spawn_info,
         move_remaining = 0.0,
         dist_to_player = 0.0,
         dist_flat = 0.0,
-        ambush = false,
+        ambush = is_boss && !info.dead,
         notified = false,
         reaction_timer = 0.0,
         last_visible = false

@@ -360,7 +360,7 @@ assert_contains "boss:hans-spawns-on-e1m9" \
     "boss=1 ghost=0"
 assert_contains "boss:hans-hp-1200" \
     "setlevel:8 enemylist" \
-    "kind=hans state=stand dir=4 hp=1200"
+    "kind=hans state=stand dir=8 hp=1200"
 # E3M10 (level 29) is the Pacman-homage secret — all four ghosts spawn.
 assert_contains "ghost:four-ghosts-on-pacman-level" \
     "setlevel:29 enemies" \
@@ -388,6 +388,15 @@ assert_contains "boss:kill-doesnt-end-level" \
 assert_contains "boss:kill-completes-die-animation" \
     "setlevel:8 killenemy:0 wait:30 enemylist" \
     "kind=hans state=dead"
+# Bosses spawn with FL_AMBUSH + dir=nodir in the original. With a closed
+# door between the player and Hans, approaching quietly must leave him
+# asleep; opening the door gives him LOS and he wakes + shoots.
+assert_contains "boss:hans-stays-asleep-behind-closed-door" \
+    "setlevel:8 goto:34,16 wait:200 enemylist" \
+    "kind=hans state=stand"
+assert_contains "boss:hans-wakes-when-door-opens" \
+    "setlevel:8 goto:34,16 space wait:35 enemylist" \
+    "kind=hans state=shoot"
 # E1M9's three EXITTILE markers (plane-1 tile 99) sit at y=7 behind the
 # gold-key door; stepping onto one fires the BJ-victory cutscene
 # directly without the elevator-wait freeze.
