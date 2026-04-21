@@ -413,6 +413,45 @@ assert_contains "exittile:walking-onto-it-fires-bj-victory" \
 assert_contains "exittile:bj-cutscene-corpse-finishes-dying" \
     "setlevel:8 killenemy:0 goto:34,8 fwd:50 wait:60 enemylist" \
     "kind=hans state=dead"
+# The four death-cam bosses (Schabbs / Gift / Fat / real Hitler) end the
+# episode via A_StartDeathCam in the original: hold on final death frame,
+# fizzle to black, taunt card, teleport camera, fizzle in, replay death
+# animation, drop into the intermission tally. Hans and Gretel are the
+# two exceptions — they still use the gold-key + EXITTILE flow.
+assert_contains "deathcam:schabbs-enters-death-cam-on-kill" \
+    "setlevel:18 killenemy:0 phase" \
+    "phase=death_cam"
+assert_contains "deathcam:giftmacher-enters-death-cam-on-kill" \
+    "setlevel:38 killenemy:0 phase" \
+    "phase=death_cam"
+assert_contains "deathcam:fat-enters-death-cam-on-kill" \
+    "setlevel:58 killenemy:8 phase" \
+    "phase=death_cam"
+assert_contains "deathcam:hitler-enters-death-cam-on-kill" \
+    "setlevel:28 killenemy:2 phase" \
+    "phase=death_cam"
+# Hans and Gretel do NOT enter gp_death_cam — their death flow still
+# routes through the gold-key drop + EXITTILE walk → gp_bj_victory.
+assert_contains "deathcam:hans-does-not-enter-death-cam" \
+    "setlevel:8 killenemy:0 wait:30 phase" \
+    "phase=playing"
+# After ~10 seconds the whole cutscene finishes and hands off to the
+# regular intermission tally screen (pre_fade 1.43s + fade_out 1.0s +
+# taunt timeout 4.3s + fade_in 1.0s + replay ≤3.0s).
+assert_contains "deathcam:auto-advances-to-intermission" \
+    "setlevel:18 killenemy:0 wait:400 phase" \
+    "phase=intermission"
+# The `advance` test command dismisses the death-cam early, same way a
+# space press would end the taunt card and (after the rest of the
+# cutscene) land on the intermission screen.
+assert_contains "deathcam:advance-skips-to-intermission" \
+    "setlevel:18 killenemy:0 advance phase" \
+    "phase=intermission"
+# Hans still drops a gold key — walking onto his tile after the kill
+# picks it up. Preserves the gold-key + EXITTILE flow on E1M9.
+assert_contains "deathcam:hans-still-drops-gold-key" \
+    "setlevel:8 killenemy:0 goto:34,14 state" \
+    "gold=1"
 
 section "enemy projectiles"
 # Fake Hitler on E3M9 unloads a flame salvo down the corridor west of him.

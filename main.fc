@@ -200,6 +200,12 @@ union game_phase =
     | gp_bj_victory    // BJ runs forward + jumps + yells after the player
                        // steps on a boss-map EXITTILE (wolf4sdl's
                        // VictoryTile → SpawnBJVictory → ex_victorious).
+    | gp_death_cam     // boss-death cutscene for the four auto-victory bosses
+                       // (Schabbs / Gift / Fat / real Hitler). Pause on final
+                       // death frame, fizzle to black, taunt card, teleport
+                       // camera to frame the corpse, fade in, replay death
+                       // animation, hand off to intermission. Ports wolf4sdl
+                       // A_StartDeathCam.
     | gp_episode_end   // per-episode victory screen (after boss level 8)
     | gp_victory       // all six episodes cleared; space returns to main menu
 
@@ -359,6 +365,20 @@ struct game =
     bj_anim_timer: float64
     bj_phase: int32      // 0 = running, 1 = jumping, 2 = holding final frame
     bj_yelled: bool      // YEAHSND latch (fires on entering jump frame 1)
+
+    // Death-cam cutscene state — active only during gp_death_cam.
+    // Sub-phases: 0 = hold on final death frame, 1 = dissolve to black,
+    // 2 = taunt "Let's see you in hell!" text screen, 3 = camera teleport +
+    // dissolve back in, 4 = replay death animation, 5 = hand off to
+    // intermission (transient; update_phase_transitions enters next state).
+    dc_sub: int32
+    dc_timer: float64               // seconds elapsed in current sub-phase
+    dc_boss_idx: int32              // index of the corpse in lv->enemies
+    dc_kill_x: float64              // player position when the boss died
+    dc_kill_y: float64              // (matches wolf4sdl gamestate.killx/y)
+    dc_fade: float64                // 0 = viewport fully visible, 1 = fully
+                                    // black; feeds dissolve_stipple during
+                                    // fade-out / taunt / fade-in sub-phases
 
     // Phase state (death / intermission / game-over). Most of tick() skips
     // when phase != gp_playing; rendering paints the appropriate overlay.
@@ -914,6 +934,16 @@ let kind_is_boss = (k: enemy_kind) ->
     | ek_hitler_fake | ek_hitler -> true
     | _ -> false
 
+// True iff this kind ends the episode on death via the death-cam cutscene
+// (A_StartDeathCam in the original). Hans and Gretel instead drop a gold
+// key so the player walks onto the EXITTILE — they're bosses but not
+// death-cam bosses. Fake Hitler and Mecha Hitler die without ending the
+// episode (Mecha morphs into the real Hitler; fake is just a mini-boss).
+let kind_has_death_cam = (k: enemy_kind) ->
+    match k with
+    | ek_schabbs | ek_giftmacher | ek_fat | ek_hitler -> true
+    | _ -> false
+
 // True iff the kind is a pacman ghost (non-hostile chaser).
 let kind_is_ghost = (k: enemy_kind) ->
     match k with
@@ -953,9 +983,15 @@ let drop_for_kind = (k: enemy_kind) ->
     | ek_ss      -> item_kind.machine_gun
     | ek_dog     -> item_kind.decoration
     | ek_mutant  -> item_kind.clip
-    // Bosses drop gold keys (wolf4sdl — unlocks the exit elevator).
-    | ek_hans | ek_schabbs | ek_gretel | ek_giftmacher | ek_fat
-    | ek_hitler_fake | ek_hitler -> item_kind.gold_key
+    // Hans and Gretel drop gold keys so the player can unlock the gold-
+    // key door and step onto the EXITTILE behind it. The four death-cam
+    // bosses (Schabbs, Giftmacher, Fat, real Hitler) end the episode
+    // directly via the death-cam cutscene — no key needed. Fake Hitler
+    // and Mecha Hitler die without ending the level and without dropping
+    // anything in the original.
+    | ek_hans | ek_gretel -> item_kind.gold_key
+    | ek_schabbs | ek_giftmacher | ek_fat
+    | ek_hitler_fake | ek_hitler -> item_kind.decoration
     | ek_blinky | ek_pinky | ek_clyde | ek_inky -> item_kind.decoration
 
 // VSWAP sprite page index of the dropped pickup's shape (shape = 2 + tile - 23).
@@ -965,8 +1001,7 @@ let drop_shape_for_kind = (k: enemy_kind) ->
     | ek_officer -> 2 + (49 - 23)
     | ek_mutant  -> 2 + (49 - 23)
     | ek_ss      -> 2 + (50 - 23)   // MG shape
-    | ek_hans | ek_schabbs | ek_gretel | ek_giftmacher | ek_fat
-    | ek_hitler_fake | ek_hitler -> 2 + (43 - 23)  // gold key
+    | ek_hans | ek_gretel -> 2 + (43 - 23)   // gold key
     | _ -> 0
 
 // PCG channel IDs. One seed fans out to independent streams per channel; we
@@ -1552,6 +1587,175 @@ let tick_bj_victory = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
         if g->bj_anim_timer <= 0.0 then
             enter_episode_end(g)
 
+// ============================================================
+// Death-cam cutscene (Schabbs / Giftmacher / Fat / real Hitler)
+// ============================================================
+//
+// The four "auto-victory" bosses end the episode via a multi-beat cutscene
+// rather than dropping a key for an EXITTILE walk: hold on the final death
+// frame, dissolve the viewport to black, show a taunt line ("Let's see you
+// in hell!"), wait for the player to acknowledge, teleport the camera to
+// frame the corpse, dissolve back in, replay the death animation, and hand
+// off to the regular intermission → episode-end flow. The HUD (status bar)
+// stays visible throughout — only the 3D viewport dissolves.
+//
+// The fade itself reuses `dissolve_stipple`, which takes a 0..1 progress
+// and paints a deterministic spatial-hash pattern of pixels to a target
+// color. We just ramp `g->dc_fade` linearly through the fade-out and
+// fade-in sub-phases and hold at 1.0 during the taunt card.
+
+// Sub-phase codes for g->dc_sub.
+let dc_sub_pre_fade    = 0   // hold on final death frame (post-animation)
+let dc_sub_fade_out    = 1   // dissolve viewport to black (dc_fade 0 → 1)
+let dc_sub_taunt       = 2   // "Let's see you in hell!" card on black
+let dc_sub_fade_in     = 3   // camera teleported, dissolve back in (1 → 0)
+let dc_sub_replay_hold = 4   // boss death animation replays
+let dc_sub_done        = 5   // transient — next tick enters intermission
+
+// Timing (seconds). Held at the same beats as the original so the flow
+// feels right — a short pause on the corpse, a one-second dissolve each
+// way, a taunt card the player can space through within ~4 seconds.
+let dc_pre_fade_time   = 1.43
+let dc_fade_time       = 1.00
+let dc_taunt_timeout   = 4.30
+let dc_replay_hold_max = 3.00
+
+// Begin the death-cam cutscene. Records the kill position (for the camera
+// teleport later), the corpse's enemy-array index, starts the death anim,
+// and clears held input. Called from damage_enemy for death-cam bosses
+// instead of the regular kill_enemy path.
+let enter_death_cam = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*,
+                       boss_idx: int32, sprite_start: int32) ->
+    // Drive the boss into its death animation. kill_enemy plays the
+    // per-kind death scream but — because drop_for_kind returns
+    // decoration for death-cam kinds — skips the key drop, matching
+    // the original (Schabbs/Gift/Fat/Hitler don't place a bo_key1).
+    kill_enemy(lv, g, ac, e, sprite_start)
+    g->phase = game_phase.gp_death_cam
+    g->phase_timer = 0.0
+    g->dc_sub = dc_sub_pre_fade
+    g->dc_timer = 0.0                   // hold starts once the anim reaches es_dead
+    g->dc_fade = 0.0
+    g->dc_boss_idx = boss_idx
+    g->dc_kill_x = g->pos_x
+    g->dc_kill_y = g->pos_y
+    // Freeze held inputs so a chord from the kill shot doesn't eat the
+    // taunt-card acknowledge. Mirrors enter_bj_victory's input reset.
+    g->next_level = false
+    g->next_level_delay = 0.0
+    g->key_up = false
+    g->key_down = false
+    g->key_left = false
+    g->key_right = false
+    g->key_fire = false
+    g->key_space = false
+    g->key_space_handled = true
+    g->key_ack = false
+    g->key_ack_handled = true
+
+// Place the camera so it's looking at the boss corpse from the same side
+// the player killed it from. Ports A_StartDeathCam's position loop: start
+// at ~1.25 tiles back along the kill-direction ray, step outward by 1/16
+// of a tile until the camera bbox clears walls. Sets pos + dir vectors;
+// the raycaster picks up the new view automatically.
+let teleport_death_cam = (lv: level*, g: game*, boss_x: float64, boss_y: float64) ->
+    // Direction from boss to kill-position, in world (y-down) coords.
+    let dx = g->dc_kill_x - boss_x
+    let dy = g->dc_kill_y - boss_y
+    let len = math.sqrt(dx * dx + dy * dy)
+    let ux = if len > 1e-6 then dx / len else 1.0
+    let uy = if len > 1e-6 then dy / len else 0.0
+    // Back off from the corpse until the player bbox clears walls. The
+    // original starts at 0x14000 fixed-point (≈ 1.25 tiles) and grows by
+    // 0x1000 per retry.
+    let mut dist = 1.25
+    let mut nx = boss_x + ux * dist
+    let mut ny = boss_y + uy * dist
+    let mut guard = 0
+    loop
+        if !player_blocked_by_map(lv, nx, ny) then break
+        if guard >= 64 then break         // safety — shouldn't happen
+        dist = dist + 0.0625               // 1/16 tile per retry
+        nx = boss_x + ux * dist
+        ny = boss_y + uy * dist
+        guard = guard + 1
+    g->pos_x = nx
+    g->pos_y = ny
+    // Face the corpse (opposite of the back-off direction).
+    g->dir_x = 0.0 - ux
+    g->dir_y = 0.0 - uy
+    // Camera plane is dir rotated 90° CW with FOV ≈ 2 * atan(0.66). Matches
+    // the setup used everywhere else pos / dir are reassigned.
+    g->plane_x = 0.0 - g->dir_y * 0.66
+    g->plane_y = g->dir_x * 0.66
+
+// Per-tick update for gp_death_cam. Drives sub-phase transitions and feeds
+// the fizzle-fade reveal when one is active. Dying-enemy animation is
+// pumped from the outer tick dispatch (update_dying_enemies), so this
+// function doesn't call it directly.
+let tick_death_cam = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
+    g->dc_timer = g->dc_timer + dt
+    let sub = g->dc_sub
+    if sub == dc_sub_pre_fade then
+        // Wait until the boss's death animation hits es_dead, then hold
+        // ~1.43s on the dead frame before starting the fade.
+        if g->dc_boss_idx >= 0 && g->dc_boss_idx < lv->num_enemies then
+            let e = &lv->enemies[g->dc_boss_idx]
+            match e->state with
+            | es_dead ->
+                if g->dc_timer >= dc_pre_fade_time then
+                    g->dc_sub = dc_sub_fade_out
+                    g->dc_timer = 0.0
+                    g->dc_fade = 0.0
+            | _ ->
+                // Still dying — hold the timer at 0 so the post-animation
+                // hold starts from the moment es_dead is reached.
+                g->dc_timer = 0.0
+        else
+            g->dc_sub = dc_sub_fade_out
+            g->dc_timer = 0.0
+            g->dc_fade = 0.0
+    else if sub == dc_sub_fade_out then
+        g->dc_fade = g->dc_timer / dc_fade_time
+        if g->dc_fade >= 1.0 then
+            g->dc_fade = 1.0
+            g->dc_sub = dc_sub_taunt
+            g->dc_timer = 0.0
+            g->key_ack_handled = false      // allow the taunt card to dismiss
+    else if sub == dc_sub_taunt then
+        // Wait for space acknowledge (key_ack) or the timeout. When
+        // dismissed, teleport the camera and start the fade-in.
+        let dismissed = (g->key_ack && !g->key_ack_handled) || g->dc_timer >= dc_taunt_timeout
+        if dismissed then
+            g->key_ack_handled = true
+            if g->dc_boss_idx >= 0 && g->dc_boss_idx < lv->num_enemies then
+                let e = &lv->enemies[g->dc_boss_idx]
+                teleport_death_cam(lv, g, e->x, e->y)
+                // Replay the death animation: back to es_die, first frame.
+                e->state = enemy_state.es_die
+                e->anim_frame = 0
+                e->anim_timer = die_frame_time
+                e->dir = dir_nodir
+            g->dc_sub = dc_sub_fade_in
+            g->dc_timer = 0.0
+            g->dc_fade = 1.0
+    else if sub == dc_sub_fade_in then
+        g->dc_fade = 1.0 - g->dc_timer / dc_fade_time
+        if g->dc_fade <= 0.0 then
+            g->dc_fade = 0.0
+            g->dc_sub = dc_sub_replay_hold
+            g->dc_timer = 0.0
+    else if sub == dc_sub_replay_hold then
+        // Hold until the corpse animation completes again, with a hard
+        // cap so we can't wedge. Then transition to intermission.
+        let anim_done = if g->dc_boss_idx >= 0 && g->dc_boss_idx < lv->num_enemies then
+            match lv->enemies[g->dc_boss_idx].state with
+            | es_dead -> true
+            | _ -> false
+        else true
+        if anim_done || g->dc_timer >= dc_replay_hold_max then
+            g->dc_sub = dc_sub_done
+
 // Begin the intermission phase (stats screen between levels). The phase
 // timer starts at 0 so the "press space to continue" gate needs at least
 // one frame before it will fire — prevents an in-flight space press from
@@ -1965,6 +2169,12 @@ let update_phase_transitions = (w: world*, vs: vswap.vswap_file*) ->
         else
             g->phase = game_phase.gp_game_over
             g->phase_timer = 0.0
+    // Death-cam cutscene has finished its replay hold; hand off to the
+    // intermission tally screen, which will itself advance into
+    // gp_episode_end on space (since all death-cam boss maps are level 8
+    // within their episode).
+    if g->phase == game_phase.gp_death_cam && g->dc_sub == dc_sub_done then
+        enter_intermission(g)
     level_changed
 
 // ============================================================
@@ -3812,7 +4022,10 @@ let kill_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, sprite_start:
 // through the wall still puts the actor into attack mode via FirstSighting).
 // If HP would drop to 0, transition to die and award score. Score goes here
 // so unscripted hitscans can't bypass it.
-let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, dmg: int32, sprite_start: int32) ->
+//
+// `idx` is the enemy's position in lv->enemies — needed so the death-cam
+// cutscene can reference the corpse after damage_enemy returns.
+let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, idx: int32, dmg: int32, sprite_start: int32) ->
     match e->state with
     | es_die | es_dead -> return
     | _ -> void()
@@ -3823,14 +4036,19 @@ let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, dmg: int32,
     e->hp = e->hp - dmg
     e->notified = true
     if e->hp <= 0 then
-        kill_enemy(lv, g, ac, e, sprite_start)
         g->score = g->score + score_for_kind(e->kind)
         g->kills = g->kills + 1
-        // Bosses don't end the level on death — they just drop a gold
-        // key (via drop_for_kind in kill_enemy) that the player carries
-        // to the EXITTILE behind the gold-key door, mirroring the
-        // original game's flow. update_player checks the EXITTILE on
-        // every move and routes the cutscene from there.
+        // Schabbs / Giftmacher / Fat / real Hitler end the episode via
+        // the death-cam cutscene (A_StartDeathCam in the original). All
+        // other kinds — including Hans and Gretel — just drop their
+        // gold key (or pickup) and leave the player to walk out.
+        if kind_has_death_cam(e->kind) then
+            enter_death_cam(lv, g, ac, e, idx, sprite_start)
+        else
+            kill_enemy(lv, g, ac, e, sprite_start)
+        // Hans / Gretel drop the key from kill_enemy via drop_for_kind.
+        // update_player checks the EXITTILE on every move and routes the
+        // BJ-runs cutscene from there.
     else
         // Put non-active actors into combat mode before anything else (mirrors
         // wolf4sdl DamageActor: FirstSighting is called up front regardless of
@@ -4368,7 +4586,7 @@ let fire_player_hitscan = (w: world*) ->
     let dist = math.sqrt(rx * rx + ry * ry)
     let dmg = weapon_damage_roll(g, g->weapon, dist)
     if dmg <= 0 then return
-    damage_enemy(lv, g, ac, e, dmg, sprite_start)
+    damage_enemy(lv, g, ac, e, idx, dmg, sprite_start)
 
 // ============================================================
 // Door animation
@@ -5176,6 +5394,10 @@ let music_chunk_for_phase = (phase: game_phase, level_num: int32) ->
     | gp_title | gp_main_menu -> music_wonderin
     | gp_intermission         -> music_endlevel
     | gp_bj_victory           -> music_urahero   // same cue as the episode-end screen
+    // Death-cam: keep the level track playing so the fizzle-out / taunt
+    // card / fade-in all happen under the boss-level music (matches the
+    // original — A_StartDeathCam doesn't switch tracks).
+    | gp_death_cam            -> if level_num >= 0 && level_num < 60 then songs[level_num] else 0
     | gp_episode_end          -> music_urahero
     | gp_victory              -> music_vicmarch
     | _ -> if level_num >= 0 && level_num < 60 then songs[level_num] else 0
@@ -5523,6 +5745,13 @@ let tick = (w: world*, dt: float64) ->
             // the BJ run so the player sees the death animation finish
             // (not just the first die frame freeze-framed under BJ).
             update_dying_enemies(w->lv, dt)
+        else if g->phase == game_phase.gp_death_cam then
+            // Pump the dying boss's animation frames before the phase
+            // logic inspects e->state — dc_sub_pre_fade and
+            // dc_sub_replay_hold both advance on the es_die → es_dead
+            // transition, so the tick order matters.
+            update_dying_enemies(w->lv, dt)
+            tick_death_cam(w->lv, g, w->ac, dt)
     // Phase transitions (death collapse → restart / game-over). Main loop
     // layers music switching on top of this; test mode doesn't need music
     // so it can ignore the return value.
@@ -5845,6 +6074,31 @@ let render_game_over = (rc: render_ctx*, g: game*) ->
     draw_number(rc, 220, 120, g->score, white, 1)
     draw_centered_text(rc, 140, "PRESS ANY KEY", white, 1)
 
+// Render one frame of the gp_death_cam cutscene. Normal viewport during
+// the pre-fade hold and the replay; a dissolve-to-black during fade_out
+// and fade_in (progress 0..1 from g->dc_fade); a black card with the
+// taunt text during the taunt sub-phase.
+let render_death_cam = (w: world*, vs: vswap.vswap_file*, pal: uint32[],
+                        font: font_info*) ->
+    let g = w->g
+    let rc = w->rc
+    let sub = g->dc_sub
+    if sub == dc_sub_taunt then
+        // Fully black viewport (dc_fade is 1.0 here) with the taunt text.
+        // Y position roughly matches the original's upper-third placement;
+        // HUD stays visible underneath.
+        dissolve_stipple(rc, 0x00000000u32, 1.0)
+        let yellow = 0xFFFFD700u32
+        draw_font_centered(rc, font, 45, "LET'S SEE YOU IN HELL!", yellow)
+    else
+        render_walls(w->lv, rc, g, vs, pal)
+        build_billboards(w->lv, rc, g, vs->sprite_start)
+        render_billboards(rc, g, vs, pal)
+        render_weapon(rc, vs, pal, g)
+        // dc_fade is 0 during pre-fade and replay, so dissolve_stipple is
+        // a no-op there (it early-returns on progress <= 0).
+        dissolve_stipple(rc, 0x00000000u32, g->dc_fade)
+
 // Per-episode victory screen (gp_episode_end): shown after the intermission
 // on level 8 (boss / finale) of each episode. Simple text screen — no
 // ENDART, no BJ art for now. Space advances to the next episode.
@@ -6110,6 +6364,10 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
         return
     | gp_victory ->
         render_final_victory(w->rc, w->font, w->g)
+        return
+    | gp_death_cam ->
+        render_death_cam(w, vs, pal, w->font)
+        render_hud(w->rc, w->vg, pal, w->g)
         return
     | _ -> void()
     render_walls(w->lv, w->rc, w->g, vs, pal)
@@ -6764,6 +7022,7 @@ let debug_dump_state = (w: world*) ->
     | gp_intermission -> "intermission"
     | gp_game_over    -> "gameover"
     | gp_bj_victory   -> "bj_victory"
+    | gp_death_cam    -> "death_cam"
     | gp_episode_end  -> "episode_end"
     | gp_victory      -> "victory"
     io.write("\n=== DEBUG DUMP ===\n", stderr)
@@ -6951,6 +7210,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         | gp_intermission -> "intermission"
         | gp_game_over    -> "gameover"
         | gp_bj_victory   -> "bj_victory"
+        | gp_death_cam    -> "death_cam"
         | gp_episode_end  -> "episode_end"
         | gp_victory      -> "victory"
         let par = if g->level_num < 60 then par_times[g->level_num] else 0
@@ -7033,6 +7293,12 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
             // hold, but tests skip to the end so scripted sequences don't
             // need to pad with wait:200.
             enter_episode_end(g)
+        else if g->phase == game_phase.gp_death_cam then
+            // Death-cam collapses to the intermission tally screen, same
+            // as a natural dc_sub_done → enter_intermission transition.
+            // Tests still need to `advance` once more to reach
+            // gp_episode_end on boss maps.
+            enter_intermission(g)
         else if g->phase == game_phase.gp_episode_end then
             advance_next_episode(w, w->ac->vs)
         else if g->phase == game_phase.gp_victory then
@@ -7150,7 +7416,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
             if n < 0 || n >= w->lv->num_enemies then bad("enemy index out of range")
             else
                 let e = &w->lv->enemies[n]
-                damage_enemy(w->lv, g, w->ac, e, e->hp + 1, w->ac->vs->sprite_start)
+                damage_enemy(w->lv, g, w->ac, e, n, e->hp + 1, w->ac->vs->sprite_start)
         | none -> bad("integer enemy index")
     else if text.starts_with(arg, "setphase:") then
         // Force a phase transition for test-mode screenshot coverage.
@@ -7187,6 +7453,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         | gp_intermission -> "intermission"
         | gp_game_over    -> "gameover"
         | gp_bj_victory   -> "bj_victory"
+        | gp_death_cam    -> "death_cam"
         | gp_episode_end  -> "episode_end"
         | gp_victory      -> "victory"
         io.write("phase=%s{phase_s} timer=%6.3f{g->phase_timer} lives=%d{g->lives}\n", stdout)
@@ -7480,6 +7747,8 @@ let main = (args: str[]) ->
         bj_dir = dir_nodir, bj_distance = 0.0, bj_run_tiles_left = 0,
         bj_anim_frame = 0, bj_anim_timer = 0.0,
         bj_phase = 0, bj_yelled = false,
+        dc_sub = 0, dc_timer = 0.0, dc_boss_idx = -1,
+        dc_kill_x = 0.0, dc_kill_y = 0.0, dc_fade = 0.0,
         phase = game_phase.gp_title, phase_timer = 0.0,
         damage_flash_timer = 0.0, respawn_fade_timer = 0.0,
         get_psyched_timer = 0.0, got_gatling_timer = 0.0,
