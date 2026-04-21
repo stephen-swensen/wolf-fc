@@ -432,8 +432,8 @@ struct game =
     menu_sel: int32
     menu_level: int32
 
-    // Music on/off — togglable from the main menu "SOUND" entry and by
-    // the M key in-game. Interactive loop inspects this when filling audio.
+    // Music on/off — togglable from the main menu "SOUND" entry.
+    // Interactive loop inspects this when filling audio.
     music_on: bool
 
     // User requested quit (main menu's QUIT entry). Main loop reads this
@@ -7468,8 +7468,14 @@ let main = (args: str[]) ->
                 // clears it, so the gatling fires on the first frame of the
                 // next level. Checked per-branch below.
                 let is_key_repeat = event.key.repeat != 0u8
-                // F11 fullscreen toggle always works (even from menu/pause).
-                if k == sdl2.key_f11 then
+                // Fullscreen toggle — always works (even from menu / pause).
+                // F11 is our own shortcut; Alt+Enter matches the original
+                // SDL port. Either Alt modifier counts (KMOD_ALT = LALT |
+                // RALT = 0x0300). Alt+Enter `continue`s past the phase
+                // match so the menu doesn't also confirm on the same press.
+                let is_alt_enter = k == sdl2.key_return
+                    && (event.key.keysym.mod & 0x0300u16) != 0u16
+                if (k == sdl2.key_f11 || is_alt_enter) && !is_key_repeat then
                     fullscreen = !fullscreen
                     if fullscreen then
                         let mut db = sdl2.rect { x = 0, y = 0, w = 0, h = 0 }
@@ -7482,6 +7488,7 @@ let main = (args: str[]) ->
                         sdl2.restore_window(win)
                         sdl2.maximize_window(win)
                     sdl2.set_logical_size(ren, screen_w, actual_h)
+                    if is_alt_enter then continue
                 // Per-phase dispatch for everything else.
                 match g->phase with
                 | gp_title ->
@@ -7667,20 +7674,11 @@ let main = (args: str[]) ->
                         if k == sdl2.key_2 then g->weapon = 1
                         if k == sdl2.key_3 then g->weapon = 2
                         if k == sdl2.key_4 then g->weapon = 3
-                        if k == sdl2.key_m then
-                            // Also fires as part of the M+L+I cheat chord:
-                            // don't toggle music if L and I are already
-                            // held (the user is finishing the chord, not
-                            // toggling audio). Chord detection itself runs
-                            // per-frame in check_cheat_chords.
-                            g->key_m_held = true
-                            if !(g->key_l_held && g->key_i_held) then
-                                music_on = !music_on
-                                g->music_on = music_on
-                                if !music_on && audio_dev > 0u32 then
-                                    sdl2.clear_audio(audio_dev)
-                        // Cheat-chord held-flags. L/I/B/A/T have no other
-                        // in-game action, so just raise the held flag.
+                        // Cheat-chord held-flags. M/L/I/B/A/T have no other
+                        // in-game action (M used to toggle music but that
+                        // clashed with the MLI chord; use the main menu's
+                        // SOUND entry to toggle music now).
+                        if k == sdl2.key_m then g->key_m_held = true
                         if k == sdl2.key_l then g->key_l_held = true
                         if k == sdl2.key_i then g->key_i_held = true
                         if k == sdl2.key_b then g->key_b_held = true

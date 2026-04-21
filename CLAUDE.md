@@ -147,7 +147,7 @@ All project modules are declared at the top level (no namespaces), so they're ac
   - HUD renderer with 3x5 bitmap digit font
   - `upscale_2x` — pixel-doubles 320x200 → 640x400 for the SDL texture
   - Display pipeline: 640x400 texture + `SDL_RenderSetLogicalSize(640, 480)` for 4:3 (matching wolf4sdl)
-  - Classic Wolf3D input (arrows, alt-strafe, shift-run, space-open, ctrl-fire, F11-fullscreen, s-screenshot, m-music toggle, 1-4 weapon select, Esc-quit)
+  - Classic Wolf3D input (arrows, alt-strafe, shift-run, space-open, ctrl-fire, F11-fullscreen, s-screenshot, 1-4 weapon select, Esc-quit). Music is toggled from the main menu's SOUND entry (no longer an in-game M key — M is part of the MLI cheat chord).
 
 ## Key Data Formats
 

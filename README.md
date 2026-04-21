@@ -73,9 +73,8 @@ Classic Wolfenstein 3D controls:
 | Left Ctrl | Fire weapon |
 | Space | Use / open doors / activate elevator / push wall |
 | 1 – 4 | Select weapon (knife / pistol / machine gun / chain gun) |
-| M | Toggle music |
 | S | Save screenshot to `~/.wolf-fc/screenshots/ss_NNN.png` |
-| F11 | Toggle fullscreen |
+| F11 or Alt + Enter | Toggle fullscreen |
 | Escape | Quit |
 
 ### Secret cheat codes

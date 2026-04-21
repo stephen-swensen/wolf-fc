@@ -154,6 +154,7 @@ module sdl2 from "SDL2/SDL.h" =
     extern struct SDL_Keysym as sdl_keysym =
         scancode: int32
         sym: int32
+        mod: uint16
     extern struct SDL_KeyboardEvent as keyboard_event =
         type: uint32
         repeat: uint8
