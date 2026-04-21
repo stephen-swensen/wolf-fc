@@ -641,7 +641,7 @@ let enemy_patrol_speed  = 0.9   // tiles/sec — patrol pace before player is sp
 let dog_chase_speed     = 3.2   // tiles/sec — dogs roughly player-run speed
 let walk_frame_time     = 0.12  // seconds per W1/W2/W3/W4 cycle frame
 let shoot_frame_time    = 0.20  // humanoid shoot-windup frame duration
-let pain_time           = 0.20  // pain flinch duration
+let pain_time           = 0.143 // pain flinch duration (10 tics @ 70Hz)
 let die_frame_time      = 0.18  // per frame during death animation
 let enemy_sight_range   = 16.0  // tiles — max LOS distance for sight check
 
@@ -3614,11 +3614,26 @@ let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, dmg: int32,
             // update_phase_transitions routes to BJ on that frame.
             g->next_level = true
     else
-        // Pain flinch (except dogs, which don't display pain frames).
-        e->state = enemy_state.es_pain
-        e->anim_frame = 0
-        e->anim_timer = pain_time
-        e->dir = dir_nodir
+        // Put non-active actors into combat mode before anything else (mirrors
+        // wolf4sdl DamageActor: FirstSighting is called up front regardless of
+        // kind). For regular enemies this chase state is about to be overridden
+        // by the pain transition below, but for bosses / dogs it's the only
+        // thing that wakes them on a through-the-wall or sneak-attack shot.
+        match e->state with
+        | es_stand | es_path -> wake_enemy(g, e, ac)
+        | _ -> void()
+        // Pain flinch applies to guards / officers / SS / mutants only. In the
+        // original, DamageActor's switch falls through to a no-op default for
+        // bosses and dogs — they keep their current state (chase / shoot) and
+        // continue fighting through sustained damage. That's why unloading the
+        // chain gun into Hans doesn't stun-lock him there.
+        match e->kind with
+        | ek_guard | ek_officer | ek_ss | ek_mutant ->
+            e->state = enemy_state.es_pain
+            e->anim_frame = 0
+            e->anim_timer = pain_time
+            e->dir = dir_nodir
+        | _ -> void()
 
 // Per-kind reaction delay (seconds) between first detection and actual wake.
 // Mirrors wolf4sdl SightPlayer's temp2 switch (wl_state.cpp:1500): values are
