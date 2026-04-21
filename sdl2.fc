@@ -54,10 +54,14 @@ module sdl2 from "SDL2/SDL.h" =
     extern SDLK_z as key_z: int32
     extern SDLK_x as key_x: int32
     extern SDLK_a as key_a: int32
+    extern SDLK_b as key_b: int32
     extern SDLK_d as key_d: int32
     extern SDLK_h as key_h: int32
+    extern SDLK_i as key_i: int32
+    extern SDLK_l as key_l: int32
     extern SDLK_p as key_p: int32
     extern SDLK_c as key_c: int32
+    extern SDLK_t as key_t: int32
     extern SDLK_w as key_w: int32
     extern SDLK_F11 as key_f11: int32
     extern SDLK_s as key_s: int32

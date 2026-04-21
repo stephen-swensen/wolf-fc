@@ -263,6 +263,22 @@ struct game =
     key_ack: bool
     key_ack_handled: bool
     key_fire: bool
+    // Held-state flags for the cheat-chord keys. Unlike the main gameplay
+    // keys above (which are consumed per-frame by movement/fire), these
+    // stay true while the physical key is pressed so check_cheat_chords can
+    // detect M+L+I or B+A+T held simultaneously, regardless of press order.
+    // Only wired in the interactive loop; --test mode fires the effect via
+    // the mli / bat commands directly.
+    key_m_held: bool
+    key_l_held: bool
+    key_i_held: bool
+    key_b_held: bool
+    key_a_held: bool
+    key_t_held: bool
+    // Edge latches so a held chord fires the cheat once. Cleared when any
+    // of the three chord keys is released, re-arming the next press.
+    cheat_mli_latched: bool
+    cheat_bat_latched: bool
     // Wall-scrape sound cooldown (seconds). Prevents HITWALLSND from firing
     // every frame while the player grinds along a wall. Counts down in
     // update_player; a new bump is only announced when it hits 0.
@@ -1260,29 +1276,88 @@ let compute_level_bonus = (g: game*) ->
 // stack up during a fight.
 let show_message = (g: game*, text: const str) ->
     let mut n = (int32) text.len
-    if n > 63 then n = 63
+    if n > 255 then n = 255
     for i in 0..n
         g->msg_buf[i] = text[i]
     g->msg_len = n
     g->msg_timer = 3.0
 
-// Draw the banner message if active. Fades out in the last 0.5 s.
+// Draw the banner message if active. Fades out in the last 0.5 s. Newlines
+// split the message into multiple centered lines stacked vertically — used
+// by the secret cheat messages to show their full original-game text.
 let render_message = (rc: render_ctx*, font: font_info*, g: game*) ->
     if g->msg_timer <= 0.0 || g->msg_len <= 0 then return
-    // Compute total width (font->width for each byte) and center above HUD.
-    let mut w = 0
-    for i in 0..g->msg_len
-        let ch = (int32) g->msg_buf[i]
-        if ch >= 0 && ch < 256 then w = w + font->width[ch]
-    let x = (game_w - w) / 2
-    let y = 4
     // Foreground color brightens/fades.
     let t = if g->msg_timer > 0.5 then 1.0 else g->msg_timer / 0.5
     let bright = (uint32) (255.0 * t)
     let color = 0xFF000000u32 | (bright << 16) | (bright << 8) | bright
-    let mut cx = x
-    for i in 0..g->msg_len
-        cx = cx + draw_font_char(rc, font, cx, y, (int32) g->msg_buf[i], color)
+    // Walk msg_buf one line at a time, breaking on '\n'. Empty lines (from
+    // "\n\n" in the source text) render as a blank vertical gap.
+    let line_h = font->height + 1
+    let mut y = 4
+    let mut line_start = 0
+    let mut i = 0
+    loop
+        let at_end = i >= g->msg_len
+        let is_nl = !at_end && g->msg_buf[i] == 10u8
+        if at_end || is_nl then
+            // Measure + render the slice [line_start .. i).
+            let mut w = 0
+            for j in line_start..i
+                let ch = (int32) g->msg_buf[j]
+                if ch >= 0 && ch < 256 then w = w + font->width[ch]
+            let mut cx = (game_w - w) / 2
+            for j in line_start..i
+                cx = cx + draw_font_char(rc, font, cx, y, (int32) g->msg_buf[j], color)
+            y = y + line_h
+            line_start = i + 1
+            if at_end then break
+        i = i + 1
+
+// ------------------------------------------------------------
+// Cheat chords (held-key secret codes)
+// ------------------------------------------------------------
+// The original game shipped two chord cheats: M+L+I to refill the player
+// with full health / ammo / keys / chaingun, and B+A+T as a flavor-message
+// easter egg (a plug for Commander Keen in the original). Both stay active
+// in any build — they are not gated by a debug flag.
+
+// Cheat pop-ups hang around longer than regular pickup banners so the
+// multi-line original text can be read. The original game froze play and
+// waited for a keypress; we keep gameplay running and just hold the banner
+// on-screen for ~6 seconds before the 0.5 s fade.
+let cheat_msg_time = 6.0
+
+let apply_mli_cheat = (g: game*) ->
+    g->health = 100
+    g->ammo = 99
+    g->has_gold_key = true
+    g->has_silver_key = true
+    g->weapon = 3
+    g->best_weapon = 3
+    g->score = 0
+    show_message(g, "You now have 100% Health,\n99 Ammo and both Keys!\n\nNote that you have basically\neliminated your chances of\ngetting a high score!")
+    g->msg_timer = cheat_msg_time
+
+let apply_bat_cheat = (g: game*) ->
+    show_message(g, "Commander Keen is also\navailable from Apogee, but\nthen, you already know\nthat - right, Cheatmeister?!")
+    g->msg_timer = cheat_msg_time
+
+// Called per-frame from the interactive game loop while gp_playing. Checks
+// whether all three keys of each chord are held simultaneously; fires the
+// effect once per chord-press (latched until at least one of the three keys
+// is released, so a held combo doesn't retrigger every frame).
+let check_cheat_chords = (g: game*) ->
+    let mli_all = g->key_m_held && g->key_l_held && g->key_i_held
+    if mli_all && !g->cheat_mli_latched then
+        apply_mli_cheat(g)
+        g->cheat_mli_latched = true
+    if !mli_all then g->cheat_mli_latched = false
+    let bat_all = g->key_b_held && g->key_a_held && g->key_t_held
+    if bat_all && !g->cheat_bat_latched then
+        apply_bat_cheat(g)
+        g->cheat_bat_latched = true
+    if !bat_all then g->cheat_bat_latched = false
 
 // BJ victory cutscene tuning. Speeds come from wolf4sdl's BJRUNSPEED /
 // BJJUMPSPEED fixed-point-per-tic constants at 70 Hz: 2048*70/0x10000 ≈
@@ -6649,6 +6724,13 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
     else if arg == "givekeys" then
         g->has_gold_key = true
         g->has_silver_key = true
+    else if arg == "mli" then
+        // Direct-fire the M+L+I cheat effect. In interactive play this is
+        // triggered by holding those three keys; test mode has no keyboard,
+        // so scripted scenarios invoke the effect through this command.
+        apply_mli_cheat(g)
+    else if arg == "bat" then
+        apply_bat_cheat(g)
     else if arg == "psyched" then
         // Force the GET PSYCHED overlay timer so a following ss: captures
         // the full-screen load graphic. Bypasses the normal test_mode gate
@@ -7181,6 +7263,9 @@ let main = (args: str[]) ->
         key_shift = false, key_alt = false,
         key_ctrl = false, key_space = false, key_space_handled = false,
         key_ack = false, key_ack_handled = false, key_fire = false,
+        key_m_held = false, key_l_held = false, key_i_held = false,
+        key_b_held = false, key_a_held = false, key_t_held = false,
+        cheat_mli_latched = false, cheat_bat_latched = false,
         wall_hit_cooldown = 0.0,
         health = 100, ammo = 8, score = 0, lives = 3,
         level_num = 0,
@@ -7212,7 +7297,7 @@ let main = (args: str[]) ->
         menu_sel = 0, menu_level = menu_main,
         music_on = true, want_quit = false,
         has_active_game = false,
-        msg_buf = alloc(uint8[64] {})!,
+        msg_buf = alloc(uint8[256] {})!,
         msg_len = 0, msg_timer = 0.0,
         rng_enemy = random.pcg_random.make_with_channel(rng_seed, rng_channel_enemy),
         rng_face = random.pcg_random.make_with_channel(rng_seed, rng_channel_face)
@@ -7583,10 +7668,24 @@ let main = (args: str[]) ->
                         if k == sdl2.key_3 then g->weapon = 2
                         if k == sdl2.key_4 then g->weapon = 3
                         if k == sdl2.key_m then
-                            music_on = !music_on
-                            g->music_on = music_on
-                            if !music_on && audio_dev > 0u32 then
-                                sdl2.clear_audio(audio_dev)
+                            // Also fires as part of the M+L+I cheat chord:
+                            // don't toggle music if L and I are already
+                            // held (the user is finishing the chord, not
+                            // toggling audio). Chord detection itself runs
+                            // per-frame in check_cheat_chords.
+                            g->key_m_held = true
+                            if !(g->key_l_held && g->key_i_held) then
+                                music_on = !music_on
+                                g->music_on = music_on
+                                if !music_on && audio_dev > 0u32 then
+                                    sdl2.clear_audio(audio_dev)
+                        // Cheat-chord held-flags. L/I/B/A/T have no other
+                        // in-game action, so just raise the held flag.
+                        if k == sdl2.key_l then g->key_l_held = true
+                        if k == sdl2.key_i then g->key_i_held = true
+                        if k == sdl2.key_b then g->key_b_held = true
+                        if k == sdl2.key_a then g->key_a_held = true
+                        if k == sdl2.key_t then g->key_t_held = true
                         if k == sdl2.key_s then take_screenshot(w, vs, pal)
                         if k == sdl2.key_d then debug_dump_state(w)
                         // IN_Ack: any keydown during an acknowledge screen
@@ -7609,12 +7708,26 @@ let main = (args: str[]) ->
                 if k == sdl2.key_lshift then g->key_shift = false
                 if k == sdl2.key_lalt then g->key_alt = false
                 if k == sdl2.key_lctrl then g->key_fire = false
+                // Cheat-chord held-flags (see keydown side).
+                if k == sdl2.key_m then g->key_m_held = false
+                if k == sdl2.key_l then g->key_l_held = false
+                if k == sdl2.key_i then g->key_i_held = false
+                if k == sdl2.key_b then g->key_b_held = false
+                if k == sdl2.key_a then g->key_a_held = false
+                if k == sdl2.key_t then g->key_t_held = false
                 if k == sdl2.key_space then
                     g->key_space = false
                     g->key_space_handled = false
                 // Any keyup rearms the IN_Ack latch so the next press can fire.
                 g->key_ack = false
                 g->key_ack_handled = false
+
+        // Cheat chords (M+L+I, B+A+T). Only fires while actually playing,
+        // so holding the letters on menus / intermission / death screens
+        // is a no-op. Runs before tick so the refilled health/ammo/weapon
+        // is visible the same frame.
+        if g->phase == game_phase.gp_playing then
+            check_cheat_chords(g)
 
         // Update
         tick(w, dt)

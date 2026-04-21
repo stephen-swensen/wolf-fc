@@ -78,6 +78,15 @@ Classic Wolfenstein 3D controls:
 | F11 | Toggle fullscreen |
 | Escape | Quit |
 
+### Secret cheat codes
+
+As in the original, two chord cheats work during gameplay — hold all three keys at once:
+
+| Chord | Effect |
+|-------|--------|
+| M + L + I | Refill: 100 health, 99 ammo, both keys, chaingun; score zeroed |
+| B + A + T | Flavor message only (no gameplay effect) |
+
 > **Note:** On Windows, rapid Ctrl presses trigger the Sticky Keys accessibility popup. If this gets in your way during combat, turn off Sticky Keys in Settings → Accessibility → Keyboard.
 
 ## Headless Test Mode
@@ -116,6 +125,8 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `setweapon:N` | Select weapon slot 0-3 (knife/pistol/MG/chain) |
 | `fire` | Press fire once (1 tick); hitscans enemies, decrements ammo, plays weapon SFX |
 | `givekeys` | Grant gold and silver keys (debug) |
+| `mli` | Fire the M+L+I cheat effect (refill + chaingun + score reset) |
+| `bat` | Fire the B+A+T flavor-message cheat |
 | `psyched` | Force the "GET PSYCHED!" full-screen load overlay timer (debug — bypasses the test-mode gate so `ss:` can capture it) |
 | `gotgatling` | Force the GOTGATLINGPIC face-cell swap timer (debug — paints over the BJ face slot in render_hud for the duration) |
 | `facetile` | Print the tile the player is facing and the `next_level` flag (debug) |

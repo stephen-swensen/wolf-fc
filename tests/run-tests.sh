@@ -444,6 +444,25 @@ assert_contains "msg:cross-pickup-awards-100" \
     "goto:7,14 state" \
     "score=100"
 
+section "cheats"
+# MLI chord: full health / 99 ammo / both keys / gatling, score zeroed.
+assert_contains "cheat:mli-full-ammo" \
+    "mli state" \
+    "ammo=99"
+assert_contains "cheat:mli-gatling" \
+    "mli state" \
+    "weapon=3 best=3"
+assert_contains "cheat:mli-gives-both-keys" \
+    "mli state" \
+    "gold=1 silver=1"
+assert_contains "cheat:mli-zeros-score" \
+    "goto:7,14 mli state" \
+    "score=0"
+# BAT chord is flavor-only: gameplay state unchanged.
+assert_contains "cheat:bat-leaves-health-unchanged" \
+    "bat state" \
+    "health=100 ammo=8"
+
 section "episode structure"
 # Episode jumping via setepisode.
 assert_contains "episode:setepisode-0-starts-e1m1" \

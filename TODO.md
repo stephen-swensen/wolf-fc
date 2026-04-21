@@ -121,6 +121,17 @@ triggers them:
 ## Current State (2026-04-17)
 
 ### Recent additions (this session, part 7)
+- Secret cheat chords (M+L+I and B+A+T) wired to the interactive loop.
+  MLI refills health/ammo/keys/chaingun and zeros score; BAT shows a
+  flavor message only. Both use the full original-game text (multi-line
+  Commander Keen plug for BAT, the 100%-health/"eliminated your high
+  score" lecture for MLI); `render_message` now wraps on '\n' and the
+  banner buffer grew to 256 bytes. Cheat banners hold 6 s before the
+  fade. No sound — matches the original. Latched so holding the chord
+  fires the effect once. Test-mode commands `mli` / `bat` invoke the
+  effects directly (no keyboard in headless mode). Music-toggle on M is
+  suppressed when L+I are already held so finishing the MLI chord
+  doesn't kill audio.
 - Enemy projectiles: Schabbs (needle), Giftmacher / Fat (rocket), and
   fake Hitler (flame) now fire visible, dodgeable projectiles instead of
   hitscanning. Ports wolf4sdl's `T_SchabbThrow` / `T_GiftThrow` / `T_Launch`
