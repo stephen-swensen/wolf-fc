@@ -86,6 +86,12 @@ As in the original, two chord cheats work during gameplay — hold all three key
 | M + L + I | Refill: 100 health, 99 ammo, both keys, chaingun; score zeroed |
 | B + A + T | Flavor message only (no gameplay effect) |
 
+There's also a Doom-style sequence cheat (type the letters in order, no need to hold):
+
+| Sequence | Effect |
+|----------|--------|
+| I D D Q D | Toggle god mode (silently absorbs all damage; refills health on activation) |
+
 > **Note:** On Windows, rapid Ctrl presses trigger the Sticky Keys accessibility popup. If this gets in your way during combat, turn off Sticky Keys in Settings → Accessibility → Keyboard.
 
 ## Headless Test Mode
@@ -126,12 +132,15 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `givekeys` | Grant gold and silver keys (debug) |
 | `mli` | Fire the M+L+I cheat effect (refill + chaingun + score reset) |
 | `bat` | Fire the B+A+T flavor-message cheat |
+| `iddqd` | Toggle Doom-style god mode (also refills health on activation) |
 | `psyched` | Force the "GET PSYCHED!" full-screen load overlay timer (debug — bypasses the test-mode gate so `ss:` can capture it) |
 | `gotgatling` | Force the GOTGATLINGPIC face-cell swap timer (debug — paints over the BJ face slot in render_hud for the duration) |
 | `facetile` | Print the tile the player is facing and the `next_level` flag (debug) |
 | `enemies` | Print totals per enemy kind and per state |
 | `enemylist` | Print each enemy: index, tile, kind, state, direction, hp, area number |
+| `killenemy:N` | Overkill enemy at index N via `damage_enemy` (drops, score, kill counter all fire as if shot) |
 | `arrows` | Print every plane-1 ICONARROWS path-marker tile (`x,y` and dir 0..7) |
+| `exittiles` | Print every plane-1 EXITTILE marker (`x,y`) on the current map — boss-map exits that fire the BJ-victory cutscene when stepped on |
 | `setlevel:N` | Load level N (0..59) and enter gp_playing |
 | `setepisode:N` | Jump to the start of episode N (0..5) — level=N*10 |
 | `setdifficulty:N` | Re-apply difficulty N (0..3) to the current level, re-running spawn filtering |

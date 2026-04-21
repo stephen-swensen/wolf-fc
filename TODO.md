@@ -161,19 +161,26 @@ triggers them:
   `LevelCompleted` else-branch. The ticker is parked at stage 4 and the
   score is bumped inside `enter_intermission` so the advance / next-level
   wiring stays unchanged.
-- BJ victory cutscene: killing a boss on map 8 of an episode now enters
-  a new `gp_bj_victory` phase (replacing the regular intermission) where
-  BJ runs north for 6 tiles, jumps 4 frames, yells YEAHSND on frame 2,
-  then auto-advances to the episode-end screen. Ports wolf4sdl's
-  `SpawnBJVictory` + `T_BJRun`/`T_BJJump`/`T_BJYell` → `ex_victorious`
-  chain using an inline actor on `game` (bj_x/y/anim/phase) rather than
-  a full enemy slot. Sprites from `SPR_BJ_W1..W4 / JUMP1..4` (sprite_start
-  + 408..415). Music routes to URAHERO_MUS for the cutscene and the
-  following episode-end screen. `advance` test command skips the
-  cutscene directly to episode_end for scripted tests.
+- BJ victory cutscene: stepping onto an EXITTILE (plane-1 tile 99,
+  marked into `lv->exit_tiles` at level build) on a boss map enters
+  a new `gp_bj_victory` phase where BJ spawns at the player and follows
+  the level's path-arrow tiles for 6 tiles via a port of wolf4sdl's
+  `SelectPathDir`, then jumps 4 frames, yells YEAHSND on frame 2, and
+  auto-advances to the episode-end screen. Boss kill itself is now a
+  regular enemy death (drops a gold key, plays the death animation,
+  no level transition); the player has to grab the key and walk past
+  the gold-key door to reach the EXITTILE — same flow as the original
+  game. `update_dying_enemies` keeps the boss corpse animating during
+  the cutscene's freeze so it lands on its `dead` pose instead of
+  freeze-framing on the first die frame. Sprites from `SPR_BJ_W1..W4
+  / JUMP1..4` (sprite_start + 408..415). Music routes to URAHERO_MUS
+  for the cutscene and the following episode-end screen. `advance`
+  test command skips the cutscene directly to episode_end for
+  scripted tests; `endepisode` synthesizes the BJ trigger on a boss
+  map by setting `next_level=true` (routed by update_phase_transitions).
 
 ### Recent additions (this session, part 6)
-- Pre-intermission wait: pulling the elevator switch (or killing a boss) now
+- Pre-intermission wait: pulling the elevator switch now
   freezes gameplay for `elevator_wait_time` (1.0s) while LEVELDONESND plays
   out in the world before the tally screen pops. `g->next_level_delay` ticks
   down in the gp_playing branch of `tick` and `update_phase_transitions` only
@@ -198,7 +205,7 @@ triggers them:
   guard that old intermission code relied on is no longer needed: keydown
   events themselves latch the handled flag on the first usage.
 - Pre-intermission fade-to-black: during the `elevator_wait_time` freeze
-  (set when the switch is pulled or a boss dies), `render_frame` now applies
+  (set when the elevator switch is pulled), `render_frame` now applies
   `viewport_tint_full` with `alpha = 1 - next_level_delay / elevator_wait_
   time`, so the screen darkens linearly toward black over the second before
   the tally screen appears. Gives immediate visual feedback that the press

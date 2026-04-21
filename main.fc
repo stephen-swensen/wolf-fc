@@ -108,9 +108,9 @@ let get_psyched_pic_h = 48
 let got_gatling_time = 2.2
 
 // Seconds to hold gameplay frozen after the player pulls the elevator switch
-// (or a boss dies) before the intermission screen appears. Stands in for the
-// original game's fade-out/fade-in between Cmd_Use and LevelCompleted — lets
-// LEVELDONESND play out in the world before the score tally takes over.
+// before the intermission screen appears. Stands in for the original game's
+// fade-out/fade-in between Cmd_Use and LevelCompleted — lets LEVELDONESND
+// play out in the world before the score tally takes over.
 let elevator_wait_time = 1.0
 
 // Per-level music: songs[episode * 10 + level] = music enum index.
@@ -197,9 +197,9 @@ union game_phase =
     | gp_dying
     | gp_intermission
     | gp_game_over
-    | gp_bj_victory    // BJ runs forward + jumps + yells after an episode
-                       // boss kill. Replaces the regular intermission for
-                       // boss maps (wolf4sdl's SpawnBJVictory → ex_victorious).
+    | gp_bj_victory    // BJ runs forward + jumps + yells after the player
+                       // steps on a boss-map EXITTILE (wolf4sdl's
+                       // VictoryTile → SpawnBJVictory → ex_victorious).
     | gp_episode_end   // per-episode victory screen (after boss level 8)
     | gp_victory       // all six episodes cleared; space returns to main menu
 
@@ -279,6 +279,14 @@ struct game =
     // of the three chord keys is released, re-arming the next press.
     cheat_mli_latched: bool
     cheat_bat_latched: bool
+    // Doom-style IDDQD god-mode cheat. `iddqd_progress` is the index of
+    // the next expected key in the I-D-D-Q-D sequence (0..4); reaching 5
+    // toggles `god_mode` and resets. Detected on letter-key keydown
+    // events (no key-repeat) so a held key can't auto-advance the
+    // state machine. While `god_mode` is true, damage_player early-
+    // returns so the player can't lose health (or die).
+    iddqd_progress: int32
+    god_mode: bool
     // Wall-scrape sound cooldown (seconds). Prevents HITWALLSND from firing
     // every frame while the player grinds along a wall. Counts down in
     // update_player; a new bump is only announced when it hits 0.
@@ -294,8 +302,8 @@ struct game =
     has_silver_key: bool
     next_level: bool
     // Counts down in gp_playing while `next_level` is latched; when it reaches
-    // 0 the intermission phase is entered. Gives LEVELDONESND time to play in
-    // the world (elevator "ding" / boss death) before the tally screen pops.
+    // 0 the intermission phase is entered. Gives LEVELDONESND ("elevator
+    // ding") time to play in the world before the tally screen pops.
     next_level_delay: float64
     weapon: int32          // 0=knife, 1=pistol, 2=machine gun, 3=chain gun
     best_weapon: int32     // highest-tier firearm owned (pistol..chain). When
@@ -337,15 +345,19 @@ struct game =
     want_near_boss: bool
 
     // BJ victory cutscene actor state — active only during gp_bj_victory.
-    // Spawned one tile south of the player at entry; runs north for 6
-    // tiles, then jumps 4 frames with YEAHSND on frame 2. See
-    // enter_bj_victory / tick_bj_victory.
+    // Spawned at the player's position; follows path-arrow tiles
+    // (lv->path_arrows) tile-by-tile for 6 tiles, then jumps 4 frames with
+    // YEAHSND on frame 2. See enter_bj_victory / tick_bj_victory.
     bj_x: float64
     bj_y: float64
+    bj_tile_x: int32       // current tile (for path-arrow lookup)
+    bj_tile_y: int32
+    bj_dir: int32          // current heading (dir_east..dir_southeast, or dir_nodir)
+    bj_distance: float64   // tiles remaining until BJ reaches next tile center
+    bj_run_tiles_left: int32  // tiles to run before starting the jump (counts down from 6)
     bj_anim_frame: int32
     bj_anim_timer: float64
     bj_phase: int32      // 0 = running, 1 = jumping, 2 = holding final frame
-    bj_dist_run: float64 // tiles run so far
     bj_yelled: bool      // YEAHSND latch (fires on entering jump frame 1)
 
     // Phase state (death / intermission / game-over). Most of tick() skips
@@ -983,6 +995,11 @@ struct level =
     tilemap: uint8[]
     // Bitmap: which wall tiles are pushable (marker 98 in plane 1).
     pushwall_tiles: bool[]
+    // Bitmap: which tiles are EXITTILE markers (plane-1 tile 99). Stepping
+    // onto one triggers the BJ-victory cutscene (wolf4sdl VictoryTile).
+    // Boss-level maps place these behind the gold-key door so the player
+    // must kill the boss + pick up the dropped key first.
+    exit_tiles: bool[]
     // Per-tile path-arrow override for patrolling enemies (plane-1 tiles
     // 90..97 = ICONARROWS + dir). 0..7 redirects a passing patroller to that
     // dir; dir_nodir (8) means "no arrow at this tile".
@@ -1135,6 +1152,7 @@ let build_level = (lv_data: maps.level*, sprite_start: int32, difficulty: int32,
     let lv = alloc(level {
         tilemap = alloc(uint8[map_size * map_size] {})!,
         pushwall_tiles = alloc(bool[map_size * map_size] {})!,
+        exit_tiles = alloc(bool[map_size * map_size] {})!,
         path_arrows = alloc(uint8[map_size * map_size] {})!,
         sprites = alloc(sprite_obj[max_sprites] {})!,
         num_sprites = 0,
@@ -1155,6 +1173,7 @@ let build_level = (lv_data: maps.level*, sprite_start: int32, difficulty: int32,
     build_tilemap(lv, lv_data, sprite_start)
     spawn_sprites(lv, lv_data, sprite_start)
     mark_pushwalls(lv, lv_data)
+    mark_exit_tiles(lv, lv_data)
     mark_path_arrows(lv, lv_data)
     build_areas(lv, lv_data)
     spawn_enemies(lv, lv_data, difficulty, no_dogs)
@@ -1181,6 +1200,7 @@ let build_level = (lv_data: maps.level*, sprite_start: int32, difficulty: int32,
 let free_level = (lv: level*) ->
     free(lv->tilemap)
     free(lv->pushwall_tiles)
+    free(lv->exit_tiles)
     free(lv->path_arrows)
     free(lv->sprites)
     free(lv->doors)
@@ -1343,6 +1363,38 @@ let apply_bat_cheat = (g: game*) ->
     show_message(g, "Commander Keen is also\navailable from Apogee, but\nthen, you already know\nthat - right, Cheatmeister?!")
     g->msg_timer = cheat_msg_time
 
+// IDDQD — Doom-style god-mode toggle. Flips invulnerability and pops a
+// banner naming the source. Health is bumped to 100 on activation as a
+// gentle "you're whole again" cue (matches Doom's IDDQD); deactivation
+// leaves the current health alone.
+let apply_iddqd_cheat = (g: game*) ->
+    g->god_mode = !g->god_mode
+    if g->god_mode then
+        g->health = 100
+        show_message(g, "A Doom fan, eh?\n\nGod mode ON")
+    else
+        show_message(g, "A Doom fan, eh?\n\nGod mode OFF")
+    g->msg_timer = cheat_msg_time
+
+// Drive the IDDQD state machine forward on a single letter keydown.
+// Called from the SDL keydown handler (no key-repeat) and from the
+// `iddqd` test command in test mode. Sequence is I-D-D-Q-D; an
+// out-of-order key restarts progress (resets to 1 if the typed key
+// matches the I prefix, else 0) so partial overlaps like "IDIDDQD"
+// still arrive at the cheat.
+let iddqd_sequence = int32[5] {
+    sdl2.key_i, sdl2.key_d, sdl2.key_d, sdl2.key_q, sdl2.key_d
+}
+let advance_iddqd = (g: game*, k: int32) ->
+    if k != sdl2.key_i && k != sdl2.key_d && k != sdl2.key_q then return
+    if k == iddqd_sequence[g->iddqd_progress] then
+        g->iddqd_progress = g->iddqd_progress + 1
+        if g->iddqd_progress >= 5 then
+            apply_iddqd_cheat(g)
+            g->iddqd_progress = 0
+    else
+        g->iddqd_progress = if k == iddqd_sequence[0] then 1 else 0
+
 // Called per-frame from the interactive game loop while gp_playing. Checks
 // whether all three keys of each chord are held simultaneously; fires the
 // effect once per chord-press (latched until at least one of the three keys
@@ -1371,30 +1423,60 @@ let bj_jump_speed       = 0.73
 let bj_walk_frame_time  = 0.15   // avg of 12 / 8 tic run frames
 let bj_jump_frame_time  = 0.20
 let bj_final_hold_time  = 1.2
-let bj_run_distance     = 6.0    // tiles — matches wolf4sdl temp1=6
 
-// Begin the BJ victory cutscene. Invoked in place of `next_level =
-// true` when the player kills a boss on the last regular map of an
-// episode (map 8 / level_num % 10 == 8). BJ is spawned 1 tile south of
-// the player and runs north past them; we don't animate them through
-// the map's actual geometry, so collision is skipped — the actor drifts
-// through walls if the player was boxed in by one. Applies the level-
-// completion bonus before the screen change so the episode-end total
-// reflects the boss run even though the regular tally is skipped.
+// Can BJ step onto (tx, ty)? Off-map and wall tiles block; doors block
+// only when not fully open; any other tile is free (floors / floor-tagged
+// markers / dead actors). Mirrors wolf4sdl's TryWalk for the bjobj class.
+let bj_tile_passable = (lv: level*, tx: int32, ty: int32) ->
+    if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
+    else
+        let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+        if t >= 1 && t <= 63 then false
+        else if t >= 128 then lv->doors[t - 128].state == door_state.open
+        else true
+
+// Read the path arrow at BJ's current tile (if any) and snap his heading
+// to it; then probe the new tile in that direction and stop if it's
+// blocked. Exactly wolf4sdl's SelectPathDir for the bjobj actor class.
+// Distance is reset to 1 tile so the running loop advances one tile
+// before consulting the arrow table again.
+let bj_select_path_dir = (lv: level*, g: game*) ->
+    let arrow = (int32) lv->path_arrows[(int64) g->bj_tile_x * 64 + (int64) g->bj_tile_y]
+    if arrow != dir_nodir then g->bj_dir = arrow
+    g->bj_distance = 1.0
+    if g->bj_dir == dir_nodir then return
+    let nx = g->bj_tile_x + dir_dx[g->bj_dir]
+    let ny = g->bj_tile_y + dir_dy[g->bj_dir]
+    if !bj_tile_passable(lv, nx, ny) then g->bj_dir = dir_nodir
+
+// Begin the BJ victory cutscene. Invoked from update_player when the
+// player steps onto an EXITTILE (plane-1 tile 99) on a boss map; also
+// triggered synthetically by the `endepisode` test command. BJ spawns
+// at the player's world position but with his tile coordinates set one
+// south, matching wolf4sdl's SpawnBJVictory quirk — the first tick_
+// bj_victory iteration snaps him to that south-tile center and reads
+// the path arrow there to pick his heading. Applies the level-completion
+// bonus up front so the episode-end total still reflects the map clear.
 let enter_bj_victory = (g: game*) ->
     g->phase = game_phase.gp_bj_victory
     g->phase_timer = 0.0
     g->score = g->score + compute_level_bonus(g)
-    // Spawn BJ 1 tile south of the player and run him north.
     g->bj_x = g->pos_x
-    g->bj_y = g->pos_y + 1.0
+    g->bj_y = g->pos_y
+    g->bj_tile_x = (int32) g->pos_x
+    g->bj_tile_y = (int32) g->pos_y + 1
+    g->bj_dir = dir_north
+    g->bj_distance = 0.0
+    g->bj_run_tiles_left = 6
     g->bj_anim_frame = 0
     g->bj_anim_timer = bj_walk_frame_time
     g->bj_phase = 0
-    g->bj_dist_run = 0.0
     g->bj_yelled = false
-    // Freeze gameplay input. Pre-handle space so a still-held elevator
-    // press doesn't race an early episode-end transition.
+    // Clear latched pre-transition flags and pre-handle space so the
+    // EXITTILE step (or a held elevator press on a synthetic endepisode)
+    // doesn't race an early episode-end transition.
+    g->next_level = false
+    g->next_level_delay = 0.0
     g->key_up = false
     g->key_down = false
     g->key_left = false
@@ -1403,26 +1485,56 @@ let enter_bj_victory = (g: game*) ->
     g->key_space_handled = true
     g->key_ack_handled = true
 
-// Advance the BJ actor one tick. Called from tick() while in
-// gp_bj_victory. Transitions to gp_episode_end once the actor has
-// finished running, jumping, and holding the final jump frame.
-let tick_bj_victory = (g: game*, ac: audio_ctx*, dt: float64) ->
+// Advance the BJ actor one tick. Called from update_world while in
+// gp_bj_victory. During the run phase the step loop matches wolf4sdl's
+// T_BJRun: consume `move` fixed-budget, crossing tile centers along the
+// current heading and re-running bj_select_path_dir at each center to
+// pick up the next authored arrow. After bj_run_tiles_left reaches 0 BJ
+// jumps in whatever direction he was last running, then holds the final
+// frame briefly before the episode-end screen takes over.
+let tick_bj_victory = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
     g->bj_anim_timer = g->bj_anim_timer - dt
     if g->bj_phase == 0 then
-        // Running north — 4-frame walk cycle, world-space move at bj_run_speed.
-        let step = bj_run_speed * dt
-        g->bj_y = g->bj_y - step
-        g->bj_dist_run = g->bj_dist_run + step
+        // Running — step in bj_dir, snapping to each tile center along the way.
+        let mut move = bj_run_speed * dt
+        loop
+            if move <= 1e-6 then break
+            if g->bj_dir == dir_nodir then break
+            if move < g->bj_distance then
+                g->bj_x = g->bj_x + dir_vx[g->bj_dir] * move
+                g->bj_y = g->bj_y + dir_vy[g->bj_dir] * move
+                g->bj_distance = g->bj_distance - move
+                break
+            // Snap to the center of BJ's current tile, then step across to
+            // the next tile in the active direction and re-pick direction
+            // from that tile's path arrow.
+            g->bj_x = (float64) g->bj_tile_x + 0.5
+            g->bj_y = (float64) g->bj_tile_y + 0.5
+            move = move - g->bj_distance
+            g->bj_distance = 0.0
+            bj_select_path_dir(lv, g)
+            g->bj_run_tiles_left = g->bj_run_tiles_left - 1
+            if g->bj_run_tiles_left <= 0 then
+                g->bj_phase = 1
+                g->bj_anim_frame = 0
+                g->bj_anim_timer = bj_jump_frame_time
+                break
+            if g->bj_dir != dir_nodir then
+                // Advance into the next tile; ob->distance is 1 tile per
+                // wolf4sdl SelectPathDir, so we consume move against it.
+                g->bj_tile_x = g->bj_tile_x + dir_dx[g->bj_dir]
+                g->bj_tile_y = g->bj_tile_y + dir_dy[g->bj_dir]
         if g->bj_anim_timer <= 0.0 then
             g->bj_anim_frame = (g->bj_anim_frame + 1) & 3
             g->bj_anim_timer = bj_walk_frame_time
-        if g->bj_dist_run >= bj_run_distance then
-            g->bj_phase = 1
-            g->bj_anim_frame = 0
-            g->bj_anim_timer = bj_jump_frame_time
     else if g->bj_phase == 1 then
         // Jumping — 4 sequential frames, YEAHSND on entering frame 1.
-        g->bj_y = g->bj_y - bj_jump_speed * dt
+        // Move stays on BJ's last heading (north by default on a map with
+        // no arrows). Phase-advance is frame-gated, not distance-gated.
+        let jdir = if g->bj_dir == dir_nodir then dir_north else g->bj_dir
+        let jstep = bj_jump_speed * dt
+        g->bj_x = g->bj_x + dir_vx[jdir] * jstep
+        g->bj_y = g->bj_y + dir_vy[jdir] * jstep
         if g->bj_anim_timer <= 0.0 then
             let next_frame = g->bj_anim_frame + 1
             if next_frame == 1 && !g->bj_yelled then
@@ -1674,11 +1786,12 @@ let clear_gameplay_input_keys = (g: game*) ->
     g->key_space = false
     g->key_space_handled = false
     // Also reset the weapon cooldown. update_weapon doesn't run outside
-    // gp_playing, so a fire_timer left mid-cycle by the last shot before the
-    // boss died survives the whole next_level_delay → BJ → gp_episode_end
-    // freeze and then decays over the first ~86 ms of the next episode — a
-    // phantom gatling animation plus the tail of the queued digi samples
-    // sounding like a stray burst of fire at level start.
+    // gp_playing, so a fire_timer left mid-cycle by the last shot before
+    // the elevator switch (or EXITTILE step) survives the whole
+    // next_level_delay → intermission → next-level freeze and then decays
+    // over the first ~86 ms of the new map — a phantom gatling animation
+    // plus the tail of the queued digi samples sounding like a stray
+    // burst of fire at level start.
     g->fire_timer = 0.0
     g->weapon_frame = 0
 
@@ -1835,11 +1948,11 @@ let update_phase_transitions = (w: world*, vs: vswap.vswap_file*) ->
     if g->next_level && g->phase == game_phase.gp_playing
        && g->next_level_delay <= 0.0 then
         g->next_level = false
-        // Episode-boss kills on the last regular map play the BJ victory
-        // cutscene, which feeds directly into the episode-end screen and
-        // skips the tally. Every other `next_level` transition (elevator
-        // switch, secret exit, non-boss map 8) goes through the regular
-        // intermission → advance flow.
+        // Boss-map exits route through BJ victory; everything else goes
+        // through the regular intermission → advance flow. In normal
+        // play boss maps fire BJ via the EXITTILE check in update_player
+        // (which doesn't set next_level), so this branch is reached only
+        // by the synthetic `endepisode` test command on a boss map.
         if g->level_num % levels_per_episode == 8 then
             enter_bj_victory(g)
         else
@@ -3052,6 +3165,18 @@ let update_player = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
     // event next frame floods from the player's current area, not the area
     // they were in when the level loaded.
     update_player_area(lv, g)
+    // EXITTILE check (wolf4sdl Thrust's `if (mapsegs[1] == EXITTILE)` tail).
+    // Stepping onto a plane-1 tile-99 marker fires the BJ-victory cutscene
+    // immediately — no elevator-wait freeze, no fade. Boss-level maps
+    // gate this tile behind the gold-key door so you have to kill the
+    // boss + grab the dropped key first. Skipped while next_level is
+    // already latched to avoid double-triggering on the same step.
+    if !g->next_level then
+        let ptx = (int32) g->pos_x
+        let pty = (int32) g->pos_y
+        if ptx >= 0 && ptx < map_size && pty >= 0 && pty < map_size then
+            if lv->exit_tiles[(int64) ptx * 64 + (int64) pty] then
+                enter_bj_victory(g)
 
 // ============================================================
 // Item pickups — walk-over detection
@@ -3192,6 +3317,16 @@ let mark_pushwalls = (lv: level*, lv_data: maps.level*) ->
         for x in 0..map_size
             let obj = (int32) lv_data->objects[(int64) y * 64 + (int64) x]
             lv->pushwall_tiles[(int64) x * 64 + (int64) y] = obj == 98
+
+// Mark EXITTILE markers from plane-1 data. Plane-1 tile 99 is the
+// floor-level "step on me to end the level" marker that sits past the
+// gold-key door on boss maps; stepping onto one triggers the BJ-victory
+// cutscene (mirrors wolf4sdl's VictoryTile -> SpawnBJVictory).
+let mark_exit_tiles = (lv: level*, lv_data: maps.level*) ->
+    for y in 0..map_size
+        for x in 0..map_size
+            let obj = (int32) lv_data->objects[(int64) y * 64 + (int64) x]
+            lv->exit_tiles[(int64) x * 64 + (int64) y] = obj == 99
 
 // Read the raw plane-0 area number at (x,y). Returns the index into
 // area_by_player (0..num_areas-1) for floor tiles, or -1 for any tile that
@@ -3585,6 +3720,10 @@ let damage_player = (g: game*, ac: audio_ctx*, dmg: int32) ->
     match g->phase with
     | gp_playing -> void()
     | _          -> return
+    // IDDQD god mode: silently swallow damage. Intentionally no damage
+    // flash or pain sound so the cheat reads as "nothing even touched
+    // you" rather than a hit absorbed.
+    if g->god_mode then return
     g->health = g->health - dmg
     g->damage_flash_timer = damage_flash_time
     // Force the next face roll to fire on the next update_face tick so the
@@ -3674,20 +3813,14 @@ let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, dmg: int32,
     e->hp = e->hp - dmg
     e->notified = true
     if e->hp <= 0 then
-        let was_boss = kind_is_boss(e->kind)
         kill_enemy(lv, g, ac, e, sprite_start)
         g->score = g->score + score_for_kind(e->kind)
         g->kills = g->kills + 1
-        // Killing a boss ends the level immediately (wolf4sdl's
-        // LevelCompleted trigger on boss-death + elevator-reveal).
-        if was_boss then
-            g->next_level_delay = elevator_wait_time
-            show_message(g, "YOU GOT THE BOSS KEY!")
-            // Episode-boss kill (map 8 of each episode) triggers the BJ
-            // victory cutscene instead of the regular intermission. The
-            // `next_level` latch still drives the elevator-wait freeze;
-            // update_phase_transitions routes to BJ on that frame.
-            g->next_level = true
+        // Bosses don't end the level on death — they just drop a gold
+        // key (via drop_for_kind in kill_enemy) that the player carries
+        // to the EXITTILE behind the gold-key door, mirroring the
+        // original game's flow. update_player checks the EXITTILE on
+        // every move and routes the cutscene from there.
     else
         // Put non-active actors into combat mode before anything else (mirrors
         // wolf4sdl DamageActor: FirstSighting is called up front regardless of
@@ -4134,6 +4267,26 @@ let update_enemies = (w: world*, dt: float64) ->
     let sprite_start = w->ac->vs->sprite_start
     for i in 0..w->lv->num_enemies
         update_enemy(w->lv, w->g, w->ac, i, dt, sprite_start)
+
+// Animation-only pump for actors in es_die. Used during phases that
+// freeze the rest of gameplay (gp_bj_victory, the elevator pre-tally
+// freeze) so a boss dying at the tail end of a fight still plays its
+// full die-frame cascade and lands on the dead-pose sprite instead of
+// staying stuck on its first die frame.
+let update_dying_enemies = (lv: level*, dt: float64) ->
+    for i in 0..lv->num_enemies
+        let e = &lv->enemies[i]
+        match e->state with
+        | es_die ->
+            e->anim_timer = e->anim_timer - dt
+            if e->anim_timer <= 0.0 then
+                let sp = sprites_for_kind(e->kind)
+                e->anim_frame = e->anim_frame + 1
+                if e->anim_frame >= sp.num_die_frames then
+                    e->state = enemy_state.es_dead
+                else
+                    e->anim_timer = die_frame_time
+        | _ -> void()
 
 // ============================================================
 // Player-fire hitscan — called when Ctrl fires the weapon and there's a
@@ -5320,7 +5473,7 @@ let tick = (w: world*, dt: float64) ->
         if g->get_psyched_timer > 0.0 then
             g->get_psyched_timer = g->get_psyched_timer - dt
             if g->get_psyched_timer < 0.0 then g->get_psyched_timer = 0.0
-        // Elevator/boss-death pre-intermission wait: freeze all gameplay for
+        // Elevator-switch pre-intermission wait: freeze all gameplay for
         // `next_level_delay` seconds so LEVELDONESND plays out in the world
         // before the tally screen takes over. update_phase_transitions won't
         // enter the intermission phase until the delay has elapsed. We keep
@@ -5331,6 +5484,10 @@ let tick = (w: world*, dt: float64) ->
             if g->next_level_delay > 0.0 then
                 g->next_level_delay = g->next_level_delay - dt
                 if g->next_level_delay < 0.0 then g->next_level_delay = 0.0
+            // Even with the rest of gameplay frozen, dying actors keep
+            // animating so anything mid-die when the elevator switch
+            // fired finishes its death cascade before the tally screen.
+            update_dying_enemies(w->lv, dt)
         else
             // Wolf4sdl PlayLoop resets madenoise at the top of each frame; we
             // follow suit so noise from one tick only wakes enemies on the same
@@ -5351,7 +5508,11 @@ let tick = (w: world*, dt: float64) ->
         if g->phase == game_phase.gp_intermission then
             tick_intermission(g, w->ac, dt)
         else if g->phase == game_phase.gp_bj_victory then
-            tick_bj_victory(g, w->ac, dt)
+            tick_bj_victory(w->lv, g, w->ac, dt)
+            // Boss corpse + any other dying actors keep animating during
+            // the BJ run so the player sees the death animation finish
+            // (not just the first die frame freeze-framed under BJ).
+            update_dying_enemies(w->lv, dt)
     // Phase transitions (death collapse → restart / game-over). Main loop
     // layers music switching on top of this; test mode doesn't need music
     // so it can ignore the return value.
@@ -6731,6 +6892,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         apply_mli_cheat(g)
     else if arg == "bat" then
         apply_bat_cheat(g)
+    else if arg == "iddqd" then
+        // Trigger the IDDQD god-mode toggle directly without having to
+        // pipe the full I-D-D-Q-D sequence through the key event path.
+        apply_iddqd_cheat(g)
     else if arg == "psyched" then
         // Force the GET PSYCHED overlay timer so a following ss: captures
         // the full-screen load graphic. Bypasses the normal test_mode gate
@@ -6763,7 +6928,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         io.write("health=%d{g->health} ammo=%d{g->ammo} score=%d{g->score} lives=%d{g->lives} level=%d{g->level_num} weapon=%d{g->weapon} best=%d{g->best_weapon}\n", stdout)
         let gk = if g->has_gold_key then 1 else 0
         let sk = if g->has_silver_key then 1 else 0
-        io.write("keys: gold=%d{gk} silver=%d{sk}\n", stdout)
+        let gm = if g->god_mode then 1 else 0
+        io.write("keys: gold=%d{gk} silver=%d{sk} god=%d{gm}\n", stdout)
         void()
     else if arg == "counters" then
         // Kill / secret / treasure counters + level time / par / phase.
@@ -6965,6 +7131,17 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         g->phase = game_phase.gp_dying
         g->phase_timer = 0.0
         trigger_sound(snd_death_1, w->ac)
+    else if text.starts_with(arg, "killenemy:") then
+        // Instant-kill enemy by index (matches enemylist's [N] order).
+        // Routes through damage_enemy with an HP-clearing damage value so
+        // score / kills / drops fire the same way a real bullet would.
+        match text.parse_int32(arg[10..arg.len]) with
+        | some(n) ->
+            if n < 0 || n >= w->lv->num_enemies then bad("enemy index out of range")
+            else
+                let e = &w->lv->enemies[n]
+                damage_enemy(w->lv, g, w->ac, e, e->hp + 1, w->ac->vs->sprite_start)
+        | none -> bad("integer enemy index")
     else if text.starts_with(arg, "setphase:") then
         // Force a phase transition for test-mode screenshot coverage.
         let p = arg[9..arg.len]
@@ -7124,6 +7301,18 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
             let area = (int32) w->lv->tile_areas[(int64) e.tile_x * 64 + (int64) e.tile_y]
             io.write("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp} area=%d{area}\n", stdout)
         void()
+    else if arg == "exittiles" then
+        // List every EXITTILE marker (plane-1 tile 99) on the current map.
+        // Boss-level maps place exactly one of these behind the gold-key
+        // door; stepping onto it triggers the BJ-victory cutscene.
+        let mut count = 0
+        for y in 0..map_size
+            for x in 0..map_size
+                if w->lv->exit_tiles[(int64) x * 64 + (int64) y] then
+                    io.write("exit: %d{x},%d{y}\n", stdout)
+                    count = count + 1
+        io.write("exittiles: count=%d{count}\n", stdout)
+        void()
     else if arg == "enemies" then
         // Summary: counts by kind and by state, for regression checks.
         // Buckets: 0=guard, 1=officer, 2=ss, 3=dog, 4=mutant, 5=boss, 6=ghost.
@@ -7266,6 +7455,7 @@ let main = (args: str[]) ->
         key_m_held = false, key_l_held = false, key_i_held = false,
         key_b_held = false, key_a_held = false, key_t_held = false,
         cheat_mli_latched = false, cheat_bat_latched = false,
+        iddqd_progress = 0, god_mode = false,
         wall_hit_cooldown = 0.0,
         health = 100, ammo = 8, score = 0, lives = 3,
         level_num = 0,
@@ -7275,8 +7465,11 @@ let main = (args: str[]) ->
         fire_timer = 0.0, weapon_frame = 0,
         face_frame = 0, face_count = 0.0,
         area_number = -1, made_noise = false, player_running = false, want_near_boss = false,
-        bj_x = 0.0, bj_y = 0.0, bj_anim_frame = 0, bj_anim_timer = 0.0,
-        bj_phase = 0, bj_dist_run = 0.0, bj_yelled = false,
+        bj_x = 0.0, bj_y = 0.0,
+        bj_tile_x = 0, bj_tile_y = 0,
+        bj_dir = dir_nodir, bj_distance = 0.0, bj_run_tiles_left = 0,
+        bj_anim_frame = 0, bj_anim_timer = 0.0,
+        bj_phase = 0, bj_yelled = false,
         phase = game_phase.gp_title, phase_timer = 0.0,
         damage_flash_timer = 0.0, respawn_fade_timer = 0.0,
         get_psyched_timer = 0.0, got_gatling_timer = 0.0,
@@ -7684,6 +7877,12 @@ let main = (args: str[]) ->
                         if k == sdl2.key_b then g->key_b_held = true
                         if k == sdl2.key_a then g->key_a_held = true
                         if k == sdl2.key_t then g->key_t_held = true
+                        // IDDQD sequence — only progresses while in-game,
+                        // matching how the chord cheats are gated. Held
+                        // keys can't auto-advance because we're already
+                        // inside the !is_key_repeat branch.
+                        if g->phase == game_phase.gp_playing then
+                            advance_iddqd(g, k)
                         if k == sdl2.key_s then take_screenshot(w, vs, pal)
                         if k == sdl2.key_d then debug_dump_state(w)
                         // IN_Ack: any keydown during an acknowledge screen

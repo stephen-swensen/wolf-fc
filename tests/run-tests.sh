@@ -377,6 +377,33 @@ assert_contains "boss:hitler-on-e3m9"    "setlevel:28 enemylist" "kind=hitler"
 assert_contains "boss:giftmacher-on-e4m9" "setlevel:38 enemylist" "kind=gift"
 assert_contains "boss:gretel-on-e5m9"    "setlevel:48 enemylist" "kind=gretel"
 assert_contains "boss:fat-face-on-e6m9"  "setlevel:58 enemylist" "kind=fat"
+# killenemy:N runs damage_enemy with overkill damage; verifies that a
+# boss kill no longer immediately ends the level (the original game
+# requires the player to walk onto the EXITTILE behind the gold-key
+# door first). Boss enters es_die, world keeps ticking, phase stays
+# playing, gold key drops in the corpse tile.
+assert_contains "boss:kill-doesnt-end-level" \
+    "setlevel:8 killenemy:0 wait:30 phase" \
+    "phase=playing"
+assert_contains "boss:kill-completes-die-animation" \
+    "setlevel:8 killenemy:0 wait:30 enemylist" \
+    "kind=hans state=dead"
+# E1M9's three EXITTILE markers (plane-1 tile 99) sit at y=7 behind the
+# gold-key door; stepping onto one fires the BJ-victory cutscene
+# directly without the elevator-wait freeze.
+assert_contains "exittile:e1m9-has-three-exit-tiles" \
+    "setlevel:8 exittiles" \
+    "exittiles: count=3"
+assert_contains "exittile:walking-onto-it-fires-bj-victory" \
+    "setlevel:8 goto:34,8 fwd:50 phase" \
+    "phase=bj_victory"
+# Boss kill before the EXITTILE walk: boss is fully `dead` (final pose)
+# by the time the cutscene starts, even when the kill happens just
+# before stepping onto the tile — update_dying_enemies pumps the die
+# frames during the cutscene so the corpse doesn't freeze on frame 1.
+assert_contains "exittile:bj-cutscene-corpse-finishes-dying" \
+    "setlevel:8 killenemy:0 goto:34,8 fwd:50 wait:60 enemylist" \
+    "kind=hans state=dead"
 
 section "enemy projectiles"
 # Fake Hitler on E3M9 unloads a flame salvo down the corridor west of him.
@@ -459,6 +486,23 @@ assert_contains "cheat:mli-zeros-score" \
     "goto:7,14 mli state" \
     "score=0"
 # BAT chord is flavor-only: gameplay state unchanged.
+# IDDQD god-mode toggle: flips an in-game flag; while on, damage_player
+# is a no-op so projectile / hitscan damage is silently swallowed.
+assert_contains "cheat:iddqd-flips-god-mode-on" \
+    "iddqd state" \
+    "god=1"
+assert_contains "cheat:iddqd-toggles-off" \
+    "iddqd iddqd state" \
+    "god=0"
+assert_contains "cheat:iddqd-restores-health-on-activation" \
+    "sethp:5 iddqd state" \
+    "health=100"
+# Schabbs needle scenario from the projectiles section: at wait:20 the
+# needle has connected and HP is normally <= 80. With god mode armed
+# beforehand the hit is silently absorbed.
+assert_contains "cheat:iddqd-blocks-projectile-damage" \
+    "setlevel:18 iddqd goto:31,17 wait:25 state" \
+    "health=100"
 assert_contains "cheat:bat-leaves-health-unchanged" \
     "bat state" \
     "health=100 ammo=8"
