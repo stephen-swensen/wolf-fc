@@ -1607,23 +1607,23 @@ let tick_bj_victory = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
 // Sub-phase codes for g->dc_sub.
 let dc_sub_pre_fade    = 0   // hold on final death frame (post-animation)
 let dc_sub_fade_out    = 1   // dissolve viewport to black (dc_fade 0 → 1)
-let dc_sub_taunt       = 2   // "Let's see you in hell!" card on black
+let dc_sub_taunt       = 2   // "LET'S SEE THAT AGAIN!" card on backdrop
 let dc_sub_fade_in     = 3   // camera teleported, dissolve back in (1 → 0)
-let dc_sub_replay_anim = 4   // boss reset to es_die, animation plays
-let dc_sub_replay_hold = 5   // hold on the final dead pose so it registers
-let dc_sub_done        = 6   // transient — next tick enters intermission
+let dc_sub_pre_replay  = 4   // beat of silence before animation restarts
+let dc_sub_replay_anim = 5   // boss reset to es_die, animation plays
+let dc_sub_replay_hold = 6   // hold on the final dead pose so it registers
+let dc_sub_done        = 7   // transient — next tick enters intermission
 
-// Timing (seconds). Held at the same beats as the original so the flow
-// feels right — a short pause on the corpse, a one-second dissolve each
-// way, a taunt card the player can space through within ~4 seconds.
-// The replay hold buys the player a clear look at the final dead pose
-// *after* the animation finishes; without it the scene cuts to
-// intermission the moment the corpse lands and feels clipped.
+// Timing (seconds). The pre-replay and post-replay holds keep the scene
+// from feeling clipped: without them the fade-in snaps straight into a
+// fresh death animation, and the final dead pose flashes by before the
+// intermission screen comes up.
 let dc_pre_fade_time     = 1.43
 let dc_fade_time         = 1.00
 let dc_taunt_timeout     = 4.30
+let dc_pre_replay_time   = 0.80     // corpse sits visibly before re-dying
 let dc_replay_anim_max   = 2.00     // safety cap if anim somehow sticks
-let dc_replay_hold_time  = 1.50     // dwell on the final dead frame
+let dc_replay_hold_time  = 2.50     // dwell on the final dead frame
 
 // Begin the death-cam cutscene. Records the kill position (for the camera
 // teleport later), the corpse's enemy-array index, starts the death anim,
@@ -1751,18 +1751,23 @@ let tick_death_cam = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
         g->dc_fade = 1.0 - g->dc_timer / dc_fade_time
         if g->dc_fade <= 0.0 then
             g->dc_fade = 0.0
-            // Now that the viewport is fully revealed, restart the death
-            // animation so the player watches the corpse die a second
-            // time in the zoomed-in frame — and replay the death scream
-            // so the audio beat lands on the new animation, matching the
-            // original's A_DeathScream at the start of the death-cam's
-            // re-entered die-cascade.
+            g->dc_sub = dc_sub_pre_replay
+            g->dc_timer = 0.0
+    else if sub == dc_sub_pre_replay then
+        // Hold on the corpse in its final pose for a beat before the
+        // animation replays. Roughly matches the original's 10-tic pause
+        // at the top of s_schabbdeathcam (and its siblings) that the
+        // state machine walks through before re-entering the die frames.
+        if g->dc_timer >= dc_pre_replay_time then
             if g->dc_boss_idx >= 0 && g->dc_boss_idx < lv->num_enemies then
                 let e = &lv->enemies[g->dc_boss_idx]
                 e->state = enemy_state.es_die
                 e->anim_frame = 0
                 e->anim_timer = die_frame_time
                 e->dir = dir_nodir
+                // Replay the death scream so the audio beat lands on the
+                // new animation, matching A_DeathScream at the top of
+                // the re-entered die cascade.
                 let snd = death_scream_for_kind(e->kind, g)
                 if snd >= 0 then trigger_sound_at(snd, ac, g, e->x, e->y)
             g->dc_sub = dc_sub_replay_anim
@@ -6113,28 +6118,64 @@ let render_game_over = (rc: render_ctx*, g: game*) ->
 // uses; dissolving to pure black looks too abrupt compared to the OG.
 let dc_backdrop_color = 0xFF004040u32
 
+// SPR_DEATHCAM in the original's sprite enum is offset 1 from sprite
+// base (SPR_DEMO=0, SPR_DEATHCAM=1). Flashes on/off every ~0.45s while
+// the death cam is active (wolf4sdl: `GetTimeCount() & 32`).
+let dc_sprite_offset     = 1
+let dc_sprite_flash_rate = 2.2          // Hz; matches 32/70 s half-period
+
+// True during the sub-phases that show the death-cam's zoomed-in view
+// (after the camera teleport). Drives both the SPR_DEATHCAM flash and
+// the suppression of the normal weapon sprite, which the original
+// replaces with the DEATH CAM graphic during this window.
+let dc_is_replay_view = (sub: int32) ->
+    sub == dc_sub_fade_in || sub == dc_sub_pre_replay
+        || sub == dc_sub_replay_anim || sub == dc_sub_replay_hold
+
+// Draw the SPR_DEATHCAM sprite at the bottom-center of the viewport,
+// sized the same way render_weapon sizes the gun. Flashes on/off per
+// phase_timer; caller is expected to gate on dc_is_replay_view.
+let render_deathcam_sprite = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[],
+                              phase_timer: float64) ->
+    // Skip during the "off" half of the flash cycle.
+    let cycle = (int32) (phase_timer * dc_sprite_flash_rate * 2.0)
+    if (cycle & 1) != 0 then return
+    let page = vs->sprite_start + dc_sprite_offset
+    let dw = view_h
+    let dh = view_h
+    let dx = (game_w - dw) / 2
+    let dy = view_h - dh
+    draw_hud_sprite(rc, vs, pal, page, dx, dy, dw, dh)
+
 // Render one frame of the gp_death_cam cutscene. Normal viewport during
-// the pre-fade hold and the replay; a dissolve-to-backdrop during fade_out
-// and fade_in (progress 0..1 from g->dc_fade); a solid backdrop with the
-// taunt text during the taunt sub-phase.
+// the pre-fade hold; a dissolve-to-backdrop during fade_out and fade_in;
+// a solid backdrop with the taunt pic font during the taunt sub-phase;
+// zoomed-in corpse view with a flashing DEATH CAM sprite during the
+// replay sub-phases.
 let render_death_cam = (w: world*, vs: vswap.vswap_file*, pal: uint32[],
-                        font: font_info*) ->
+                        vg: vgagraph.vgagraph_file*) ->
     let g = w->g
     let rc = w->rc
     let sub = g->dc_sub
     if sub == dc_sub_taunt then
         // Fully covered viewport (dc_fade is 1.0 here) with the taunt.
-        // Text is left-aligned at x=68, y=45 and rendered in white — the
-        // original calls US_Print with PrintX=68/PrintY=45/fontcolor=15.
-        // HUD stays visible underneath.
+        // The original calls Write(0, 7, STR_SEEAGAIN) when bordercol is
+        // the default VIEWCOLOR, which renders the 16-wide intermission
+        // lump-pic letters at (0, 56). "LET'S SEE THAT AGAIN!" in that
+        // font spans all 320 px of the viewport edge to edge.
         dissolve_stipple(rc, dc_backdrop_color, 1.0)
-        let white = 0xFFFFFFFFu32
-        draw_font_text(rc, font, 68, 45, "Let's see that again!", white)
+        write_lpic_text(rc, vg, pal, 0, 7 * 8, "LET'S SEE THAT AGAIN!")
     else
         render_walls(w->lv, rc, g, vs, pal)
         build_billboards(w->lv, rc, g, vs->sprite_start)
         render_billboards(rc, g, vs, pal)
-        render_weapon(rc, vs, pal, g)
+        // During the zoomed-in replay window, the weapon sprite is
+        // replaced by the flashing DEATH CAM graphic; elsewhere the
+        // viewport should still look normal with the gun visible.
+        if dc_is_replay_view(sub) then
+            render_deathcam_sprite(rc, vs, pal, g->phase_timer)
+        else
+            render_weapon(rc, vs, pal, g)
         // dc_fade is 0 during pre-fade and replay, so dissolve_stipple is
         // a no-op there (it early-returns on progress <= 0).
         dissolve_stipple(rc, dc_backdrop_color, g->dc_fade)
@@ -6406,7 +6447,7 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
         render_final_victory(w->rc, w->font, w->g)
         return
     | gp_death_cam ->
-        render_death_cam(w, vs, pal, w->font)
+        render_death_cam(w, vs, pal, w->vg)
         render_hud(w->rc, w->vg, pal, w->g)
         return
     | _ -> void()

@@ -435,17 +435,18 @@ assert_contains "deathcam:hitler-enters-death-cam-on-kill" \
 assert_contains "deathcam:hans-does-not-enter-death-cam" \
     "setlevel:8 killenemy:0 wait:30 phase" \
     "phase=playing"
-# After ~10 seconds the whole cutscene finishes and hands off to the
+# After the full cutscene (pre_fade + fade_out + taunt + fade_in +
+# pre_replay + replay_anim + replay_hold ≈ 12s) we hand off to the
 # regular intermission tally screen.
 assert_contains "deathcam:auto-advances-to-intermission" \
-    "setlevel:18 killenemy:0 wait:400 phase" \
+    "setlevel:18 killenemy:0 wait:500 phase" \
     "phase=intermission"
 # The death scream fires a second time when the replay animation starts
 # (matches the original: re-entering the die-cascade hits A_DeathScream
-# again). At wait:292 Schabbs's death cry should be audible — sound 24 is
-# MEINGOTTSND ("Mein Gott!").
+# again). At wait:320 we're just past the pre_replay beat so Schabbs's
+# death cry should be audible — sound 24 is MEINGOTTSND ("Mein Gott!").
 assert_contains "deathcam:death-scream-replays-on-replay-anim" \
-    "setlevel:18 killenemy:0 wait:292 digi_slots" \
+    "setlevel:18 killenemy:0 wait:320 digi_slots" \
     "sound=24"
 # The `advance` test command dismisses the death-cam early, same way a
 # space press would end the taunt card and (after the rest of the
