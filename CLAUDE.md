@@ -113,21 +113,32 @@ Helpers defined in the script: `assert_contains NAME "CMD" "SUBSTRING"`, `assert
 
 All project modules are declared at the top level (no namespaces), so they're accessible from anywhere by qualified name with no imports required. Only stdlib (`std::`) imports are needed in `main.fc`.
 
-- **`sdl2.fc`** (`module sdl2`) — C-interop bindings for SDL2 (window, renderer, texture, event, audio). Vendored from `fc-lang/demos/shared/`.
-- **`png.fc`** (`module png`) — Pure-FC PNG writer (CRC-32, Adler-32, deflate stored blocks, optional tEXt metadata). Used for screenshots.
-- **`opl2.fc`** (`module opl2`) — YM3812 FM synth emulator (`chip`, `init`, `write`, `sample`) plus AdLib helpers (`load_instrument`, `note_on`, `note_off`). The generic `fill_ticked(chip, buf, count, sample_rate, tick_rate, &tick_accum, advance_closure)` runner factors out the sample/tick loop used by the OPL2-based drivers. Standalone / not wolf-specific.
-- **`sound.fc`** — Wolf3D sound-format drivers, three top-level modules. Each exposes `init(...)` / `fill(p, buf, count, sample_rate)` and mixes additively (saturating) into the output buffer:
-  - `module imf` — IMF music. Owns an OPL2 chip. Events are `[reg, val, delay_lo, delay_hi]` quads at 700 Hz; loops at end of track.
-  - `module adlib` — id-Software AdLib SFX. Owns an OPL2 chip. One voice on channel 0 at 140 Hz; note stream parsed from AUDIOT chunk format.
-  - `module digi` — 8-bit PCM from VSWAP. No chip; up to 4 simultaneous slots, nearest-neighbor resampled 7042 Hz → output rate.
-- **`data.fc`** — Wolf3D data loading, five top-level modules:
-  - `module bytes` — Little-endian uint16/uint32/int32 readers
-  - `module palette` — `init()` returns heap-allocated 256-entry ARGB palette from hardcoded 6-bit VGA data
-  - `module vswap` — Loads VSWAP.WL6, provides `wall_pixel()` accessor
-  - `module maps` — Loads MAPHEAD+GAMEMAPS with Carmack + RLEW decompression
-  - `module audio` — Loads AUDIOHED+AUDIOT, provides chunk offset/length accessors
+Subsystem files were extracted from `main.fc` in a large 2026-04 refactor. The file names and modules they contain:
 
-- **`main.fc`** — Game engine, no namespace:
+| File | Modules | What's in it |
+|---|---|---|
+| `sdl2.fc` | `sdl2` | SDL2 C-interop bindings (window, renderer, texture, event, audio). |
+| `opl2.fc` | `opl2` | YM3812 FM synth emulator + AdLib helpers + `fill_ticked` driver runner. |
+| `png.fc` | `png` | Pure-FC PNG writer (CRC-32, Adler-32, deflate, optional tEXt). |
+| `sound.fc` | `imf`, `adlib`, `digi`, `mixer` | Wolf3D sound-format drivers. |
+| `data.fc` | `bytes`, `palette`, `vswap`, `maps`, `vgagraph`, `audio` | Wolf3D data-file loading. |
+| `sfx.fc` | `sfx` (with nested `id`) | Sound-effect trigger helpers + the 73 sound IDs. Tables `sfx_digi_slot` / `sfx_adlib_chunk` live at file scope in main.fc. |
+| `ui.fc` | `font`, `pics` (with nested `id`), `hud` | UI primitives: VGAGRAPH font, generic pic blitter, status bar + BJ face animation. |
+| `save.fc` | `save` | Save/load slot I/O + encoding. |
+| `combat.fc` | `dir`, `enemies` (with nested `ai`), `projectiles`, `hitscan` | Enemy data + AI + projectiles + player hitscan. Per-kind sprite tables (`enemy_sprites_*`) and direction vectors (`dir_vx`, `dir_vy`, `dir_dx`, `dir_dy`, `dir_opposite`) live at file scope in main.fc because FC forbids array-literal initializers at module scope. |
+| `level.fc` | `tilemap`, `areas`, `spawn`, `doors`, `pushwall`, `pickups` | Level geometry + enemy/sprite spawning + door / pushwall animation + pickup collection. |
+| `cutscenes.fc` | `bj_victory`, `death_cam` (with nested `sub`), `intermission`, `episode_end`, `victory_screen`, `game_over`, `title_screen` | Per-phase state machines + renderers. |
+| `menu.fc` | `menu` (with nested `nav`) | Main menu + submenus (episode, difficulty, map, save/load slot list). |
+| `render.fc` | `raycaster`, `billboards`, `overlay` | DDA raycaster, billboard sort+draw, viewport tints / dissolve / upscale / screenshot pipeline. |
+| `player.fc` | `player` (with nested `cheats`) | Player movement / collision / camera / weapon firing + MLI/BAT/IDDQD cheats. `player_radius` lives at file scope in main.fc to break a `player ↔ doors` circular module reference. |
+
+### FC module restrictions hit during the refactor
+
+- **Non-entry-point files can only contain modules.** Every `.fc` file other than `main.fc` must put every declaration inside a `module X = ...` block. File-scope `let`/`struct`/`union` is only allowed in the file that defines `let main`.
+- **Module-level `let` bindings cannot use array-literal initializers.** `let t = int32[3] { ... }` at module scope fails with `top-level initializer for 't' must be a constant expression`. Integer / float literals are fine; the failure is specific to array literals. Consequence: lookup tables (sound IDs → digi slot, enemy sprite pages, direction vectors, par times, …) have to live at file scope in main.fc even when their only callers are in one module. Where this happened, the file-scope binding is prefixed with the owning module's name (`sfx_digi_slot`, `enemy_sprites_guard`, `dir_vx`, …) and a comment points back at the module that logically owns it.
+- **Modules can't have circular references.** `player` uses `doors.passable` (for collision), and `doors.update` uses `player_radius` (for its bbox-based auto-close check). Moving `player_radius` out of `module player` and down to file scope in main.fc broke the cycle.
+
+- **`main.fc`** — Game engine orchestration + file-scope constants:
   - Constants (game_w=320, game_h=200, screen_w=640, screen_h=400, actual_h=480, view_h=160, sample_rate=44100)
   - `struct world` — the god-handle: `{g: game*, lv: level*, rc: render_ctx*, ac: audio_ctx*, sm: save_menu_ctx*}`. Only orchestrators take `world*`; narrow functions take just the fields they touch.
   - `struct game` — player state (position, direction, camera plane, input, health/ammo/score, `no_dogs` CLI flag)

@@ -1,0 +1,217 @@
+// Wolf-FC sound effects — mapping of game events to AUDIOT chunk IDs, and
+// the trigger helpers that queue an AdLib SFX or digitized PCM clip from
+// the `audio_ctx` owned by `world`. Digi-pack clips are preferred when
+// present (matches the original Sound Blaster mode); the AdLib chunk from
+// AUDIOT is the fallback.
+//
+// Every sound the game triggers is indexed by `sfx.id.*` — each id is a
+// row number into the `sfx_digi_slot` / `sfx_adlib_chunk` tables in
+// main.fc (FC restricts non-entry-point files to contain modules only,
+// and forbids module-level array-literal initializers — the tables must
+// live at file scope in the entry-point file, even though they're
+// logically part of this module).
+//
+// To add a new sound:
+//   1. Append a constant to `module sfx.id` and bump `sfx.count`,
+//   2. extend `sfx_digi_slot` and `sfx_adlib_chunk` in main.fc with the
+//      right lookup row,
+//   3. call `sfx.trigger(sfx.id.new_one, ac)` from the new site.
+
+module sfx =
+    import math from std::
+
+    // Sound IDs — indexes into the sfx_digi_slot / sfx_adlib_chunk
+    // tables in main.fc. Not Wolf3D AUDIOT enum values, and not digi-
+    // pack slot numbers. The tables translate.
+    module id =
+        let open_door      = 0
+        let close_door     = 1
+        let atk_pistol     = 2
+        let atk_knife      = 3
+        let atk_mg         = 4
+        let atk_gat        = 5
+        let get_key        = 6
+        let get_ammo       = 7
+        let bonus1         = 8    // cross
+        let pain           = 9
+        let push_wall      = 10
+        let get_mg         = 11
+        let get_gat        = 12
+        let hit_wall       = 13
+        let no_action      = 14
+        let no_way         = 15
+        let bonus2         = 16   // chalice
+        let bonus3         = 17   // bible
+        let bonus4         = 18   // crown
+        let bonus1up       = 19   // extra life
+        let health1        = 20   // dog food / food
+        let health2        = 21   // first aid
+        let halt           = 22   // guard/officer alert ("Halt!")
+        let schutzad       = 23   // SS alert ("Schutzstaffel!")
+        let dog_bark       = 24   // dog alert
+        let nazi_fire      = 25   // guard/officer fire
+        let ss_fire        = 26   // SS rapid fire
+        let dog_attack     = 27   // dog bite
+        let dog_death      = 28
+        let death_1        = 29   // guard death scream (aka DEATHSCREAM1SND)
+        let death_2        = 30   // officer death scream
+        let death_3        = 31   // SS death scream
+        // HITENEMYSND exists in the original's audio enum but is never
+        // played anywhere — kept as a table slot for completeness.
+        let hit_enemy      = 32   // bullet impact on flesh — unused
+        // Expanded guard death scream pool (original A_DeathScream picks
+        // one of 8 at random for guardobj). First three are death_1..3.
+        let death_4        = 33   // DEATHSCREAM4SND
+        let death_5        = 34
+        let death_6        = 35
+        let death_7        = 36
+        let death_8        = 37
+        let death_9        = 38
+        // Per-kind / per-boss vocals. Sighting = "FirstSighting" vocal
+        // played once when enemy wakes. Death = played from A_DeathScream.
+        let spion          = 39   // SPIONSND — officer sighting
+        let nein_sovass    = 40   // NEINSOVASSND — officer death
+        let leben          = 41   // LEBENSND — SS death ("Mein Leben!")
+        let ahhhg          = 42   // AHHHGSND — mutant death
+        let gutentag       = 43   // GUTENTAGSND — Hans sighting
+        let mutti          = 44   // MUTTISND — Hans death ("Mutti!")
+        let kein           = 45   // KEINSND — Gretel sighting
+        let mein           = 46   // MEINSND — Gretel death
+        let eine           = 47   // EINESND — Giftmacher sighting
+        let donner         = 48   // DONNERSND — Giftmacher death
+        let erlauben       = 49   // ERLAUBENSND — Fat Face sighting
+        let rose           = 50   // ROSESND — Fat Face death
+        let schabbsha      = 51   // SCHABBSHASND — Schabbs sighting
+        let meingott       = 52   // MEINGOTTSND — Schabbs death
+        let tot_hund       = 53   // TOT_HUNDSND — Fake Hitler sighting
+        let hitlerha       = 54   // HITLERHASND — Fake Hitler death
+        let die            = 55   // DIESND — Mecha/Real Hitler sighting
+        let scheist        = 56   // SCHEISTSND — Mecha Hitler death
+        let eva            = 57   // EVASND — Real Hitler death
+        // Intermission / elevator sounds
+        let level_done     = 58   // LEVELDONESND — elevator switch "ding"
+        let end_bonus1     = 59   // ENDBONUS1SND — per-tick counter during countup
+        let end_bonus2     = 60   // ENDBONUS2SND — counter stopped (non-100%)
+        let percent100     = 61   // PERCENT100SND — 100% ratio bonus
+        let no_bonus       = 62   // NOBONUSSND — 0% ratio
+        // Boss-specific attack sounds. The original dispatches T_Shoot's
+        // firing sound per obclass; wolf-fc previously routed every
+        // non-SS boss to nazi_fire, which sounded wrong for bosses.
+        let boss_fire      = 63   // BOSSFIRESND — Hans, Mecha/Real Hitler gun
+        let schabbs_throw  = 64   // SCHABBSTHROWSND — Schabbs syringe (AdLib only)
+        let flamethrower   = 65   // FLAMETHROWERSND — Fake Hitler (AdLib only)
+        let missile_fire   = 66   // MISSILEFIRESND — Gift / Fat rocket
+        // Placeholders: mapping is filled so late-landing callers don't
+        // revisit this table. No current trigger site — mech_step waits
+        // on a separate Mecha Hitler stage and yeah waits on T_BJYell.
+        let mech_step      = 67   // MECHSTEPSND — Mecha Hitler walk stomp
+        let yeah           = 68   // YEAHSND — BJ victory-jump exclamation
+        // Menu UI sounds. AdLib-only — none have digi versions.
+        let move_gun1      = 69   // MOVEGUN1SND — menu cursor move
+        let shoot          = 70   // SHOOTSND — menu item confirm
+        let esc_pressed    = 71   // ESCPRESSEDSND — menu cancel / back
+        let missile_hit    = 72   // MISSILEHITSND — rocket wall explosion
+
+    // Total number of sfx.id.* entries. The sfx_digi_slot / sfx_adlib_chunk
+    // tables in main.fc are sized to this.
+    let count = 73
+
+    // --- AUDIOT enum IDs we don't currently trigger (reference only).
+    //     Append a new `id.*` above when wiring one up.
+    //
+    //   select_wpn       = 1   SELECTWPNSND     — weapon-slot switch blip (digi 46)
+    //   select_item      = 2   SELECTITEMSND    — menu "item selected" blip (no digi)
+    //   heartbeat        = 3   HEARTBEATSND     — low-health heartbeat loop (no digi)
+    //   move_gun2        = 4   MOVEGUN2SND      — menu cursor "click" (no digi)
+    //   nazi_hit_player  = 7   NAZIHITPLAYERSND — enemy bullet hit on player (no digi)
+    //   player_death     = 9   PLAYERDEATHSND   — BJ's dying scream (no digi)
+    //   no_item          = 13  NOITEMSND        — pickup refused (no digi)
+    //   walk1            = 14  WALK1SND         — footstep A (no digi)
+    //   walk2            = 15  WALK2SND         — footstep B (no digi)
+    //   game_over        = 17  GAMEOVERSND      — "game over" jingle (no digi)
+    //   shoot_door       = 28  SHOOTDOORSND     — knife/bullet on door (no digi)
+    //   boss_active      = 49  BOSSACTIVESND    — boss-room wake-up sting (no digi)
+    //   slurpie          = 61  SLURPIESND       — BJ slurping bonus chalice (no digi)
+    //   goobs            = 71  GOOBSSND         — extra goop/gore on death (no digi)
+
+    // Output sample rate for the SDL audio device (Hz). All driver
+    // chips run at this rate. The int32-mix + soft-clip finalizer lives
+    // in `sound.fc::mixer` — the main loop just calls `mixer.fill_frame`
+    // and queues the resulting int16 buffer to SDL.
+    let sample_rate = 44100
+
+    // Play a sound by sfx.id.*. Prefers the digitized version (richer
+    // audio, matches the original Sound Blaster mode) and falls back to
+    // the AdLib version loaded from AUDIOT on demand. `pan` is [-1, +1];
+    // 0 = centered. `gain` is a linear multiplier — 1.0 plays at the
+    // OG Sound Blaster level, <1 attenuates, >1 pushes into the mixer's
+    // soft-clip region. Only the digi path honours pan/gain; the AdLib
+    // fallback routes through the OPL2 chip, which has no cheap per-note
+    // attenuation knob (in practice enemy/pickup sounds all have digi
+    // versions, so the fall-through is silent for spatial callers).
+    let trigger_panned_gain = (sound_id: int32, ac: audio_ctx*,
+                                pan: float64, gain: float64) ->
+        if sound_id < 0 || sound_id >= count then return
+        let digi_idx = sfx_digi_slot[sound_id]
+        if digi_idx >= 0 then
+            digi.play_with_gain(ac->digi, digi_idx, pan, gain)
+        else
+            let enum_val = sfx_adlib_chunk[sound_id]
+            if enum_val >= 0 then
+                let chunk = 87 + enum_val   // STARTADLIBSOUNDS = LASTSOUND = 87
+                if chunk >= 0 && chunk < ac->ad->num_chunks then
+                    let off = (int64) audio.chunk_offset(ac->ad, chunk)
+                    let len = audio.chunk_length(ac->ad, chunk)
+                    if len >= 23 then
+                        adlib.play(ac->sfx, adlib.parse(ac->ad->raw, off))
+
+    let trigger_panned = (sound_id: int32, ac: audio_ctx*, pan: float64) ->
+        trigger_panned_gain(sound_id, ac, pan, 1.0)
+
+    let trigger = (sound_id: int32, ac: audio_ctx*) ->
+        trigger_panned_gain(sound_id, ac, 0.0, 1.0)
+
+    let trigger_loud = (sound_id: int32, ac: audio_ctx*, gain: float64) ->
+        trigger_panned_gain(sound_id, ac, 0.0, gain)
+
+    // Spatial variant: pans a source in the stereo field AND attenuates
+    // by distance, so a guard firing across the level is quiet and off
+    // to the side while the same guard at point-blank is loud and
+    // centered. Takes the player struct so we can look up pos + camera
+    // plane.
+    //
+    // Pan mapping: project the source→player vector onto the player's
+    // camera-plane axis (perpendicular to facing). That's exactly how
+    // the raycaster decides horizontal screen-x for sprites, so a
+    // source sitting right of the player on screen will pan right.
+    //
+    // Distance mapping: linear rolloff from full volume at the player's
+    // tile to silent at ~16 tiles out. Roughly matches the original's
+    // attenuation tables (ATABLEMAX=15 in PlaySoundLocGlobal), which
+    // also silenced sources beyond that radius. Sounds past the cutoff
+    // are dropped entirely so distant enemies don't eat mix slots.
+    let trigger_at = (sound_id: int32, ac: audio_ctx*, g: game*,
+                       x: float64, y: float64) ->
+        let dx = x - g->pos_x
+        let dy = y - g->pos_y
+        let dist_sq = dx * dx + dy * dy
+        let dist = math.sqrt(dist_sq)
+        let max_dist = 16.0
+        let gain = if dist >= max_dist then 0.0
+                   else (max_dist - dist) / max_dist
+        if gain <= 0.0 then return
+        // Very-close sounds (<1 tile) stay centered so stepping past an
+        // enemy doesn't produce a hard stereo flip.
+        if dist_sq < 1.0 then
+            trigger_panned_gain(sound_id, ac, 0.0, gain)
+        else
+            // Camera-plane axis is g->plane; its sign tells us which side.
+            let plen = math.sqrt(g->plane_x * g->plane_x + g->plane_y * g->plane_y)
+            let pan_raw = if plen < 1e-4 then 0.0
+                else (dx * g->plane_x + dy * g->plane_y) / (plen * dist)
+            // Soften pan by distance so far-off sources don't ping-pong
+            // across the soundstage; at 16 tiles pan settles to ~half
+            // of raw.
+            let pan_atten = 1.0 / (1.0 + dist / 8.0)
+            let pan = pan_raw * (0.4 + 0.6 * pan_atten)
+            trigger_panned_gain(sound_id, ac, pan, gain)

@@ -1,0 +1,617 @@
+// Wolf-FC save / load — one 10-slot save directory under
+// ~/.wolf-fc/saves/.
+//
+// Format is a simple line-oriented text file: first token of each line
+// names the section ("WLFC", "label", "game", "pos", "doors", "door",
+// "pushwall", "sprites_alive", "enemies", "enemy"). Text is deliberate:
+// it's debuggable, round-trips cleanly through printf/%f parsing, and
+// avoids the platform-specific float64-to-bytes dance that a binary
+// format would need.
+
+module save =
+    import io from std::
+    import sys from std::
+    import text from std::
+    import math from std::
+    import random from std::
+
+    let version = 1
+
+    // Split a save-file line on spaces, compacting consecutive
+    // separators so the padded-width floats we write (e.g. "%14.6f")
+    // parse cleanly. Returns a heap `str[]` that the caller must free
+    // (along with each entry — this matches text.split's ownership).
+    // Used by every `else if text.starts_with(line, "tag ") then`
+    // branch in `from_slot`.
+    let split_ws = (s: const str) ->
+        // Two-pass: count tokens, then allocate exact size.
+        let mut count = 0
+        let mut i = 0i64
+        loop
+            if i >= s.len then break
+            if s[i] == 0x20u8 then
+                i = i + 1
+                continue
+            count = count + 1
+            loop
+                if i >= s.len then break
+                if s[i] == 0x20u8 then break
+                i = i + 1
+        let out = alloc(str[count] {})!
+        let mut ti = 0
+        let mut j = 0i64
+        loop
+            if j >= s.len then break
+            if s[j] == 0x20u8 then
+                j = j + 1
+                continue
+            let start = j
+            loop
+                if j >= s.len then break
+                if s[j] == 0x20u8 then break
+                j = j + 1
+            let n = j - start
+            // Copy into a heap slice so entries outlive any caller
+            // reuse.
+            let buf = alloc(uint8[n] {})!
+            for k in 0..n
+                buf[k] = s[start + k]
+            out[ti] = buf
+            ti = ti + 1
+        out
+
+    // Free the result of split_ws (both the outer array and each entry).
+    let free_split = (toks: str[]) ->
+        for k in 0..(int32) toks.len
+            free(toks[(int64) k])
+        free(toks)
+
+    // Root directory for wolf-fc user data (saves, screenshots).
+    // Respects the WOLF_FC_HOME env override so test runs can point at
+    // a throwaway directory instead of scribbling on the real user's
+    // saves. Falls back to $HOME/.wolf-fc for normal use.
+    let wolf_data_dir = () ->
+        match sys.env("WOLF_FC_HOME") with
+        | some(override) -> some(alloc("%s{override}")!)
+        | none ->
+            match sys.home_dir() with
+            | none -> default(str?)
+            | some(home) -> some(alloc("%s{home}/.wolf-fc")!)
+
+    // Ensure $WOLF_FC_HOME/saves (or ~/.wolf-fc/saves) exists. Returns
+    // true if the directory is (now) available.
+    let ensure_save_dir = () ->
+        match wolf_data_dir() with
+        | none -> false
+        | some(dir) ->
+            defer free(dir)
+            io.mkdir(dir)
+            io.mkdir("%s{dir}/saves")
+            true
+
+    let slot_path = (slot: int32) ->
+        match wolf_data_dir() with
+        | none -> default(str?)
+        | some(dir) ->
+            defer free(dir)
+            let p = alloc("%s{dir}/saves/slot_%02d{slot}.sav")!
+            some(p)
+
+    // Small parse helpers — saves bail gracefully if a field is
+    // unparseable by defaulting to 0 / 0.0. Paired with the "expect at
+    // least N tokens" guards in each section, this keeps a malformed
+    // line from cascading.
+    let unwrap_int = (s: const str) ->
+        match text.parse_int32(s) with
+        | some(n) -> n
+        | none    -> 0
+
+    let unwrap_int64 = (s: const str) ->
+        match text.parse_int64(s) with
+        | some(n) -> n
+        | none    -> 0i64
+
+    let unwrap_float = (s: const str) ->
+        match text.parse_float64(s) with
+        | some(x) -> x
+        | none    -> 0.0
+
+    // Numeric kind/state codes for serialization. Preserving ordering
+    // so older saves stay loadable if we add new variants at the end.
+    let enemy_kind_to_int = (k: enemies.enemy_kind) ->
+        match k with
+        | guard        -> 0
+        | officer      -> 1
+        | ss           -> 2
+        | dog          -> 3
+        | mutant       -> 4
+        | hans         -> 5
+        | schabbs      -> 6
+        | gretel       -> 7
+        | giftmacher   -> 8
+        | fat          -> 9
+        | hitler_fake  -> 10
+        | hitler       -> 11
+        | blinky       -> 12
+        | pinky        -> 13
+        | clyde        -> 14
+        | inky         -> 15
+
+    let int_to_enemy_kind = (n: int32) ->
+        match n with
+        | 0  -> enemies.enemy_kind.guard
+        | 1  -> enemies.enemy_kind.officer
+        | 2  -> enemies.enemy_kind.ss
+        | 3  -> enemies.enemy_kind.dog
+        | 4  -> enemies.enemy_kind.mutant
+        | 5  -> enemies.enemy_kind.hans
+        | 6  -> enemies.enemy_kind.schabbs
+        | 7  -> enemies.enemy_kind.gretel
+        | 8  -> enemies.enemy_kind.giftmacher
+        | 9  -> enemies.enemy_kind.fat
+        | 10 -> enemies.enemy_kind.hitler_fake
+        | 11 -> enemies.enemy_kind.hitler
+        | 12 -> enemies.enemy_kind.blinky
+        | 13 -> enemies.enemy_kind.pinky
+        | 14 -> enemies.enemy_kind.clyde
+        | _  -> enemies.enemy_kind.inky
+
+    let enemy_state_to_int = (s: enemies.enemy_state) ->
+        match s with
+        | stand -> 0
+        | path  -> 1
+        | chase -> 2
+        | shoot -> 3
+        | pain  -> 4
+        | die   -> 5
+        | dead  -> 6
+
+    let int_to_enemy_state = (n: int32) ->
+        match n with
+        | 0 -> enemies.enemy_state.stand
+        | 1 -> enemies.enemy_state.path
+        | 2 -> enemies.enemy_state.chase
+        | 3 -> enemies.enemy_state.shoot
+        | 4 -> enemies.enemy_state.pain
+        | 5 -> enemies.enemy_state.die
+        | _ -> enemies.enemy_state.dead
+
+    let int_to_door_state = (n: int32) ->
+        match n with
+        | 0 -> doors.door_state.closed
+        | 1 -> doors.door_state.opening
+        | 2 -> doors.door_state.open
+        | _ -> doors.door_state.closing
+
+    // Write the running world state to a save-slot file. Overwrites
+    // any existing slot. Metadata label is auto-generated from the
+    // current level + time.
+    let to_slot = (w: world*, slot: int32) ->
+        ensure_save_dir()
+        match slot_path(slot) with
+        | none ->
+            io.write("save: HOME not set, skipping\n", stderr)
+            void()
+        | some(path) ->
+            let g = w->g
+            let lv = w->lv
+            match io.open(path, "w") with
+            | none ->
+                io.write("save: failed to open %s{path}\n", stderr)
+                void()
+            | some(f) ->
+                defer io.close(f)
+                io.write("WLFC %d{version}\n", f)
+                // Auto-generated label — encodes episode/level for the
+                // menu.
+                let ep = g->level_num / levels_per_episode + 1
+                let lvl = g->level_num % levels_per_episode + 1
+                io.write("label E%d{ep}M%d{lvl}\n", f)
+                io.write(
+                    "game %d{g->level_num} %d{g->difficulty} %d{g->lives} %d{g->score} %d{g->health} %d{g->ammo} %d{g->weapon} %d{g->best_weapon} %d{if g->has_gold_key then 1 else 0} %d{if g->has_silver_key then 1 else 0} %d{if g->went_secret then 1 else 0}\n", f)
+                io.write(
+                    "counters %d{g->kills} %d{g->total_kills} %d{g->secrets} %d{g->total_secrets} %d{g->treasures} %d{g->total_treasures}\n", f)
+                io.write("time %14.6f{g->level_time}\n", f)
+                io.write("pos %14.6f{g->pos_x} %14.6f{g->pos_y}\n", f)
+                io.write("dir %14.6f{g->dir_x} %14.6f{g->dir_y}\n", f)
+                io.write("plane %14.6f{g->plane_x} %14.6f{g->plane_y}\n", f)
+                io.write("area %d{g->area_number}\n", f)
+                // Doors: count + one row per door.
+                io.write("doors %d{lv->num_doors}\n", f)
+                for i in 0..lv->num_doors
+                    let d = &lv->doors[i]
+                    let st = match d->state with
+                    | closed  -> 0
+                    | opening -> 1
+                    | open    -> 2
+                    | closing -> 3
+                    io.write(
+                        "door %d{i} %d{d->tile_x} %d{d->tile_y} %d{st} %14.6f{d->open_timer} %14.6f{lv->door_pos[i]}\n", f)
+                // Pushwall.
+                let pw = &lv->pushwall
+                let pw_active = if pw->active then 1 else 0
+                io.write(
+                    "pushwall %d{pw_active} %d{pw->tile_x} %d{pw->tile_y} %d{pw->dir_x} %d{pw->dir_y} %14.6f{pw->progress} %d{(int32) pw->orig_tile}\n", f)
+                // Sprite alive flags: compact hex bitmask, one char
+                // per 4 sprites.
+                io.write("sprites %d{lv->num_sprites} ", f)
+                let ns = lv->num_sprites
+                let bytes_needed = (ns + 3) / 4
+                for b in 0..bytes_needed
+                    let mut nibble = 0
+                    for bit in 0..4
+                        let idx = b * 4 + bit
+                        if idx < ns && lv->sprites[idx].alive then
+                            nibble = nibble | (1 << bit)
+                    let ch = if nibble < 10 then 48 + nibble else 87 + nibble
+                    w->sm->hex_scratch[0] = (uint8) ch
+                    io.write(w->sm->hex_scratch[0..1], f)
+                io.write("\n", f)
+                // Enemies.
+                io.write("enemies %d{lv->num_enemies}\n", f)
+                for i in 0..lv->num_enemies
+                    let e = &lv->enemies[i]
+                    let ki = enemy_kind_to_int(e->kind)
+                    let si = enemy_state_to_int(e->state)
+                    let amb = if e->ambush then 1 else 0
+                    let nfd = if e->notified then 1 else 0
+                    let sh = if e->shoot_fired then 1 else 0
+                    io.write(
+                        "enemy %d{i} %14.6f{e->x} %14.6f{e->y} %d{e->tile_x} %d{e->tile_y} %d{ki} %d{si} %d{e->dir} %d{e->hp} %d{e->anim_frame} %14.6f{e->anim_timer} %d{sh} %14.6f{e->move_remaining} %d{amb} %d{nfd} %14.6f{e->reaction_timer}\n", f)
+                // PRNG state. Bits round-trip through signed int64
+                // (same width as uint64 under 2's complement); load
+                // reinterprets via (uint64). Older saves lack this
+                // line and fall back to a fresh seed-0 stream (reset
+                // at the top of from_slot).
+                io.write(
+                    "rng %d{(int64) g->rng_enemy.state} %d{(int64) g->rng_enemy.inc} %d{(int64) g->rng_face.state} %d{(int64) g->rng_face.inc}\n", f)
+                io.write("end\n", f)
+                void()
+
+    // Load a saved slot file into the world. Returns true on success.
+    // On failure the world state is undefined (caller should treat a
+    // failed load as the equivalent of a save corrupt and return to
+    // the main menu).
+    //
+    // Approach: read the whole file into memory, split into lines,
+    // walk line by line applying each section. First we load the map
+    // for the saved level_num, then overlay door / pushwall / sprite
+    // / enemy state. The freshly-built level already has enemies
+    // spawned from plane-1, which we overwrite.
+    let from_slot = (w: world*, vs: vswap.vswap_file*, slot: int32) ->
+        match slot_path(slot) with
+        | none -> false
+        | some(path) ->
+            match io.read_all(path) with
+            | none -> false
+            | some(contents) ->
+                defer free(contents)
+                let lines = text.split(contents, "\n")
+                defer free(lines)
+                if lines.len < 2 then false
+                else if !text.starts_with(lines[0], "WLFC ") then false
+                else
+                    let g = w->g
+                    // Reset both PCG streams to a seed-0 baseline
+                    // before walking lines. A save written by this
+                    // build will include an `rng` line that
+                    // overwrites the state; older saves lack that
+                    // line and keep this deterministic default.
+                    // Either way, load is now reproducible rather
+                    // than inheriting whatever stream position the
+                    // live game had reached.
+                    g->rng_enemy = random.pcg_random.make_with_channel(0u64, rng_channel_enemy)
+                    g->rng_face  = random.pcg_random.make_with_channel(0u64, rng_channel_face)
+                    let mut level_loaded = false
+                    let mut i = 0
+                    loop
+                        if i >= (int32) lines.len then break
+                        let line = lines[(int64) i]
+                        i = i + 1
+                        if line.len == 0 then continue
+                        if text.starts_with(line, "label ") then
+                            void()   // menu-only; ignored at load time
+                        else if text.starts_with(line, "game ") then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 12 then
+                                g->level_num    = unwrap_int(toks[1])
+                                g->difficulty   = unwrap_int(toks[2])
+                                g->lives        = unwrap_int(toks[3])
+                                g->score        = unwrap_int(toks[4])
+                                g->health       = unwrap_int(toks[5])
+                                g->ammo         = unwrap_int(toks[6])
+                                g->weapon       = unwrap_int(toks[7])
+                                g->best_weapon  = unwrap_int(toks[8])
+                                g->has_gold_key   = unwrap_int(toks[9]) != 0
+                                g->has_silver_key = unwrap_int(toks[10]) != 0
+                                g->went_secret  = unwrap_int(toks[11]) != 0
+                                // Reload the level for the saved
+                                // level_num. This rebuilds
+                                // lv->{tilemap,doors,pushwall,sprites,enemies}
+                                // which we'll immediately overwrite
+                                // with the saved state below.
+                                reload_level_data(w, vs)
+                                level_loaded = true
+                        else if text.starts_with(line, "counters ") then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 7 then
+                                g->kills           = unwrap_int(toks[1])
+                                g->total_kills     = unwrap_int(toks[2])
+                                g->secrets         = unwrap_int(toks[3])
+                                g->total_secrets   = unwrap_int(toks[4])
+                                g->treasures       = unwrap_int(toks[5])
+                                g->total_treasures = unwrap_int(toks[6])
+                        else if text.starts_with(line, "time ") then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 2 then g->level_time = unwrap_float(toks[1])
+                        else if text.starts_with(line, "pos ") then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 3 then
+                                g->pos_x = unwrap_float(toks[1])
+                                g->pos_y = unwrap_float(toks[2])
+                        else if text.starts_with(line, "dir ") then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 3 then
+                                g->dir_x = unwrap_float(toks[1])
+                                g->dir_y = unwrap_float(toks[2])
+                        else if text.starts_with(line, "plane ") then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 3 then
+                                g->plane_x = unwrap_float(toks[1])
+                                g->plane_y = unwrap_float(toks[2])
+                        else if text.starts_with(line, "area ") then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 2 then g->area_number = unwrap_int(toks[1])
+                        else if text.starts_with(line, "rng ") then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 5 then
+                                g->rng_enemy.state = (uint64) unwrap_int64(toks[1])
+                                g->rng_enemy.inc   = (uint64) unwrap_int64(toks[2])
+                                g->rng_face.state  = (uint64) unwrap_int64(toks[3])
+                                g->rng_face.inc    = (uint64) unwrap_int64(toks[4])
+                        else if text.starts_with(line, "door ") then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 7 && level_loaded then
+                                let di = unwrap_int(toks[1])
+                                if di >= 0 && di < w->lv->num_doors then
+                                    let d = &w->lv->doors[di]
+                                    d->state = int_to_door_state(unwrap_int(toks[4]))
+                                    d->open_timer = unwrap_float(toks[5])
+                                    w->lv->door_pos[di] = unwrap_float(toks[6])
+                        else if text.starts_with(line, "pushwall ") && level_loaded then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 8 then
+                                let pw = &w->lv->pushwall
+                                pw->active   = unwrap_int(toks[1]) != 0
+                                pw->tile_x   = unwrap_int(toks[2])
+                                pw->tile_y   = unwrap_int(toks[3])
+                                pw->dir_x    = unwrap_int(toks[4])
+                                pw->dir_y    = unwrap_int(toks[5])
+                                pw->progress = unwrap_float(toks[6])
+                                pw->orig_tile = (uint8) unwrap_int(toks[7])
+                        else if text.starts_with(line, "sprites ") && level_loaded then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 3 then
+                                let ns = unwrap_int(toks[1])
+                                let bits = toks[2]
+                                let bytes_needed = (ns + 3) / 4
+                                for b in 0..bytes_needed
+                                    if (int64) b >= bits.len then break
+                                    let ch = (int32) bits[(int64) b]
+                                    let nibble = if ch >= 48 && ch <= 57 then ch - 48
+                                                 else if ch >= 97 && ch <= 102 then ch - 87
+                                                 else 0
+                                    for bit in 0..4
+                                        let idx = b * 4 + bit
+                                        if idx >= ns then break
+                                        if idx < w->lv->num_sprites then
+                                            w->lv->sprites[idx].alive = (nibble >> bit) & 1 != 0
+                        else if text.starts_with(line, "enemies ") && level_loaded then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 2 then
+                                w->lv->num_enemies = unwrap_int(toks[1])
+                        else if text.starts_with(line, "enemy ") && level_loaded then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 15 then
+                                let ei = unwrap_int(toks[1])
+                                if ei >= 0 && ei < w->lv->num_enemies then
+                                    let e = &w->lv->enemies[ei]
+                                    e->x              = unwrap_float(toks[2])
+                                    e->y              = unwrap_float(toks[3])
+                                    e->tile_x         = unwrap_int(toks[4])
+                                    e->tile_y         = unwrap_int(toks[5])
+                                    e->kind           = int_to_enemy_kind(unwrap_int(toks[6]))
+                                    e->state          = int_to_enemy_state(unwrap_int(toks[7]))
+                                    e->dir            = unwrap_int(toks[8])
+                                    e->hp             = unwrap_int(toks[9])
+                                    e->anim_frame     = unwrap_int(toks[10])
+                                    e->anim_timer     = unwrap_float(toks[11])
+                                    e->shoot_fired    = unwrap_int(toks[12]) != 0
+                                    e->move_remaining = unwrap_float(toks[13])
+                                    e->ambush         = unwrap_int(toks[14]) != 0
+                                    if toks.len >= 16 then
+                                        e->notified = unwrap_int(toks[15]) != 0
+                                    if toks.len >= 17 then
+                                        e->reaction_timer = unwrap_float(toks[16])
+                                    else
+                                        e->reaction_timer = 0.0
+                    // Recompute area_by_player from the restored door
+                    // states so enemy AI sees the correct
+                    // connectivity. areas.connect walks the door list
+                    // and re-floods from the player's anchor area.
+                    for a in 0..areas.num_areas
+                        w->lv->area_by_player[a] = false
+                    for aa in 0..(areas.num_areas * areas.num_areas)
+                        w->lv->area_connect[aa] = 0u8
+                    // Sum open-door counts into area_connect (both
+                    // directions).
+                    for di in 0..w->lv->num_doors
+                        let d = &w->lv->doors[di]
+                        match d->state with
+                        | open ->
+                            if d->area1 >= 0 && d->area2 >= 0 then
+                                let i1 = d->area1 * areas.num_areas + d->area2
+                                let i2 = d->area2 * areas.num_areas + d->area1
+                                w->lv->area_connect[i1] = w->lv->area_connect[i1] + 1u8
+                                w->lv->area_connect[i2] = w->lv->area_connect[i2] + 1u8
+                        | _ -> void()
+                    areas.connect(w->lv, g->area_number)
+                    // Resume gameplay.
+                    g->phase = game_phase.gp_playing
+                    g->phase_timer = 0.0
+                    g->made_noise = false
+                    g->key_up = false
+                    g->key_down = false
+                    g->key_left = false
+                    g->key_right = false
+                    g->key_fire = false
+                    g->key_space = false
+                    // Leave key_space_handled at false: the user
+                    // confirmed the load by pressing space/enter in
+                    // the menu, and if we mark it handled here their
+                    // *next* press on a door/elevator (after the
+                    // intervening KEYUP) would be silently eaten.
+                    // Matches the enter_intermission / enter_episode_end
+                    // fix for the same symptom.
+                    g->key_space_handled = false
+                    g->key_ack = false
+                    g->key_ack_handled = false
+                    g->damage_flash_timer = 0.0
+                    g->msg_timer = 0.0
+                    true
+
+    // Rebuild the save-slots cache from disk. Called when entering
+    // the save/load menu. Reads only the header + label of each file
+    // (not the full body) by streaming line-by-line until we've seen
+    // the `game` line.
+    let refresh_slots = (sm: save_menu_ctx*) ->
+        for i in 0..num_save_slots
+            // Free any label from a previous refresh.
+            let old_label = sm->slots[i].label
+            if old_label.len > 0 then free(old_label)
+            sm->slots[i] = save_slot_info {
+                empty = true,
+                label = default(uint8[]),
+                level_num = 0, difficulty = 0, score = 0
+            }
+        for i in 0..num_save_slots
+            match slot_path(i) with
+            | none -> void()
+            | some(path) ->
+                if !io.exists(path) then void()
+                else
+                    match io.read_all(path) with
+                    | none -> void()
+                    | some(contents) ->
+                        defer free(contents)
+                        let lines = text.split(contents, "\n")
+                        defer free(lines)
+                        let mut level_num = 0
+                        let mut difficulty = 0
+                        let mut score = 0
+                        let mut label_src = default(const str?)
+                        let mut valid = false
+                        for li in 0..(int32) lines.len
+                            let line = lines[(int64) li]
+                            if text.starts_with(line, "label ") then
+                                label_src = some(line[6..line.len])
+                            else if text.starts_with(line, "game ") then
+                                let toks = split_ws(line)
+                                defer free_split(toks)
+                                if toks.len >= 5 then
+                                    level_num = unwrap_int(toks[1])
+                                    difficulty = unwrap_int(toks[2])
+                                    score = unwrap_int(toks[4])
+                                    valid = true
+                        if valid then
+                            let lbl = match label_src with
+                            | some(s) ->
+                                let n = s.len
+                                let buf = alloc(uint8[n] {})!
+                                for k in 0..n
+                                    buf[k] = s[k]
+                                buf
+                            | none -> default(uint8[])
+                            sm->slots[i] = save_slot_info {
+                                empty = false, label = lbl,
+                                level_num = level_num,
+                                difficulty = difficulty, score = score
+                            }
+
+    // In-game debug dump (D key): print everything we'd want to know
+    // to diagnose a "stuck" report — player pos / dir / phase /
+    // lives, and for every tile in the player's bbox, what's there
+    // (wall / door / sprite / enemy). Output goes to stderr so it
+    // doesn't interfere with stdout-based scripts.
+    let debug_dump_state = (w: world*) ->
+        let g = w->g
+        let lv = w->lv
+        let phase_s = match g->phase with
+        | gp_title        -> "title"
+        | gp_main_menu    -> "menu"
+        | gp_playing      -> "playing"
+        | gp_dying        -> "dying"
+        | gp_intermission -> "intermission"
+        | gp_game_over    -> "gameover"
+        | gp_bj_victory   -> "bj_victory"
+        | gp_death_cam    -> "death_cam"
+        | gp_episode_end  -> "episode_end"
+        | gp_victory      -> "victory"
+        io.write("\n=== DEBUG DUMP ===\n", stderr)
+        io.write("phase=%s{phase_s} hp=%d{g->health} lives=%d{g->lives} level=%d{g->level_num}\n", stderr)
+        io.write("pos=(%7.4f{g->pos_x}, %7.4f{g->pos_y}) dir=(%7.4f{g->dir_x}, %7.4f{g->dir_y})\n", stderr)
+        io.write("area=%d{g->area_number} keys: gold=%d{if g->has_gold_key then 1 else 0} silver=%d{if g->has_silver_key then 1 else 0}\n", stderr)
+        let xl = (int32) (g->pos_x - player_radius)
+        let xr = (int32) (g->pos_x + player_radius)
+        let yl = (int32) (g->pos_y - player_radius)
+        let yh = (int32) (g->pos_y + player_radius)
+        io.write("bbox tiles: x[%d{xl}..%d{xr}] y[%d{yl}..%d{yh}]\n", stderr)
+        for tx in xl..(xr + 1)
+            for ty in yl..(yh + 1)
+                let ti = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+                let door_kind = if ti >= 128 then
+                    match lv->doors[ti - 128].state with
+                    | closed  -> "DOOR:closed"
+                    | opening -> "DOOR:opening"
+                    | open    -> "DOOR:open"
+                    | closing -> "DOOR:closing"
+                else ""
+                let kind = if ti >= 1 && ti <= 63 then "WALL"
+                    else if ti >= 128 then door_kind
+                    else "open"
+                io.write("  tile (%d{tx},%d{ty}) tilemap=%d{ti} -> %s{kind}\n", stderr)
+        io.write("blocking sprites within 2 tiles:\n", stderr)
+        for i in 0..lv->num_sprites
+            let s = &lv->sprites[i]
+            if !s->alive || !s->blocks then continue
+            let dx = s->x - g->pos_x
+            let dy = s->y - g->pos_y
+            let d = math.sqrt(dx * dx + dy * dy)
+            if d < 2.0 then
+                io.write("  sprite[%d{i}] pos=(%6.3f{s->x},%6.3f{s->y}) page=%d{s->shape_page} d=%5.3f{d}\n", stderr)
+        io.write("live enemies within 2 tiles:\n", stderr)
+        for i in 0..lv->num_enemies
+            let e = &lv->enemies[i]
+            match e->state with
+            | dead | die -> void()
+            | _ ->
+                let dx = e->x - g->pos_x
+                let dy = e->y - g->pos_y
+                let d = math.sqrt(dx * dx + dy * dy)
+                if d < 2.0 then
+                    io.write("  enemy[%d{i}] pos=(%6.3f{e->x},%6.3f{e->y}) tile(%d{e->tile_x},%d{e->tile_y}) hp=%d{e->hp} d=%5.3f{d}\n", stderr)
+        io.write("=== END ===\n\n", stderr)
+        void()

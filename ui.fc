@@ -1,0 +1,636 @@
+// Wolf-FC UI primitives — the VGAGRAPH-backed font, the generic VG pic
+// blitter, and the HUD status bar that sits on top of them. All three are
+// shared across the menu, intermission, cutscenes, title screen, and
+// get-psyched overlay — named `ui.fc` rather than `hud.fc` to reflect
+// that hud is only one of the many consumers.
+
+module pics =
+    // VGAGRAPH chunk IDs (Wolf3D WL6). Full inventory of all 149 chunks
+    // from gfxv_wl6.h, grouped by lump. Constants annotated "(unused)"
+    // are not drawn by any current code path — they exist for
+    // documentation / future features (see TODO.md "VGAGRAPH art not
+    // yet surfaced").
+    module id =
+        // --- STARTFONT (chunks 1..2). NUMFONT=2. Chunk 0 is the
+        // STRUCTPIC directory, not a pic. Font 1 is the small variable-
+        // width menu / HUD font used for all our text rendering. Font
+        // 2 is a larger fixed-width status-bar font the original uses
+        // for floor-complete headings — we render those with
+        // LEVELEND_LUMP art instead, so font 2 is unused.
+        let font_small = 1
+        let font_big   = 2        // (unused) larger secondary font
+
+        // --- README_LUMP (chunks 3..9). Backdrop art for the original's
+        // in-game "Read This!" help screen (IN_Help). The help screen
+        // itself isn't implemented.
+        let h_bj          = 3     // (unused) BJ holding the castle keys
+        let h_castle      = 4     // (unused) blazing castle silhouette
+        let h_blaze       = 5     // (unused) flame ring behind the castle
+        let h_topwindow   = 6     // (unused) help-window top border
+        let h_leftwindow  = 7     // (unused) help-window left border
+        let h_rightwindow = 8     // (unused) help-window right border
+        let h_bottominfo  = 9     // (unused) help-window bottom info strip
+
+        // --- CONTROLS_LUMP (chunks 10..42). Menu / options art used by
+        // the original's Options → Control / Sound / Customize
+        // submenus and by the episode / difficulty / load / save /
+        // high-scores pickers. Wolf-fc ships a text-only menu so all
+        // of these are (unused) today.
+        let c_options      = 10   // (unused) "OPTIONS" header
+        let c_cursor1      = 11   // (unused) menu cursor frame A (blinking)
+        let c_cursor2      = 12   // (unused) menu cursor frame B
+        let c_notselected  = 13   // (unused) non-highlighted row backdrop
+        let c_selected     = 14   // (unused) highlighted row backdrop
+        let c_fx_title     = 15   // (unused) "SOUND EFFECTS" header
+        let c_digi_title   = 16   // (unused) "DIGITIZED SOUND" header
+        let c_music_title  = 17   // (unused) "MUSIC" header
+        let c_mouselback   = 18   // (unused) "MOUSE LOOK" toggle art
+        let c_baby         = 19   // (unused) "CAN I PLAY DADDY?" difficulty card
+        let c_easy         = 20   // (unused) "DON'T HURT ME" difficulty card
+        let c_normal       = 21   // (unused) "BRING 'EM ON!" difficulty card
+        let c_hard         = 22   // (unused) "I AM DEATH INCARNATE" difficulty card
+        let c_loadsavedisk = 23   // (unused) floppy icon on the load/save screen
+        let c_diskloading1 = 24   // (unused) floppy spin frame 1
+        let c_diskloading2 = 25   // (unused) floppy spin frame 2
+        let c_control      = 26   // (unused) "CONTROL" header
+        let c_customize    = 27   // (unused) "CUSTOMIZE CONTROLS" header
+        let c_loadgame     = 28   // (unused) "LOAD GAME" header
+        let c_savegame     = 29   // (unused) "SAVE GAME" header
+        let c_episode1     = 30   // (unused) ep-1 card: "ESCAPE FROM WOLFENSTEIN"
+        let c_episode2     = 31   // (unused) ep-2 card: "OPERATION EISENFAUST"
+        let c_episode3     = 32   // (unused) ep-3 card: "DIE, FUHRER, DIE!"
+        let c_episode4     = 33   // (unused) ep-4 card: "A DARK SECRET"
+        let c_episode5     = 34   // (unused) ep-5 card: "TRAIL OF THE MADMAN"
+        let c_episode6     = 35   // (unused) ep-6 card: "CONFRONTATION"
+        let c_code         = 36   // (unused) "ENTER CODE" (cheat entry)
+        let c_timecode     = 37   // (unused) "TIME CODE" (cheat entry)
+        let c_level        = 38   // (unused) "LEVEL" high-scores column
+        let c_name         = 39   // (unused) "NAME" high-scores column
+        let c_score        = 40   // (unused) "SCORE" high-scores column
+        let c_joy1         = 41   // (unused) joystick option A
+        let c_joy2         = 42   // (unused) joystick option B
+
+        // --- LEVELEND_LUMP (chunks 43..85). Intermission-screen BJ
+        // portrait and the large-font alphabet / digits / punctuation
+        // used by the intermission draw path (see pics.draw calls).
+        let l_guy         = 43    // BJ portrait (breathing frame A)
+        let l_colon       = 44
+        let l_num0        = 45    // L_NUM0PIC..L_NUM9PIC = 45..54
+        let l_percent     = 55
+        let l_a           = 56    // L_APIC..L_ZPIC = 56..81
+        let l_expoint     = 82
+        let l_apostrophe  = 83
+        let l_guy2        = 84    // BJ portrait (breathing frame B)
+        let l_bjwins      = 85    // BJ-wins art for the episode-end screen
+
+        // --- Title lump (chunks 86..90). One-off full-screen / banner art.
+        let statusbar  = 86       // 320x40 in-game status bar
+        let title      = 87       // title screen (TITLEPIC)
+        let pg13       = 88       // (unused) parental-advisory splash
+        let credits    = 89       // (unused) credits screen
+        let highscores = 90       // (unused) high-scores screen header
+
+        // --- LATCHPICS_LUMP (chunks 91..134). HUD, pickup pop-ups,
+        // pause / level-load overlays. Anything blitted on top of
+        // gameplay.
+        let knife       = 91      // weapon icon — KNIFEPIC
+        let pistol      = 92      // weapon icon — GUNPIC
+        let mg          = 93      // weapon icon — MACHINEGUNPIC
+        let chain       = 94      // weapon icon — GATLINGGUNPIC
+        let no_key      = 95      // empty key slot (NOKEYPIC, part of statusbar)
+        let gold_key    = 96
+        let silver_key  = 97
+        let n_blank     = 98      // blank digit (clears a leading digit cell)
+        let n_0         = 99      // digits N_0PIC..N_9PIC = 99..108
+        let n_9         = 108
+        let face_base   = 109     // FACE1APIC..FACE8APIC; 8 expressions ×
+                                  //   3 A/B/C variants.
+                                  //   chunk = base + expr*3 + var.
+                                  //   expr 0 = 100% health grin,
+                                  //   expr 7 = dead / severely wounded.
+        let got_gatling = 131     // (unused) "YOU GOT THE GATLING GUN!" pickup
+        let mutant_bj   = 132     // (unused) mutant-BJ transformation cut-scene
+        let paused      = 133     // (unused) "PAUSED" overlay (wolf-fc
+                                  //  removed the pause phase; still here
+                                  //  for parity)
+        let get_psyched = 134     // "GET PSYCHED!" level-load overlay
+
+        // Chunk 135 is the STARTPICM / STARTSPRITES marker — no pic data.
+
+        // --- Demo / order-screen lump (chunks 136..148).
+        let order       = 136     // (unused) shareware order screen
+        let error       = 137     // (unused) generic error screen
+        let t_helpart   = 138     // (unused) alt "Read This!" help art
+        let t_demo0     = 139     // (unused) demo-playback art slot 0
+        let t_demo1     = 140     // (unused) demo slot 1
+        let t_demo2     = 141     // (unused) demo slot 2
+        let t_demo3     = 142     // (unused) demo slot 3
+        let t_endart1   = 143     // (unused) episode-1 ending text page
+        let t_endart2   = 144     // (unused) episode-2 ending text page
+        let t_endart3   = 145     // (unused) episode-3 ending text page
+        let t_endart4   = 146     // (unused) episode-4 ending text page
+        let t_endart5   = 147     // (unused) episode-5 ending text page
+        let t_endart6   = 148     // (unused) episode-6 ending text page
+
+    // Draw a decoded VGA-planar pic at (dst_x, dst_y) in the framebuffer.
+    // Pixels outside the fb are clipped. `pal` is the 256-entry ARGB
+    // palette. Palette index 255 is magenta but treated as opaque here —
+    // VGAGRAPH images don't use transparency (only sprites do). First
+    // call for a given chunk decodes + palette-applies into
+    // rc->pic_cache; subsequent calls are a plain ARGB memcpy.
+    let draw = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+                chunk: int32, dst_x: int32, dst_y: int32) ->
+        if chunk < 0 || chunk >= (int32) rc->pic_cache.len then return
+        if rc->pic_cache[chunk].len == 0 then
+            let pic = vgagraph.load_pic(vg, chunk)
+            defer free(pic)
+            if pic.len == 0 then return
+            let w = vgagraph.pic_width(vg, chunk)
+            let h = vgagraph.pic_height(vg, chunk)
+            if w <= 0 || h <= 0 then return
+            let buf = alloc(uint32[w * h] {})!
+            for i in 0..(w * h)
+                buf[(int64) i] = pal[(int32) pic[(int64) i]]
+            rc->pic_cache[chunk] = buf
+        let buf = rc->pic_cache[chunk]
+        let w = vgagraph.pic_width(vg, chunk)
+        let h = vgagraph.pic_height(vg, chunk)
+        for y in 0..h
+            let dy = dst_y + y
+            if dy < 0 || dy >= game_h then continue
+            for x in 0..w
+                let dx = dst_x + x
+                if dx < 0 || dx >= game_w then continue
+                rc->fb[(int64) dy * 320 + (int64) dx] = buf[(int64) y * (int64) w + (int64) x]
+
+    // "GET PSYCHED!" level-load overlay. Matches the original's
+    // PreloadGraphics: fill the 3D view area with VIEWCOLOR (palette
+    // 0x7f), draw GETPSYCHEDPIC centered horizontally at y =
+    // (view_h - pic_h) / 2, then paint a two-tone progress bar
+    // (colors 0x37 / 0x32 over a BLACK trough) across the bottom of
+    // the pic frame. Our progress animates 0→100% as the timer counts
+    // down, which is a tiny embellishment on top of the original
+    // (which pins the bar at 100% the whole second).
+    let render_get_psyched_overlay = (rc: render_ctx*, vg: vgagraph.vgagraph_file*,
+                                       pal: uint32[],
+                                       timer_remaining: float64,
+                                       timer_total: float64) ->
+        // Blank the 3D viewport with the grey border color. Leave the
+        // status bar (y >= view_h) untouched.
+        let bg = pal[get_psyched_bg_index]
+        for y in 0..view_h
+            let base = y * game_w
+            for x in 0..game_w
+                rc->fb[base + x] = bg
+        // Center the pic within the viewport. Use the VGAGRAPH-reported
+        // size in case the pic is ever re-packed; wolf3d's is 224x48.
+        let pw = vgagraph.pic_width(vg, id.get_psyched)
+        let ph = vgagraph.pic_height(vg, id.get_psyched)
+        let pic_w = if pw > 0 then pw else get_psyched_pic_w
+        let pic_h = if ph > 0 then ph else get_psyched_pic_h
+        let pic_x = (game_w - pic_w) / 2
+        let pic_y = (view_h - pic_h) / 2
+        draw(rc, vg, pal, id.get_psyched, pic_x, pic_y)
+        // Progress bar: the original offsets it to (WindowX+5,
+        // WindowY+WindowH-3) with width WindowW-10. We use the pic
+        // bounds as the window.
+        let bar_x = pic_x + 5
+        let bar_y = pic_y + pic_h - 3
+        let bar_full_w = pic_w - 10
+        let bg_col = pal[0x00]
+        let bar_col = pal[0x37]
+        let bar_hilight = pal[0x32]
+        // Trough (always full-width black strip 2px tall).
+        for by in 0..2
+            let row = (bar_y + by) * game_w
+            for bx in 0..bar_full_w
+                rc->fb[row + bar_x + bx] = bg_col
+        // Filled portion: 0 → 100% as timer_remaining goes from total → 0.
+        let elapsed = timer_total - timer_remaining
+        let frac = if timer_total <= 0.0 then 1.0 else elapsed / timer_total
+        let fill_w_f = frac * (float64) bar_full_w
+        let fill_w = if fill_w_f < 0.0 then 0
+            else if fill_w_f > (float64) bar_full_w then bar_full_w
+            else (int32) fill_w_f
+        for by in 0..2
+            let row = (bar_y + by) * game_w
+            let col = if by == 0 then bar_hilight else bar_col
+            // The original draws the main bar full-width then the
+            // highlight one pixel shorter. For simplicity we paint both
+            // at the same width.
+            for bx in 0..fill_w
+                rc->fb[row + bar_x + bx] = col
+
+    // One-time decode + nearest-neighbor scale of TITLEPIC into a
+    // 320×200 ARGB buffer. Returns a heap slice the caller must hold
+    // for the process lifetime.
+    let build_title_bg_cache = (vg: vgagraph.vgagraph_file*, pal: uint32[]) ->
+        let buf = alloc(uint32[game_w * game_h] {})!
+        let pic = vgagraph.load_pic(vg, id.title)
+        defer free(pic)
+        if pic.len == 0 then return buf
+        let w = vgagraph.pic_width(vg, id.title)
+        let h = vgagraph.pic_height(vg, id.title)
+        if w <= 0 || h <= 0 then return buf
+        for py in 0..game_h
+            let sy = (int64) py * (int64) h / (int64) game_h
+            for px in 0..game_w
+                let sx = (int64) px * (int64) w / (int64) game_w
+                let pix = pic[sy * (int64) w + sx]
+                buf[(int64) py * (int64) game_w + (int64) px] = pal[(int32) pix]
+        buf
+
+    // Blit the cached title backdrop into the framebuffer.
+    let blit_title_bg = (rc: render_ctx*) ->
+        if rc->title_bg.len == 0 then return
+        for i in 0..(game_w * game_h)
+            rc->fb[i] = rc->title_bg[i]
+
+
+// ============================================================
+// Wolf3D VGAGRAPH font rendering
+// ============================================================
+//
+// The bitmap font in VGAGRAPH has this layout (after Huffman expand):
+//   int16 height
+//   int16 location[256]   — offset from struct start to each char's pixels
+//   int8  width[256]      — pixel width per char (0 for unused glyphs)
+//   ...pixel bytes (non-zero = ink, 0 = background)
+//
+// Characters are stored column-major within their glyph: a glyph of
+// (width, height) is `width * height` bytes; pixel[col, row] lives at
+// byte `col * height + row`... actually the original walks it as
+// `source[i*height + j]` so row varies faster than column when iterating
+// column-first. We just read column-major: pix[col*height + row].
+
+module font =
+
+    struct info =
+        height: int32
+        location: int32[256]
+        width: int32[256]
+        pixels: uint8[]       // original decoded font chunk, held for glyph reads
+
+    let load = (vg: vgagraph.vgagraph_file*, chunk: int32) ->
+        // VGAGRAPH fonts are raw (not planar). The decompressed chunk is
+        // the fontstruct followed by pixel data.
+        let raw = vgagraph.decompress_chunk(vg, chunk)
+        if raw.len < 4 then return alloc(info {
+            height = 8,
+            location = int32[256] {},
+            width = int32[256] {},
+            pixels = raw
+        })!
+        let h = (int32) bytes.u16(raw, 0i64)
+        let mut loc = int32[256] {}
+        let mut wdt = int32[256] {}
+        for i in 0..256
+            // location[] is 256 uint16 entries starting at offset 2.
+            loc[i] = (int32) bytes.u16(raw, 2i64 + (int64) i * 2)
+            // width[] is 256 uint8 entries starting after the location
+            // array (offset 2 + 512 = 514).
+            wdt[i] = (int32) raw[514i64 + (int64) i]
+        alloc(info {
+            height = h,
+            location = loc,
+            width = wdt,
+            pixels = raw
+        })!
+
+    // Draw one character from the VGAGRAPH font. Returns the advance
+    // width. Glyph pixels are row-major: byte at (col, row) =
+    // pixels[row * width + col].
+    let draw_char = (rc: render_ctx*, f: info*, x: int32, y: int32,
+                     ch: int32, color: uint32) ->
+        if ch < 0 || ch >= 256 then return 0
+        let cw = f->width[ch]
+        if cw <= 0 then return 0
+        let ch_h = f->height
+        let src_off = (int64) f->location[ch]
+        for row in 0..ch_h
+            for col in 0..cw
+                let px = f->pixels[src_off + (int64) row * (int64) cw + (int64) col]
+                if px != 0u8 then
+                    let dx = x + col
+                    let dy = y + row
+                    if dx >= 0 && dx < game_w && dy >= 0 && dy < game_h then
+                        rc->fb[(int64) dy * 320 + (int64) dx] = color
+        cw
+
+    let draw_text = (rc: render_ctx*, f: info*,
+                     x: int32, y: int32, s: const str, color: uint32) ->
+        let mut cx = x
+        for i in 0..(int32) s.len
+            let ch = (int32) s[(int64) i]
+            let advance = draw_char(rc, f, cx, y, ch, color)
+            cx = cx + advance
+
+    // Measure a string's rendered pixel width (for centering).
+    let text_width = (f: info*, s: const str) ->
+        let mut w = 0
+        for i in 0..(int32) s.len
+            let ch = (int32) s[(int64) i]
+            if ch >= 0 && ch < 256 then w = w + f->width[ch]
+        w
+
+    let draw_centered = (rc: render_ctx*, f: info*,
+                         y: int32, s: const str, color: uint32) ->
+        let w = text_width(f, s)
+        draw_text(rc, f, (game_w - w) / 2, y, s, color)
+
+    // Load an IMF music player from an AUDIOT chunk number. Grouped
+    // with font because it reuses the VGAGRAPH-pipeline approach — a
+    // better home may emerge later.
+    let music_load = (ad: audio.audio_data*, chunk: int32) ->
+        let off = (int64) audio.chunk_offset(ad, chunk)
+        let len = (int64) audio.chunk_length(ad, chunk)
+        imf.init_from_chunk(ad->raw, off, (int64) len, (float64) sfx.sample_rate)
+
+    // Pick the AUDIOT chunk number that should be playing for the
+    // current phase. Title and main menu use MENUSONG (WONDERIN).
+    // Intermission uses ENDLEVEL. Per-episode and final victory screens
+    // get URAHERO and VICMARCH. All other phases (gp_playing, gp_dying,
+    // gp_game_over) use the per-level song table.
+    let music_chunk_for_phase = (phase: game_phase, level_num: int32) ->
+        let mus = match phase with
+        | gp_title | gp_main_menu -> music_wonderin
+        | gp_intermission         -> music_endlevel
+        | gp_bj_victory           -> music_urahero   // same cue as the episode-end screen
+        // Death-cam: keep the level track playing so the fizzle-out /
+        // taunt card / fade-in all happen under the boss-level music
+        // (matches the original — A_StartDeathCam doesn't switch tracks).
+        | gp_death_cam            -> if level_num >= 0 && level_num < 60 then songs[level_num] else 0
+        | gp_episode_end          -> music_urahero
+        | gp_victory              -> music_vicmarch
+        | _ -> if level_num >= 0 && level_num < 60 then songs[level_num] else 0
+        261 + mus
+
+
+// ============================================================
+// HUD — status bar at screen bottom + message banner
+// ============================================================
+
+module hud =
+    import random from std::
+
+    // 3x5 pixel bitmap font (packed into int32: 5 rows of 3 bits).
+    // Supports digits 0-9 and uppercase A-Z. Distinct from the
+    // VGAGRAPH `font` module above — `hud`'s font is a tiny in-module
+    // font used for HP/ammo digits and test-mode overlays.
+    let char_glyph = (ch: int32) ->
+        // Digits
+        if ch == 48 then 7 | (5 << 3) | (5 << 6) | (5 << 9) | (7 << 12)       // 0
+        else if ch == 49 then 2 | (6 << 3) | (2 << 6) | (2 << 9) | (7 << 12)  // 1
+        else if ch == 50 then 7 | (1 << 3) | (7 << 6) | (4 << 9) | (7 << 12)  // 2
+        else if ch == 51 then 7 | (1 << 3) | (7 << 6) | (1 << 9) | (7 << 12)  // 3
+        else if ch == 52 then 5 | (5 << 3) | (7 << 6) | (1 << 9) | (1 << 12)  // 4
+        else if ch == 53 then 7 | (4 << 3) | (7 << 6) | (1 << 9) | (7 << 12)  // 5
+        else if ch == 54 then 7 | (4 << 3) | (7 << 6) | (5 << 9) | (7 << 12)  // 6
+        else if ch == 55 then 7 | (1 << 3) | (1 << 6) | (1 << 9) | (1 << 12)  // 7
+        else if ch == 56 then 7 | (5 << 3) | (7 << 6) | (5 << 9) | (7 << 12)  // 8
+        else if ch == 57 then 7 | (5 << 3) | (7 << 6) | (1 << 9) | (7 << 12)  // 9
+        // Letters
+        else if ch == 65 then 2 | (5 << 3) | (7 << 6) | (5 << 9) | (5 << 12)  // A
+        else if ch == 67 then 3 | (4 << 3) | (4 << 6) | (4 << 9) | (3 << 12)  // C
+        else if ch == 68 then 6 | (5 << 3) | (5 << 6) | (5 << 9) | (6 << 12)  // D
+        else if ch == 69 then 7 | (4 << 3) | (7 << 6) | (4 << 9) | (7 << 12)  // E
+        else if ch == 70 then 7 | (4 << 3) | (6 << 6) | (4 << 9) | (4 << 12)  // F
+        else if ch == 71 then 7 | (4 << 3) | (5 << 6) | (5 << 9) | (7 << 12)  // G
+        else if ch == 72 then 5 | (5 << 3) | (7 << 6) | (5 << 9) | (5 << 12)  // H
+        else if ch == 73 then 7 | (2 << 3) | (2 << 6) | (2 << 9) | (7 << 12)  // I
+        else if ch == 75 then 5 | (6 << 3) | (4 << 6) | (6 << 9) | (5 << 12)  // K
+        else if ch == 76 then 4 | (4 << 3) | (4 << 6) | (4 << 9) | (7 << 12)  // L
+        else if ch == 77 then 5 | (7 << 3) | (7 << 6) | (5 << 9) | (5 << 12)  // M
+        else if ch == 78 then 5 | (7 << 3) | (7 << 6) | (5 << 9) | (5 << 12)  // N
+        else if ch == 79 then 7 | (5 << 3) | (5 << 6) | (5 << 9) | (7 << 12)  // O
+        else if ch == 80 then 6 | (5 << 3) | (6 << 6) | (4 << 9) | (4 << 12)  // P
+        else if ch == 82 then 6 | (5 << 3) | (6 << 6) | (5 << 9) | (5 << 12)  // R
+        else if ch == 83 then 3 | (4 << 3) | (2 << 6) | (1 << 9) | (6 << 12)  // S
+        else if ch == 84 then 7 | (2 << 3) | (2 << 6) | (2 << 9) | (2 << 12)  // T
+        else if ch == 85 then 5 | (5 << 3) | (5 << 6) | (5 << 9) | (7 << 12)  // U
+        else if ch == 86 then 5 | (5 << 3) | (5 << 6) | (2 << 9) | (2 << 12)  // V
+        else if ch == 87 then 5 | (5 << 3) | (5 << 6) | (7 << 9) | (5 << 12)  // W
+        else if ch == 89 then 5 | (5 << 3) | (2 << 6) | (2 << 9) | (2 << 12)  // Y
+        else 0  // space or unknown
+
+    let digit_glyph = (d: int32) -> char_glyph(d + 48)
+
+    let draw_digit = (rc: render_ctx*, x: int32, y: int32, d: int32, color: uint32, scale: int32) ->
+        let g = digit_glyph(d)
+        for row in 0..5
+            let bits = (g >> (row * 3)) & 7
+            for col in 0..3
+                if (bits >> (2 - col)) & 1 != 0 then
+                    for sy in 0..scale
+                        for sx in 0..scale
+                            let px = x + col * scale + sx
+                            let py = y + row * scale + sy
+                            if px >= 0 && px < game_w && py >= 0 && py < game_h then
+                                rc->fb[(int64) py * 320 + (int64) px] = color
+
+    let draw_number = (rc: render_ctx*, x: int32, y: int32, num: int32, color: uint32, scale: int32) ->
+        let mut n = num
+        if n < 0 then n = 0
+        let mut digits = int32[8] { 0, 0, 0, 0, 0, 0, 0, 0 }
+        let mut count = 0
+        if n == 0 then
+            digits[0] = 0
+            count = 1
+        else
+            loop
+                if n == 0 then break
+                if count >= 8 then break
+                digits[count] = n % 10
+                n = n / 10
+                count = count + 1
+        // Draw right-to-left (digits are stored reversed)
+        for i in 0..count
+            let dx = x - (i * (3 * scale + scale))
+            draw_digit(rc, dx, y, digits[i], color, scale)
+
+    // Draw a string using the 3x5 bitmap font.
+    let draw_text = (rc: render_ctx*, x: int32, y: int32, s: const str, color: uint32, scale: int32) ->
+        for ci in 0..(int32) s.len
+            let ch = (int32) s[(int64) ci]
+            let gl = char_glyph(ch)
+            if gl != 0 then
+                let cx = x + ci * (3 * scale + scale)
+                for row in 0..5
+                    let bits = (gl >> (row * 3)) & 7
+                    for col in 0..3
+                        if (bits >> (2 - col)) & 1 != 0 then
+                            for sy in 0..scale
+                                for sx in 0..scale
+                                    let px = cx + col * scale + sx
+                                    let py = y + row * scale + sy
+                                    if px >= 0 && px < game_w && py >= 0 && py < game_h then
+                                        rc->fb[(int64) py * 320 + (int64) px] = color
+
+    // Draw a filled rectangle in the framebuffer.
+    let fill_rect = (rc: render_ctx*, x0: int32, y0: int32, x1: int32, y1: int32, color: uint32) ->
+        for y in y0..y1
+            for x in x0..x1
+                if x >= 0 && x < game_w && y >= 0 && y < game_h then
+                    rc->fb[(int64) y * 320 + (int64) x] = color
+
+    // Draw a vertical separator line with 3D effect.
+    let draw_vsep = (rc: render_ctx*, x: int32, y0: int32, y1: int32) ->
+        for y in y0..y1
+            if x >= 0 && x < game_w && y >= 0 && y < game_h then
+                rc->fb[(int64) y * 320 + (int64) x] = 0xFF383838u32
+                if x + 1 < game_w then
+                    rc->fb[(int64) y * 320 + (int64) (x + 1)] = 0xFF909090u32
+
+    // Pick the BJ face chunk from health + animation frame. The
+    // original picks the expression row from `(100-health)/16`
+    // (clamped 0..7) and the A/B/C variant from `gamestate.faceframe`
+    // (0..2). Health=0 shows the final "mostly dead" row. `frame` is
+    // clamped to 0..2 by the caller.
+    let face_chunk_for = (health: int32, frame: int32) ->
+        let mut h = health
+        if h > 100 then h = 100
+        if h < 0 then h = 0
+        let idx = if h == 0 then 6 else (100 - h) / 16
+        let clamped = if idx > 6 then 6 else idx
+        let f = if frame < 0 then 0 else if frame > 2 then 2 else frame
+        pics.id.face_base + clamped * 3 + f
+
+    // Face-animation byte roll. Uses its own pcg channel (see
+    // struct game) so HUD rendering doesn't perturb the enemy RNG
+    // stream that scripted tests rely on.
+    let face_rnd_byte = (g: game*) ->
+        (int32) (random.pcg_random.next_uint32(&g->rng_face) & 0xFFu32)
+
+    // UpdateFace: accumulate `tics` into facecount; when it exceeds
+    // a random 0..255 threshold, roll a new faceframe. The roll is
+    // `US_RndT()>>6` (giving 0..3) with 3 mapped down to 1, so the
+    // distribution is 0=25% / 1=50% / 2=25% — the centre variant is
+    // most common, which gives the face a natural "look forward"
+    // bias with occasional glances. Our dt is fixed at 1/35s in
+    // tests; multiplying by 70 yields ~2 units per tick, matching
+    // the original's 70Hz tics rate.
+    let update_face = (g: game*, dt: float64) ->
+        g->face_count = g->face_count + dt * 70.0
+        if g->face_count > (float64) face_rnd_byte(g) then
+            let roll = face_rnd_byte(g) / 64       // 0..3
+            let frame = if roll == 3 then 1 else roll
+            g->face_frame = frame
+            g->face_count = 0.0
+
+    // Draw a right-aligned decimal number using the VGAGRAPH number
+    // pics. `digits` is the cell count; shorter numbers get
+    // N_BLANKPIC padding on the left (matches the original's
+    // LatchNumber). `px`/`py` is the top-left of the LEFTMOST cell.
+    // Each cell is 8x16.
+    let draw_vg_number = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+                          px: int32, py: int32, digits: int32, num: int32) ->
+        let mut n = if num < 0 then 0 else num
+        let mut out_digits = int32[16] {}
+        let mut count = 0
+        if n == 0 then
+            out_digits[0] = 0
+            count = 1
+        else
+            loop
+                if n == 0 then break
+                if count >= 16 then break
+                out_digits[count] = n % 10
+                n = n / 10
+                count = count + 1
+        // Draw right-to-left: rightmost digit at px + (digits-1)*8
+        for slot in 0..digits
+            let x = px + (digits - 1 - slot) * 8
+            let chunk = if slot < count then pics.id.n_0 + out_digits[slot]
+                else pics.id.n_blank
+            pics.draw(rc, vg, pal, chunk, x, py)
+
+    let render = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[], g: game*) ->
+        let bar_top = view_h                         // 160
+        // Full Wolf3D status-bar graphic: all the cell outlines +
+        // labels are pre-rendered into a single 320x40 image. We
+        // paint it, then stamp digits / face / keys / weapon-icon
+        // over the empty cells.
+        pics.draw(rc, vg, pal, pics.id.statusbar, 0, bar_top)
+        // Cell x-coords (in pixels) and widths (in 8-px "cells"),
+        // from the original's LatchNumber calls:
+        //   floor : x=16, 2 cells
+        //   score : x=48, 6 cells
+        //   lives : x=112, 1 cell
+        //   health: x=168, 3 cells
+        //   ammo  : x=216, 2 cells
+        let num_y = bar_top + 16
+        draw_vg_number(rc, vg, pal, 16, num_y, 2, g->level_num + 1)
+        draw_vg_number(rc, vg, pal, 48, num_y, 6, g->score)
+        draw_vg_number(rc, vg, pal, 112, num_y, 1, g->lives)
+        draw_vg_number(rc, vg, pal, 168, num_y, 3, g->health)
+        draw_vg_number(rc, vg, pal, 216, num_y, 2, g->ammo)
+        // BJ face — chosen by health + the rolling A/B/C variant
+        // from update_face. Dead / dying locks to the final row,
+        // A-variant only. got_gatling_timer overrides everything
+        // while active, matching the original's DrawFace check
+        // against SD_SoundPlaying(GETGATLINGSND).
+        let face = if g->got_gatling_timer > 0.0 then pics.id.got_gatling
+            else match g->phase with
+            | gp_dying     -> pics.id.face_base + 6 * 3
+            | _            -> face_chunk_for(g->health, g->face_frame)
+        pics.draw(rc, vg, pal, face, 136, bar_top + 4)
+        // Weapon icon on the right.
+        let weapon_chunk = match g->weapon with
+        | 1 -> pics.id.pistol
+        | 2 -> pics.id.mg
+        | 3 -> pics.id.chain
+        | _ -> pics.id.knife
+        pics.draw(rc, vg, pal, weapon_chunk, 256, bar_top + 8)
+        // Key indicators — two slots on the right edge. Positions
+        // match the original StatusDrawPic coords (30,4) and (30,20)
+        // → x=240.
+        if g->has_gold_key then
+            pics.draw(rc, vg, pal, pics.id.gold_key, 240, bar_top + 4)
+        if g->has_silver_key then
+            pics.draw(rc, vg, pal, pics.id.silver_key, 240, bar_top + 20)
+
+    // Copy a const str into g->msg_buf and arm the message timer.
+    // The buffer caps at 63 chars (1 spare); longer messages are
+    // truncated. Duration is the original 3 seconds — long enough
+    // to read, short enough to not stack up during a fight.
+    let show_message = (g: game*, text: const str) ->
+        let mut n = (int32) text.len
+        if n > 255 then n = 255
+        for i in 0..n
+            g->msg_buf[i] = text[i]
+        g->msg_len = n
+        g->msg_timer = 3.0
+
+    // Draw the banner message if active. Fades out in the last
+    // 0.5 s. Newlines split the message into multiple centered
+    // lines stacked vertically — used by the secret cheat messages
+    // to show their full original-game text.
+    let render_message = (rc: render_ctx*, f: font.info*, g: game*) ->
+        if g->msg_timer <= 0.0 || g->msg_len <= 0 then return
+        // Foreground color brightens/fades.
+        let t = if g->msg_timer > 0.5 then 1.0 else g->msg_timer / 0.5
+        let bright = (uint32) (255.0 * t)
+        let color = 0xFF000000u32 | (bright << 16) | (bright << 8) | bright
+        // Walk msg_buf one line at a time, breaking on '\n'. Empty
+        // lines (from "\n\n" in the source text) render as a blank
+        // vertical gap.
+        let line_h = f->height + 1
+        let mut y = 4
+        let mut line_start = 0
+        let mut i = 0
+        loop
+            let at_end = i >= g->msg_len
+            let is_nl = !at_end && g->msg_buf[i] == 10u8
+            if at_end || is_nl then
+                // Measure + render the slice [line_start .. i).
+                let mut w = 0
+                for j in line_start..i
+                    let ch = (int32) g->msg_buf[j]
+                    if ch >= 0 && ch < 256 then w = w + f->width[ch]
+                let mut cx = (game_w - w) / 2
+                for j in line_start..i
+                    cx = cx + font.draw_char(rc, f, cx, y, (int32) g->msg_buf[j], color)
+                y = y + line_h
+                line_start = i + 1
+                if at_end then break
+            i = i + 1

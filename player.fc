@@ -1,0 +1,435 @@
+// Wolf-FC player — movement, collision, camera rotation, and weapon
+// firing / animation. The `cheats` submodule (MLI / BAT chord
+// detection, IDDQD letter sequence) is nested here because it's
+// triggered only by player input.
+
+module player =
+    import math from std::
+
+    // `player_radius` (the player collision player_radius, 0.35) lives at file
+    // scope in main.fc to break a circular-module reference with
+    // `doors`: player.blocked_by_map uses doors.passable, and
+    // doors.update uses player_radius for its bbox auto-close
+    // check. Referenced here by unqualified name.
+
+    // Static-decoration half-width (tiles). Blocking sprites
+    // (barrels, lamps, tables, etc.) block the player as a half-tile
+    // AABB centered on the tile instead of the whole 1×1 cell — you
+    // can approach a barrel until your bbox edge is
+    // ~(player_radius + sprite_block_half) from its center. Tuned down from
+    // a full tile because the art typically occupies only the middle
+    // half and the original's tile-grain blocking feels too
+    // intrusive at our scale.
+    let sprite_block_half = 0.25
+
+    // Enemy exclusion player_radius (tiles) — squared. Roughly player_radius (0.35)
+    // + enemy body half-width (~0.25). Smaller than the full bbox so
+    // the player can squeeze past an adjacent enemy without being
+    // locked out of corridors.
+    let enemy_block_r2 = 0.55 * 0.55
+
+    // True if the player's bbox at (px, py) overlaps a wall, closed
+    // door, or a blocking static sprite. Does NOT check enemy
+    // overlap — that's handled in try_move with a distance
+    // comparison so the player can always slide away from an enemy
+    // they're already inside of (prevents mutual-deadlock with
+    // chasing actors).
+    let blocked_by_map = (lv: level*, px: float64, py: float64) ->
+        let xl = (int32) (px - player_radius)
+        let xr = (int32) (px + player_radius)
+        let yl = (int32) (py - player_radius)
+        let yh = (int32) (py + player_radius)
+        // Walls + doors: per-tile check on each bbox corner.
+        let tile_blocks = (tx: int32, ty: int32) ->
+            tilemap.tile_solid(lv, tx, ty) || (tilemap.tile_is_door(lv, tx, ty) && !doors.passable(lv, tx, ty))
+        if tile_blocks(xl, yl) || tile_blocks(xr, yl)
+           || tile_blocks(xl, yh) || tile_blocks(xr, yh) then true
+        else
+            // Blocking sprites: AABB overlap against a half-tile box
+            // centered on the sprite. reach = player_radius +
+            // sprite_block_half.
+            let reach = player_radius + sprite_block_half
+            let mut hit = false
+            for i in 0..lv->num_sprites
+                let s = &lv->sprites[i]
+                if s->alive && s->blocks then
+                    let dx = px - s->x
+                    let dy = py - s->y
+                    let adx = if dx < 0.0 then 0.0 - dx else dx
+                    let ady = if dy < 0.0 then 0.0 - dy else dy
+                    if adx < reach && ady < reach then hit = true
+            hit
+
+    // Would moving from (cur_x, cur_y) to (nx, ny) collide with a
+    // live enemy? Asymmetric: blocks only moves that put the player
+    // INSIDE the exclusion zone of some live enemy AND DECREASE the
+    // distance to that enemy. Moves that increase (or leave
+    // unchanged) the distance are always allowed, so if an enemy
+    // walks onto the player the player can always slide away. Skips
+    // dead and actively-dying enemies (they don't physically block).
+    let move_blocked_by_enemy = (lv: level*, cur_x: float64, cur_y: float64,
+                                 nx: float64, ny: float64) ->
+        let mut hit = false
+        for i in 0..lv->num_enemies
+            let e = &lv->enemies[i]
+            match e->state with
+            | dead | die -> void()
+            | _ ->
+                let new_dx = e->x - nx
+                let new_dy = e->y - ny
+                let new_d2 = new_dx * new_dx + new_dy * new_dy
+                if new_d2 < enemy_block_r2 then
+                    let cur_dx = e->x - cur_x
+                    let cur_dy = e->y - cur_y
+                    let cur_d2 = cur_dx * cur_dx + cur_dy * cur_dy
+                    if new_d2 < cur_d2 then hit = true
+        hit
+
+    // Back-compat shim: walls-only check for old callers. Prefer the
+    // split above when you know the current (cur_x, cur_y) so enemy
+    // sliding works.
+    let blocked = (lv: level*, px: float64, py: float64) ->
+        blocked_by_map(lv, px, py)
+
+    // Try to move the player by (dx, dy). Attempts per-axis (so the
+    // player can slide along a wall when blocked on one axis) and
+    // reports "fully blocked" so the caller can trigger a wall-bump
+    // sound. Collision is checked against the map (walls + closed
+    // doors) AND live enemies — enemy blocking is "directional":
+    // moves that put the player further from an enemy are always
+    // allowed, which is what prevents the mutual-deadlock when an
+    // enemy walks onto the player from their side.
+    let try_move = (lv: level*, g: game*, dx: float64, dy: float64) ->
+        let cur_x = g->pos_x
+        let cur_y = g->pos_y
+        let nx = cur_x + dx
+        let ny = cur_y + dy
+        let mut blocked_x = true
+        let mut blocked_y = true
+        if !blocked_by_map(lv, nx, cur_y)
+           && !move_blocked_by_enemy(lv, cur_x, cur_y, nx, cur_y) then
+            g->pos_x = nx
+            blocked_x = false
+        if !blocked_by_map(lv, g->pos_x, ny)
+           && !move_blocked_by_enemy(lv, g->pos_x, cur_y, g->pos_x, ny) then
+            g->pos_y = ny
+            blocked_y = false
+        blocked_x && blocked_y
+
+    let rotate_camera = (g: game*, angle: float64) ->
+        let c = math.cos(angle)
+        let s = math.sin(angle)
+        let od = g->dir_x
+        g->dir_x = od * c + g->dir_y * s
+        g->dir_y = od * (0.0 - s) + g->dir_y * c
+        let op = g->plane_x
+        g->plane_x = op * c + g->plane_y * s
+        g->plane_y = op * (0.0 - s) + g->plane_y * c
+
+    // ============================================================
+    // Cheats — triggered only by player input
+    // ============================================================
+
+    module cheats =
+        // Cheat pop-ups hang around longer than regular pickup
+        // banners so the multi-line original text can be read. The
+        // original game froze play and waited for a keypress; we keep
+        // gameplay running and just hold the banner on-screen for
+        // ~6 seconds before the 0.5 s fade.
+        let msg_time = 6.0
+
+        let apply_mli = (g: game*) ->
+            g->health = 100
+            g->ammo = 99
+            g->has_gold_key = true
+            g->has_silver_key = true
+            g->weapon = 3
+            g->best_weapon = 3
+            g->score = 0
+            hud.show_message(g, "You now have 100% Health,\n99 Ammo and both Keys!\n\nNote that you have basically\neliminated your chances of\ngetting a high score!")
+            g->msg_timer = msg_time
+
+        let apply_bat = (g: game*) ->
+            hud.show_message(g, "Commander Keen is also\navailable from Apogee, but\nthen, you already know\nthat - right, Cheatmeister?!")
+            g->msg_timer = msg_time
+
+        // IDDQD — Doom-style god-mode toggle. Flips invulnerability
+        // and pops a banner naming the source. Health is bumped to
+        // 100 on activation as a gentle "you're whole again" cue
+        // (matches Doom's IDDQD); deactivation leaves the current
+        // health alone.
+        let apply_iddqd = (g: game*) ->
+            g->god_mode = !g->god_mode
+            if g->god_mode then
+                g->health = 100
+                hud.show_message(g, "A Doom fan, eh?\n\nGod mode ON")
+            else
+                hud.show_message(g, "A Doom fan, eh?\n\nGod mode OFF")
+            g->msg_timer = msg_time
+
+        // Drive the IDDQD state machine forward on a single letter
+        // keydown. Called from the SDL keydown handler (no key-repeat)
+        // and from the `iddqd` test command in test mode. Sequence is
+        // I-D-D-Q-D; an out-of-order key restarts progress (resets to
+        // 1 if the typed key matches the I prefix, else 0) so partial
+        // overlaps like "IDIDDQD" still arrive at the cheat.
+        // `iddqd_sequence` lives at file scope in main.fc (FC forbids
+        // array-literal initializers at module scope).
+        let advance_iddqd = (g: game*, k: int32) ->
+            if k != sdl2.key_i && k != sdl2.key_d && k != sdl2.key_q then return
+            if k == iddqd_sequence[g->iddqd_progress] then
+                g->iddqd_progress = g->iddqd_progress + 1
+                if g->iddqd_progress >= 5 then
+                    apply_iddqd(g)
+                    g->iddqd_progress = 0
+            else
+                g->iddqd_progress = if k == iddqd_sequence[0] then 1 else 0
+
+        // Called per-frame from the interactive game loop while
+        // gp_playing. Checks whether all three keys of each chord
+        // are held simultaneously; fires the effect once per
+        // chord-press (latched until at least one of the three keys
+        // is released, so a held combo doesn't retrigger every
+        // frame).
+        let check_chords = (g: game*) ->
+            let mli_all = g->key_m_held && g->key_l_held && g->key_i_held
+            if mli_all && !g->cheat_mli_latched then
+                apply_mli(g)
+                g->cheat_mli_latched = true
+            if !mli_all then g->cheat_mli_latched = false
+            let bat_all = g->key_b_held && g->key_a_held && g->key_t_held
+            if bat_all && !g->cheat_bat_latched then
+                apply_bat(g)
+                g->cheat_bat_latched = true
+            if !bat_all then g->cheat_bat_latched = false
+
+    // ============================================================
+    // Player update (movement, input, use-action dispatch)
+    // ============================================================
+
+    let update = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
+        let spd = move_speed * dt * (if g->key_shift then run_mult else 1.0)
+        let rot = turn_speed * dt * (if g->key_shift then run_mult else 1.0)
+
+        // thrustspeed-vs-RUNSPEED check (from the original's T_Shoot)
+        // that picks the base-160 "player can dodge" hitchance. True
+        // this frame iff shift is held AND the player is actually
+        // attempting a move (fwd/back, or alt+left/right strafe).
+        // Turning in place doesn't count — neither does holding
+        // shift without a direction.
+        g->player_running = g->key_shift && (
+            g->key_up || g->key_down ||
+            (g->key_alt && (g->key_left || g->key_right)))
+
+        // Track whether any attempted move was fully blocked — if so
+        // and the AdLib SFX chip is idle, play the wall-bump sound
+        // (matches the original's
+        // `if (!SD_SoundPlaying()) SD_PlaySound(HITWALLSND)` in
+        // T_Player).
+        let back_spd   = spd * back_mult
+        let strafe_spd = spd * strafe_mult
+        let mut wall_hit = false
+        if g->key_up && try_move(lv, g, g->dir_x * spd, g->dir_y * spd) then wall_hit = true
+        if g->key_down && try_move(lv, g, 0.0 - g->dir_x * back_spd, 0.0 - g->dir_y * back_spd) then wall_hit = true
+
+        if g->key_alt then
+            if g->key_left && try_move(lv, g, 0.0 - g->plane_x * strafe_spd, 0.0 - g->plane_y * strafe_spd) then wall_hit = true
+            if g->key_right && try_move(lv, g, g->plane_x * strafe_spd, g->plane_y * strafe_spd) then wall_hit = true
+        else
+            if g->key_left then rotate_camera(g, rot)
+            if g->key_right then rotate_camera(g, 0.0 - rot)
+
+        if g->wall_hit_cooldown > 0.0 then
+            g->wall_hit_cooldown = g->wall_hit_cooldown - dt
+        if wall_hit && g->wall_hit_cooldown <= 0.0 then
+            sfx.trigger(sfx.id.hit_wall, ac)
+            g->wall_hit_cooldown = 0.4   // ~400 ms before we'll re-announce
+
+        // Use-action dispatch — mirrors the original's Cmd_Use
+        // (wl_agent.cpp).
+        //   • Push-wall runs every frame while space is held;
+        //     pushwall.try_push is idempotent (early-returns if one
+        //     is already sliding or the tile isn't a push-wall
+        //     marker), so the behaviour is "hold space and walk
+        //     along a row of walls to find secrets" — the hallmark
+        //     Wolf3D use-key ergonomic.
+        //   • Elevator and door are edge-triggered on the press
+        //     itself, exactly like the original's
+        //     `!buttonheld[bt_use]` gate. NOWAYSND (locked door)
+        //     rides along inside the edge branch so it can't stutter.
+        //   • DONOTHINGSND fires every frame when nothing else did,
+        //     matching the original's else-branch. The AdLib driver
+        //     dedups same-chunk retriggers (see adlib.play in
+        //     sound.fc), so the "do-do-do" hold-at-wall rhythm comes
+        //     back at the chunk's natural ~300 ms length instead of
+        //     the frame rate — a cold OPL2 reset every frame would
+        //     otherwise cut the envelope short and degrade into
+        //     clicks over a few seconds.
+        if g->key_space then
+            let edge = !g->key_space_handled
+            g->key_space_handled = true
+            let fx = (int32) (g->pos_x + g->dir_x)
+            let fy = (int32) (g->pos_y + g->dir_y)
+            let mut did_anything = false
+            // Push-wall first so sliding a held space along a wall
+            // activates secret tiles even when an edge event isn't
+            // fresh (cardinal-only; diagonals wouldn't map to a
+            // single push direction).
+            let push_dx = if g->dir_x > 0.5 then 1 else if g->dir_x < -0.5 then -1 else 0
+            let push_dy = if g->dir_y > 0.5 then 1 else if g->dir_y < -0.5 then -1 else 0
+            if push_dx != 0 || push_dy != 0 then
+                if pushwall.try_push(lv, fx, fy, push_dx, push_dy) then
+                    sfx.trigger(sfx.id.push_wall, ac)
+                    g->secrets = g->secrets + 1
+                    did_anything = true
+            // Elevator + door fire once per press. Tile 21 ==
+            // ELEVATORTILE; standing on ALTELEVATORTILE (area 0) at
+            // switch-flip routes to the secret level (mirrors the
+            // original's ex_secretlevel). The !g->next_level guard
+            // is belt-and-braces so a fresh press during the
+            // elevator-wait window doesn't restack the LEVELDONESND
+            // cue.
+            if edge && fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
+                let face_tile = (int32) lv->tilemap[(int64) fx * 64 + (int64) fy]
+                if face_tile == 21 && !g->next_level then
+                    let stand_area = (int32) lv->tile_areas[
+                        (int64) ((int32) g->pos_x) * 64 + (int64) ((int32) g->pos_y)]
+                    if stand_area == 0 then g->went_secret = true
+                    g->next_level = true
+                    g->next_level_delay = elevator_wait_time
+                    // Boost LEVELDONESND into the mixer's soft-clip
+                    // region so the elevator-switch "bam!" lands the
+                    // way it did on OG Sound Blaster hardware. ~1.8×
+                    // sits just under the hard-clip threshold for
+                    // the digi's typical peak.
+                    sfx.trigger_loud(sfx.id.level_done, ac, 1.8)
+                    did_anything = true
+                else
+                    match doors.try_open(lv, fx, fy, g, ac) with
+                    | no_door      -> void()
+                    | door_opened  -> did_anything = true
+                    | door_locked  ->
+                        sfx.trigger(sfx.id.no_way, ac)
+                        did_anything = true
+            if !did_anything then
+                sfx.trigger(sfx.id.no_action, ac)
+        // Refresh g->area_number from whatever tile the player is now
+        // standing on. The original's Thrust does this every frame;
+        // we follow suit so any door event next frame floods from
+        // the player's current area, not the area they were in when
+        // the level loaded.
+        areas.update_player_area(lv, g)
+        // EXITTILE check (the original's Thrust
+        // `if (mapsegs[1] == EXITTILE)` tail). Stepping onto a
+        // plane-1 tile-99 marker fires the BJ-victory cutscene
+        // immediately — no elevator-wait freeze, no fade. Boss-level
+        // maps gate this tile behind the gold-key door so you have
+        // to kill the boss + grab the dropped key first. Skipped
+        // while next_level is already latched to avoid double-
+        // triggering on the same step.
+        if !g->next_level then
+            let ptx = (int32) g->pos_x
+            let pty = (int32) g->pos_y
+            if ptx >= 0 && ptx < map_size && pty >= 0 && pty < map_size then
+                if lv->exit_tiles[(int64) ptx * 64 + (int64) pty] then
+                    bj_victory.enter(g)
+
+    // ============================================================
+    // Weapon animation & firing
+    // ============================================================
+
+    // Per-frame weapon-animation pump. `fire_rate`, `weapon_fire_snd`,
+    // and `weapon_sprite_base` live at file scope in main.fc (FC
+    // forbids array-literal initializers at module scope).
+    let update_weapon = (w: world*, dt: float64) ->
+        let g = w->g
+        let ac = w->ac
+        if g->fire_timer > 0.0 then
+            g->fire_timer = g->fire_timer - dt
+            // Advance animation frames across the fire_rate window
+            // (4 phases).
+            if g->fire_timer <= 0.0 then
+                g->weapon_frame = 0
+                g->fire_timer = 0.0
+                // Wolf3D auto-switches to the knife at the end of an
+                // attack if ammo ran out (wl_agent.cpp T_Attack, the
+                // !ammo branch).
+                if g->weapon > 0 && g->ammo == 0 then g->weapon = 0
+            else
+                let total = fire_rate[g->weapon]
+                let progress = 1.0 - g->fire_timer / total
+                g->weapon_frame = if progress < 0.25 then 1
+                    else if progress < 0.5 then 2
+                    else if progress < 0.75 then 3
+                    else 4
+        if g->key_fire && g->fire_timer <= 0.0 then
+            if g->weapon == 0 then
+                // Knife — no ammo needed
+                g->fire_timer = fire_rate[0]
+                g->weapon_frame = 1
+                sfx.trigger(weapon_fire_snd[0], ac)
+                hitscan.fire_player(w)
+            else if g->ammo > 0 then
+                g->ammo = g->ammo - 1
+                g->fire_timer = fire_rate[g->weapon]
+                g->weapon_frame = 1
+                sfx.trigger(weapon_fire_snd[g->weapon], ac)
+                hitscan.fire_player(w)
+
+    // Draw a t_compshape sprite as a HUD overlay, stretched to
+    // (dst_w, dst_h) at screen position (dst_x, dst_y). Transparent
+    // (unused) source pixels are skipped implicitly by the run-list
+    // format. Framebuffer writes are clipped to the 3D viewport
+    // (0..view_h) so the weapon never paints onto the HUD bar.
+    let draw_hud_sprite = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[],
+                           page: int32, dst_x: int32, dst_y: int32,
+                           dst_w: int32, dst_h: int32) ->
+        let hdr = vswap.sprite_header_at(vs, page)
+        if !hdr.valid then return   // sparse page
+        let base = hdr.base
+        for sc in hdr.left_pix..(hdr.right_pix + 1)
+            let sx0 = dst_x + sc * dst_w / 64
+            let sx1 = dst_x + (sc + 1) * dst_w / 64
+            if sx1 <= 0 || sx0 >= game_w then continue
+            let data_off = (int64) hdr.col_offsets[sc]
+            let mut off = base + data_off
+            loop
+                let endy_raw = (int32) bytes.u16(vs->raw, off)
+                if endy_raw == 0 then break
+                let newstart = (int64) (int16) bytes.u16(vs->raw, off + 2)
+                let starty_raw = (int32) bytes.u16(vs->raw, off + 4)
+                off = off + 6
+                let row_start = starty_raw / 2
+                let row_end = endy_raw / 2
+                for row in row_start..row_end
+                    let pix = vs->raw[base + newstart + (int64) row]
+                    let color = pal[(int32) pix]
+                    let sy0 = dst_y + row * dst_h / 64
+                    let sy1 = dst_y + (row + 1) * dst_h / 64
+                    let y0 = if sy0 < 0 then 0 else sy0
+                    let y1 = if sy1 > view_h then view_h else sy1
+                    for sx in sx0..sx1
+                        if sx < 0 || sx >= game_w then continue
+                        for sy in y0..y1
+                            rc->fb[(int64) sy * 320 + (int64) sx] = color
+
+    // Draw the currently-held weapon sprite centered at the bottom
+    // of the 3D viewport. Sprite page =
+    // sprite_start + weapon_sprite_base[weapon] + frame, where
+    // frame 0 is "ready" and 1..4 are the attack frames.
+    let render_weapon = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[], g: game*) ->
+        let frame = g->weapon_frame
+        let sprite_idx = weapon_sprite_base[g->weapon] + frame
+        let page = vs->sprite_start + sprite_idx
+        // Weapon bob during movement (subtle vertical offset).
+        let bob = if g->key_up || g->key_down then
+            (int32) (math.sin(g->pos_x * 8.0 + g->pos_y * 8.0) * 2.0)
+        else 0
+        // Scale the 64x64 source to fill the viewport height,
+        // centered. Source transparency covers the upper rows so
+        // only the bottom portion of the weapon is actually drawn.
+        let dw = view_h
+        let dh = view_h
+        let dx = (game_w - dw) / 2
+        let dy = view_h - dh + bob
+        draw_hud_sprite(rc, vs, pal, page, dx, dy, dw, dh)

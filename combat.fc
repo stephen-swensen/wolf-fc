@@ -1,0 +1,1313 @@
+// Wolf-FC combat — enemies (data + AI), projectiles (enemy-fired dodgeable
+// objects), and the player's hitscan weapon fire. The `dir` module is
+// promoted to the top level because it's used by cutscenes (BJ victory
+// path-follow) and level spawn code as well, not just enemies.
+
+// ============================================================
+// Direction encoding — matches wolf4sdl dirtype (east=0, NE=1, N=2, ...
+// SE=7). Dir 8 = "nodir" (stationary / blocked-in).
+// ============================================================
+
+module dir =
+    let east      = 0
+    let northeast = 1
+    let north     = 2
+    let northwest = 3
+    let west      = 4
+    let southwest = 5
+    let south     = 6
+    let southeast = 7
+    let nodir     = 8
+
+    // The vx / vy / dx / dy / opposite lookup arrays live at file
+    // scope in main.fc (FC forbids array-literal initializers at
+    // module scope). Access them as `dir_vx`, `dir_vy`, `dir_dx`,
+    // `dir_dy`, `dir_opposite` — still logically part of this module.
+
+
+// ============================================================
+// Enemies — plane-1 tiles 108+ spawn guard / officer / SS / dog / mutant
+// ============================================================
+
+module enemies =
+    import math from std::
+
+    union enemy_kind =
+        | guard
+        | officer
+        | ss
+        | dog
+        | mutant
+        // Bosses — single-view (no 8-angle rotation) high-HP enemies
+        // that end the level on death. Hans (E1), Schabbs (E2), Hitler
+        // (E3), Giftmacher (E4), Gretel (E5). Sprite indices lie in
+        // the 420-510 range in VSWAP; we render them with a per-boss
+        // sprite_base and rely on walk_base..walk_base+3 for the
+        // 4-frame walk cycle.
+        | hans
+        | schabbs
+        | gretel
+        | giftmacher
+        | fat
+        | hitler_fake
+        | hitler
+        // Pacman ghosts — E1M10 (secret level) easter egg. Don't
+        // attack; chase the player; teleport him back on contact.
+        | blinky
+        | pinky
+        | clyde
+        | inky
+
+    union enemy_state =
+        | stand      // idle — transitions to chase/shoot on sight
+        | path       // patrolling along pre-set direction
+        | chase      // actively pursuing player
+        | shoot      // firing (multi-frame attack animation)
+        | pain       // brief flinch after taking damage
+        | die        // death animation frames
+        | dead       // corpse (final frame, no further animation)
+
+    // One animate actor. State, position, direction, HP all mutate in
+    // place; the live/dead distinction is `state == dead` (no separate
+    // `alive` flag).
+    struct enemy =
+        x: float64
+        y: float64
+        tile_x: int32             // integer tile — authoritative for AI / LOS
+        tile_y: int32
+        kind: enemy_kind
+        state: enemy_state
+        dir: int32                // 0..7 or 8 (nodir)
+        hp: int32
+        anim_frame: int32         // index into the state's frame list (walk 0-3, shoot 0-2, die 0-3)
+        anim_timer: float64       // seconds until next anim transition
+        shoot_fired: bool         // set true after the damage-roll frame in shoot, so we only fire once per attack
+        move_remaining: float64   // distance (tiles) left to reach the next tile center
+        dist_to_player: float64   // squared distance, used for draw sort
+        dist_flat: float64        // tile-grid distance, used for some AI decisions
+        ambush: bool              // tile 106 (AMBUSH) — don't wake on sound, only LOS
+        notified: bool            // has entered active pursuit at least once (suppresses re-alert sound)
+        reaction_timer: float64   // seconds left between first detection and actual wake; 0 when not yet detected (mirrors wolf4sdl SightPlayer's temp2)
+        last_visible: bool        // set by build_billboards when the enemy was drawn in the previous frame (mirrors wolf4sdl FL_VISABLE); read by enemy_fire_at_player to pick the steeper hitchance falloff
+
+    // Tunables — see ai.update_enemies for how each is used.
+    let max_enemies = 150
+    let enemy_chase_speed   = 1.5   // tiles/sec — walking chase for all humanoids
+    let enemy_patrol_speed  = 0.9   // tiles/sec — patrol pace before player is spotted
+    let dog_chase_speed     = 3.2   // tiles/sec — dogs roughly player-run speed
+    let walk_frame_time     = 0.12  // seconds per W1/W2/W3/W4 cycle frame
+    let shoot_frame_time    = 0.20  // humanoid shoot-windup frame duration
+    let pain_time           = 0.143 // pain flinch duration (10 tics @ 70Hz)
+    let die_frame_time      = 0.18  // per frame during death animation
+    let sight_range         = 16.0  // tiles — max LOS distance for sight check
+
+    // Per-kind sprite-page offsets relative to VSWAP sprite_start. Derived
+    // from the original's sprite enum (wl_def.h): SPR_GRD_S_1..
+    // SPR_GRD_SHOOT3 block at 50, DOG block at 99 (no stand), SS at 138,
+    // MUT at 187, OFC at 238.
+    //   stand_base : 8 angles at +0..+7 (standing/idle frame)
+    //   walk_base  : 32 frames = 4 walk phases × 8 angles
+    //   pain / die / dead / shoot : single-view pages (no angle variants)
+    struct sprite_table =
+        stand_base: int32
+        walk_base: int32
+        pain1: int32
+        pain2: int32
+        die_frames: int32[4]
+        num_die_frames: int32
+        dead_frame: int32
+        shoot_frames: int32[4]
+        num_shoot_frames: int32
+
+    // True iff this kind uses the 8-angle rotating walk-sprite table
+    // (guards, SS, officers, dogs, mutants). Bosses and ghosts are
+    // single-view.
+    let kind_is_rotating = (k: enemy_kind) ->
+        match k with
+        | hans | schabbs | gretel | giftmacher | fat
+        | hitler_fake | hitler
+        | blinky | pinky | clyde | inky -> false
+        | _ -> true
+
+    // Per-kind starting HP, indexed by difficulty. Mirrors the original's
+    // `starthitpoints[4][NUMENEMIES]` (wl_act2.cpp). Mutants, fake
+    // Hitler, and every boss scale up from baby → death incarnate;
+    // grunts and dogs are constant across difficulties.
+    let hp_for_kind = (k: enemy_kind, d: int32) ->
+        let diff_pick = (baby: int32, easy: int32, med: int32, hard: int32) ->
+            if d == 0 then baby else if d == 1 then easy
+            else if d == 2 then med else hard
+        match k with
+        | guard        -> 25
+        | officer      -> 50
+        | ss           -> 100
+        | dog          -> 1
+        | mutant       -> diff_pick(45, 55, 55, 65)
+        | hans         -> diff_pick(850, 950, 1050, 1200)
+        | schabbs      -> diff_pick(850, 950, 1550, 2400)
+        | gretel       -> diff_pick(850, 950, 1050, 1200)
+        | giftmacher   -> diff_pick(850, 950, 1050, 1200)
+        | fat          -> diff_pick(850, 950, 1050, 1200)
+        | hitler_fake  -> diff_pick(200, 300, 400, 500)
+        | hitler       -> diff_pick(800, 950, 1050, 1200)
+        | blinky | pinky | clyde | inky -> 1000  // unkillable-ish
+
+    // Score granted to the player on kill. Wolf3D values.
+    let score_for_kind = (k: enemy_kind) ->
+        match k with
+        | guard        -> 100
+        | officer      -> 400
+        | ss           -> 500
+        | dog          -> 200
+        | mutant       -> 700
+        | hans         -> 5000
+        | schabbs      -> 5000
+        | gretel       -> 5000
+        | giftmacher   -> 5000
+        | fat          -> 5000
+        | hitler_fake  -> 2000
+        | hitler       -> 5000
+        | blinky | pinky | clyde | inky -> 0
+
+    // Movement speed while chasing (tiles/sec). Dogs sprint; bosses and
+    // ghosts move at enemy_chase_speed.
+    let chase_speed_for_kind = (k: enemy_kind) ->
+        match k with
+        | dog -> dog_chase_speed
+        | _   -> enemy_chase_speed
+
+    // True iff the kind is a level-ending boss. Killing one ends the level.
+    let kind_is_boss = (k: enemy_kind) ->
+        match k with
+        | hans | schabbs | gretel | giftmacher | fat
+        | hitler_fake | hitler -> true
+        | _ -> false
+
+    // True iff this kind ends the episode on death via the death-cam
+    // cutscene (A_StartDeathCam in the original). Hans and Gretel
+    // instead drop a gold key so the player walks onto the EXITTILE —
+    // they're bosses but not death-cam bosses. Fake Hitler and Mecha
+    // Hitler die without ending the episode (Mecha morphs into the
+    // real Hitler; fake is just a mini-boss).
+    let kind_has_death_cam = (k: enemy_kind) ->
+        match k with
+        | schabbs | giftmacher | fat | hitler -> true
+        | _ -> false
+
+    // True iff the kind is a pacman ghost (non-hostile chaser).
+    let kind_is_ghost = (k: enemy_kind) ->
+        match k with
+        | blinky | pinky | clyde | inky -> true
+        | _ -> false
+
+    // True iff the kind opens doors on walk. In the original, dogs,
+    // fake-Hitlers, and ghosts/spectres use CHECKDIAG on all sides
+    // (doors block them); only humans and mutants/real-bosses use
+    // CHECKSIDE and trigger OpenDoor.
+    let kind_opens_doors = (k: enemy_kind) ->
+        match k with
+        | dog | hitler_fake | blinky | pinky | clyde | inky -> false
+        | _ -> true
+
+    // Bitmask: bit N set = fire (or bite) on entering shoot-frame N.
+    // Mutants use a double-shot pattern (T_Shoot on s_mutshoot1 and
+    // s_mutshoot3 in the original); most other hitscan enemies fire
+    // once at frame 2 of their 3-frame shoot cycle. Projectile bosses
+    // have shorter or longer shoot-frame tables and are mapped to
+    // match the original's states.cpp entries: Schabbs / Giftmacher
+    // throw once on their 2nd frame (bit 1), Fat throws on frame 2
+    // (bit 1) with the rest of his frames left idle, and fake Hitler
+    // launches a flame on every frame of his 2-frame approximation of
+    // the original's 8-frame salvo.
+    let shoot_fire_mask_for_kind = (k: enemy_kind) ->
+        match k with
+        | mutant -> 5    // 0b0101 — frames 0 and 2
+        | hans | gretel -> 5    // bosses fire on both shoot frames (chain gun)
+        | schabbs | giftmacher | fat -> 2  // 0b0010 — frame 1
+        | hitler_fake -> 3   // 0b0011 — both frames (flame salvo)
+        | _         -> 4    // 0b0100 — frame 2
+
+    // Pickup item to drop on death (pickups.item_kind.decoration =
+    // nothing). SS drop a machine gun; guards, officers, and mutants
+    // drop a clip. Dogs drop nothing.
+    let drop_for_kind = (k: enemy_kind) ->
+        match k with
+        | guard   -> pickups.item_kind.clip
+        | officer -> pickups.item_kind.clip
+        | ss      -> pickups.item_kind.machine_gun
+        | dog     -> pickups.item_kind.decoration
+        | mutant  -> pickups.item_kind.clip
+        // Hans and Gretel drop gold keys so the player can unlock the
+        // gold-key door and step onto the EXITTILE behind it. The four
+        // death-cam bosses (Schabbs, Giftmacher, Fat, real Hitler) end
+        // the episode directly via the death-cam cutscene — no key
+        // needed. Fake Hitler and Mecha Hitler die without ending the
+        // level and without dropping anything in the original.
+        | hans | gretel -> pickups.item_kind.gold_key
+        | schabbs | giftmacher | fat
+        | hitler_fake | hitler -> pickups.item_kind.decoration
+        | blinky | pinky | clyde | inky -> pickups.item_kind.decoration
+
+    // VSWAP sprite page index of the dropped pickup's shape
+    // (shape = 2 + tile - 23).
+    let drop_shape_for_kind = (k: enemy_kind) ->
+        match k with
+        | guard   -> 2 + (49 - 23)   // clip shape
+        | officer -> 2 + (49 - 23)
+        | mutant  -> 2 + (49 - 23)
+        | ss      -> 2 + (50 - 23)   // MG shape
+        | hans | gretel -> 2 + (43 - 23)   // gold key
+        | _ -> 0
+
+    // The 16 per-kind sprite tables (enemy_sprites_guard through
+    // enemy_sprites_inky) live at file scope in main.fc for the same
+    // reason as the dir.* arrays above. `sprites_for_kind` reaches
+    // for them by global name.
+    let sprites_for_kind = (k: enemy_kind) ->
+        match k with
+        | guard   -> enemy_sprites_guard
+        | officer -> enemy_sprites_ofc
+        | ss      -> enemy_sprites_ss
+        | dog     -> enemy_sprites_dog
+        | mutant  -> enemy_sprites_mut
+        | hans         -> enemy_sprites_hans
+        | schabbs      -> enemy_sprites_schabbs
+        | gretel       -> enemy_sprites_gretel
+        | giftmacher   -> enemy_sprites_giftmacher
+        | fat          -> enemy_sprites_fat
+        | hitler_fake  -> enemy_sprites_hitler_fake
+        | hitler       -> enemy_sprites_hitler
+        | blinky       -> enemy_sprites_blinky
+        | pinky        -> enemy_sprites_pinky
+        | clyde        -> enemy_sprites_clyde
+        | inky         -> enemy_sprites_inky
+
+    // Pick the 8-way rotating sprite for this enemy based on the angle
+    // from the enemy to (px, py) (usually the player). Mirrors the
+    // original's CalcRotate formula (`angle = atan2(e2p_y, e2p_x) -
+    // enemy_angle` quantized into 8 bins with a 22.5° offset).
+    let angle_sprite = (e: enemy*, px: float64, py: float64, base: int32) ->
+        let e2p_x = px - e->x
+        let e2p_y = e->y - py      // flip to std-math y-up
+        let a_e2p = math.atan2(e2p_y, e2p_x)
+        let a_face = (float64) e->dir * math.pi / 4.0
+        let mut rel = a_e2p - a_face + math.pi / 8.0
+        let two_pi = 2.0 * math.pi
+        loop
+            if rel >= 0.0 then break
+            rel = rel + two_pi
+        loop
+            if rel < two_pi then break
+            rel = rel - two_pi
+        let mut bin = (int32) (rel / (math.pi / 4.0))
+        if bin < 0 then bin = 0
+        if bin > 7 then bin = 7
+        base + bin
+
+    // VSWAP page (relative to sprite_start) for this enemy in its
+    // current state. Frame counts come from the original's states[]
+    // table; animation loops for walk states and plays once for die /
+    // shoot / pain.
+    let sprite_page = (e: enemy*, px: float64, py: float64) ->
+        let sp = sprites_for_kind(e->kind)
+        let rotating = kind_is_rotating(e->kind)
+        match e->state with
+        | stand ->
+            // Dogs have no stand pose — fall back to walk-frame 1.
+            // Bosses / ghosts are single-view: just use stand_base
+            // directly.
+            if rotating then angle_sprite(e, px, py, sp.stand_base)
+            else sp.stand_base
+        | path | chase ->
+            // Walk cycle: 4 phases of 8 angles. anim_frame cycles 0..3.
+            let ph = e->anim_frame % 4
+            if rotating then angle_sprite(e, px, py, sp.walk_base + ph * 8)
+            else sp.walk_base + ph
+        | shoot ->
+            let f = if e->anim_frame < sp.num_shoot_frames then e->anim_frame else sp.num_shoot_frames - 1
+            sp.shoot_frames[f]
+        | pain ->
+            // Alternate pain pose if the kind has two. anim_frame 0 = pain1.
+            if e->anim_frame == 0 then sp.pain1 else sp.pain2
+        | die ->
+            let f = if e->anim_frame < sp.num_die_frames then e->anim_frame else sp.num_die_frames - 1
+            sp.die_frames[f]
+        | dead -> sp.dead_frame
+
+    // ============================================================
+    // Enemy AI — per-frame state machine, pathfinding, line-of-sight,
+    // damage application, death handling. Nested under `enemies`
+    // because it operates only on enemies and has no callers outside
+    // the combat / phase-transition paths.
+    // ============================================================
+
+    module ai =
+        import math from std::
+        import random from std::
+
+        // Step through the tilemap along (x1,y1) → (x2,y2). Returns
+        // true if the ray passes without hitting a solid wall or a
+        // not-fully-open door. Used for enemy sight checks and
+        // player-fire hit-validation. Samples 8× per tile, which is
+        // dense enough for 64-tile maps without being a bottleneck.
+        let check_line_clear = (lv: level*, x1: float64, y1: float64, x2: float64, y2: float64) ->
+            let dx = x2 - x1
+            let dy = y2 - y1
+            let dist = math.sqrt(dx * dx + dy * dy)
+            if dist <= 1e-4 then return true
+            let steps = (int32) (dist * 8.0) + 1
+            let rx = dx / (float64) steps
+            let ry = dy / (float64) steps
+            let tx_end = (int32) x2
+            let ty_end = (int32) y2
+            let mut cx = x1
+            let mut cy = y1
+            let mut ok = true
+            for i in 1..steps
+                cx = cx + rx
+                cy = cy + ry
+                let tx = (int32) cx
+                let ty = (int32) cy
+                // Reached the destination tile — the rest of the line
+                // is inside it, so clear.
+                if tx == tx_end && ty == ty_end then break
+                if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then
+                    ok = false
+                    break
+                let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+                if t >= 1 && t <= 63 then
+                    ok = false
+                    break
+                if t >= 128 then
+                    // Pass only through fully-open doors.
+                    if lv->doors[t - 128].state != doors.door_state.open then
+                        ok = false
+                        break
+            ok
+
+        // Is the player visible to the enemy right now? Combines a
+        // forward-cone check (player roughly in front of enemy) with a
+        // tilemap LOS ray. Inside ~1.5 tiles, sight is automatic
+        // regardless of facing (matches the original's MINSIGHT
+        // fallback). An enemy with `dir == dir.nodir` (stationary /
+        // blocked-in) skips the cone check and falls through to the
+        // raw LOS — the original's stand actor wakes the same way.
+        // (Indexing dir_vx with dir.nodir == 8 would also be a slice
+        // OOB and abort the process.)
+        let enemy_sees_player = (lv: level*, g: game*, e: enemy*) ->
+            let dx = g->pos_x - e->x
+            let dy = g->pos_y - e->y
+            let dist = math.sqrt(dx * dx + dy * dy)
+            if dist > sight_range then false
+            else if dist < 1.5 || e->dir == dir.nodir then
+                check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y)
+            else
+                let fx = dir_vx[e->dir]
+                let fy = dir_vy[e->dir]
+                let dot = dx * fx + dy * fy
+                if dot <= 0.0 then false      // player is behind the enemy
+                else check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y)
+
+        // True iff the tile at (tx, ty) is passable for an enemy trying
+        // to move INTO it. Walls block; the player's tile blocks (so
+        // enemies don't walk into the camera); other live enemies
+        // block. Doors of any state are routable — advance_enemy_move
+        // handles the wait-for-open pause and triggers the door to
+        // open, matching the original's T_Chase. `self_idx` identifies
+        // the caller so it doesn't block itself.
+        let enemy_tile_passable = (lv: level*, g: game*, self_idx: int32, tx: int32, ty: int32) ->
+            if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
+            else
+                let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+                let e = &lv->enemies[self_idx]
+                if t >= 1 && t <= 63 then false
+                // Door tiles block kinds that can't open doors unless
+                // fully open (matches the original's CHECKDIAG:
+                // actorat is cleared only when open).
+                else if t >= 128 && !kind_opens_doors(e->kind)
+                        && lv->doors[t - 128].state != doors.door_state.open then false
+                else if (int32) g->pos_x == tx && (int32) g->pos_y == ty then false
+                else
+                    let mut blocked = false
+                    for j in 0..lv->num_enemies
+                        if j == self_idx then continue
+                        let oe = &lv->enemies[j]
+                        match oe->state with
+                        | dead -> void()     // corpses don't block
+                        | _ ->
+                            if oe->tile_x == tx && oe->tile_y == ty then blocked = true
+                    for i in 0..lv->num_sprites
+                        let s = &lv->sprites[i]
+                        if s->alive && s->blocks
+                           && (int32) s->x == tx && (int32) s->y == ty then blocked = true
+                    !blocked
+
+        // Try to take a step in `d` from this enemy's current tile.
+        // For diagonal moves we also insist both orthogonal neighbors
+        // are open so enemies don't clip the corner of a wall (matches
+        // the original's TryWalk corner check).
+        let try_enemy_walk = (lv: level*, g: game*, self_idx: int32, d: int32) ->
+            if d == dir.nodir then false
+            else
+                let e = &lv->enemies[self_idx]
+                let ntx = e->tile_x + dir_dx[d]
+                let nty = e->tile_y + dir_dy[d]
+                if !enemy_tile_passable(lv, g, self_idx, ntx, nty) then false
+                else if dir_dx[d] != 0 && dir_dy[d] != 0 then
+                    // Diagonal: require both cardinal neighbors passable too.
+                    enemy_tile_passable(lv, g, self_idx, e->tile_x + dir_dx[d], e->tile_y)
+                        && enemy_tile_passable(lv, g, self_idx, e->tile_x, e->tile_y + dir_dy[d])
+                else true
+
+        // SelectChaseDir in the original, minus the dodge variant and
+        // the turn markers. Picks up to two preferred directions
+        // toward the player (the larger axis tried first), tries the
+        // current heading, then scans all four cardinals in a random
+        // starting order, and finally allows a turnaround. Leaves
+        // e->dir at dir.nodir when fully blocked in.
+        let select_chase_dir = (lv: level*, g: game*, self_idx: int32) ->
+            let e = &lv->enemies[self_idx]
+            let dxi = (int32) g->pos_x - e->tile_x
+            let dyi = (int32) g->pos_y - e->tile_y
+            let adx = if dxi < 0 then -dxi else dxi
+            let ady = if dyi < 0 then -dyi else dyi
+            let old_dir = e->dir
+            let turnaround = if old_dir == dir.nodir then dir.nodir else dir_opposite[old_dir]
+            let mut d1 = dir.nodir
+            let mut d2 = dir.nodir
+            if dxi > 0 then d1 = dir.east else if dxi < 0 then d1 = dir.west
+            if dyi > 0 then d2 = dir.south else if dyi < 0 then d2 = dir.north
+            if ady > adx then
+                let t = d1
+                d1 = d2
+                d2 = t
+            if d1 == turnaround then d1 = dir.nodir
+            if d2 == turnaround then d2 = dir.nodir
+            if d1 != dir.nodir then
+                e->dir = d1
+                if try_enemy_walk(lv, g, self_idx, d1) then return
+            if d2 != dir.nodir then
+                e->dir = d2
+                if try_enemy_walk(lv, g, self_idx, d2) then return
+            if old_dir != dir.nodir && old_dir != turnaround then
+                e->dir = old_dir
+                if try_enemy_walk(lv, g, self_idx, old_dir) then return
+            let cardinals = int32[4] { dir.east, dir.north, dir.west, dir.south }
+            let start = rnd_byte(g) % 4
+            for k in 0..4
+                let d = cardinals[(start + k) % 4]
+                if d == turnaround then continue
+                e->dir = d
+                if try_enemy_walk(lv, g, self_idx, d) then return
+            if turnaround != dir.nodir then
+                e->dir = turnaround
+                if try_enemy_walk(lv, g, self_idx, turnaround) then return
+            e->dir = dir.nodir
+
+        // Patrol: keep walking in the current heading. If the current
+        // tile carries an ICON_ARROWS marker (plane-1 90..97, pre-
+        // baked into lv->path_arrows), snap to that direction first.
+        // If the resulting move is blocked, stop — no wall-bounce
+        // fallback. Matches the original's SelectPathDir.
+        let select_path_dir = (lv: level*, g: game*, self_idx: int32) ->
+            let e = &lv->enemies[self_idx]
+            let arrow = (int32) lv->path_arrows[(int64) e->tile_x * 64 + (int64) e->tile_y]
+            if arrow != dir.nodir then e->dir = arrow
+            if e->dir == dir.nodir || !try_enemy_walk(lv, g, self_idx, e->dir) then
+                e->dir = dir.nodir
+
+        // Advance this enemy along its current direction by
+        // `speed * dt` tiles. When crossing a tile center, consumes
+        // the leftover step by picking a new direction (chase or
+        // patrol) and continuing — otherwise enemies would slow down
+        // noticeably at every grid crossing. If the next tile is a
+        // closed or animating door, kicks it to opening (with sound)
+        // and pauses at the current tile center until it's fully open
+        // — matches the original's T_Chase OpenDoor.
+        let advance_enemy_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, speed: float64, dt: float64, is_chase: bool) ->
+            let mut step = speed * dt
+            loop
+                if step <= 1e-6 then break
+                let e = &lv->enemies[self_idx]
+                if e->dir == dir.nodir then
+                    if is_chase then select_chase_dir(lv, g, self_idx)
+                    else select_path_dir(lv, g, self_idx)
+                    if e->dir == dir.nodir then break
+                let ntx = e->tile_x + dir_dx[e->dir]
+                let nty = e->tile_y + dir_dy[e->dir]
+                if ntx >= 0 && ntx < map_size && nty >= 0 && nty < map_size then
+                    let nt = (int32) lv->tilemap[(int64) ntx * 64 + (int64) nty]
+                    if nt >= 128 && lv->doors[nt - 128].state != doors.door_state.open then
+                        if kind_opens_doors(e->kind) then
+                            if lv->doors[nt - 128].state == doors.door_state.closed then
+                                doors.start_opening(lv, nt - 128, g, ac)
+                            e->x = (float64) e->tile_x + 0.5
+                            e->y = (float64) e->tile_y + 0.5
+                            break
+                        else
+                            // Door is a solid wall to this kind — abort
+                            // the step and force a new direction choice
+                            // from the current tile.
+                            e->x = (float64) e->tile_x + 0.5
+                            e->y = (float64) e->tile_y + 0.5
+                            e->dir = dir.nodir
+                            break
+                let target_x = (float64) ntx + 0.5
+                let target_y = (float64) nty + 0.5
+                let dx = target_x - e->x
+                let dy = target_y - e->y
+                let dist = math.sqrt(dx * dx + dy * dy)
+                if dist > step then
+                    e->x = e->x + dx / dist * step
+                    e->y = e->y + dy / dist * step
+                    step = 0.0
+                else
+                    e->x = target_x
+                    e->y = target_y
+                    e->tile_x = e->tile_x + dir_dx[e->dir]
+                    e->tile_y = e->tile_y + dir_dy[e->dir]
+                    step = step - dist
+                    if is_chase then select_chase_dir(lv, g, self_idx)
+                    else select_path_dir(lv, g, self_idx)
+
+        // Advance a looping walk animation (4 frames with the same
+        // duration each). Takes a pointer so callers don't have to
+        // know the backing array.
+        let advance_walk_anim = (e: enemy*) ->
+            if e->anim_timer <= 0.0 then
+                e->anim_frame = (e->anim_frame + 1) % 4
+                e->anim_timer = walk_frame_time
+
+        // Player damage path — one place so every damage source routes
+        // through the same SFX + death-transition handling. dmg ≤0 is
+        // a no-op; damage while already dying / gameover / intermission
+        // is silently dropped so scripted paths can keep ticking
+        // without retriggering the death transition.
+        let damage_player = (g: game*, ac: audio_ctx*, dmg: int32) ->
+            if dmg <= 0 then return
+            match g->phase with
+            | gp_playing -> void()
+            | _          -> return
+            // IDDQD god mode: silently swallow damage. Intentionally
+            // no damage flash or pain sound so the cheat reads as
+            // "nothing even touched you" rather than a hit absorbed.
+            if g->god_mode then return
+            g->health = g->health - dmg
+            g->damage_flash_timer = damage_flash_time
+            // Force the next face roll to fire on the next
+            // hud.update_face tick so the new health row is visible
+            // immediately (the original resets facecount in
+            // TakeDamage's BJOUCHPIC branch and calls DrawFace right
+            // after).
+            g->face_count = 256.0
+            if g->health <= 0 then
+                g->health = 0
+                g->phase = game_phase.gp_dying
+                g->phase_timer = 0.0
+                // Death scream on lethal damage; regular pain otherwise.
+                sfx.trigger(sfx.id.death_1, ac)
+            else
+                sfx.trigger(sfx.id.pain, ac)
+
+        // Drop a pickup sprite at (x, y). Reuses empty sprite slots
+        // from earlier pickups before growing the list — prevents the
+        // array from hitting its cap just because the player has been
+        // clearing rooms.
+        let add_dropped_item = (lv: level*, x: float64, y: float64, page: int32, it: pickups.item_kind) ->
+            let mut slot = -1
+            for i in 0..lv->num_sprites
+                if !lv->sprites[i].alive then
+                    slot = i
+                    break
+            if slot < 0 then
+                if lv->num_sprites >= tilemap.max_sprites then return
+                slot = lv->num_sprites
+                lv->num_sprites = lv->num_sprites + 1
+            lv->sprites[slot] = tilemap.sprite_obj {
+                x = x, y = y, shape_page = page, dist = 0.0,
+                item_type = it, alive = true, blocks = false
+            }
+
+        // Per-kind death vocal (A_DeathScream in the original).
+        // Mutants are silent; ghosts (pacman) are silent. Returns -1
+        // for those cases so callers can skip the sfx.trigger_at call.
+        let death_scream_for_kind = (k: enemy_kind, g: game*) ->
+            match k with
+            | dog          -> sfx.id.dog_death
+            | ss           -> sfx.id.leben        // "Mein Leben!"
+            | officer      -> sfx.id.nein_sovass
+            | mutant       -> sfx.id.ahhhg
+            | guard        -> guard_death_sounds[rnd_byte(g) & 7]
+            | hans         -> sfx.id.mutti        // "Mutti!"
+            | gretel       -> sfx.id.mein
+            | giftmacher   -> sfx.id.donner
+            | fat          -> sfx.id.rose
+            | schabbs      -> sfx.id.meingott     // "Mein Gott!"
+            | hitler_fake  -> sfx.id.hitlerha
+            | hitler       -> sfx.id.eva
+            | blinky | pinky | clyde | inky -> -1
+
+        // Transition this enemy into die: play death sound, drop any
+        // pickup they carry, and let the animation timer tick out the
+        // die frames. Caller awards score separately so stand-level
+        // test commands can invoke this without accidentally buffing
+        // the player.
+        let kill_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, sprite_start: int32) ->
+            e->state = enemy_state.die
+            e->anim_frame = 0
+            e->anim_timer = die_frame_time
+            e->dir = dir.nodir
+            let snd = death_scream_for_kind(e->kind, g)
+            if snd >= 0 then sfx.trigger_at(snd, ac, g, e->x, e->y)
+            let drop = drop_for_kind(e->kind)
+            match drop with
+            | decoration -> void()
+            | _ ->
+                let shape = drop_shape_for_kind(e->kind)
+                add_dropped_item(lv, e->x, e->y, sprite_start + shape, drop)
+
+        // Apply damage to an enemy. Always alerts them (matches the
+        // original: a shot through the wall still puts the actor into
+        // attack mode via FirstSighting). If HP would drop to 0,
+        // transition to die and award score. Score goes here so
+        // unscripted hitscans can't bypass it.
+        //
+        // `idx` is the enemy's position in lv->enemies — needed so the
+        // death-cam cutscene can reference the corpse after
+        // damage_enemy returns.
+        let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, idx: int32, dmg: int32, sprite_start: int32) ->
+            match e->state with
+            | die | dead -> return
+            | _ -> void()
+            // Damaging an enemy also raises noise (the original's
+            // DamageActor sets madenoise up front). This is what makes
+            // a knife hit wake nearby guards even though the knife
+            // itself isn't loud — the victim's pain shout is.
+            g->made_noise = true
+            e->hp = e->hp - dmg
+            e->notified = true
+            if e->hp <= 0 then
+                g->score = g->score + score_for_kind(e->kind)
+                g->kills = g->kills + 1
+                // Schabbs / Giftmacher / Fat / real Hitler end the
+                // episode via the death-cam cutscene (A_StartDeathCam
+                // in the original). All other kinds — including Hans
+                // and Gretel — just drop their gold key (or pickup)
+                // and leave the player to walk out.
+                if kind_has_death_cam(e->kind) then
+                    death_cam.enter(lv, g, ac, e, idx, sprite_start)
+                else
+                    kill_enemy(lv, g, ac, e, sprite_start)
+                // Hans / Gretel drop the key from kill_enemy via
+                // drop_for_kind. update_player checks the EXITTILE on
+                // every move and routes the BJ-runs cutscene from
+                // there.
+            else
+                // Put non-active actors into combat mode before
+                // anything else (mirrors the original's DamageActor:
+                // FirstSighting is called up front regardless of
+                // kind). For regular enemies this chase state is about
+                // to be overridden by the pain transition below, but
+                // for bosses / dogs it's the only thing that wakes
+                // them on a through-the-wall or sneak-attack shot.
+                match e->state with
+                | stand | path -> wake_enemy(g, e, ac)
+                | _ -> void()
+                // Pain flinch applies to guards / officers / SS /
+                // mutants only. In the original, DamageActor's switch
+                // falls through to a no-op default for bosses and dogs
+                // — they keep their current state (chase / shoot) and
+                // continue fighting through sustained damage. That's
+                // why unloading the chain gun into Hans doesn't
+                // stun-lock him there.
+                match e->kind with
+                | guard | officer | ss | mutant ->
+                    e->state = enemy_state.pain
+                    e->anim_frame = 0
+                    e->anim_timer = pain_time
+                    e->dir = dir.nodir
+                | _ -> void()
+
+        // Per-kind reaction delay (seconds) between first detection
+        // and actual wake. Mirrors SightPlayer's temp2 switch in the
+        // original (wl_state.cpp:1500): values are in tics (70 Hz) in
+        // the original; we convert to seconds. rnd_byte is drawn from
+        // rng_enemy so scripted tests stay deterministic.
+        let reaction_delay_for_kind = (k: enemy_kind, g: game*) ->
+            let tics = match k with
+            | guard   -> 1 + rnd_byte(g) / 4    // 1..64 tics (≈0.014..0.914s)
+            | officer -> 2                      // fixed 2 tics
+            | mutant  -> 1 + rnd_byte(g) / 6    // 1..43 tics
+            | ss      -> 1 + rnd_byte(g) / 6    // 1..43 tics
+            | dog     -> 1 + rnd_byte(g) / 8    // 1..32 tics
+            | hans | schabbs | gretel | giftmacher
+            | fat | hitler_fake | hitler -> 1
+            | blinky | pinky | clyde | inky -> 1
+            (float64) tics / 70.0
+
+        // True iff a stand / path enemy has detected the player this
+        // frame. Mirrors the first-detection half of the original's
+        // SightPlayer (wl_state.cpp): an enemy ignores the player
+        // unless its area is reachable from the player by open doors
+        // (area_by_player). Inside that connected zone, AMBUSH-
+        // flagged enemies still need a literal LOS, but regular
+        // guards detect on either LOS *or* a noise event (gun shot or
+        // pain scream) anywhere in the connected zone — that's how
+        // firing in one room pulls everyone in connected rooms toward
+        // you. Detection starts a reaction-delay countdown in
+        // update_enemy; the actual transition-to-chase doesn't happen
+        // until the timer elapses.
+        let enemy_should_wake = (lv: level*, g: game*, e: enemy*) ->
+            let area = (int32) lv->tile_areas[(int64) e->tile_x * 64 + (int64) e->tile_y]
+            if area >= areas.num_areas then false
+            else if !lv->area_by_player[area] then false
+            else if e->ambush then enemy_sees_player(lv, g, e)
+            else g->made_noise || enemy_sees_player(lv, g, e)
+
+        // Wake up a sleeping (stand/path) enemy. Plays the per-kind
+        // alert vocal the first time only; subsequent wake-ups from
+        // repeated hits / line-of-sight loss/regain stay silent so the
+        // soundscape doesn't get spammy.
+        let wake_enemy = (g: game*, e: enemy*, ac: audio_ctx*) ->
+            e->state = enemy_state.chase
+            e->anim_frame = 0
+            e->anim_timer = walk_frame_time
+            e->dir = dir.nodir
+            if !e->notified then
+                e->notified = true
+                // FirstSighting in the original: one vocal per kind
+                // played when the enemy enters combat. Mutants are
+                // silent (no vocalization). Ghosts are silent. Each
+                // boss has a signature line.
+                let snd = match e->kind with
+                | guard        -> sfx.id.halt
+                | officer      -> sfx.id.spion       // "Spion!"
+                | ss           -> sfx.id.schutzad    // "Schutzstaffel!"
+                | dog          -> sfx.id.dog_bark
+                | mutant       -> -1              // silent
+                | hans         -> sfx.id.gutentag    // "Guten Tag!"
+                | gretel       -> sfx.id.kein
+                | giftmacher   -> sfx.id.eine
+                | fat          -> sfx.id.erlauben
+                | schabbs      -> sfx.id.schabbsha
+                | hitler_fake  -> sfx.id.tot_hund
+                | hitler       -> sfx.id.die
+                | blinky | pinky | clyde | inky -> -1    // silent
+                if snd >= 0 then sfx.trigger_at(snd, ac, g, e->x, e->y)
+
+        // Enemy firing an attack at the player, called from T_Shoot
+        // frames. Ports the original's T_Shoot distance-based hit
+        // chance and damage roll. Hitchance picks one of four
+        // formulas based on whether the player is running this frame
+        // and whether the enemy was drawn last frame (FL_VISABLE):
+        //   still + hidden   : 256 - dist*8
+        //   still + visible  : 256 - dist*16  (player can see to dodge)
+        //   running + hidden : 160 - dist*8
+        //   running + visible: 160 - dist*16
+        // SS and Hans (`bossobj` in the original — only Hans uses that
+        // obclass) apply a 2/3 distance discount before this lookup —
+        // they're more accurate shooters. Other bosses fire with their
+        // own obclass and do not get it.
+        let enemy_fire_at_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
+            // Per-kind firing sound — mirrors the original's T_Shoot
+            // switch. Gretel is not listed in the original switch and
+            // falls through to NAZIFIRESND.
+            let snd = match e->kind with
+            | ss                      -> sfx.id.ss_fire
+            | hans | hitler           -> sfx.id.boss_fire
+            | schabbs                 -> sfx.id.schabbs_throw
+            | hitler_fake             -> sfx.id.flamethrower
+            | giftmacher | fat        -> sfx.id.missile_fire
+            | _                       -> sfx.id.nazi_fire
+            sfx.trigger_at(snd, ac, g, e->x, e->y)
+            if !check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then return
+            let dxi = (int32) g->pos_x - e->tile_x
+            let dyi = (int32) g->pos_y - e->tile_y
+            let adx = if dxi < 0 then -dxi else dxi
+            let ady = if dyi < 0 then -dyi else dyi
+            let dist_tiles = if adx > ady then adx else ady
+            // Only ssobj and bossobj get the 2/3 discount in the
+            // original T_Shoot — bossobj is Hans Grosse specifically;
+            // Schabbs / Gretel / Giftmacher / Fat / Hitler(fake/real)
+            // use their own obclass and miss the shortcut.
+            let dist_adj = match e->kind with
+            | ss | hans -> dist_tiles * 2 / 3
+            | _         -> dist_tiles
+            let base = if g->player_running then 160 else 256
+            let falloff = if e->last_visible then 16 else 8
+            let hitchance = base - dist_adj * falloff
+            if rnd_byte(g) < hitchance then
+                let roll = rnd_byte(g)
+                let dmg = if dist_adj < 2 then roll / 4
+                          else if dist_adj < 4 then roll / 8
+                          else roll / 16
+                damage_player(g, ac, dmg)
+
+        // Per-frame AI step for one enemy. Dispatches on state;
+        // advances animation and moves continuously. Called from
+        // update_enemies which does the loop.
+        let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, dt: float64, sprite_start: int32) ->
+            let e = &lv->enemies[self_idx]
+            e->anim_timer = e->anim_timer - dt
+            match e->state with
+            | dead -> void()
+            | die ->
+                if e->anim_timer <= 0.0 then
+                    let sp = sprites_for_kind(e->kind)
+                    e->anim_frame = e->anim_frame + 1
+                    if e->anim_frame >= sp.num_die_frames then
+                        e->state = enemy_state.dead
+                    else
+                        e->anim_timer = die_frame_time
+            | pain ->
+                if e->anim_timer <= 0.0 then
+                    e->state = enemy_state.chase
+                    e->anim_frame = 0
+                    e->anim_timer = walk_frame_time
+                    e->dir = dir.nodir
+            | stand ->
+                // Two-phase wake (the original's SightPlayer): on
+                // first detection we seed a per-kind reaction timer
+                // and keep standing; the transition to chase only
+                // fires when the timer counts down to 0. Commits on
+                // detection — losing LOS mid-countdown doesn't abort
+                // the wake, matching the original's "once spotted,
+                // reacting" behavior.
+                if e->reaction_timer > 0.0 then
+                    e->reaction_timer = e->reaction_timer - dt
+                    if e->reaction_timer <= 0.0 then
+                        e->reaction_timer = 0.0
+                        wake_enemy(g, e, ac)
+                else if enemy_should_wake(lv, g, e) then
+                    e->reaction_timer = reaction_delay_for_kind(e->kind, g)
+            | path ->
+                if e->reaction_timer > 0.0 then
+                    e->reaction_timer = e->reaction_timer - dt
+                    if e->reaction_timer <= 0.0 then
+                        e->reaction_timer = 0.0
+                        wake_enemy(g, e, ac)
+                    else
+                        advance_enemy_move(lv, g, ac, self_idx, enemy_patrol_speed, dt, false)
+                        advance_walk_anim(e)
+                else if enemy_should_wake(lv, g, e) then
+                    e->reaction_timer = reaction_delay_for_kind(e->kind, g)
+                else
+                    advance_enemy_move(lv, g, ac, self_idx, enemy_patrol_speed, dt, false)
+                    advance_walk_anim(e)
+            | chase ->
+                match e->kind with
+                | dog ->
+                    // T_DogChase's lunge gate: |dx|-move ≤ 1 && |dy|-move ≤ 1
+                    // in tiles. `move` is the dog's distance-to-travel this
+                    // frame, so the effective range is 1 + step on each axis.
+                    let step = dog_chase_speed * dt
+                    let adx = math.abs(g->pos_x - e->x)
+                    let ady = math.abs(g->pos_y - e->y)
+                    if adx <= 1.0 + step && ady <= 1.0 + step && check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then
+                        e->state = enemy_state.shoot
+                        e->anim_frame = 0
+                        e->anim_timer = shoot_frame_time
+                        e->shoot_fired = false
+                    else
+                        advance_enemy_move(lv, g, ac, self_idx, dog_chase_speed, dt, true)
+                        advance_walk_anim(e)
+                | blinky | pinky | clyde | inky ->
+                    // Pacman ghosts — chase silently and damage on
+                    // contact; no shoot animation, no projectile.
+                    // Contact test matches ClipMove's ghost branch in
+                    // the original: |dx|, |dy| each within
+                    // MINACTORDIST (1 tile) of the player center.
+                    let adx = math.abs(g->pos_x - e->x)
+                    let ady = math.abs(g->pos_y - e->y)
+                    if adx <= 1.0 && ady <= 1.0 then
+                        damage_player(g, ac, 1)
+                    advance_enemy_move(lv, g, ac, self_idx, enemy_chase_speed, dt, true)
+                    advance_walk_anim(e)
+                | _ ->
+                    // Shoot roll: the original uses (tics<<4)/dist against
+                    // a 256-range rnd. We approximate with a dt-scaled
+                    // chance so 35Hz and 70Hz tick rates behave
+                    // equivalently. chance ≈ dt*40 / max(dist, 1).
+                    if check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then
+                        let dxi = (int32) g->pos_x - e->tile_x
+                        let dyi = (int32) g->pos_y - e->tile_y
+                        let adx = if dxi < 0 then -dxi else dxi
+                        let ady = if dyi < 0 then -dyi else dyi
+                        let dist_tiles = if adx > ady then adx else ady
+                        let d = if dist_tiles < 1 then 1 else dist_tiles
+                        let chance = (int32) (dt * 1400.0) / d   // ~40/tile/sec at 35Hz
+                        if rnd_byte(g) < chance then
+                            e->state = enemy_state.shoot
+                            e->anim_frame = 0
+                            e->anim_timer = shoot_frame_time
+                            e->shoot_fired = false
+                            return
+                    advance_enemy_move(lv, g, ac, self_idx, chase_speed_for_kind(e->kind), dt, true)
+                    advance_walk_anim(e)
+            | shoot ->
+                let sp = sprites_for_kind(e->kind)
+                if e->anim_timer <= 0.0 then
+                    e->anim_frame = e->anim_frame + 1
+                    e->shoot_fired = false
+                    if e->anim_frame >= sp.num_shoot_frames then
+                        e->state = enemy_state.chase
+                        e->anim_frame = 0
+                        e->anim_timer = walk_frame_time
+                        e->dir = dir.nodir
+                        return
+                    e->anim_timer = shoot_frame_time
+                // Fire on entering each fire-frame in the per-kind
+                // mask. shoot_fired is a per-frame latch so mutants
+                // (mask = bits 0 and 2) fire twice.
+                let mask = shoot_fire_mask_for_kind(e->kind)
+                if !e->shoot_fired && (mask & (1 << e->anim_frame)) != 0 then
+                    e->shoot_fired = true
+                    match e->kind with
+                    | dog -> projectiles.enemy_bite_player(lv, g, ac, e)
+                    | schabbs | giftmacher | fat | hitler_fake ->
+                        projectiles.spawn(lv, ac, g, e, projectiles.kind_for_enemy(e->kind))
+                    | _   -> enemy_fire_at_player(lv, g, ac, e)
+
+        let update_enemies = (w: world*, dt: float64) ->
+            let sprite_start = w->ac->vs->sprite_start
+            for i in 0..w->lv->num_enemies
+                update_enemy(w->lv, w->g, w->ac, i, dt, sprite_start)
+
+        // Animation-only pump for actors in die. Used during phases
+        // that freeze the rest of gameplay (gp_bj_victory, the
+        // elevator pre-tally freeze) so a boss dying at the tail end
+        // of a fight still plays its full die-frame cascade and lands
+        // on the dead-pose sprite instead of staying stuck on its
+        // first die frame.
+        let update_dying_enemies = (lv: level*, dt: float64) ->
+            for i in 0..lv->num_enemies
+                let e = &lv->enemies[i]
+                match e->state with
+                | die ->
+                    e->anim_timer = e->anim_timer - dt
+                    if e->anim_timer <= 0.0 then
+                        let sp = sprites_for_kind(e->kind)
+                        e->anim_frame = e->anim_frame + 1
+                        if e->anim_frame >= sp.num_die_frames then
+                            e->state = enemy_state.dead
+                        else
+                            e->anim_timer = die_frame_time
+                | _ -> void()
+
+
+// ============================================================
+// Enemy projectile attacks — visible dodgeable objects fired by Schabbs,
+// Giftmacher, Fat, and fake Hitler. Ports T_SchabbThrow / T_GiftThrow /
+// T_Launch / T_FakeFire (spawn) + T_Projectile (per-tic step) from the
+// original.
+// ============================================================
+
+module projectiles =
+    import math from std::
+
+    union projectile_kind =
+        | needle    // Schabbs syringe: 4-frame flip-book, non-rotating
+        | rocket    // Giftmacher / Fat missile: 8 rotating angles, explodes
+        | fire      // Fake Hitler flamethrower: 2-frame animation, dissipates
+        | boom      // Short-lived explosion sprite spawned on rocket wall hit
+
+    struct projectile =
+        kind: projectile_kind
+        x: float64
+        y: float64
+        angle: float64            // radians, direction of travel
+        alive: bool               // false = slot is free
+        anim_frame: int32         // cycling 0..3 for needle, 0..1 for fire, 0..2 for boom
+        anim_timer: float64       // seconds until next frame
+
+    let max_projectiles = 32   // generous cap — MAXACTORS is shared pool; few projectiles actually fly at once
+
+    // Projectile speeds in tiles/sec, derived from the original's
+    // fixed-point 0x2000 (needle/rocket) and 0x1200 (flame) per-tic
+    // speeds at the 70Hz tic rate.
+    let needle_speed = 8.75   // 0x2000 * 70 / 0x10000
+    let rocket_speed = 8.75
+    let fire_speed   = 4.92   // 0x1200 * 70 / 0x10000
+    let hit_radius   = 0.75   // PROJECTILESIZE / TILEGLOBAL — per-axis player hit box
+    let wall_radius  = 0.125  // PROJSIZE / TILEGLOBAL — wall collision half-extent
+    let anim_time    = 0.10   // seconds per needle/fire animation frame
+    let boom_time    = 0.12   // seconds per explosion frame
+
+    // Sprite-page offsets into VSWAP (relative to `sprite_start`).
+    // Derived from the original's sprite enum (wl_def.h): HYPO follows
+    // SCHABB_DEAD at 317, FIRE follows FAKE_SHOOT at 326,
+    // ROCKET/SMOKE/BOOM are a block right after Giftmacher at
+    // 370/378/382.
+    let hypo_base   = 317
+    let fire_base   = 326
+    let rocket_base = 370
+    let boom_base   = 382
+
+    // Angle wrap helper. Keeps `a` in [0, 2π).
+    let tau = 6.283185307179586
+
+    let wrap_angle = (a: float64) ->
+        let mut r = a
+        loop
+            if r >= 0.0 then break
+            r = r + tau
+        loop
+            if r < tau then break
+            r = r - tau
+        r
+
+    // VSWAP page for a projectile in its current state. Rockets rotate
+    // through 8 angles keyed off travel direction; needle/fire/boom
+    // use sequential animation frames from their respective base pages.
+    let sprite_page = (sprite_start: int32, p: projectile*) ->
+        match p->kind with
+        | needle -> sprite_start + hypo_base + (p->anim_frame & 3)
+        | rocket ->
+            // 8 rotation frames spanning [0, 2π). Quantize angle → frame index.
+            let a = wrap_angle(p->angle)
+            let idx = (int32) (a * 8.0 / tau) & 7
+            sprite_start + rocket_base + idx
+        | fire -> sprite_start + fire_base + (p->anim_frame & 1)
+        | boom ->
+            let f = if p->anim_frame > 2 then 2 else p->anim_frame
+            sprite_start + boom_base + f
+
+    // Find a free projectile slot, or -1 if the array is saturated.
+    // Callers silently drop the spawn when full (mirrors the
+    // original's MAXACTORS guard in T_FakeFire).
+    let alloc_slot = (lv: level*) ->
+        let mut slot = -1
+        for i in 0..max_projectiles
+            if slot < 0 && !lv->projectiles[i].alive then slot = i
+        slot
+
+    // Spawn a projectile at the enemy's current position, pointed at
+    // the player's current position. Angle is stored in standard-trig
+    // y-up convention so the rotating-rocket sprite picker can share
+    // the same convention as enemies.angle_sprite.
+    let spawn = (lv: level*, ac: audio_ctx*, g: game*, e: enemies.enemy*, k: projectile_kind) ->
+        let slot = alloc_slot(lv)
+        if slot < 0 then return
+        let dx = g->pos_x - e->x
+        let dy = e->y - g->pos_y     // flip to y-up so atan2 gives standard trig angle
+        let ang = math.atan2(dy, dx)
+        lv->projectiles[slot] = projectile {
+            kind = k,
+            x = e->x,
+            y = e->y,
+            angle = wrap_angle(ang),
+            alive = true,
+            anim_frame = 0,
+            anim_timer = anim_time
+        }
+        let snd = match k with
+        | needle -> sfx.id.schabbs_throw
+        | rocket -> sfx.id.missile_fire
+        | fire   -> sfx.id.flamethrower
+        | boom   -> -1
+        if snd >= 0 then sfx.trigger_at(snd, ac, g, e->x, e->y)
+
+    // Wall / closed-door collision for a projectile point at (x, y).
+    // Mirrors ProjectileTryMove's 3x3 tile scan within ±PROJSIZE in
+    // the original (wl_act2.cpp:206). Returns true if any tile in the
+    // scanned range blocks — walls (1..63) and door tiles that aren't
+    // fully open.
+    let hits_wall = (lv: level*, x: float64, y: float64) ->
+        let xl = (int32) math.floor(x - wall_radius)
+        let yl = (int32) math.floor(y - wall_radius)
+        let xh = (int32) math.floor(x + wall_radius)
+        let yh = (int32) math.floor(y + wall_radius)
+        let mut hit = false
+        for tx in xl..(xh + 1)
+            for ty in yl..(yh + 1)
+                if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then
+                    hit = true
+                else
+                    let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+                    if t >= 1 && t <= 63 then hit = true
+                    if t >= 128 then
+                        let door_idx = t - 128
+                        if door_idx >= 0 && door_idx < lv->num_doors
+                            && lv->door_pos[door_idx] < 0.95 then hit = true
+        hit
+
+    // Damage per projectile kind — T_Projectile's per-class rolls in
+    // the original.
+    let damage_of = (k: projectile_kind, g: game*) ->
+        let roll = rnd_byte(g)
+        match k with
+        | needle -> (roll >> 3) + 20    // 20-51
+        | rocket -> (roll >> 3) + 30    // 30-61
+        | fire   -> roll >> 3           // 0-31
+        | boom   -> 0
+
+    // Per-frame update for one projectile slot. Advances animation,
+    // steps the position, checks wall/player collision, mutates into
+    // a boom sprite on rocket wall-hit, or frees the slot on other
+    // terminal events.
+    let update = (lv: level*, g: game*, ac: audio_ctx*, p: projectile*, dt: float64) ->
+        if !p->alive then return
+        let frame_time = match p->kind with
+        | boom -> boom_time
+        | _    -> anim_time
+        p->anim_timer = p->anim_timer - dt
+        if p->anim_timer <= 0.0 then
+            p->anim_frame = p->anim_frame + 1
+            p->anim_timer = frame_time
+        match p->kind with
+        | boom ->
+            // Short 3-frame explosion, then free the slot.
+            if p->anim_frame >= 3 then p->alive = false
+        | _ ->
+            let speed = match p->kind with
+            | needle -> needle_speed
+            | rocket -> rocket_speed
+            | fire   -> fire_speed
+            | boom   -> 0.0
+            let step = speed * dt
+            // Y-up angle → y-down world motion: flip the sin term.
+            let nx = p->x + math.cos(p->angle) * step
+            let ny = p->y - math.sin(p->angle) * step
+            if hits_wall(lv, nx, ny) then
+                match p->kind with
+                | rocket ->
+                    // Mutate the slot into a short-lived explosion
+                    // sprite at the last pre-hit position, so the
+                    // fireball appears against the wall rather than
+                    // inside it.
+                    p->kind = projectile_kind.boom
+                    p->anim_frame = 0
+                    p->anim_timer = boom_time
+                    sfx.trigger_at(sfx.id.missile_hit, ac, g, p->x, p->y)
+                | _ -> p->alive = false
+            else
+                p->x = nx
+                p->y = ny
+                if math.abs(p->x - g->pos_x) < hit_radius
+                    && math.abs(p->y - g->pos_y) < hit_radius then
+                    enemies.ai.damage_player(g, ac, damage_of(p->kind, g))
+                    p->alive = false
+
+    let update_all = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
+        for i in 0..max_projectiles
+            update(lv, g, ac, &lv->projectiles[i], dt)
+
+    // True iff this enemy kind fires a visible, dodgeable projectile
+    // instead of using T_Shoot's hitscan. Checked in the shoot
+    // dispatch.
+    let kind_uses_projectile = (k: enemies.enemy_kind) ->
+        match k with
+        | schabbs | giftmacher | fat | hitler_fake -> true
+        | _ -> false
+
+    // The projectile kind this enemy fires. Call only when
+    // kind_uses_projectile is true.
+    let kind_for_enemy = (k: enemies.enemy_kind) ->
+        match k with
+        | schabbs      -> projectile_kind.needle
+        | giftmacher   -> projectile_kind.rocket
+        | fat          -> projectile_kind.rocket
+        | hitler_fake  -> projectile_kind.fire
+        | _            -> projectile_kind.needle  // unreachable
+
+    // Dog melee bite — called from the jump-frame of `shoot` for dog.
+    // Damage is a flat ~0..16 roll inside melee range. The bark/snarl
+    // plays unconditionally at the top of the frame (mirrors T_Bite
+    // in the original) so the lunge is audible even when the dog
+    // misses.
+    let enemy_bite_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemies.enemy*) ->
+        sfx.trigger_at(sfx.id.dog_attack, ac, g, e->x, e->y)
+        let dx = g->pos_x - e->x
+        let dy = g->pos_y - e->y
+        // Per-axis box matching T_Bite in the original: each axis
+        // must be within 2 tiles of the player center (|dx|-1 ≤ 1
+        // after the TILEGLOBAL/MINACTORDIST subtraction in the
+        // original). This is more permissive on diagonals than a
+        // euclidean check — a dog centered on the tile-corner
+        // opposite the player at (1.9, 1.9) still lands a bite.
+        if math.abs(dx) > 2.0 || math.abs(dy) > 2.0 then return
+        if !enemies.ai.check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then return
+        if rnd_byte(g) < 180 then
+            // Matches T_Bite in the original: US_RndT() >> 4 → 0-15
+            // (can graze for 0).
+            let dmg = rnd_byte(g) >> 4
+            enemies.ai.damage_player(g, ac, dmg)
+
+
+// ============================================================
+// Player-fire hitscan — called when Ctrl fires the weapon and there's a
+// chance to hit an enemy. Ray is along player->dir; we pick the nearest
+// live enemy within a small angular slice, then verify no wall is between.
+// ============================================================
+
+module hitscan =
+    import math from std::
+
+    // Return the index of the enemy the player's current fire would
+    // hit, or -1.
+    let find_hit_enemy = (lv: level*, g: game*) ->
+        let mut best_idx = -1
+        let mut best_dist = 1e6
+        for i in 0..lv->num_enemies
+            let e = &lv->enemies[i]
+            match e->state with
+            | dead | die -> continue
+            | _ -> void()
+            let rx = e->x - g->pos_x
+            let ry = e->y - g->pos_y
+            let proj = rx * g->dir_x + ry * g->dir_y
+            if proj <= 0.1 || proj >= best_dist then continue
+            let perp = rx * g->dir_y - ry * g->dir_x
+            let pabs = if perp < 0.0 then -perp else perp
+            // Half-tile wide "enemy hitbox". Most enemies are ~0.7
+            // wide in Wolf3D; 0.5 is a forgiving compromise for our
+            // raycaster where sprites render at the full tile scale.
+            if pabs >= 0.5 then continue
+            if !enemies.ai.check_line_clear(lv, g->pos_x, g->pos_y, e->x, e->y) then continue
+            best_idx = i
+            best_dist = proj
+        best_idx
+
+    // Per-weapon damage. Knife: 10-25 in melee (0 beyond ~1.5 tiles).
+    // Pistol / MG / chain: similar damage per shot; rate-of-fire is
+    // what distinguishes them (handled by fire_rate[] in
+    // update_weapon). Adapted from the original's GunAttack:
+    // damage = (US_RndT() / 4) + base, tuned for our hp values.
+    let weapon_damage_roll = (g: game*, weapon: int32, dist: float64) ->
+        if weapon == 0 then
+            // Knife — fixed damage, only in melee.
+            if dist > 1.5 then 0
+            else (rnd_byte(g) >> 3) + 10
+        else
+            // Firearms — damage fades with distance (hitchance roll).
+            let roll = rnd_byte(g)
+            if dist < 2.0 then (roll >> 2) + 8
+            else if dist < 4.0 then (roll >> 3) + 5
+            else if dist < 8.0 then (roll >> 4) + 2
+            else (roll >> 5) + 1
+
+    // Called from update_weapon when the player actually fires (not
+    // every frame, only on trigger-pull that spends a bullet). Finds
+    // a target, applies damage, potentially kills the enemy (handled
+    // inside ai.damage_enemy).
+    let fire_player = (w: world*) ->
+        let lv = w->lv
+        let g = w->g
+        let ac = w->ac
+        // The original's GunAttack sets madenoise=true at the top
+        // regardless of hit; KnifeAttack does NOT — knife is a
+        // stealth weapon, only registering as noise (via
+        // ai.damage_enemy below) when it actually connects. So gate
+        // on weapon > 0 here, and let ai.damage_enemy cover the
+        // knife-hit case.
+        if g->weapon > 0 then g->made_noise = true
+        let sprite_start = ac->vs->sprite_start
+        let idx = find_hit_enemy(lv, g)
+        if idx < 0 then return
+        let e = &lv->enemies[idx]
+        let rx = e->x - g->pos_x
+        let ry = e->y - g->pos_y
+        let dist = math.sqrt(rx * rx + ry * ry)
+        let dmg = weapon_damage_roll(g, g->weapon, dist)
+        if dmg <= 0 then return
+        enemies.ai.damage_enemy(lv, g, ac, e, idx, dmg, sprite_start)

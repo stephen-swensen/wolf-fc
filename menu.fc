@@ -1,0 +1,202 @@
+// Wolf-FC menu — the main menu + its submenus (episode picker,
+// difficulty, map select, save / load slot list). Rendering only; the
+// actual menu navigation logic (cursor movement, selection) lives in
+// main.fc's event loop since it has to observe every phase of the game.
+
+module menu =
+    // Menu navigation state. `g->menu_level` picks which list to show:
+    //   main        = main menu (RESUME / NEW GAME / LOAD GAME /
+    //                 SAVE GAME / SOUND / QUIT)
+    //   difficulty  = difficulty picker (under NEW GAME, after episode
+    //                 select)
+    //   episode     = episode picker (under NEW GAME, before difficulty)
+    //   savelist    = save-slot list (Save Game — 10 slots)
+    //   loadlist    = load-slot list (Load Game — 10 slots)
+    //   map         = follows episode: picks the starting map within
+    //                 the episode. Rows 0..9 are maps 1..10 (with 9 /
+    //                 10 annotated with BOSS / SECRET); row 10 is a
+    //                 BOSS FIGHT shortcut that loads map 9 + teleports
+    //                 the player next to the boss.
+    module nav =
+        let main       = 0
+        let difficulty = 1
+        let episode    = 2
+        let savelist   = 3
+        let loadlist   = 4
+        let map        = 5
+
+    // Main menu:
+    //   0 RESUME GAME (only when has_active_game; locked otherwise)
+    //   1 NEW GAME
+    //   2 LOAD GAME
+    //   3 SAVE GAME   (only when has_active_game; locked otherwise)
+    //   4 SOUND       (toggles music_on)
+    //   5 QUIT
+    let main_len = 6
+
+    let main_label = (i: int32) ->
+        match i with
+        | 0 -> "RESUME"
+        | 1 -> "NEW GAME"
+        | 2 -> "LOAD GAME"
+        | 3 -> "SAVE GAME"
+        | 4 -> "SOUND"
+        | 5 -> "QUIT"
+        | _ -> ""
+
+    // Locked = visible but not selectable. Up/down navigation skips
+    // locked rows; pressing Enter on a locked row (which only happens
+    // via direct `setmenu_sel` paths from external test commands) is
+    // a no-op.
+    let main_is_locked = (i: int32, has_active_game: bool) ->
+        (i == 0 || i == 3) && !has_active_game
+
+    let diff_label = (i: int32) ->
+        match i with
+        | 0 -> "CAN I PLAY, DADDY?"
+        | 1 -> "DON'T HURT ME."
+        | 2 -> "BRING 'EM ON!"
+        | 3 -> "I AM DEATH INCARNATE!"
+        | _ -> ""
+
+    // Episode picker labels — short for menu fit.
+    let episode_label = (i: int32) ->
+        match i with
+        | 0 -> "EPISODE 1  ESCAPE FROM WOLFENSTEIN"
+        | 1 -> "EPISODE 2  OPERATION EISENFAUST"
+        | 2 -> "EPISODE 3  DIE, FUHRER, DIE!"
+        | 3 -> "EPISODE 4  A DARK SECRET"
+        | 4 -> "EPISODE 5  TRAIL OF THE MADMAN"
+        | 5 -> "EPISODE 6  CONFRONTATION"
+        | _ -> ""
+
+    // Map picker sub-submenu: 10 maps per episode plus a BOSS FIGHT
+    // shortcut that starts on map 9 and teleports the player next to
+    // the boss. Maps 9 and 10 get annotations to highlight the boss /
+    // secret routing.
+    let map_len = 11
+
+    let map_label = (i: int32) ->
+        match i with
+        | 0 -> "FLOOR 1"
+        | 1 -> "FLOOR 2"
+        | 2 -> "FLOOR 3"
+        | 3 -> "FLOOR 4"
+        | 4 -> "FLOOR 5"
+        | 5 -> "FLOOR 6"
+        | 6 -> "FLOOR 7"
+        | 7 -> "FLOOR 8"
+        | 8 -> "FLOOR 9  (BOSS)"
+        | 9 -> "FLOOR 10  (SECRET)"
+        | 10 -> "BOSS FIGHT"
+        | _ -> ""
+
+    // Draw a list-style menu: centered title, one highlighted row per
+    // item, chevrons around the selected row. `label_fn` returns the
+    // text for item i. Used by the main / episode / difficulty
+    // submenus; save-load slots paint separately because their rows
+    // encode per-slot metadata.
+    let draw_list = (rc: render_ctx*, f: font.info*, title: const str,
+                     items_y: int32, n: int32, sel: int32,
+                     label_fn: (int32) -> const str, locked_fn: (int32) -> bool) ->
+        let yellow = 0xFFFFD700u32
+        let white  = 0xFFFFFFFFu32
+        let dull   = 0xFF707070u32
+        font.draw_centered(rc, f, 24, title, yellow)
+        for i in 0..n
+            let y = items_y + i * (f->height + 4)
+            let is_sel = sel == i
+            let is_locked = locked_fn(i)
+            let color = if is_locked then dull
+                        else if is_sel then yellow else white
+            let label = label_fn(i)
+            font.draw_centered(rc, f, y, label, color)
+            if is_sel then
+                let w = font.text_width(f, label)
+                let cx = (game_w - w) / 2
+                font.draw_text(rc, f, cx - 14, y, ">", yellow)
+                font.draw_text(rc, f, cx + w + 6, y, "<", yellow)
+
+    // Render the save or load slot menu. Each row shows "N <label>"
+    // or "N EMPTY". The save-picker highlights all slots (writable);
+    // the load-picker greys empty slots so they're visually
+    // unselectable.
+    let render_slot = (rc: render_ctx*, sm: save_menu_ctx*, f: font.info*,
+                       title: const str, sel: int32, load_mode: bool) ->
+        let yellow = 0xFFFFD700u32
+        let white  = 0xFFFFFFFFu32
+        let dull   = 0xFF707070u32
+        let gray   = 0xFFB0B0B0u32
+        font.draw_centered(rc, f, 20, title, yellow)
+        let items_y = 44
+        for i in 0..num_save_slots
+            let s = &sm->slots[i]
+            let y = items_y + i * (f->height + 3)
+            let is_sel = sel == i
+            let is_locked = load_mode && s->empty
+            let color = if is_locked then dull
+                        else if is_sel then yellow else white
+            let row_x = 40
+            font.draw_text(rc, f, row_x, y, "%d{i + 1}", color)
+            if s->empty then
+                font.draw_text(rc, f, row_x + 18, y, "EMPTY", color)
+            else
+                // "LVL N  <label>  SCORE"
+                let ep = s->level_num / levels_per_episode + 1
+                let lvl = s->level_num % levels_per_episode + 1
+                font.draw_text(rc, f, row_x + 18, y,
+                    "E%d{ep}M%d{lvl}", color)
+                // Label (user-chosen). Fall back to a generic string
+                // if unset.
+                if s->label.len > 0 then
+                    // Draw up to ~22 chars of label.
+                    let mut limit = (int32) s->label.len
+                    if limit > 22 then limit = 22
+                    // Copy to a tiny scratch buffer so we can treat it
+                    // as const str.
+                    for j in 0..limit
+                        sm->label_scratch[j] = s->label[j]
+                    sm->label_scratch[limit] = 0u8
+                    let slab = (const str) sm->label_scratch[0..(int64) limit]
+                    font.draw_text(rc, f, row_x + 60, y, slab, color)
+                font.draw_text(rc, f, row_x + 180, y, "%d{s->score}", color)
+            if is_sel then
+                font.draw_text(rc, f, 20, y, ">", yellow)
+                font.draw_text(rc, f, game_w - 28, y, "<", yellow)
+        font.draw_centered(rc, f, game_h - 24,
+            "UP/DOWN  ENTER  ESC", gray)
+
+    let render_main = (rc: render_ctx*, sm: save_menu_ctx*,
+                       vg: vgagraph.vgagraph_file*, pal: uint32[],
+                       f: font.info*, g: game*) ->
+        // Tint the title as a backdrop (slightly dimmed so the menu
+        // pops).
+        pics.blit_title_bg(rc)
+        // Darken overlay so menu text stays readable over the title
+        // art.
+        overlay.viewport_tint_full(rc, 0x00000000u32, 0.55)
+        if g->menu_level == nav.main then
+            draw_list(rc, f, "MAIN MENU", 50, main_len, g->menu_sel,
+                (i: int32) ->
+                    // SOUND row gets an inline ON/OFF; RESUME and
+                    // SAVE rows are locked without an active game.
+                    if i == 4 then
+                        if g->music_on then "SOUND:  ON" else "SOUND: OFF"
+                    else main_label(i),
+                (i: int32) -> main_is_locked(i, g->has_active_game))
+        else if g->menu_level == nav.episode then
+            draw_list(rc, f, "CHOOSE EPISODE", 44, num_episodes, g->menu_sel,
+                (i: int32) -> episode_label(i),
+                (_: int32) -> false)
+        else if g->menu_level == nav.map then
+            draw_list(rc, f, "CHOOSE FLOOR", 32, map_len, g->menu_sel,
+                (i: int32) -> map_label(i),
+                (_: int32) -> false)
+        else if g->menu_level == nav.difficulty then
+            draw_list(rc, f, "CHOOSE DIFFICULTY", 56, 4, g->menu_sel,
+                (i: int32) -> diff_label(i),
+                (_: int32) -> false)
+        else if g->menu_level == nav.savelist then
+            render_slot(rc, sm, f, "SAVE GAME", g->menu_sel, false)
+        else if g->menu_level == nav.loadlist then
+            render_slot(rc, sm, f, "LOAD GAME", g->menu_sel, true)

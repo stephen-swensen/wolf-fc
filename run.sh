@@ -23,7 +23,11 @@ if [[ ! -x "$FC_BIN" ]] || \
 fi
 
 SRCS="$WOLF_DIR/sdl2.fc $WOLF_DIR/opl2.fc $WOLF_DIR/sound.fc \
-      $WOLF_DIR/png.fc $WOLF_DIR/data.fc $WOLF_DIR/main.fc \
+      $WOLF_DIR/png.fc $WOLF_DIR/data.fc \
+      $WOLF_DIR/sfx.fc $WOLF_DIR/ui.fc $WOLF_DIR/save.fc \
+      $WOLF_DIR/combat.fc $WOLF_DIR/level.fc $WOLF_DIR/cutscenes.fc \
+      $WOLF_DIR/menu.fc $WOLF_DIR/player.fc $WOLF_DIR/render.fc \
+      $WOLF_DIR/main.fc \
       $FC_DIR/stdlib/io.fc $FC_DIR/stdlib/text.fc $FC_DIR/stdlib/sys.fc \
       $FC_DIR/stdlib/math.fc $FC_DIR/stdlib/random.fc"
 
