@@ -5,16 +5,11 @@
 // AUDIOT is the fallback.
 //
 // Every sound the game triggers is indexed by `sfx.id.*` — each id is a
-// row number into the `sfx_digi_slot` / `sfx_adlib_chunk` tables in
-// main.fc (FC restricts non-entry-point files to contain modules only,
-// and forbids module-level array-literal initializers — the tables must
-// live at file scope in the entry-point file, even though they're
-// logically part of this module).
+// row number into the `digi_slot` / `adlib_chunk` tables below.
 //
 // To add a new sound:
 //   1. Append a constant to `module sfx.id` and bump `sfx.count`,
-//   2. extend `sfx_digi_slot` and `sfx_adlib_chunk` in main.fc with the
-//      right lookup row,
+//   2. extend `digi_slot` and `adlib_chunk` with the right lookup row,
 //   3. call `sfx.trigger(sfx.id.new_one, ac)` from the new site.
 
 module sfx =
@@ -140,6 +135,170 @@ module sfx =
     // and queues the resulting int16 buffer to SDL.
     let sample_rate = 44100
 
+    // Digi-pack index for each sfx.id.* (-1 = no digitized version).
+    // The mapping is the WL6 branch of the original's wolfdigimap[]
+    // (wl_main.cpp:927). SOD's branch differs — in particular, SOD
+    // remaps digi 38 to GETGATLINGSND as a "Got Gat replacement", but
+    // in WL6 digi 38 is ERLAUBENSND (Fat Face sighting voice line).
+    // Verified entry-by-entry 2026-04-20: every row here matches
+    // InitDigiMap's table for WL6; missing enum entries resolve to -1
+    // too (SD_PlaySound then falls back to AdLib).
+    let digi_slot = int32[73] {
+         3,   // open_door    (OPENDOORSND  -> digi 3)
+         2,   // close_door   (CLOSEDOORSND -> digi 2)
+         5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
+        -1,   // atk_knife    (no digi in Wolf3D)
+         4,   // atk_mg       (ATKMACHINEGUNSND -> digi 4)
+         6,   // atk_gat      (ATKGATLINGSND -> digi 6)
+        -1,   // get_key      (no digi)
+        -1,   // get_ammo     (no digi)
+        -1,   // bonus1       (no digi)
+        14,   // pain         (TAKEDAMAGESND -> digi 14)
+        15,   // push_wall    (PUSHWALLSND  -> digi 15)
+        -1,   // get_mg       (no digi)
+        -1,   // get_gat      (WL6 has no digi for GETGATLINGSND — plays via
+              //                AdLib only. SOD's wolfdigimap remaps digi 38 to
+              //                GETGATLINGSND, but in WL6 digi 38 is ERLAUBENSND.)
+        -1,   // hit_wall     (no digi)
+        -1,   // no_action    (no digi)
+        -1,   // no_way       (no digi)
+        -1,   // bonus2       (no digi)
+        -1,   // bonus3       (no digi)
+        -1,   // bonus4       (no digi)
+        -1,   // bonus1up     (no digi)
+        -1,   // health1      (no digi)
+        -1,   // health2      (no digi)
+         0,   // halt         (HALTSND -> digi 0)
+         7,   // schutzad     (SCHUTZADSND -> digi 7)
+         1,   // dog_bark     (DOGBARKSND -> digi 1)
+        21,   // nazi_fire    (NAZIFIRESND -> digi 21)
+        11,   // ss_fire      (SSFIRESND -> digi 11)
+        29,   // dog_attack   (DOGATTACKSND -> digi 29)
+        16,   // dog_death    (DOGDEATHSND -> digi 16)
+        12,   // death_1      (DEATHSCREAM1SND -> digi 12)
+        13,   // death_2      (DEATHSCREAM2SND -> digi 13)
+        13,   // death_3      (DEATHSCREAM3SND -> digi 13, shares slot)
+        -1,   // hit_enemy    (HITENEMYSND has no digi in Wolf3D)
+        34,   // death_4      (DEATHSCREAM4SND -> digi 34, "AIIEEE")
+        35,   // death_5      (DEATHSCREAM5SND -> digi 35, "DEE-DEE")
+        39,   // death_6      (DEATHSCREAM6SND -> digi 39, "FART")
+        40,   // death_7      (DEATHSCREAM7SND -> digi 40, "GASP")
+        41,   // death_8      (DEATHSCREAM8SND -> digi 41, "GUH-BOY!")
+        42,   // death_9      (DEATHSCREAM9SND -> digi 42, "AH GEEZ!")
+        27,   // spion        (SPIONSND -> digi 27)
+        28,   // nein_sovass  (NEINSOVASSND -> digi 28)
+        20,   // leben        (LEBENSND -> digi 20)
+        17,   // ahhhg        (AHHHGSND -> digi 17)
+         8,   // gutentag     (GUTENTAGSND -> digi 8)
+         9,   // mutti        (MUTTISND -> digi 9)
+        43,   // kein         (KEINSND -> digi 43)
+        44,   // mein         (MEINSND -> digi 44)
+        37,   // eine         (EINESND -> digi 37)
+        36,   // donner       (DONNERSND -> digi 36)
+        38,   // erlauben     (ERLAUBENSND -> digi 38)
+        45,   // rose         (ROSESND -> digi 45)
+        25,   // schabbsha    (SCHABBSHASND -> digi 25)
+        24,   // meingott     (MEINGOTTSND -> digi 24)
+        23,   // tot_hund     (TOT_HUNDSND -> digi 23)
+        26,   // hitlerha     (HITLERHASND -> digi 26)
+        18,   // die          (DIESND -> digi 18)
+        33,   // scheist      (SCHEISTSND -> digi 33)
+        19,   // eva          (EVASND -> digi 19)
+        30,   // level_done   (LEVELDONESND -> digi 30)
+        -1,   // end_bonus1   (no digi — AdLib only)
+        -1,   // end_bonus2   (no digi — AdLib only)
+        -1,   // percent100   (no digi — AdLib only)
+        -1,   // no_bonus     (no digi — AdLib only)
+        10,   // boss_fire    (BOSSFIRESND -> digi 10)
+        -1,   // schabbs_throw (no digi — AdLib only)
+        -1,   // flamethrower (no digi — AdLib only)
+        -1,   // missile_fire (no digi — AdLib only)
+        31,   // mech_step    (MECHSTEPSND -> digi 31)
+        32,   // yeah         (YEAHSND -> digi 32)
+        -1,   // move_gun1    (no digi — AdLib only)
+        -1,   // shoot        (no digi — AdLib only)
+        -1,   // esc_pressed  (no digi — AdLib only)
+        -1    // missile_hit  (no digi — AdLib only; wolfdigimap omits it)
+    }
+
+    // AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this).
+    // -1 to disable. Enum values taken from audiowl6.h.
+    let adlib_chunk = int32[73] {
+        18,   // open_door    (OPENDOORSND)
+        19,   // close_door   (CLOSEDOORSND)
+        24,   // atk_pistol   (ATKPISTOLSND)
+        23,   // atk_knife    (ATKKNIFESND)
+        26,   // atk_mg       (ATKMACHINEGUNSND)
+        11,   // atk_gat      (ATKGATLINGSND)
+        12,   // get_key      (GETKEYSND)
+        31,   // get_ammo     (GETAMMOSND)
+        35,   // bonus1       (BONUS1SND)
+        16,   // pain         (TAKEDAMAGESND)
+        46,   // push_wall    (PUSHWALLSND)
+        30,   // get_mg       (GETMACHINESND)
+        38,   // get_gat      (GETGATLINGSND)
+         0,   // hit_wall     (HITWALLSND)
+        20,   // no_action    (DONOTHINGSND)
+         6,   // no_way       (NOWAYSND)
+        36,   // bonus2       (BONUS2SND)
+        37,   // bonus3       (BONUS3SND)
+        45,   // bonus4       (BONUS4SND)
+        44,   // bonus1up     (BONUS1UPSND)
+        33,   // health1      (HEALTH1SND)
+        34,   // health2      (HEALTH2SND)
+        21,   // halt         (HALTSND)
+        51,   // schutzad     (SCHUTZADSND)
+        41,   // dog_bark     (DOGBARKSND)
+        58,   // nazi_fire    (NAZIFIRESND)
+        60,   // ss_fire      (SSFIRESND)
+        68,   // dog_attack   (DOGATTACKSND)
+        10,   // dog_death    (DOGDEATHSND)
+        29,   // death_1      (DEATHSCREAM1SND)
+        22,   // death_2      (DEATHSCREAM2SND)
+        25,   // death_3      (DEATHSCREAM3SND)
+        27,   // hit_enemy    (HITENEMYSND)
+        73,   // death_4      (DEATHSCREAM4SND)
+        74,   // death_5      (DEATHSCREAM5SND)
+        75,   // death_6      (DEATHSCREAM6SND)
+        76,   // death_7      (DEATHSCREAM7SND)
+        77,   // death_8      (DEATHSCREAM8SND)
+        78,   // death_9      (DEATHSCREAM9SND)
+        66,   // spion        (SPIONSND)
+        67,   // nein_sovass  (NEINSOVASSND)
+        56,   // leben        (LEBENSND — "Mein Leben!")
+        52,   // ahhhg        (AHHHGSND — mutant death)
+        55,   // gutentag     (GUTENTAGSND — Hans sighting)
+        50,   // mutti        (MUTTISND — Hans death)
+        82,   // kein         (KEINSND — Gretel sighting)
+        83,   // mein         (MEINSND — Gretel death)
+        80,   // eine         (EINESND — Gift sighting)
+        79,   // donner       (DONNERSND — Gift death)
+        81,   // erlauben     (ERLAUBENSND — Fat sighting)
+        84,   // rose         (ROSESND — Fat death)
+        64,   // schabbsha    (SCHABBSHASND — Schabbs sighting)
+        63,   // meingott     (MEINGOTTSND — Schabbs death)
+        62,   // tot_hund     (TOT_HUNDSND — Fake Hitler sighting)
+        65,   // hitlerha     (HITLERHASND — Fake Hitler death)
+        53,   // die          (DIESND — Hitler sighting)
+        57,   // scheist      (SCHEISTSND — Mecha Hitler death)
+        54,   // eva          (EVASND — Real Hitler death)
+        40,   // level_done   (LEVELDONESND)
+        42,   // end_bonus1   (ENDBONUS1SND)
+        43,   // end_bonus2   (ENDBONUS2SND)
+        48,   // percent100   (PERCENT100SND)
+        47,   // no_bonus     (NOBONUSSND)
+        59,   // boss_fire    (BOSSFIRESND)
+         8,   // schabbs_throw (SCHABBSTHROWSND)
+        69,   // flamethrower (FLAMETHROWERSND)
+        85,   // missile_fire (MISSILEFIRESND)
+        70,   // mech_step    (MECHSTEPSND)
+        72,   // yeah         (YEAHSND)
+         5,   // move_gun1    (MOVEGUN1SND)
+        32,   // shoot        (SHOOTSND)
+        39,   // esc_pressed  (ESCPRESSEDSND)
+        86    // missile_hit  (MISSILEHITSND — AdLib-only rocket explosion)
+    }
+
     // Play a sound by sfx.id.*. Prefers the digitized version (richer
     // audio, matches the original Sound Blaster mode) and falls back to
     // the AdLib version loaded from AUDIOT on demand. `pan` is [-1, +1];
@@ -152,11 +311,11 @@ module sfx =
     let trigger_panned_gain = (sound_id: int32, ac: audio_ctx*,
                                 pan: float64, gain: float64) ->
         if sound_id < 0 || sound_id >= count then return
-        let digi_idx = sfx_digi_slot[sound_id]
+        let digi_idx = digi_slot[sound_id]
         if digi_idx >= 0 then
             digi.play_with_gain(ac->digi, digi_idx, pan, gain)
         else
-            let enum_val = sfx_adlib_chunk[sound_id]
+            let enum_val = adlib_chunk[sound_id]
             if enum_val >= 0 then
                 let chunk = 87 + enum_val   // STARTADLIBSOUNDS = LASTSOUND = 87
                 if chunk >= 0 && chunk < ac->ad->num_chunks then

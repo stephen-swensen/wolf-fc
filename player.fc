@@ -6,26 +6,26 @@
 module player =
     import math from std::
 
-    // `player_radius` (the player collision player_radius, 0.35) lives at file
-    // scope in main.fc to break a circular-module reference with
-    // `doors`: player.blocked_by_map uses doors.passable, and
-    // doors.update uses player_radius for its bbox auto-close
-    // check. Referenced here by unqualified name.
+    // `player_radius` (the player's 0.35-tile collision radius) lives
+    // at file scope in main.fc to break a circular module reference
+    // — player.blocked_by_map uses doors.passable, and doors.update
+    // uses player_radius for its bbox auto-close check. Referenced
+    // here by unqualified name.
 
     // Static-decoration half-width (tiles). Blocking sprites
     // (barrels, lamps, tables, etc.) block the player as a half-tile
     // AABB centered on the tile instead of the whole 1×1 cell — you
     // can approach a barrel until your bbox edge is
-    // ~(player_radius + sprite_block_half) from its center. Tuned down from
-    // a full tile because the art typically occupies only the middle
-    // half and the original's tile-grain blocking feels too
-    // intrusive at our scale.
+    // ~(player_radius + sprite_block_half) from its center. Tuned
+    // down from a full tile because the art typically occupies only
+    // the middle half and the original's tile-grain blocking feels
+    // too intrusive at our scale.
     let sprite_block_half = 0.25
 
-    // Enemy exclusion player_radius (tiles) — squared. Roughly player_radius (0.35)
-    // + enemy body half-width (~0.25). Smaller than the full bbox so
-    // the player can squeeze past an adjacent enemy without being
-    // locked out of corridors.
+    // Enemy exclusion radius (tiles) — squared. Roughly player_radius
+    // (0.35) + enemy body half-width (~0.25). Smaller than the full
+    // bbox so the player can squeeze past an adjacent enemy without
+    // being locked out of corridors.
     let enemy_block_r2 = 0.55 * 0.55
 
     // True if the player's bbox at (px, py) overlaps a wall, closed
@@ -167,14 +167,17 @@ module player =
                 hud.show_message(g, "A Doom fan, eh?\n\nGod mode OFF")
             g->msg_timer = msg_time
 
+        // The IDDQD key sequence (I-D-D-Q-D).
+        let iddqd_sequence = int32[5] {
+            sdl2.key_i, sdl2.key_d, sdl2.key_d, sdl2.key_q, sdl2.key_d
+        }
+
         // Drive the IDDQD state machine forward on a single letter
         // keydown. Called from the SDL keydown handler (no key-repeat)
-        // and from the `iddqd` test command in test mode. Sequence is
-        // I-D-D-Q-D; an out-of-order key restarts progress (resets to
-        // 1 if the typed key matches the I prefix, else 0) so partial
-        // overlaps like "IDIDDQD" still arrive at the cheat.
-        // `iddqd_sequence` lives at file scope in main.fc (FC forbids
-        // array-literal initializers at module scope).
+        // and from the `iddqd` test command in test mode. An
+        // out-of-order key restarts progress (resets to 1 if the
+        // typed key matches the I prefix, else 0) so partial overlaps
+        // like "IDIDDQD" still arrive at the cheat.
         let advance_iddqd = (g: game*, k: int32) ->
             if k != sdl2.key_i && k != sdl2.key_d && k != sdl2.key_q then return
             if k == iddqd_sequence[g->iddqd_progress] then
@@ -338,9 +341,27 @@ module player =
     // Weapon animation & firing
     // ============================================================
 
-    // Per-frame weapon-animation pump. `fire_rate`, `weapon_fire_snd`,
-    // and `weapon_sprite_base` live at file scope in main.fc (FC
-    // forbids array-literal initializers at module scope).
+    // Weapon fire rates (seconds per shot cycle). Index by
+    // g->weapon. Derived from the original's `attackinfo[4][14]`
+    // (wl_agent.cpp:56) with 6-tic frames at the 70Hz tic rate.
+    // Knife/pistol: 4 full frames = 24 tics ≈ 0.343s per swing/shot.
+    // MG: frames 2↔3 loop while held = 12 tics ≈ 0.171s/shot.
+    // Chaingun: fires on both frame 2 and 3 of the 2-frame loop =
+    // 6 tics ≈ 0.086s/shot.
+    let fire_rate = float64[4] { 0.343, 0.343, 0.171, 0.086 }
+
+    // Per-weapon firing sound. Values are sfx.id.atk_knife / .atk_pistol
+    // / .atk_mg / .atk_gat (raw integers — FC const-expr init can't
+    // resolve across module boundaries yet).
+    let weapon_fire_snd = int32[4] { 3, 2, 4, 5 }
+
+    // Base sprite index in VSWAP for each weapon's "ready" pose. The
+    // 4 attack frames follow sequentially (ready, atk1..atk4).
+    // Derived from wl_def.h's player-attack-frames enum:
+    // SPR_KNIFEREADY=416, etc.
+    let weapon_sprite_base = int32[4] { 416, 421, 426, 431 }
+
+    // Per-frame weapon-animation pump.
     let update_weapon = (w: world*, dt: float64) ->
         let g = w->g
         let ac = w->ac

@@ -122,10 +122,10 @@ Subsystem files were extracted from `main.fc` in a large 2026-04 refactor. The f
 | `png.fc` | `png` | Pure-FC PNG writer (CRC-32, Adler-32, deflate, optional tEXt). |
 | `sound.fc` | `imf`, `adlib`, `digi`, `mixer` | Wolf3D sound-format drivers. |
 | `data.fc` | `bytes`, `palette`, `vswap`, `maps`, `vgagraph`, `audio` | Wolf3D data-file loading. |
-| `sfx.fc` | `sfx` (with nested `id`) | Sound-effect trigger helpers + the 73 sound IDs. Tables `sfx_digi_slot` / `sfx_adlib_chunk` live at file scope in main.fc. |
+| `sfx.fc` | `sfx` (with nested `id`) | Sound-effect trigger helpers + the 73 sound IDs + `digi_slot` / `adlib_chunk` lookup tables. |
 | `ui.fc` | `font`, `pics` (with nested `id`), `hud` | UI primitives: VGAGRAPH font, generic pic blitter, status bar + BJ face animation. |
 | `save.fc` | `save` | Save/load slot I/O + encoding. |
-| `combat.fc` | `dir`, `enemies` (with nested `ai`), `projectiles`, `hitscan` | Enemy data + AI + projectiles + player hitscan. Per-kind sprite tables (`enemy_sprites_*`) and direction vectors (`dir_vx`, `dir_vy`, `dir_dx`, `dir_dy`, `dir_opposite`) live at file scope in main.fc because FC forbids array-literal initializers at module scope. |
+| `combat.fc` | `dir`, `enemies` (with nested `ai`), `projectiles`, `hitscan` | Enemy data + AI + projectiles + player hitscan. |
 | `level.fc` | `tilemap`, `areas`, `spawn`, `doors`, `pushwall`, `pickups` | Level geometry + enemy/sprite spawning + door / pushwall animation + pickup collection. |
 | `cutscenes.fc` | `bj_victory`, `death_cam` (with nested `sub`), `intermission`, `episode_end`, `victory_screen`, `game_over`, `title_screen` | Per-phase state machines + renderers. |
 | `menu.fc` | `menu` (with nested `nav`) | Main menu + submenus (episode, difficulty, map, save/load slot list). |
@@ -135,8 +135,7 @@ Subsystem files were extracted from `main.fc` in a large 2026-04 refactor. The f
 ### FC module restrictions hit during the refactor
 
 - **Non-entry-point files can only contain modules.** Every `.fc` file other than `main.fc` must put every declaration inside a `module X = ...` block. File-scope `let`/`struct`/`union` is only allowed in the file that defines `let main`.
-- **Module-level `let` bindings cannot use array-literal initializers.** `let t = int32[3] { ... }` at module scope fails with `top-level initializer for 't' must be a constant expression`. Integer / float literals are fine; the failure is specific to array literals. Consequence: lookup tables (sound IDs → digi slot, enemy sprite pages, direction vectors, par times, …) have to live at file scope in main.fc even when their only callers are in one module. Where this happened, the file-scope binding is prefixed with the owning module's name (`sfx_digi_slot`, `enemy_sprites_guard`, `dir_vx`, …) and a comment points back at the module that logically owns it.
-- **Modules can't have circular references.** `player` uses `doors.passable` (for collision), and `doors.update` uses `player_radius` (for its bbox-based auto-close check). Moving `player_radius` out of `module player` and down to file scope in main.fc broke the cycle.
+- **Modules can't have circular references.** `player` uses `doors.passable` (for collision), and `doors.update` uses `player_radius` (for its bbox-based auto-close check). Moving `player_radius` out of `module player` and down to file scope in main.fc broke the cycle; `module player` references it by unqualified name.
 
 - **`main.fc`** — Game engine orchestration + file-scope constants:
   - Constants (game_w=320, game_h=200, screen_w=640, screen_h=400, actual_h=480, view_h=160, sample_rate=44100)

@@ -19,10 +19,14 @@ module dir =
     let southeast = 7
     let nodir     = 8
 
-    // The vx / vy / dx / dy / opposite lookup arrays live at file
-    // scope in main.fc (FC forbids array-literal initializers at
-    // module scope). Access them as `dir_vx`, `dir_vy`, `dir_dx`,
-    // `dir_dy`, `dir_opposite` — still logically part of this module.
+    // Unit-vector lookup (wolf-fc game coords: +x east, +y south).
+    let vx = float64[8] { 1.0,  0.7071068,  0.0, -0.7071068, -1.0, -0.7071068,  0.0,  0.7071068 }
+    let vy = float64[8] { 0.0, -0.7071068, -1.0, -0.7071068,  0.0,  0.7071068,  1.0,  0.7071068 }
+    // Integer tile-step lookup (for grid-aligned moves).
+    let dx = int32[8]   { 1,  1,  0, -1, -1, -1,  0,  1 }
+    let dy = int32[8]   { 0, -1, -1, -1,  0,  1,  1,  1 }
+    // Opposite direction (for "don't turn straight around first").
+    let opposite = int32[8] { 4, 5, 6, 7, 0, 1, 2, 3 }
 
 
 // ============================================================
@@ -259,28 +263,146 @@ module enemies =
         | hans | gretel -> 2 + (43 - 23)   // gold key
         | _ -> 0
 
-    // The 16 per-kind sprite tables (enemy_sprites_guard through
-    // enemy_sprites_inky) live at file scope in main.fc for the same
-    // reason as the dir.* arrays above. `sprites_for_kind` reaches
-    // for them by global name.
+    // Per-kind sprite tables — one per enemy_kind variant, keyed by
+    // the kind → table lookup in `sprites_for_kind` below.
+    let sprites_guard = sprite_table {
+        stand_base = 50, walk_base = 58,
+        pain1 = 90, pain2 = 94,
+        die_frames = int32[4] { 91, 92, 93, 0 }, num_die_frames = 3,
+        dead_frame = 95,
+        shoot_frames = int32[4] { 96, 97, 98, 0 }, num_shoot_frames = 3
+    }
+    let sprites_dog = sprite_table {
+        stand_base = 99, walk_base = 99,
+        pain1 = 99, pain2 = 99,  // dogs don't show pain
+        die_frames = int32[4] { 131, 132, 133, 0 }, num_die_frames = 3,
+        dead_frame = 134,
+        shoot_frames = int32[4] { 135, 136, 137, 0 }, num_shoot_frames = 3  // jump-bite frames
+    }
+    let sprites_ss = sprite_table {
+        stand_base = 138, walk_base = 146,
+        pain1 = 178, pain2 = 182,
+        die_frames = int32[4] { 179, 180, 181, 0 }, num_die_frames = 3,
+        dead_frame = 183,
+        shoot_frames = int32[4] { 184, 185, 186, 0 }, num_shoot_frames = 3
+    }
+    let sprites_mut = sprite_table {
+        stand_base = 187, walk_base = 195,
+        pain1 = 227, pain2 = 231,
+        die_frames = int32[4] { 228, 229, 230, 232 }, num_die_frames = 4,
+        dead_frame = 233,
+        shoot_frames = int32[4] { 234, 235, 236, 237 }, num_shoot_frames = 4
+    }
+    let sprites_ofc = sprite_table {
+        stand_base = 238, walk_base = 246,
+        pain1 = 278, pain2 = 282,
+        die_frames = int32[4] { 279, 280, 281, 283 }, num_die_frames = 4,
+        dead_frame = 284,
+        shoot_frames = int32[4] { 285, 286, 287, 0 }, num_shoot_frames = 3
+    }
+    let sprites_hans = sprite_table {
+        stand_base = 296, walk_base = 296,
+        pain1 = 300, pain2 = 300,
+        die_frames = int32[4] { 304, 305, 306, 0 }, num_die_frames = 3,
+        dead_frame = 303,
+        shoot_frames = int32[4] { 300, 301, 302, 0 }, num_shoot_frames = 3
+    }
+    let sprites_schabbs = sprite_table {
+        stand_base = 307, walk_base = 307,
+        pain1 = 311, pain2 = 311,
+        die_frames = int32[4] { 313, 314, 315, 0 }, num_die_frames = 3,
+        dead_frame = 316,
+        shoot_frames = int32[4] { 311, 312, 0, 0 }, num_shoot_frames = 2
+    }
+    // Fake Hitler: only one SHOOT pose (325); FIRE1/FIRE2 are projectile
+    // sprites, not character animation frames.
+    let sprites_hitler_fake = sprite_table {
+        stand_base = 321, walk_base = 321,
+        pain1 = 325, pain2 = 325,
+        die_frames = int32[4] { 328, 329, 330, 331 }, num_die_frames = 4,
+        dead_frame = 333,
+        shoot_frames = int32[4] { 325, 325, 0, 0 }, num_shoot_frames = 2
+    }
+    // Real Hitler has 7 die frames — we truncate to the 4 the struct holds.
+    let sprites_hitler = sprite_table {
+        stand_base = 345, walk_base = 345,
+        pain1 = 349, pain2 = 349,
+        die_frames = int32[4] { 353, 354, 355, 356 }, num_die_frames = 4,
+        dead_frame = 352,
+        shoot_frames = int32[4] { 349, 350, 351, 0 }, num_shoot_frames = 3
+    }
+    let sprites_giftmacher = sprite_table {
+        stand_base = 360, walk_base = 360,
+        pain1 = 364, pain2 = 364,
+        die_frames = int32[4] { 366, 367, 368, 0 }, num_die_frames = 3,
+        dead_frame = 369,
+        shoot_frames = int32[4] { 364, 365, 0, 0 }, num_shoot_frames = 2
+    }
+    // Gretel: placed after the rocket/smoke/boom block (370..384) in
+    // the non-SPEAR build.
+    let sprites_gretel = sprite_table {
+        stand_base = 385, walk_base = 385,
+        pain1 = 389, pain2 = 389,
+        die_frames = int32[4] { 393, 394, 395, 0 }, num_die_frames = 3,
+        dead_frame = 392,
+        shoot_frames = int32[4] { 389, 390, 391, 0 }, num_shoot_frames = 3
+    }
+    // Fat Face (E6 boss): 4 walk, 4 shoot, 3 die, 1 dead at 396..407.
+    let sprites_fat = sprite_table {
+        stand_base = 396, walk_base = 396,
+        pain1 = 400, pain2 = 400,
+        die_frames = int32[4] { 404, 405, 406, 0 }, num_die_frames = 3,
+        dead_frame = 407,
+        shoot_frames = int32[4] { 400, 401, 402, 403 }, num_shoot_frames = 4
+    }
+    // Pacman ghosts: 288..295, 2 walk frames each, no other states.
+    let sprites_blinky = sprite_table {
+        stand_base = 288, walk_base = 288,
+        pain1 = 288, pain2 = 289,
+        die_frames = int32[4] { 288, 289, 0, 0 }, num_die_frames = 2,
+        dead_frame = 289,
+        shoot_frames = int32[4] { 288, 0, 0, 0 }, num_shoot_frames = 1
+    }
+    let sprites_pinky = sprite_table {
+        stand_base = 290, walk_base = 290,
+        pain1 = 290, pain2 = 291,
+        die_frames = int32[4] { 290, 291, 0, 0 }, num_die_frames = 2,
+        dead_frame = 291,
+        shoot_frames = int32[4] { 290, 0, 0, 0 }, num_shoot_frames = 1
+    }
+    let sprites_clyde = sprite_table {
+        stand_base = 292, walk_base = 292,
+        pain1 = 292, pain2 = 293,
+        die_frames = int32[4] { 292, 293, 0, 0 }, num_die_frames = 2,
+        dead_frame = 293,
+        shoot_frames = int32[4] { 292, 0, 0, 0 }, num_shoot_frames = 1
+    }
+    let sprites_inky = sprite_table {
+        stand_base = 294, walk_base = 294,
+        pain1 = 294, pain2 = 295,
+        die_frames = int32[4] { 294, 295, 0, 0 }, num_die_frames = 2,
+        dead_frame = 295,
+        shoot_frames = int32[4] { 294, 0, 0, 0 }, num_shoot_frames = 1
+    }
+
     let sprites_for_kind = (k: enemy_kind) ->
         match k with
-        | guard   -> enemy_sprites_guard
-        | officer -> enemy_sprites_ofc
-        | ss      -> enemy_sprites_ss
-        | dog     -> enemy_sprites_dog
-        | mutant  -> enemy_sprites_mut
-        | hans         -> enemy_sprites_hans
-        | schabbs      -> enemy_sprites_schabbs
-        | gretel       -> enemy_sprites_gretel
-        | giftmacher   -> enemy_sprites_giftmacher
-        | fat          -> enemy_sprites_fat
-        | hitler_fake  -> enemy_sprites_hitler_fake
-        | hitler       -> enemy_sprites_hitler
-        | blinky       -> enemy_sprites_blinky
-        | pinky        -> enemy_sprites_pinky
-        | clyde        -> enemy_sprites_clyde
-        | inky         -> enemy_sprites_inky
+        | guard   -> sprites_guard
+        | officer -> sprites_ofc
+        | ss      -> sprites_ss
+        | dog     -> sprites_dog
+        | mutant  -> sprites_mut
+        | hans         -> sprites_hans
+        | schabbs      -> sprites_schabbs
+        | gretel       -> sprites_gretel
+        | giftmacher   -> sprites_giftmacher
+        | fat          -> sprites_fat
+        | hitler_fake  -> sprites_hitler_fake
+        | hitler       -> sprites_hitler
+        | blinky       -> sprites_blinky
+        | pinky        -> sprites_pinky
+        | clyde        -> sprites_clyde
+        | inky         -> sprites_inky
 
     // Pick the 8-way rotating sprite for this enemy based on the angle
     // from the enemy to (px, py) (usually the player). Mirrors the
@@ -392,7 +514,7 @@ module enemies =
         // fallback). An enemy with `dir == dir.nodir` (stationary /
         // blocked-in) skips the cone check and falls through to the
         // raw LOS — the original's stand actor wakes the same way.
-        // (Indexing dir_vx with dir.nodir == 8 would also be a slice
+        // (Indexing dir.vx with dir.nodir == 8 would also be a slice
         // OOB and abort the process.)
         let enemy_sees_player = (lv: level*, g: game*, e: enemy*) ->
             let dx = g->pos_x - e->x
@@ -402,8 +524,8 @@ module enemies =
             else if dist < 1.5 || e->dir == dir.nodir then
                 check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y)
             else
-                let fx = dir_vx[e->dir]
-                let fy = dir_vy[e->dir]
+                let fx = dir.vx[e->dir]
+                let fy = dir.vy[e->dir]
                 let dot = dx * fx + dy * fy
                 if dot <= 0.0 then false      // player is behind the enemy
                 else check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y)
@@ -450,13 +572,13 @@ module enemies =
             if d == dir.nodir then false
             else
                 let e = &lv->enemies[self_idx]
-                let ntx = e->tile_x + dir_dx[d]
-                let nty = e->tile_y + dir_dy[d]
+                let ntx = e->tile_x + dir.dx[d]
+                let nty = e->tile_y + dir.dy[d]
                 if !enemy_tile_passable(lv, g, self_idx, ntx, nty) then false
-                else if dir_dx[d] != 0 && dir_dy[d] != 0 then
+                else if dir.dx[d] != 0 && dir.dy[d] != 0 then
                     // Diagonal: require both cardinal neighbors passable too.
-                    enemy_tile_passable(lv, g, self_idx, e->tile_x + dir_dx[d], e->tile_y)
-                        && enemy_tile_passable(lv, g, self_idx, e->tile_x, e->tile_y + dir_dy[d])
+                    enemy_tile_passable(lv, g, self_idx, e->tile_x + dir.dx[d], e->tile_y)
+                        && enemy_tile_passable(lv, g, self_idx, e->tile_x, e->tile_y + dir.dy[d])
                 else true
 
         // SelectChaseDir in the original, minus the dodge variant and
@@ -472,7 +594,7 @@ module enemies =
             let adx = if dxi < 0 then -dxi else dxi
             let ady = if dyi < 0 then -dyi else dyi
             let old_dir = e->dir
-            let turnaround = if old_dir == dir.nodir then dir.nodir else dir_opposite[old_dir]
+            let turnaround = if old_dir == dir.nodir then dir.nodir else dir.opposite[old_dir]
             let mut d1 = dir.nodir
             let mut d2 = dir.nodir
             if dxi > 0 then d1 = dir.east else if dxi < 0 then d1 = dir.west
@@ -533,8 +655,8 @@ module enemies =
                     if is_chase then select_chase_dir(lv, g, self_idx)
                     else select_path_dir(lv, g, self_idx)
                     if e->dir == dir.nodir then break
-                let ntx = e->tile_x + dir_dx[e->dir]
-                let nty = e->tile_y + dir_dy[e->dir]
+                let ntx = e->tile_x + dir.dx[e->dir]
+                let nty = e->tile_y + dir.dy[e->dir]
                 if ntx >= 0 && ntx < map_size && nty >= 0 && nty < map_size then
                     let nt = (int32) lv->tilemap[(int64) ntx * 64 + (int64) nty]
                     if nt >= 128 && lv->doors[nt - 128].state != doors.door_state.open then
@@ -564,8 +686,8 @@ module enemies =
                 else
                     e->x = target_x
                     e->y = target_y
-                    e->tile_x = e->tile_x + dir_dx[e->dir]
-                    e->tile_y = e->tile_y + dir_dy[e->dir]
+                    e->tile_x = e->tile_x + dir.dx[e->dir]
+                    e->tile_y = e->tile_y + dir.dy[e->dir]
                     step = step - dist
                     if is_chase then select_chase_dir(lv, g, self_idx)
                     else select_path_dir(lv, g, self_idx)
@@ -627,6 +749,17 @@ module enemies =
                 x = x, y = y, shape_page = page, dist = 0.0,
                 item_type = it, alive = true, blocks = false
             }
+
+        // Pool of guard death screams. A_DeathScream in the original
+        // picks one of eight at random for guard-class enemies so
+        // repeated kills don't sound identical.
+        let guard_death_sounds = int32[8] {
+            29, 30, 31, 33, 34, 36, 37, 38
+            // sfx.id.death_1..9 without #6 — DEATHSCREAM6SND is the
+            // map-9 "fart" easter egg in the original (1/256 roll,
+            // not part of the regular pool), not currently emulated
+            // here.
+        }
 
         // Per-kind death vocal (A_DeathScream in the original).
         // Mutants are silent; ghosts (pacman) are silent. Returns -1
@@ -1270,7 +1403,7 @@ module hitscan =
 
     // Per-weapon damage. Knife: 10-25 in melee (0 beyond ~1.5 tiles).
     // Pistol / MG / chain: similar damage per shot; rate-of-fire is
-    // what distinguishes them (handled by fire_rate[] in
+    // what distinguishes them (handled by player.fire_rate[] in
     // player.update_weapon). Adapted from the original's GunAttack:
     // damage = (US_RndT() / 4) + base, tuned for our hp values.
     let weapon_damage_roll = (g: game*, weapon: int32, dist: float64) ->

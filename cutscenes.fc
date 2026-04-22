@@ -46,8 +46,8 @@ module bj_victory =
         if arrow != dir.nodir then g->bj_dir = arrow
         g->bj_distance = 1.0
         if g->bj_dir == dir.nodir then return
-        let nx = g->bj_tile_x + dir_dx[g->bj_dir]
-        let ny = g->bj_tile_y + dir_dy[g->bj_dir]
+        let nx = g->bj_tile_x + dir.dx[g->bj_dir]
+        let ny = g->bj_tile_y + dir.dy[g->bj_dir]
         if !tile_passable(lv, nx, ny) then g->bj_dir = dir.nodir
 
     // Begin the BJ victory cutscene. Invoked from player.update when
@@ -105,8 +105,8 @@ module bj_victory =
                 if move <= 1e-6 then break
                 if g->bj_dir == dir.nodir then break
                 if move < g->bj_distance then
-                    g->bj_x = g->bj_x + dir_vx[g->bj_dir] * move
-                    g->bj_y = g->bj_y + dir_vy[g->bj_dir] * move
+                    g->bj_x = g->bj_x + dir.vx[g->bj_dir] * move
+                    g->bj_y = g->bj_y + dir.vy[g->bj_dir] * move
                     g->bj_distance = g->bj_distance - move
                     break
                 g->bj_x = (float64) g->bj_tile_x + 0.5
@@ -121,8 +121,8 @@ module bj_victory =
                     g->bj_anim_timer = jump_frame_time
                     break
                 if g->bj_dir != dir.nodir then
-                    g->bj_tile_x = g->bj_tile_x + dir_dx[g->bj_dir]
-                    g->bj_tile_y = g->bj_tile_y + dir_dy[g->bj_dir]
+                    g->bj_tile_x = g->bj_tile_x + dir.dx[g->bj_dir]
+                    g->bj_tile_y = g->bj_tile_y + dir.dy[g->bj_dir]
             if g->bj_anim_timer <= 0.0 then
                 g->bj_anim_frame = (g->bj_anim_frame + 1) & 3
                 g->bj_anim_timer = walk_frame_time
@@ -133,8 +133,8 @@ module bj_victory =
             // frame-gated, not distance-gated.
             let jdir = if g->bj_dir == dir.nodir then dir.north else g->bj_dir
             let jstep = jump_speed * dt
-            g->bj_x = g->bj_x + dir_vx[jdir] * jstep
-            g->bj_y = g->bj_y + dir_vy[jdir] * jstep
+            g->bj_x = g->bj_x + dir.vx[jdir] * jstep
+            g->bj_y = g->bj_y + dir.vy[jdir] * jstep
             if g->bj_anim_timer <= 0.0 then
                 let next_frame = g->bj_anim_frame + 1
                 if next_frame == 1 && !g->bj_yelled then
