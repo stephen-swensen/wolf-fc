@@ -62,7 +62,7 @@ module doors =
     // Try to open a door at the given tile position. Returns what
     // happened — the caller owns the NOWAYSND cue so it can edge-
     // trigger on initial key-press rather than spamming while space
-    // is held (see update_player's space handler).
+    // is held (see player.update's space handler).
     let try_open = (lv: level*, x: int32, y: int32, g: game*, ac: audio_ctx*) ->
         if x < 0 || x >= map_size || y < 0 || y >= map_size then door_action.no_door
         else

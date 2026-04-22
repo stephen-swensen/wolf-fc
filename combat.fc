@@ -699,7 +699,7 @@ module enemies =
                 else
                     kill_enemy(lv, g, ac, e, sprite_start)
                 // Hans / Gretel drop the key from kill_enemy via
-                // drop_for_kind. update_player checks the EXITTILE on
+                // drop_for_kind. player.update checks the EXITTILE on
                 // every move and routes the BJ-runs cutscene from
                 // there.
             else
@@ -1271,7 +1271,7 @@ module hitscan =
     // Per-weapon damage. Knife: 10-25 in melee (0 beyond ~1.5 tiles).
     // Pistol / MG / chain: similar damage per shot; rate-of-fire is
     // what distinguishes them (handled by fire_rate[] in
-    // update_weapon). Adapted from the original's GunAttack:
+    // player.update_weapon). Adapted from the original's GunAttack:
     // damage = (US_RndT() / 4) + base, tuned for our hp values.
     let weapon_damage_roll = (g: game*, weapon: int32, dist: float64) ->
         if weapon == 0 then
@@ -1286,7 +1286,7 @@ module hitscan =
             else if dist < 8.0 then (roll >> 4) + 2
             else (roll >> 5) + 1
 
-    // Called from update_weapon when the player actually fires (not
+    // Called from player.update_weapon when the player actually fires (not
     // every frame, only on trigger-pull that spends a bullet). Finds
     // a target, applies damage, potentially kills the enemy (handled
     // inside ai.damage_enemy).

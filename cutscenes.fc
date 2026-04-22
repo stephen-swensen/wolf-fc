@@ -50,12 +50,12 @@ module bj_victory =
         let ny = g->bj_tile_y + dir_dy[g->bj_dir]
         if !tile_passable(lv, nx, ny) then g->bj_dir = dir.nodir
 
-    // Begin the BJ victory cutscene. Invoked from update_player when
+    // Begin the BJ victory cutscene. Invoked from player.update when
     // the player steps onto an EXITTILE (plane-1 tile 99) on a boss
     // map; also triggered synthetically by the `endepisode` test
     // command. BJ spawns at the player's world position but with his
     // tile coordinates set one south, matching the original's
-    // SpawnBJVictory quirk — the first tick_bj_victory iteration
+    // SpawnBJVictory quirk — the first bj_victory.tick iteration
     // snaps him to that south-tile center and reads the path arrow
     // there to pick his heading. Applies the level-completion bonus
     // up front so the episode-end total still reflects the map clear.

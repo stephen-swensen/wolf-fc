@@ -823,7 +823,6 @@ struct game =
     rng_enemy: random.pcg_random
     rng_face: random.pcg_random
 
-
 // PCG channel IDs. One seed fans out to independent streams per channel; we
 // keep AI rolls and HUD-face rolls on different channels so HUD rendering
 // can't perturb the enemy sequence scripted tests depend on.
@@ -1145,22 +1144,6 @@ let compute_level_bonus = (g: game*) ->
     let treas_bonus = if g->total_treasures > 0 && g->treasures >= g->total_treasures then percent_100_bonus else 0
     time_bonus + kill_bonus + secret_bonus + treas_bonus
 
-// ------------------------------------------------------------
-// Cheat chords (held-key secret codes)
-// ------------------------------------------------------------
-// The original game shipped two chord cheats: M+L+I to refill the player
-// with full health / ammo / keys / chaingun, and B+A+T as a flavor-message
-// easter egg (a plug for Commander Keen in the original). Both stay active
-// in any build — they are not gated by a debug flag.
-
-// Cheat pop-ups hang around longer than regular pickup banners so the
-// multi-line original text can be read. The original game froze play and
-// waited for a keypress; we keep gameplay running and just hold the banner
-// on-screen for ~6 seconds before the 0.5 s fade.
-
-// BJ victory cutscene tuning. Speeds come from wolf4sdl's BJRUNSPEED /
-
-
 // Free the current level + lv_data and load + build the level at level_num.
 // Shared by every transition path (next-level / restart / new-game). After
 // this runs, the player still needs position + per-level state set — caller
@@ -1361,18 +1344,10 @@ let update_phase_transitions = (w: world*, vs: vswap.vswap_file*) ->
         intermission.enter(g)
     level_changed
 
-
-
 // ============================================================
-// Player movement (classic Wolf3D: arrows turn/move, alt=strafe)
-// ============================================================
-
-
-
-
-// Upscale fb (320x200) to dbuf (640x400) with nearest-neighbor 2x.
-// ============================================================
-// Weapon overlay — VSWAP weapon sprite at bottom center
+// Weapon tables (logically part of `module player` in player.fc, but
+// FC forbids array-literal initializers at module scope — the module's
+// `update_weapon` / `render_weapon` read these by global name).
 // ============================================================
 
 // Weapon fire rates (seconds per shot cycle). Index by g->weapon. Derived
@@ -1392,32 +1367,6 @@ let weapon_fire_snd = int32[4] { 3, 2, 4, 5 }
 // frames follow sequentially (ready, atk1, atk2, atk3, atk4). Derived from
 // wolf4sdl's wl_def.h player-attack-frames enum: SPR_KNIFEREADY=416, etc.
 let weapon_sprite_base = int32[4] { 416, 421, 426, 431 }
-
-
-// ============================================================
-// Screenshots — saved as PNG with game-state metadata in a tEXt chunk.
-// Interactive 's' key cycles through 100 slots under ~/.wolf-fc/screenshots/.
-// Test mode writes to a caller-supplied path.
-// ============================================================
-
-
-
-
-
-
-
-// Final victory (gp_victory): shown after clearing all six episodes. Space
-// returns to the main menu.
-
-// ============================================================
-// Title / Main menu / Pause
-// ============================================================
-// Menu labels are returned by functions instead of living in an array
-// literal — FC treats `"foo"` as `const str` which doesn't fit into
-// `str[N]` directly.
-//
-// Main menu:
-//   0 RESUME GAME (only when has_active_game; locked otherwise)
 
 // One simulation tick — runs all per-frame game-state updates in order.
 // Used by both the interactive game loop and the headless test mode so

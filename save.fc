@@ -484,7 +484,7 @@ module save =
                     // the menu, and if we mark it handled here their
                     // *next* press on a door/elevator (after the
                     // intervening KEYUP) would be silently eaten.
-                    // Matches the enter_intermission / enter_episode_end
+                    // Matches the intermission.enter / episode_end.enter
                     // fix for the same symptom.
                     g->key_space_handled = false
                     g->key_ack = false
