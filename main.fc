@@ -1605,25 +1605,27 @@ let tick_bj_victory = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
 // fade-in sub-phases and hold at 1.0 during the taunt card.
 
 // Sub-phase codes for g->dc_sub.
-let dc_sub_pre_fade    = 0   // hold on final death frame (post-animation)
-let dc_sub_fade_out    = 1   // dissolve viewport to black (dc_fade 0 → 1)
-let dc_sub_taunt       = 2   // "LET'S SEE THAT AGAIN!" card on backdrop
-let dc_sub_fade_in     = 3   // camera teleported, dissolve back in (1 → 0)
-let dc_sub_pre_replay  = 4   // beat of silence before animation restarts
-let dc_sub_replay_anim = 5   // boss reset to es_die, animation plays
-let dc_sub_replay_hold = 6   // hold on the final dead pose so it registers
-let dc_sub_done        = 7   // transient — next tick enters intermission
+let dc_sub_pre_fade      = 0   // hold on final death frame (post-animation)
+let dc_sub_fade_out      = 1   // dissolve viewport to backdrop (dc_fade 0 → 1)
+let dc_sub_taunt         = 2   // "LET'S SEE THAT AGAIN!" card on backdrop
+let dc_sub_fade_in       = 3   // camera teleported, dissolve back in (1 → 0)
+let dc_sub_pre_replay    = 4   // boss restored to stand pose, beat of silence
+let dc_sub_replay_anim   = 5   // boss reset to es_die, animation plays
+let dc_sub_replay_hold   = 6   // hold on the final dead pose so it registers
+let dc_sub_fade_to_black = 7   // smooth palette-style fade before intermission
+let dc_sub_done          = 8   // transient — next tick enters intermission
 
 // Timing (seconds). The pre-replay and post-replay holds keep the scene
-// from feeling clipped: without them the fade-in snaps straight into a
-// fresh death animation, and the final dead pose flashes by before the
-// intermission screen comes up.
+// from feeling clipped; the post-replay fade-to-black covers the
+// original's VW_FadeOut() that runs between ex_victorious and the
+// victory/intermission screen.
 let dc_pre_fade_time     = 1.43
 let dc_fade_time         = 1.00
 let dc_taunt_timeout     = 4.30
-let dc_pre_replay_time   = 0.80     // corpse sits visibly before re-dying
+let dc_pre_replay_time   = 0.80     // standing pose before the re-death
 let dc_replay_anim_max   = 2.00     // safety cap if anim somehow sticks
 let dc_replay_hold_time  = 2.50     // dwell on the final dead frame
+let dc_black_fade_time   = 0.70     // linear alpha fade to full black
 
 // Begin the death-cam cutscene. Records the kill position (for the camera
 // teleport later), the corpse's enemy-array index, starts the death anim,
@@ -1735,15 +1737,21 @@ let tick_death_cam = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
             g->key_ack_handled = false      // allow the taunt card to dismiss
     else if sub == dc_sub_taunt then
         // Wait for space acknowledge (key_ack) or the timeout. When
-        // dismissed, teleport the camera and start the fade-in. The boss
-        // stays in es_dead during the fade-in so the player sees the
-        // final death pose emerge from black before the animation replays.
+        // dismissed, teleport the camera and revive the boss to his
+        // stand pose so the fade-in reveals a LIVING boss — the replay
+        // plays out as "boss is alive, boss dies again". Mirrors the
+        // original's s_schabbdeathcam state, which holds SPR_SCHABB_W1
+        // (standing pose) before the die-cascade resumes.
         let dismissed = (g->key_ack && !g->key_ack_handled) || g->dc_timer >= dc_taunt_timeout
         if dismissed then
             g->key_ack_handled = true
             if g->dc_boss_idx >= 0 && g->dc_boss_idx < lv->num_enemies then
                 let e = &lv->enemies[g->dc_boss_idx]
                 teleport_death_cam(lv, g, e->x, e->y)
+                e->state = enemy_state.es_stand
+                e->anim_frame = 0
+                e->anim_timer = walk_frame_time
+                e->dir = dir_nodir
             g->dc_sub = dc_sub_fade_in
             g->dc_timer = 0.0
             g->dc_fade = 1.0
@@ -1754,10 +1762,9 @@ let tick_death_cam = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
             g->dc_sub = dc_sub_pre_replay
             g->dc_timer = 0.0
     else if sub == dc_sub_pre_replay then
-        // Hold on the corpse in its final pose for a beat before the
-        // animation replays. Roughly matches the original's 10-tic pause
-        // at the top of s_schabbdeathcam (and its siblings) that the
-        // state machine walks through before re-entering the die frames.
+        // Boss is visible in stand pose. Hold briefly before starting
+        // the fall, then re-trigger A_DeathScream and transition to
+        // es_die so the fall frames play.
         if g->dc_timer >= dc_pre_replay_time then
             if g->dc_boss_idx >= 0 && g->dc_boss_idx < lv->num_enemies then
                 let e = &lv->enemies[g->dc_boss_idx]
@@ -1765,9 +1772,6 @@ let tick_death_cam = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
                 e->anim_frame = 0
                 e->anim_timer = die_frame_time
                 e->dir = dir_nodir
-                // Replay the death scream so the audio beat lands on the
-                // new animation, matching A_DeathScream at the top of
-                // the re-entered die cascade.
                 let snd = death_scream_for_kind(e->kind, g)
                 if snd >= 0 then trigger_sound_at(snd, ac, g, e->x, e->y)
             g->dc_sub = dc_sub_replay_anim
@@ -1784,9 +1788,17 @@ let tick_death_cam = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
             g->dc_sub = dc_sub_replay_hold
             g->dc_timer = 0.0
     else if sub == dc_sub_replay_hold then
-        // Dwell on the final dead frame so the scene doesn't cut the
-        // instant the animation lands. Then hand off to intermission.
+        // Dwell on the final dead frame, then smooth-fade to black
+        // before the intermission replaces the screen (matches the
+        // original's VW_FadeOut() between ex_victorious and Victory()).
         if g->dc_timer >= dc_replay_hold_time then
+            g->dc_sub = dc_sub_fade_to_black
+            g->dc_timer = 0.0
+            g->dc_fade = 0.0
+    else if sub == dc_sub_fade_to_black then
+        g->dc_fade = g->dc_timer / dc_black_fade_time
+        if g->dc_fade >= 1.0 then
+            g->dc_fade = 1.0
             g->dc_sub = dc_sub_done
 
 // Begin the intermission phase (stats screen between levels). The phase
@@ -6119,10 +6131,10 @@ let render_game_over = (rc: render_ctx*, g: game*) ->
 let dc_backdrop_color = 0xFF004040u32
 
 // SPR_DEATHCAM in the original's sprite enum is offset 1 from sprite
-// base (SPR_DEMO=0, SPR_DEATHCAM=1). Flashes on/off every ~0.45s while
-// the death cam is active (wolf4sdl: `GetTimeCount() & 32`).
-let dc_sprite_offset     = 1
-let dc_sprite_flash_rate = 2.2          // Hz; matches 32/70 s half-period
+// base (SPR_DEMO=0, SPR_DEATHCAM=1). Flashes on/off every ~0.46s while
+// the death cam is active — bit 5 of the 70Hz tic count toggles every
+// 32 tics, matching wolf4sdl's `GetTimeCount() & 32` gate.
+let dc_sprite_offset = 1
 
 // True during the sub-phases that show the death-cam's zoomed-in view
 // (after the camera teleport). Drives both the SPR_DEATHCAM flash and
@@ -6131,15 +6143,18 @@ let dc_sprite_flash_rate = 2.2          // Hz; matches 32/70 s half-period
 let dc_is_replay_view = (sub: int32) ->
     sub == dc_sub_fade_in || sub == dc_sub_pre_replay
         || sub == dc_sub_replay_anim || sub == dc_sub_replay_hold
+        || sub == dc_sub_fade_to_black
 
 // Draw the SPR_DEATHCAM sprite at the bottom-center of the viewport,
 // sized the same way render_weapon sizes the gun. Flashes on/off per
 // phase_timer; caller is expected to gate on dc_is_replay_view.
 let render_deathcam_sprite = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[],
                               phase_timer: float64) ->
-    // Skip during the "off" half of the flash cycle.
-    let cycle = (int32) (phase_timer * dc_sprite_flash_rate * 2.0)
-    if (cycle & 1) != 0 then return
+    // Skip during the "off" half of the flash cycle. Bit 5 of the
+    // 70Hz tic counter toggles every 32 tics (≈0.457s), so each on/off
+    // half of the cycle is ≈0.46s and a full period is ≈0.91s.
+    let tics = (int32) (phase_timer * 70.0)
+    if (tics & 32) != 0 then return
     let page = vs->sprite_start + dc_sprite_offset
     let dw = view_h
     let dh = view_h
@@ -6176,9 +6191,15 @@ let render_death_cam = (w: world*, vs: vswap.vswap_file*, pal: uint32[],
             render_deathcam_sprite(rc, vs, pal, g->phase_timer)
         else
             render_weapon(rc, vs, pal, g)
-        // dc_fade is 0 during pre-fade and replay, so dissolve_stipple is
-        // a no-op there (it early-returns on progress <= 0).
-        dissolve_stipple(rc, dc_backdrop_color, g->dc_fade)
+        if sub == dc_sub_fade_to_black then
+            // Smooth alpha fade covering the whole frame (including HUD),
+            // matching wolf4sdl VW_FadeOut() between ex_victorious and
+            // the episode/victory transition.
+            viewport_tint_full(rc, 0x00000000u32, g->dc_fade)
+        else
+            // dc_fade is 0 during pre-fade and replay, so dissolve_stipple is
+            // a no-op there (it early-returns on progress <= 0).
+            dissolve_stipple(rc, dc_backdrop_color, g->dc_fade)
 
 // Per-episode victory screen (gp_episode_end): shown after the intermission
 // on level 8 (boss / finale) of each episode. Simple text screen — no
