@@ -1850,13 +1850,14 @@ let enter_intermission = (g: game*) ->
     g->key_left = false
     g->key_right = false
     g->key_fire = false
-    // Don't pre-handle key_space or key_ack here: the pre-intermission freeze
-    // has already given the player a full second to release any key they had
-    // down at the elevator, so by the time we arrive here their next press is
-    // a deliberate "advance" that should fire on the first cycle. Pre-setting
-    // the handled flags would silently eat that press (past bug). If they are
-    // still holding a key through the freeze, letting it instant-advance the
-    // animation is natural mash-to-skip behaviour.
+    // Reset the ack latches. The death-cam taunt-card dismissal sets
+    // key_ack_handled=true and nothing clears it before the cutscene hands
+    // off here, which would otherwise swallow the first press on the tally
+    // screen. Clearing (not pre-setting) handled keeps the deliberate next
+    // press firing on its first cycle — pre-setting true is what the past
+    // bug was about.
+    g->key_ack = false
+    g->key_ack_handled = false
 
 // Count-up rates for the intermission animation (units per second). Tuned
 // to match the original's "cash-register zip" feel: counter races to its
