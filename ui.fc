@@ -638,7 +638,7 @@ module hud =
         //   health: x=168, 3 cells
         //   ammo  : x=216, 2 cells
         let num_y = bar_top + 16
-        draw_vg_number(rc, vg, pal, 16, num_y, 2, g->level_num + 1)
+        draw_vg_number(rc, vg, pal, 16, num_y, 2, (g->level_num % episode.levels_per) + 1)
         draw_vg_number(rc, vg, pal, 48, num_y, 6, g->score)
         draw_vg_number(rc, vg, pal, 112, num_y, 1, g->lives)
         draw_vg_number(rc, vg, pal, 168, num_y, 3, g->health)
