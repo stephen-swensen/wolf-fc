@@ -522,11 +522,16 @@ let grant_extra_life = (g: game*, ac: audio_ctx*) ->
 // bonuses uniformly. Also grants the 40k-score extra-life milestone,
 // looping for huge single adds (an intermission bonus can easily cross
 // multiple milestones at once — matches wolf4sdl's while-loop on
-// nextextra).
+// nextextra). Score caps at 999 999 (the 6-digit HUD cell width); the
+// original would happily wrap / overflow past that. The extra-life
+// milestone count uses the capped score so once you're maxed, no more
+// free lives come from further scoring.
+let score_max = 999999
 let add_score = (g: game*, amount: int32, ac: audio_ctx*) ->
     if g->idkfa_mode then return
     let before_milestones = g->score / extra_life_score
     g->score = g->score + amount
+    if g->score > score_max || g->score < 0 then g->score = score_max
     let after_milestones = g->score / extra_life_score
     let mut n = before_milestones
     loop
