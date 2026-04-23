@@ -47,15 +47,13 @@ module music =
     // Per-level music: songs[episode * 10 + level] = music track id.
     // Indexed by the running `g->level_num` (0..59). Used by
     // font.music_chunk_for_phase to pick the gameplay-phase track.
-    // Raw ints (not the named constants above) because FC's module-
-    // level initializers require literal elements.
     let songs = int32[60] {
-        3,11,9,12,3,11,9,12, 2,0,
-        8,18,17,4,8,18,4,17, 2,1,
-        6,20,22,21,6,20,22,21, 19,26,
-        3,11,9,12,3,11,9,12, 2,0,
-        8,18,17,4,8,18,4,17, 2,1,
-        6,20,22,21,6,20,22,21, 19,26
+        getthem,  searchn,  pow,      suspense, getthem,  searchn,  pow,      suspense, warmarch, corner,
+        nazi_omi, pregnant, goingaft, headache, nazi_omi, pregnant, headache, goingaft, warmarch, dungeon,
+        introcw3, nazi_rap, twelfth,  zerohour, introcw3, nazi_rap, twelfth,  zerohour, ultimate, pacman,
+        getthem,  searchn,  pow,      suspense, getthem,  searchn,  pow,      suspense, warmarch, corner,
+        nazi_omi, pregnant, goingaft, headache, nazi_omi, pregnant, headache, goingaft, warmarch, dungeon,
+        introcw3, nazi_rap, twelfth,  zerohour, introcw3, nazi_rap, twelfth,  zerohour, ultimate, pacman
     }
 
 
