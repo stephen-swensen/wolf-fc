@@ -452,7 +452,7 @@ module player =
             let pty = (int32) g->pos_y
             if ptx >= 0 && ptx < map_size && pty >= 0 && pty < map_size then
                 if lv->exit_tiles[(int64) ptx * 64 + (int64) pty] then
-                    bj_victory.enter(g)
+                    bj_victory.enter(g, ac)
 
     // ============================================================
     // Weapon animation & firing

@@ -344,7 +344,7 @@ module pickups =
                 true
             | extra_life ->
                 g->health = 100
-                g->lives = g->lives + 1
+                grant_extra_life(g, ac)
                 true
             | clip when (g->ammo >= 99) -> false
             | clip ->
@@ -376,19 +376,19 @@ module pickups =
                 g->has_silver_key = true
                 true
             | cross ->
-                add_score(g, 100)
+                add_score(g, 100, ac)
                 g->treasures = g->treasures + 1
                 true
             | chalice ->
-                add_score(g, 500)
+                add_score(g, 500, ac)
                 g->treasures = g->treasures + 1
                 true
             | bible ->
-                add_score(g, 1000)
+                add_score(g, 1000, ac)
                 g->treasures = g->treasures + 1
                 true
             | crown ->
-                add_score(g, 5000)
+                add_score(g, 5000, ac)
                 g->treasures = g->treasures + 1
                 true
             if !picked_up then continue
@@ -432,7 +432,7 @@ module pickups =
                 sfx.trigger(sfx.id.bonus4, ac)
                 hud.show_message(g, "CROWN +5000")
             | extra_life ->
-                sfx.trigger(sfx.id.bonus1up, ac)
+                // BONUS1UPSND already fired by grant_extra_life above.
                 hud.show_message(g, "EXTRA LIFE")
             | dog_food | food ->
                 sfx.trigger(sfx.id.health1, ac)

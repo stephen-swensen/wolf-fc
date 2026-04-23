@@ -497,19 +497,34 @@ struct world =
 // forcing new cross-module edges.
 // ============================================================
 
-// Extra-life milestone. Matches wolf4sdl's EXTRAPOINTS (first extra life
-// awarded when the player's score crosses 40000).
+// Extra-life milestone. Matches wolf4sdl's EXTRAPOINTS: the player
+// gets one extra life each time the score crosses 40000, 80000, etc.
 let extra_life_score = 40000
+
+// Grant one extra life with BONUS1UPSND. Matches wolf4sdl
+// GiveExtraMan: the `lives` counter caps at 9. Called from add_score
+// on each score-milestone crossing and from the 1UP pickup branch in
+// pickups.check.
+let grant_extra_life = (g: game*, ac: audio_ctx*) ->
+    if g->lives < 9 then g->lives = g->lives + 1
+    sfx.trigger(sfx.id.bonus1up, ac)
 
 // Add `amount` to the score, honoring the IDKFA score lock. Single
 // chokepoint so the lock covers pickups, enemy kills, and intermission
-// bonuses uniformly. Also grants the 40k-score extra-life milestone.
-let add_score = (g: game*, amount: int32) ->
+// bonuses uniformly. Also grants the 40k-score extra-life milestone,
+// looping for huge single adds (an intermission bonus can easily cross
+// multiple milestones at once — matches wolf4sdl's while-loop on
+// nextextra).
+let add_score = (g: game*, amount: int32, ac: audio_ctx*) ->
     if g->idkfa_mode then return
-    let before = g->score
+    let before_milestones = g->score / extra_life_score
     g->score = g->score + amount
-    if before < extra_life_score && g->score >= extra_life_score then
-        g->lives = g->lives + 1
+    let after_milestones = g->score / extra_life_score
+    let mut n = before_milestones
+    loop
+        if n >= after_milestones then break
+        grant_extra_life(g, ac)
+        n = n + 1
 
 // Grant the full cheat kit: 100 health, 99 ammo, chain gun (+ best-
 // weapon latch), both keys. Shared by the M+L+I chord, IDKFA
@@ -778,9 +793,9 @@ let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
         // (which doesn't set next_level), so this branch is reached only
         // by the synthetic `endepisode` test command on a boss map.
         if g->level_num % episode.levels_per == 8 then
-            bj_victory.enter(g)
+            bj_victory.enter(g, w->ac)
         else
-            intermission.enter(g)
+            intermission.enter(g, w->ac)
     if g->phase == game_phase.dying && g->phase_timer >= player.death_anim_time then
         if g->lives > 0 then
             g->lives = g->lives - 1
@@ -794,7 +809,7 @@ let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
     // episode_end on space (since all death-cam boss maps are level 8
     // within their episode).
     if g->phase == game_phase.death_cam && g->dc_sub == death_cam.sub.done then
-        intermission.enter(g)
+        intermission.enter(g, w->ac)
     level_changed
 // One simulation tick — runs all per-frame game-state updates in order.
 // Used by both the interactive game loop and the headless test mode so
@@ -1191,7 +1206,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             // as a natural death_cam.sub.done → intermission.enter transition.
             // Tests still need to `advance` once more to reach
             // episode_end on boss maps.
-            intermission.enter(g)
+            intermission.enter(g, w->ac)
         else if g->phase == game_phase.episode_end then
             advance_next_episode(w, w->ac->vs)
         else if g->phase == game_phase.victory then
