@@ -19,15 +19,15 @@ module player =
     // the original (which used 100/150 ≈ 0.67 for back and 1.0 for
     // strafe) to make alt-strafe slightly quicker than forward
     // (rewards its use in fights) while keeping back-pedalling usable.
-    let move_speed  = 3.5
-    let run_mult    = 2.0
-    let back_mult   = 0.75
-    let strafe_mult = 1.25
+    private let move_speed  = 3.5
+    private let run_mult    = 2.0
+    private let back_mult   = 0.75
+    private let strafe_mult = 1.25
 
     // Camera yaw rate (rad/sec at walk). Scaled by `run_mult` when
     // shift is held — same factor as move_speed so turning "feels
     // like" running-speed when sprinting.
-    let turn_speed  = 2.5
+    private let turn_speed  = 2.5
 
     // Static-decoration half-width (tiles). Blocking sprites
     // (barrels, lamps, tables, etc.) block the player as a half-tile
@@ -37,13 +37,13 @@ module player =
     // a full tile because the art typically occupies only the middle
     // half and the original's tile-grain blocking feels too
     // intrusive at our scale.
-    let sprite_block_half = 0.25
+    private let sprite_block_half = 0.25
 
     // Enemy exclusion radius (tiles) — squared. Roughly radius (0.35)
     // + enemy body half-width (~0.25). Smaller than the full bbox so
     // the player can squeeze past an adjacent enemy without being
     // locked out of corridors.
-    let enemy_block_r2 = 0.55 * 0.55
+    private let enemy_block_r2 = 0.55 * 0.55
 
     // Seconds to hold gameplay frozen after the player pulls the
     // elevator switch before the intermission screen appears. Stands
@@ -154,7 +154,7 @@ module player =
     // unchanged) the distance are always allowed, so if an enemy
     // walks onto the player the player can always slide away. Skips
     // dead and actively-dying enemies (they don't physically block).
-    let move_blocked_by_enemy = (lv: level*, cur_x: float64, cur_y: float64,
+    private let move_blocked_by_enemy = (lv: level*, cur_x: float64, cur_y: float64,
                                  nx: float64, ny: float64) ->
         let mut hit = false
         for i in 0..lv->num_enemies
@@ -175,7 +175,7 @@ module player =
     // Back-compat shim: walls-only check for old callers. Prefer the
     // split above when you know the current (cur_x, cur_y) so enemy
     // sliding works.
-    let blocked = (lv: level*, px: float64, py: float64) ->
+    private let blocked = (lv: level*, px: float64, py: float64) ->
         blocked_by_map(lv, px, py)
 
     // Try to move the player by (dx, dy). Attempts per-axis (so the
@@ -186,7 +186,7 @@ module player =
     // moves that put the player further from an enemy are always
     // allowed, which is what prevents the mutual-deadlock when an
     // enemy walks onto the player from their side.
-    let try_move = (lv: level*, g: game*, dx: float64, dy: float64) ->
+    private let try_move = (lv: level*, g: game*, dx: float64, dy: float64) ->
         let cur_x = g->pos_x
         let cur_y = g->pos_y
         let nx = cur_x + dx
@@ -223,7 +223,7 @@ module player =
         // original game froze play and waited for a keypress; we keep
         // gameplay running and just hold the banner on-screen for
         // ~6 seconds before the 0.5 s fade.
-        let msg_time = 6.0
+        private let msg_time = 6.0
 
         let apply_mli = (g: game*) ->
             g->health = 100
@@ -255,7 +255,7 @@ module player =
             g->msg_timer = msg_time
 
         // The IDDQD key sequence (I-D-D-Q-D).
-        let iddqd_sequence = int32[5] {
+        private let iddqd_sequence = int32[5] {
             sdl2.key_i, sdl2.key_d, sdl2.key_d, sdl2.key_q, sdl2.key_d
         }
 
@@ -440,13 +440,13 @@ module player =
     // Per-weapon firing sound. Values are sfx.id.atk_knife / .atk_pistol
     // / .atk_mg / .atk_gat (raw integers — FC const-expr init can't
     // resolve across module boundaries yet).
-    let weapon_fire_snd = int32[4] { 3, 2, 4, 5 }
+    private let weapon_fire_snd = int32[4] { 3, 2, 4, 5 }
 
     // Base sprite index in VSWAP for each weapon's "ready" pose. The
     // 4 attack frames follow sequentially (ready, atk1..atk4).
     // Derived from wl_def.h's player-attack-frames enum:
     // SPR_KNIFEREADY=416, etc.
-    let weapon_sprite_base = int32[4] { 416, 421, 426, 431 }
+    private let weapon_sprite_base = int32[4] { 416, 421, 426, 431 }
 
     // Per-frame weapon-animation pump.
     let update_weapon = (w: world*, dt: float64) ->
@@ -489,7 +489,7 @@ module player =
     // (unused) source pixels are skipped implicitly by the run-list
     // format. Framebuffer writes are clipped to the 3D viewport
     // (0..view_h) so the weapon never paints onto the HUD bar.
-    let draw_hud_sprite = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[],
+    let draw_hud_sprite = (rc: render_ctx*, vs: const vswap.vswap_file*, pal: const uint32[],
                            page: int32, dst_x: int32, dst_y: int32,
                            dst_w: int32, dst_h: int32) ->
         let hdr = vswap.sprite_header_at(vs, page)
@@ -525,7 +525,7 @@ module player =
     // of the 3D viewport. Sprite page =
     // sprite_start + weapon_sprite_base[weapon] + frame, where
     // frame 0 is "ready" and 1..4 are the attack frames.
-    let render_weapon = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[], g: game*) ->
+    let render_weapon = (rc: render_ctx*, vs: const vswap.vswap_file*, pal: const uint32[], g: game*) ->
         let frame = g->weapon_frame
         let sprite_idx = weapon_sprite_base[g->weapon] + frame
         let page = vs->sprite_start + sprite_idx

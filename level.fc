@@ -62,12 +62,12 @@ module doors =
         area1: int32
         area2: int32
 
-    let speed = 2.0         // 0→1 in 0.5 seconds
+    private let speed = 2.0         // 0→1 in 0.5 seconds
     let stay_time = 4.0     // seconds before auto-close
     let max_doors = 64
 
     // Check if a door tile is passable (fully open).
-    let passable = (lv: level*, x: int32, y: int32) ->
+    let passable = (lv: const level*, x: int32, y: int32) ->
         if x < 0 || x >= map_size || y < 0 || y >= map_size then false
         else
             let t = (int32) lv->tilemap[(int64) x * 64 + (int64) y]
@@ -488,7 +488,7 @@ module tilemap =
                     lv->tilemap[idx] = 0u8
 
     // Check if a tile is a wall (solid, not a door).
-    let tile_solid = (lv: level*, x: int32, y: int32) ->
+    let tile_solid = (lv: const level*, x: int32, y: int32) ->
         if x < 0 || x >= map_size || y < 0 || y >= map_size then true
         else
             let t = (int32) lv->tilemap[(int64) x * 64 + (int64) y]
@@ -496,7 +496,7 @@ module tilemap =
 
     // Check if tile is a door (for collision — doors block unless
     // fully open).
-    let tile_is_door = (lv: level*, x: int32, y: int32) ->
+    let tile_is_door = (lv: const level*, x: int32, y: int32) ->
         if x < 0 || x >= map_size || y < 0 || y >= map_size then false
         else
             let t = (int32) lv->tilemap[(int64) x * 64 + (int64) y]
@@ -544,7 +544,7 @@ module areas =
     // push-walls, ambush tiles) gets the no_area sentinel and is
     // excluded from connectivity checks.
     let num_areas = 37
-    let area_tile = 107
+    private let area_tile = 107
     let no_area   = 255
 
     // Read the raw plane-0 area number at (x,y). Returns the index
@@ -658,7 +658,7 @@ module spawn =
     // player — noise won't wake them. SpawnNewObj in the original also
     // rewrites the ambush tile to one of the four neighbor area tiles
     // so connectivity / sound checks have a real area to use.
-    let ambush_tile = 106
+    private let ambush_tile = 106
 
     // Find player start position and facing from level plane 1.
     // Tile values 19-22 = player facing N/E/S/W.
@@ -708,7 +708,7 @@ module spawn =
     // or behind the target. Walkable = empty floor (t == 0); closed
     // doors are skipped so the teleport doesn't park on one. No-op if
     // no candidate is free.
-    let place_player_adjacent = (lv: level*, g: game*, target_x: int32, target_y: int32) ->
+    private let place_player_adjacent = (lv: level*, g: game*, target_x: int32, target_y: int32) ->
         let offs_dx = int32[8] {  0,  0,  0,  0,  2,  1, -2, -1 }
         let offs_dy = int32[8] {  2,  1, -2, -1,  0,  0,  0,  0 }
         let face_dx = float64[8] {  0.0,  0.0,  0.0,  0.0, -1.0, -1.0,  1.0,  1.0 }
@@ -827,7 +827,7 @@ module spawn =
     //   138..141 / 174..177 / 210..213 dog patrol
     //   216..219 / 234..237 / 252..255 mutant stand
     //   220..223 / 238..241 / 256..259 mutant patrol
-    let classify_enemy_tile = (tile: int32) ->
+    private let classify_enemy_tile = (tile: int32) ->
         // Guards
         if tile >= 108 && tile <= 111 then
             some(enemy_spawn_info { kind = enemies.enemy_kind.guard, patrol = false, dir4 = tile - 108, dead = false, tier = 0 })
@@ -927,7 +927,7 @@ module spawn =
     // Allocate one enemy entry from plane-1 data. dir4 0..3 is
     // east/north/west/south; multiplied by 2 to land on the cardinal
     // dirs of the 8-dir `dirtype` encoding.
-    let one_enemy = (lv: level*, tx: int32, ty: int32, info: enemy_spawn_info, difficulty: int32) ->
+    private let one_enemy = (lv: level*, tx: int32, ty: int32, info: enemy_spawn_info, difficulty: int32) ->
         if lv->num_enemies >= enemies.max_enemies then return
         let dir8 = info.dir4 * 2   // 0,2,4,6
         let initial_state = if info.dead then enemies.enemy_state.dead
@@ -974,7 +974,7 @@ module spawn =
     // +36 at >= medium; +72 at >= hard. Mirror the same check here so
     // lowering difficulty actually thins the roster. Pre-killed
     // corpses (tier 0, tile 124) spawn unconditionally.
-    let tier_allowed = (tier: int32, diff: int32) ->
+    private let tier_allowed = (tier: int32, diff: int32) ->
         if tier <= 0 then true
         else if tier == 1 then diff >= difficulty.medium
         else diff >= difficulty.hard

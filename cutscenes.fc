@@ -17,17 +17,17 @@
 // ============================================================
 
 module bj_victory =
-    let run_speed        = 2.19
-    let jump_speed       = 0.73
-    let walk_frame_time  = 0.15   // avg of 12 / 8 tic run frames
-    let jump_frame_time  = 0.20
-    let final_hold_time  = 1.2
+    private let run_speed        = 2.19
+    private let jump_speed       = 0.73
+    private let walk_frame_time  = 0.15   // avg of 12 / 8 tic run frames
+    private let jump_frame_time  = 0.20
+    private let final_hold_time  = 1.2
 
     // Can BJ step onto (tx, ty)? Off-map and wall tiles block; doors
     // block only when not fully open; any other tile is free (floors
     // / floor-tagged markers / dead actors). Mirrors the original's
     // TryWalk for the bjobj class.
-    let tile_passable = (lv: level*, tx: int32, ty: int32) ->
+    private let tile_passable = (lv: level*, tx: int32, ty: int32) ->
         if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
         else
             let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
@@ -41,7 +41,7 @@ module bj_victory =
     // the bjobj actor class. Distance is reset to 1 tile so the
     // running loop advances one tile before consulting the arrow
     // table again.
-    let select_path_dir = (lv: level*, g: game*) ->
+    private let select_path_dir = (lv: level*, g: game*) ->
         let arrow = (int32) lv->path_arrows[(int64) g->bj_tile_x * 64 + (int64) g->bj_tile_y]
         if arrow != dir.nodir then g->bj_dir = arrow
         g->bj_distance = 1.0
@@ -218,7 +218,7 @@ module death_cam =
     // flash and the suppression of the normal weapon sprite, which
     // the original replaces with the DEATH CAM graphic during this
     // window.
-    let is_replay_view = (s: int32) ->
+    private let is_replay_view = (s: int32) ->
         s == sub.fade_in || s == sub.pre_replay
             || s == sub.replay_anim || s == sub.replay_hold
             || s == sub.fade_to_black
@@ -265,7 +265,7 @@ module death_cam =
     // direction ray, step outward by 1/16 of a tile until the camera
     // bbox clears walls. Sets pos + dir vectors; the raycaster picks
     // up the new view automatically.
-    let teleport = (lv: level*, g: game*, boss_x: float64, boss_y: float64) ->
+    private let teleport = (lv: level*, g: game*, boss_x: float64, boss_y: float64) ->
         let dx = g->dc_kill_x - boss_x
         let dy = g->dc_kill_y - boss_y
         let len = math.sqrt(dx * dx + dy * dy)
@@ -382,7 +382,7 @@ module death_cam =
     // viewport, sized the same way player.render_weapon sizes the gun.
     // Flashes on/off per phase_timer; caller is expected to gate on
     // is_replay_view.
-    let render_sprite = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[],
+    private let render_sprite = (rc: render_ctx*, vs: const vswap.vswap_file*, pal: const uint32[],
                          phase_timer: float64) ->
         let tics = (int32) (phase_timer * 70.0)
         if (tics & 32) != 0 then return
@@ -398,8 +398,8 @@ module death_cam =
     // fade_out and fade_in; a solid backdrop with the taunt pic
     // font during the taunt sub-phase; zoomed-in corpse view with a
     // flashing DEATH CAM sprite during the replay sub-phases.
-    let render = (w: world*, vs: vswap.vswap_file*, pal: uint32[],
-                  vg: vgagraph.vgagraph_file*) ->
+    let render = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[],
+                  vg: const vgagraph.vgagraph_file*) ->
         let g = w->g
         let rc = w->rc
         let s = g->dc_sub
@@ -436,8 +436,8 @@ module intermission =
     //
     // Ratio counter unit = percent (0..100). At 140 units/sec a full
     // 100% settles in ~0.7s — snappy but still readable.
-    let time_rate  = 400.0
-    let ratio_rate = 140.0
+    private let time_rate  = 400.0
+    private let ratio_rate = 140.0
 
     // Per-stage pause inserted after the end-of-stage sound fires,
     // before the next counter starts zipping. Holds the finished
@@ -445,21 +445,21 @@ module intermission =
     // the original's VBLWAIT(30 VBLs / ~0.43s @ 70Hz) +
     // SD_SoundPlaying wait; we round down a touch since the player
     // can still mash a key to skip.
-    let stage_gap = 0.35
+    private let stage_gap = 0.35
 
     // Small gap between the last ENDBONUS1SND tick and the
     // end-of-stage ring sound (ENDBONUS2 / PERCENT100 / NOBONUS).
     // Without this, the tail of the final tick sits on top of the
     // ring — the original avoided that with its
     // `while (SD_SoundPlaying ())` wait after each loop iteration.
-    let end_sound_wait = 0.18
+    private let end_sound_wait = 0.18
 
     // Short breath before the counter starts, just enough for the
     // screen swap to feel deliberate. LEVELDONESND (the elevator
     // "ding") already played out during the pre-intermission freeze
     // (elevator_wait_time), so we don't need the longer gap the
     // original inserted between Cmd_Use and LevelCompleted.
-    let lead_in = 0.25
+    private let lead_in = 0.25
 
     // Par time in seconds for each of the 60 levels. Derived from the
     // minute-fraction values in the original's ParTimes[] (fractions
@@ -480,24 +480,24 @@ module intermission =
     // is entered; displayed on the intermission screen.
     //   time bonus: +500 per second beaten par
     //   100% kills / secrets / treasures: +10000 each
-    let par_amount_per_sec = 500
-    let percent_100_bonus  = 10000
+    private let par_amount_per_sec = 500
+    private let percent_100_bonus  = 10000
     // Flat bonus awarded for completing a secret level.
-    let secret_floor_bonus = 15000
+    private let secret_floor_bonus = 15000
 
     // True iff `level_num` is the secret level (map 10 / index 9) of
     // its episode. Secret intermissions show a different layout and
     // award a flat bonus instead of ticking through kill / secret /
     // treasure ratios.
-    let is_secret_level = (level_num: int32) ->
+    private let is_secret_level = (level_num: int32) ->
         level_num % episode.levels_per == 9
 
-    let compute_time_left = (g: game*) ->
+    private let compute_time_left = (g: game*) ->
         let par = if g->level_num < 60 then par_times[g->level_num] else 0
         let t = (int32) g->level_time
         if par > 0 && t < par then par - t else 0
 
-    let compute_ratio = (cur: int32, tot: int32) ->
+    private let compute_ratio = (cur: int32, tot: int32) ->
         if tot <= 0 then 0 else (cur * 100) / tot
 
     let compute_level_bonus = (g: game*) ->
@@ -656,7 +656,7 @@ module intermission =
     // original's Write() dispatch: letters, digits, and '%' advance
     // 16 px (the pics are drawn inside 16-wide cells); ':', '!', "'"
     // advance 8 px; ' ' just advances 16.
-    let write_lpic_char = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+    private let write_lpic_char = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                            x: int32, y: int32, ch: int32) ->
         let mut c = ch
         if c >= 97 && c <= 122 then c = c - 32
@@ -686,7 +686,7 @@ module intermission =
     // Draw a string using the LEVELEND_LUMP letter/digit pics,
     // starting at pixel (x, y). `\n` resets x and advances y by 16
     // px (one row).
-    let write_lpic_text = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+    let write_lpic_text = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                            x: int32, y: int32, s: const str) ->
         let mut nx = x
         let mut ny = y
@@ -701,7 +701,7 @@ module intermission =
     // Write a number using the big L_NUM pics. `align_right` = true
     // right-aligns the last digit at pixel column `x`; false starts
     // the first digit at x.
-    let write_lpic_number = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+    private let write_lpic_number = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                              x: int32, y: int32, num: int32, align_right: bool) ->
         let mut n = if num < 0 then 0 else num
         let mut digits = int32[12] {}
@@ -726,7 +726,7 @@ module intermission =
     // VIEWCOLOR), BJ portrait on the left (breathing), "floor N
     // completed" caption, bonus / time / par lines, and live kill /
     // secret / treasure ratios animated via tick.
-    let render = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                   g: game*) ->
         let bg = pal[0x7F]
         for y in 0..view_h
@@ -838,7 +838,7 @@ module episode_end =
     // level 8 (boss / finale) of each episode. Simple text screen —
     // no ENDART, no BJ art for now. Space advances to the next
     // episode.
-    let render = (rc: render_ctx*, f: font.info*, g: game*) ->
+    let render = (rc: render_ctx*, f: const font.info*, g: game*) ->
         for i in 0..(game_w * game_h)
             rc->fb[i] = 0xFF000020u32    // deep blue backdrop
         let ep = g->level_num / episode.levels_per
@@ -875,7 +875,7 @@ module victory_screen =
 
     // Final victory (victory): shown after clearing all six
     // episodes. Space returns to the main menu.
-    let render = (rc: render_ctx*, f: font.info*, g: game*) ->
+    let render = (rc: render_ctx*, f: const font.info*, g: game*) ->
         for i in 0..(game_w * game_h)
             rc->fb[i] = 0xFF200000u32    // deep red
         let gold   = 0xFFFFD700u32
@@ -906,8 +906,8 @@ module game_over =
 module title_screen =
     // Title screen — full-screen TITLEPIC with a "PRESS ANY KEY"
     // blink at bottom.
-    let render = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
-                  f: font.info*, time: float64) ->
+    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
+                  f: const font.info*, time: float64) ->
         pics.blit_title_bg(rc)
         let blink_on = ((int32) (time * 1.6667)) % 2 == 0
         if blink_on then

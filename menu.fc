@@ -34,7 +34,7 @@ module menu =
     //   5 QUIT
     let main_len = 6
 
-    let main_label = (i: int32) ->
+    private let main_label = (i: int32) ->
         match i with
         | 0 -> "RESUME"
         | 1 -> "NEW GAME"
@@ -51,7 +51,7 @@ module menu =
     let main_is_locked = (i: int32, has_active_game: bool) ->
         (i == 0 || i == 3) && !has_active_game
 
-    let diff_label = (i: int32) ->
+    private let diff_label = (i: int32) ->
         match i with
         | 0 -> "CAN I PLAY, DADDY?"
         | 1 -> "DON'T HURT ME."
@@ -60,7 +60,7 @@ module menu =
         | _ -> ""
 
     // Episode picker labels — short for menu fit.
-    let episode_label = (i: int32) ->
+    private let episode_label = (i: int32) ->
         match i with
         | 0 -> "EPISODE 1  ESCAPE FROM WOLFENSTEIN"
         | 1 -> "EPISODE 2  OPERATION EISENFAUST"
@@ -76,7 +76,7 @@ module menu =
     // secret routing.
     let map_len = 11
 
-    let map_label = (i: int32) ->
+    private let map_label = (i: int32) ->
         match i with
         | 0 -> "FLOOR 1"
         | 1 -> "FLOOR 2"
@@ -96,7 +96,7 @@ module menu =
     // text for item i. Used by the main / episode / difficulty
     // submenus; save-load slots paint separately because their rows
     // encode per-slot metadata.
-    let draw_list = (rc: render_ctx*, f: font.info*, title: const str,
+    private let draw_list = (rc: render_ctx*, f: const font.info*, title: const str,
                      items_y: int32, n: int32, sel: int32,
                      label_fn: (int32) -> const str, locked_fn: (int32) -> bool) ->
         let yellow = 0xFFFFD700u32
@@ -121,7 +121,7 @@ module menu =
     // or "N EMPTY". The save-picker highlights all slots (writable);
     // the load-picker greys empty slots so they're visually
     // unselectable.
-    let render_slot = (rc: render_ctx*, sm: save_menu_ctx*, f: font.info*,
+    private let render_slot = (rc: render_ctx*, sm: save_menu_ctx*, f: const font.info*,
                        title: const str, sel: int32, load_mode: bool) ->
         let yellow = 0xFFFFD700u32
         let white  = 0xFFFFFFFFu32
@@ -167,8 +167,8 @@ module menu =
             "UP/DOWN  ENTER  ESC", gray)
 
     let render_main = (rc: render_ctx*, sm: save_menu_ctx*,
-                       vg: vgagraph.vgagraph_file*, pal: uint32[],
-                       f: font.info*, g: game*) ->
+                       vg: const vgagraph.vgagraph_file*, pal: const uint32[],
+                       f: const font.info*, g: game*) ->
         // Tint the title as a backdrop (slightly dimmed so the menu
         // pops).
         pics.blit_title_bg(rc)

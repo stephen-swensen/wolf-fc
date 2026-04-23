@@ -111,14 +111,14 @@ module enemies =
 
     // Tunables — see ai.update_enemies for how each is used.
     let max_enemies = 150
-    let chase_speed   = 1.5   // tiles/sec — walking chase for all humanoids
-    let patrol_speed  = 0.9   // tiles/sec — patrol pace before player is spotted
-    let dog_chase_speed     = 3.2   // tiles/sec — dogs roughly player-run speed
+    private let chase_speed   = 1.5   // tiles/sec — walking chase for all humanoids
+    private let patrol_speed  = 0.9   // tiles/sec — patrol pace before player is spotted
+    private let dog_chase_speed     = 3.2   // tiles/sec — dogs roughly player-run speed
     let walk_frame_time     = 0.12  // seconds per W1/W2/W3/W4 cycle frame
-    let shoot_frame_time    = 0.20  // humanoid shoot-windup frame duration
-    let pain_time           = 0.143 // pain flinch duration (10 tics @ 70Hz)
+    private let shoot_frame_time    = 0.20  // humanoid shoot-windup frame duration
+    private let pain_time           = 0.143 // pain flinch duration (10 tics @ 70Hz)
     let die_frame_time      = 0.18  // per frame during death animation
-    let sight_range         = 16.0  // tiles — max LOS distance for sight check
+    private let sight_range         = 16.0  // tiles — max LOS distance for sight check
 
     // Per-kind sprite-page offsets relative to VSWAP sprite_start. Derived
     // from the original's sprite enum (wl_def.h): SPR_GRD_S_1..
@@ -141,7 +141,7 @@ module enemies =
     // True iff this kind uses the 8-angle rotating walk-sprite table
     // (guards, SS, officers, dogs, mutants). Bosses and ghosts are
     // single-view.
-    let kind_is_rotating = (k: enemy_kind) ->
+    private let kind_is_rotating = (k: enemy_kind) ->
         match k with
         | hans | schabbs | gretel | giftmacher | fat
         | hitler_fake | hitler
@@ -172,7 +172,7 @@ module enemies =
         | blinky | pinky | clyde | inky -> 1000  // unkillable-ish
 
     // Score granted to the player on kill. Wolf3D values.
-    let score_for_kind = (k: enemy_kind) ->
+    private let score_for_kind = (k: enemy_kind) ->
         match k with
         | guard        -> 100
         | officer      -> 400
@@ -190,7 +190,7 @@ module enemies =
 
     // Movement speed while chasing (tiles/sec). Dogs sprint; bosses and
     // ghosts move at chase_speed.
-    let chase_speed_for_kind = (k: enemy_kind) ->
+    private let chase_speed_for_kind = (k: enemy_kind) ->
         match k with
         | dog -> dog_chase_speed
         | _   -> chase_speed
@@ -208,13 +208,13 @@ module enemies =
     // they're bosses but not death-cam bosses. Fake Hitler and Mecha
     // Hitler die without ending the episode (Mecha morphs into the
     // real Hitler; fake is just a mini-boss).
-    let kind_has_death_cam = (k: enemy_kind) ->
+    private let kind_has_death_cam = (k: enemy_kind) ->
         match k with
         | schabbs | giftmacher | fat | hitler -> true
         | _ -> false
 
     // True iff the kind is a pacman ghost (non-hostile chaser).
-    let kind_is_ghost = (k: enemy_kind) ->
+    private let kind_is_ghost = (k: enemy_kind) ->
         match k with
         | blinky | pinky | clyde | inky -> true
         | _ -> false
@@ -223,7 +223,7 @@ module enemies =
     // fake-Hitlers, and ghosts/spectres use CHECKDIAG on all sides
     // (doors block them); only humans and mutants/real-bosses use
     // CHECKSIDE and trigger OpenDoor.
-    let kind_opens_doors = (k: enemy_kind) ->
+    private let kind_opens_doors = (k: enemy_kind) ->
         match k with
         | dog | hitler_fake | blinky | pinky | clyde | inky -> false
         | _ -> true
@@ -238,7 +238,7 @@ module enemies =
     // (bit 1) with the rest of his frames left idle, and fake Hitler
     // launches a flame on every frame of his 2-frame approximation of
     // the original's 8-frame salvo.
-    let shoot_fire_mask_for_kind = (k: enemy_kind) ->
+    private let shoot_fire_mask_for_kind = (k: enemy_kind) ->
         match k with
         | mutant -> 5    // 0b0101 — frames 0 and 2
         | hans | gretel -> 5    // bosses fire on both shoot frames (chain gun)
@@ -269,7 +269,7 @@ module enemies =
 
     // VSWAP sprite page index of the dropped pickup's shape
     // (shape = 2 + tile - 23).
-    let drop_shape_for_kind = (k: enemy_kind) ->
+    private let drop_shape_for_kind = (k: enemy_kind) ->
         match k with
         | guard   -> 2 + (49 - 23)   // clip shape
         | officer -> 2 + (49 - 23)
@@ -280,49 +280,49 @@ module enemies =
 
     // Per-kind sprite tables — one per enemy_kind variant, keyed by
     // the kind → table lookup in `sprites_for_kind` below.
-    let sprites_guard = sprite_table {
+    private let sprites_guard = sprite_table {
         stand_base = 50, walk_base = 58,
         pain1 = 90, pain2 = 94,
         die_frames = int32[4] { 91, 92, 93, 0 }, num_die_frames = 3,
         dead_frame = 95,
         shoot_frames = int32[4] { 96, 97, 98, 0 }, num_shoot_frames = 3
     }
-    let sprites_dog = sprite_table {
+    private let sprites_dog = sprite_table {
         stand_base = 99, walk_base = 99,
         pain1 = 99, pain2 = 99,  // dogs don't show pain
         die_frames = int32[4] { 131, 132, 133, 0 }, num_die_frames = 3,
         dead_frame = 134,
         shoot_frames = int32[4] { 135, 136, 137, 0 }, num_shoot_frames = 3  // jump-bite frames
     }
-    let sprites_ss = sprite_table {
+    private let sprites_ss = sprite_table {
         stand_base = 138, walk_base = 146,
         pain1 = 178, pain2 = 182,
         die_frames = int32[4] { 179, 180, 181, 0 }, num_die_frames = 3,
         dead_frame = 183,
         shoot_frames = int32[4] { 184, 185, 186, 0 }, num_shoot_frames = 3
     }
-    let sprites_mut = sprite_table {
+    private let sprites_mut = sprite_table {
         stand_base = 187, walk_base = 195,
         pain1 = 227, pain2 = 231,
         die_frames = int32[4] { 228, 229, 230, 232 }, num_die_frames = 4,
         dead_frame = 233,
         shoot_frames = int32[4] { 234, 235, 236, 237 }, num_shoot_frames = 4
     }
-    let sprites_ofc = sprite_table {
+    private let sprites_ofc = sprite_table {
         stand_base = 238, walk_base = 246,
         pain1 = 278, pain2 = 282,
         die_frames = int32[4] { 279, 280, 281, 283 }, num_die_frames = 4,
         dead_frame = 284,
         shoot_frames = int32[4] { 285, 286, 287, 0 }, num_shoot_frames = 3
     }
-    let sprites_hans = sprite_table {
+    private let sprites_hans = sprite_table {
         stand_base = 296, walk_base = 296,
         pain1 = 300, pain2 = 300,
         die_frames = int32[4] { 304, 305, 306, 0 }, num_die_frames = 3,
         dead_frame = 303,
         shoot_frames = int32[4] { 300, 301, 302, 0 }, num_shoot_frames = 3
     }
-    let sprites_schabbs = sprite_table {
+    private let sprites_schabbs = sprite_table {
         stand_base = 307, walk_base = 307,
         pain1 = 311, pain2 = 311,
         die_frames = int32[4] { 313, 314, 315, 0 }, num_die_frames = 3,
@@ -331,7 +331,7 @@ module enemies =
     }
     // Fake Hitler: only one SHOOT pose (325); FIRE1/FIRE2 are projectile
     // sprites, not character animation frames.
-    let sprites_hitler_fake = sprite_table {
+    private let sprites_hitler_fake = sprite_table {
         stand_base = 321, walk_base = 321,
         pain1 = 325, pain2 = 325,
         die_frames = int32[4] { 328, 329, 330, 331 }, num_die_frames = 4,
@@ -339,14 +339,14 @@ module enemies =
         shoot_frames = int32[4] { 325, 325, 0, 0 }, num_shoot_frames = 2
     }
     // Real Hitler has 7 die frames — we truncate to the 4 the struct holds.
-    let sprites_hitler = sprite_table {
+    private let sprites_hitler = sprite_table {
         stand_base = 345, walk_base = 345,
         pain1 = 349, pain2 = 349,
         die_frames = int32[4] { 353, 354, 355, 356 }, num_die_frames = 4,
         dead_frame = 352,
         shoot_frames = int32[4] { 349, 350, 351, 0 }, num_shoot_frames = 3
     }
-    let sprites_giftmacher = sprite_table {
+    private let sprites_giftmacher = sprite_table {
         stand_base = 360, walk_base = 360,
         pain1 = 364, pain2 = 364,
         die_frames = int32[4] { 366, 367, 368, 0 }, num_die_frames = 3,
@@ -355,7 +355,7 @@ module enemies =
     }
     // Gretel: placed after the rocket/smoke/boom block (370..384) in
     // the non-SPEAR build.
-    let sprites_gretel = sprite_table {
+    private let sprites_gretel = sprite_table {
         stand_base = 385, walk_base = 385,
         pain1 = 389, pain2 = 389,
         die_frames = int32[4] { 393, 394, 395, 0 }, num_die_frames = 3,
@@ -363,7 +363,7 @@ module enemies =
         shoot_frames = int32[4] { 389, 390, 391, 0 }, num_shoot_frames = 3
     }
     // Fat Face (E6 boss): 4 walk, 4 shoot, 3 die, 1 dead at 396..407.
-    let sprites_fat = sprite_table {
+    private let sprites_fat = sprite_table {
         stand_base = 396, walk_base = 396,
         pain1 = 400, pain2 = 400,
         die_frames = int32[4] { 404, 405, 406, 0 }, num_die_frames = 3,
@@ -371,28 +371,28 @@ module enemies =
         shoot_frames = int32[4] { 400, 401, 402, 403 }, num_shoot_frames = 4
     }
     // Pacman ghosts: 288..295, 2 walk frames each, no other states.
-    let sprites_blinky = sprite_table {
+    private let sprites_blinky = sprite_table {
         stand_base = 288, walk_base = 288,
         pain1 = 288, pain2 = 289,
         die_frames = int32[4] { 288, 289, 0, 0 }, num_die_frames = 2,
         dead_frame = 289,
         shoot_frames = int32[4] { 288, 0, 0, 0 }, num_shoot_frames = 1
     }
-    let sprites_pinky = sprite_table {
+    private let sprites_pinky = sprite_table {
         stand_base = 290, walk_base = 290,
         pain1 = 290, pain2 = 291,
         die_frames = int32[4] { 290, 291, 0, 0 }, num_die_frames = 2,
         dead_frame = 291,
         shoot_frames = int32[4] { 290, 0, 0, 0 }, num_shoot_frames = 1
     }
-    let sprites_clyde = sprite_table {
+    private let sprites_clyde = sprite_table {
         stand_base = 292, walk_base = 292,
         pain1 = 292, pain2 = 293,
         die_frames = int32[4] { 292, 293, 0, 0 }, num_die_frames = 2,
         dead_frame = 293,
         shoot_frames = int32[4] { 292, 0, 0, 0 }, num_shoot_frames = 1
     }
-    let sprites_inky = sprite_table {
+    private let sprites_inky = sprite_table {
         stand_base = 294, walk_base = 294,
         pain1 = 294, pain2 = 295,
         die_frames = int32[4] { 294, 295, 0, 0 }, num_die_frames = 2,
@@ -423,7 +423,7 @@ module enemies =
     // from the enemy to (px, py) (usually the player). Mirrors the
     // original's CalcRotate formula (`angle = atan2(e2p_y, e2p_x) -
     // enemy_angle` quantized into 8 bins with a 22.5° offset).
-    let angle_sprite = (e: enemy*, px: float64, py: float64, base: int32) ->
+    private let angle_sprite = (e: const enemy*, px: float64, py: float64, base: int32) ->
         let e2p_x = px - e->x
         let e2p_y = e->y - py      // flip to std-math y-up
         let a_e2p = math.atan2(e2p_y, e2p_x)
@@ -445,7 +445,7 @@ module enemies =
     // current state. Frame counts come from the original's states[]
     // table; animation loops for walk states and plays once for die /
     // shoot / pain.
-    let sprite_page = (e: enemy*, px: float64, py: float64) ->
+    let sprite_page = (e: const enemy*, px: float64, py: float64) ->
         let sp = sprites_for_kind(e->kind)
         let rotating = kind_is_rotating(e->kind)
         match e->state with
@@ -487,7 +487,7 @@ module enemies =
         // not-fully-open door. Used for enemy sight checks and
         // player-fire hit-validation. Samples 8× per tile, which is
         // dense enough for 64-tile maps without being a bottleneck.
-        let check_line_clear = (lv: level*, x1: float64, y1: float64, x2: float64, y2: float64) ->
+        let check_line_clear = (lv: const level*, x1: float64, y1: float64, x2: float64, y2: float64) ->
             let dx = x2 - x1
             let dy = y2 - y1
             let dist = math.sqrt(dx * dx + dy * dy)
@@ -531,7 +531,7 @@ module enemies =
         // raw LOS — the original's stand actor wakes the same way.
         // (Indexing dir.vx with dir.nodir == 8 would also be a slice
         // OOB and abort the process.)
-        let sees_player = (lv: level*, g: game*, e: enemy*) ->
+        let sees_player = (lv: const level*, g: game*, e: enemy*) ->
             let dx = g->pos_x - e->x
             let dy = g->pos_y - e->y
             let dist = math.sqrt(dx * dx + dy * dy)
@@ -552,7 +552,7 @@ module enemies =
         // handles the wait-for-open pause and triggers the door to
         // open, matching the original's T_Chase. `self_idx` identifies
         // the caller so it doesn't block itself.
-        let tile_passable = (lv: level*, g: game*, self_idx: int32, tx: int32, ty: int32) ->
+        private let tile_passable = (lv: level*, g: game*, self_idx: int32, tx: int32, ty: int32) ->
             if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
             else
                 let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
@@ -583,7 +583,7 @@ module enemies =
         // For diagonal moves we also insist both orthogonal neighbors
         // are open so enemies don't clip the corner of a wall (matches
         // the original's TryWalk corner check).
-        let try_enemy_walk = (lv: level*, g: game*, self_idx: int32, d: int32) ->
+        private let try_enemy_walk = (lv: level*, g: game*, self_idx: int32, d: int32) ->
             if d == dir.nodir then false
             else
                 let e = &lv->enemies[self_idx]
@@ -602,7 +602,7 @@ module enemies =
         // current heading, then scans all four cardinals in a random
         // starting order, and finally allows a turnaround. Leaves
         // e->dir at dir.nodir when fully blocked in.
-        let select_chase_dir = (lv: level*, g: game*, self_idx: int32) ->
+        private let select_chase_dir = (lv: level*, g: game*, self_idx: int32) ->
             let e = &lv->enemies[self_idx]
             let dxi = (int32) g->pos_x - e->tile_x
             let dyi = (int32) g->pos_y - e->tile_y
@@ -710,7 +710,7 @@ module enemies =
         // Advance a looping walk animation (4 frames with the same
         // duration each). Takes a pointer so callers don't have to
         // know the backing array.
-        let advance_walk_anim = (e: enemy*) ->
+        private let advance_walk_anim = (e: enemy*) ->
             if e->anim_timer <= 0.0 then
                 e->anim_frame = (e->anim_frame + 1) % 4
                 e->anim_timer = walk_frame_time
@@ -750,7 +750,7 @@ module enemies =
         // from earlier pickups before growing the list — prevents the
         // array from hitting its cap just because the player has been
         // clearing rooms.
-        let add_dropped_item = (lv: level*, x: float64, y: float64, page: int32, it: pickups.item_kind) ->
+        private let add_dropped_item = (lv: level*, x: float64, y: float64, page: int32, it: pickups.item_kind) ->
             let mut slot = -1
             for i in 0..lv->num_sprites
                 if !lv->sprites[i].alive then
@@ -768,7 +768,7 @@ module enemies =
         // Pool of guard death screams. A_DeathScream in the original
         // picks one of eight at random for guard-class enemies so
         // repeated kills don't sound identical.
-        let guard_death_sounds = int32[8] {
+        private let guard_death_sounds = int32[8] {
             29, 30, 31, 33, 34, 36, 37, 38
             // sfx.id.death_1..9 without #6 — DEATHSCREAM6SND is the
             // map-9 "fart" easter egg in the original (1/256 roll,
@@ -881,7 +881,7 @@ module enemies =
         // original (wl_state.cpp:1500): values are in tics (70 Hz) in
         // the original; we convert to seconds. rnd_byte is drawn from
         // rng_enemy so scripted tests stay deterministic.
-        let reaction_delay_for_kind = (k: enemy_kind, g: game*) ->
+        private let reaction_delay_for_kind = (k: enemy_kind, g: game*) ->
             let tics = match k with
             | guard   -> 1 + rnd_byte(g) / 4    // 1..64 tics (≈0.014..0.914s)
             | officer -> 2                      // fixed 2 tics
@@ -905,7 +905,7 @@ module enemies =
         // you. Detection starts a reaction-delay countdown in
         // update_enemy; the actual transition-to-chase doesn't happen
         // until the timer elapses.
-        let should_wake = (lv: level*, g: game*, e: enemy*) ->
+        private let should_wake = (lv: level*, g: game*, e: enemy*) ->
             let area = (int32) lv->tile_areas[(int64) e->tile_x * 64 + (int64) e->tile_y]
             if area >= areas.num_areas then false
             else if !lv->area_by_player[area] then false
@@ -916,7 +916,7 @@ module enemies =
         // alert vocal the first time only; subsequent wake-ups from
         // repeated hits / line-of-sight loss/regain stay silent so the
         // soundscape doesn't get spammy.
-        let wake_enemy = (g: game*, e: enemy*, ac: audio_ctx*) ->
+        private let wake_enemy = (g: game*, e: enemy*, ac: audio_ctx*) ->
             e->state = enemy_state.chase
             e->anim_frame = 0
             e->anim_timer = walk_frame_time
@@ -956,7 +956,7 @@ module enemies =
         // obclass) apply a 2/3 distance discount before this lookup —
         // they're more accurate shooters. Other bosses fire with their
         // own obclass and do not get it.
-        let fire_at_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
+        private let fire_at_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
             // Per-kind firing sound — mirrors the original's T_Shoot
             // switch. Gretel is not listed in the original switch and
             // falls through to NAZIFIRESND.
@@ -994,7 +994,7 @@ module enemies =
         // Per-frame AI step for one enemy. Dispatches on state;
         // advances animation and moves continuously. Called from
         // update_enemies which does the loop.
-        let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, dt: float64, sprite_start: int32) ->
+        private let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, dt: float64, sprite_start: int32) ->
             let e = &lv->enemies[self_idx]
             e->anim_timer = e->anim_timer - dt
             match e->state with
@@ -1173,8 +1173,8 @@ module projectiles =
     // Projectile speeds in tiles/sec, derived from the original's
     // fixed-point 0x2000 (needle/rocket) and 0x1200 (flame) per-tic
     // speeds at the 70Hz tic rate.
-    let needle_speed = 8.75   // 0x2000 * 70 / 0x10000
-    let rocket_speed = 8.75
+    private let needle_speed = 8.75   // 0x2000 * 70 / 0x10000
+    private let rocket_speed = 8.75
     let fire_speed   = 4.92   // 0x1200 * 70 / 0x10000
     let hit_radius   = 0.75   // PROJECTILESIZE / TILEGLOBAL — per-axis player hit box
     let wall_radius  = 0.125  // PROJSIZE / TILEGLOBAL — wall collision half-extent
@@ -1188,13 +1188,13 @@ module projectiles =
     // 370/378/382.
     let hypo_base   = 317
     let fire_base   = 326
-    let rocket_base = 370
+    private let rocket_base = 370
     let boom_base   = 382
 
     // Angle wrap helper. Keeps `a` in [0, 2π).
-    let tau = 6.283185307179586
+    private let tau = 6.283185307179586
 
-    let wrap_angle = (a: float64) ->
+    private let wrap_angle = (a: float64) ->
         let mut r = a
         loop
             if r >= 0.0 then break
@@ -1223,7 +1223,7 @@ module projectiles =
     // Find a free projectile slot, or -1 if the array is saturated.
     // Callers silently drop the spawn when full (mirrors the
     // original's MAXACTORS guard in T_FakeFire).
-    let alloc_slot = (lv: level*) ->
+    private let alloc_slot = (lv: level*) ->
         let mut slot = -1
         for i in 0..max_projectiles
             if slot < 0 && !lv->projectiles[i].alive then slot = i
@@ -1260,7 +1260,7 @@ module projectiles =
     // the original (wl_act2.cpp:206). Returns true if any tile in the
     // scanned range blocks — walls (1..63) and door tiles that aren't
     // fully open.
-    let hits_wall = (lv: level*, x: float64, y: float64) ->
+    private let hits_wall = (lv: level*, x: float64, y: float64) ->
         let xl = (int32) math.floor(x - wall_radius)
         let yl = (int32) math.floor(y - wall_radius)
         let xh = (int32) math.floor(x + wall_radius)
@@ -1281,7 +1281,7 @@ module projectiles =
 
     // Damage per projectile kind — T_Projectile's per-class rolls in
     // the original.
-    let damage_of = (k: projectile_kind, g: game*) ->
+    private let damage_of = (k: projectile_kind, g: game*) ->
         let roll = enemies.rnd_byte(g)
         match k with
         | needle -> (roll >> 3) + 20    // 20-51
@@ -1343,7 +1343,7 @@ module projectiles =
     // True iff this enemy kind fires a visible, dodgeable projectile
     // instead of using T_Shoot's hitscan. Checked in the shoot
     // dispatch.
-    let kind_uses_projectile = (k: enemies.enemy_kind) ->
+    private let kind_uses_projectile = (k: enemies.enemy_kind) ->
         match k with
         | schabbs | giftmacher | fat | hitler_fake -> true
         | _ -> false
@@ -1393,7 +1393,7 @@ module hitscan =
 
     // Return the index of the enemy the player's current fire would
     // hit, or -1.
-    let find_hit_enemy = (lv: level*, g: game*) ->
+    private let find_hit_enemy = (lv: level*, g: game*) ->
         let mut best_idx = -1
         let mut best_dist = 1e6
         for i in 0..lv->num_enemies
@@ -1421,7 +1421,7 @@ module hitscan =
     // what distinguishes them (handled by player.fire_rate[] in
     // player.update_weapon). Adapted from the original's GunAttack:
     // damage = (US_RndT() / 4) + base, tuned for our hp values.
-    let weapon_damage_roll = (g: game*, weapon: int32, dist: float64) ->
+    private let weapon_damage_roll = (g: game*, weapon: int32, dist: float64) ->
         if weapon == 0 then
             // Knife — fixed damage, only in melee.
             if dist > 1.5 then 0

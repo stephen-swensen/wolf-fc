@@ -50,7 +50,7 @@ module save =
     import math from std::
     import random from std::
 
-    let version = 1
+    private let version = 1
 
     // Number of save slots available in the save/load menus.
     let num_slots = 10
@@ -71,7 +71,7 @@ module save =
     // (along with each entry — this matches text.split's ownership).
     // Used by every `else if text.starts_with(line, "tag ") then`
     // branch in `from_slot`.
-    let split_ws = (s: const str) ->
+    private let split_ws = (s: const str) ->
         // Two-pass: count tokens, then allocate exact size.
         let mut count = 0
         let mut i = 0i64
@@ -109,12 +109,12 @@ module save =
         out
 
     // Free the result of split_ws (both the outer array and each entry).
-    let free_split = (toks: str[]) ->
+    private let free_split = (toks: str[]) ->
         for k in 0..(int32) toks.len
             free(toks[(int64) k])
         free(toks)
 
-    let slot_path = (slot: int32) ->
+    private let slot_path = (slot: int32) ->
         match paths.wolf_data_dir() with
         | none -> default(str?)
         | some(dir) ->
@@ -126,24 +126,24 @@ module save =
     // unparseable by defaulting to 0 / 0.0. Paired with the "expect at
     // least N tokens" guards in each section, this keeps a malformed
     // line from cascading.
-    let unwrap_int = (s: const str) ->
+    private let unwrap_int = (s: const str) ->
         match text.parse_int32(s) with
         | some(n) -> n
         | none    -> 0
 
-    let unwrap_int64 = (s: const str) ->
+    private let unwrap_int64 = (s: const str) ->
         match text.parse_int64(s) with
         | some(n) -> n
         | none    -> 0i64
 
-    let unwrap_float = (s: const str) ->
+    private let unwrap_float = (s: const str) ->
         match text.parse_float64(s) with
         | some(x) -> x
         | none    -> 0.0
 
     // Numeric kind/state codes for serialization. Preserving ordering
     // so older saves stay loadable if we add new variants at the end.
-    let enemy_kind_to_int = (k: enemies.enemy_kind) ->
+    private let enemy_kind_to_int = (k: enemies.enemy_kind) ->
         match k with
         | guard        -> 0
         | officer      -> 1
@@ -162,7 +162,7 @@ module save =
         | clyde        -> 14
         | inky         -> 15
 
-    let int_to_enemy_kind = (n: int32) ->
+    private let int_to_enemy_kind = (n: int32) ->
         match n with
         | 0  -> enemies.enemy_kind.guard
         | 1  -> enemies.enemy_kind.officer
@@ -181,7 +181,7 @@ module save =
         | 14 -> enemies.enemy_kind.clyde
         | _  -> enemies.enemy_kind.inky
 
-    let enemy_state_to_int = (s: enemies.enemy_state) ->
+    private let enemy_state_to_int = (s: enemies.enemy_state) ->
         match s with
         | stand -> 0
         | path  -> 1
@@ -191,7 +191,7 @@ module save =
         | die   -> 5
         | dead  -> 6
 
-    let int_to_enemy_state = (n: int32) ->
+    private let int_to_enemy_state = (n: int32) ->
         match n with
         | 0 -> enemies.enemy_state.stand
         | 1 -> enemies.enemy_state.path
@@ -201,7 +201,7 @@ module save =
         | 5 -> enemies.enemy_state.die
         | _ -> enemies.enemy_state.dead
 
-    let int_to_door_state = (n: int32) ->
+    private let int_to_door_state = (n: int32) ->
         match n with
         | 0 -> doors.door_state.closed
         | 1 -> doors.door_state.opening
@@ -303,7 +303,7 @@ module save =
     // for the saved level_num, then overlay door / pushwall / sprite
     // / enemy state. The freshly-built level already has enemies
     // spawned from plane-1, which we overwrite.
-    let from_slot = (w: world*, vs: vswap.vswap_file*, slot: int32) ->
+    let from_slot = (w: world*, vs: const vswap.vswap_file*, slot: int32) ->
         match slot_path(slot) with
         | none -> false
         | some(path) ->

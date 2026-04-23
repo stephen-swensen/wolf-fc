@@ -289,7 +289,7 @@ module digi =
     // The digi info table sits on the last VSWAP page as an array of
     // (start_page: u16, length: u16) quads; its byte-length / 4 is the
     // digi sound count.
-    let init = (vs: vswap.vswap_file*) ->
+    let init = (vs: const vswap.vswap_file*) ->
         let info_page = vs->num_chunks - 1
         let count = (int64) vswap.page_length(vs, info_page) / 4
         let cache = alloc(cached_sound[count] {})!
@@ -304,7 +304,7 @@ module digi =
     // last VSWAP page. Returns a newly heap-allocated PCM buffer (caller
     // owns). `sound_num` is the digi-pack index (0..45 in Wolf3D), NOT
     // the sound-enum value — see wolf4sdl's wolfdigimap[] for the mapping.
-    let load_sound = (vs: vswap.vswap_file*, sound_num: int32) ->
+    let load_sound = (vs: const vswap.vswap_file*, sound_num: int32) ->
         let info_page = vs->num_chunks - 1
         let info_off = vswap.page_offset(vs, info_page)
         let start_pg = (int32) bytes.u16(vs->raw, info_off + (int64) sound_num * 4)

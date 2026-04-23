@@ -190,9 +190,9 @@ module pics =
     // GET PSYCHED overlay config. Background fill palette index
     // (VIEWCOLOR: a mid-grey) and fallback pic dimensions used if the
     // VGAGRAPH header ever reports 0×0 (the shipped WL6 pic is 224×48).
-    let get_psyched_bg_index = 0x7f
-    let get_psyched_pic_w    = 224
-    let get_psyched_pic_h    = 48
+    private let get_psyched_bg_index = 0x7f
+    private let get_psyched_pic_w    = 224
+    private let get_psyched_pic_h    = 48
 
     // Overlay hold time (seconds). Level load is instant, so this is
     // pure beat — slightly longer than the original's ~1s so the
@@ -215,7 +215,7 @@ module pics =
     // VGAGRAPH images don't use transparency (only sprites do). First
     // call for a given chunk decodes + palette-applies into
     // rc->pic_cache; subsequent calls are a plain ARGB memcpy.
-    let draw = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+    let draw = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                 chunk: int32, dst_x: int32, dst_y: int32) ->
         if chunk < 0 || chunk >= (int32) rc->pic_cache.len then return
         if rc->pic_cache[chunk].len == 0 then
@@ -248,8 +248,8 @@ module pics =
     // the pic frame. Our progress animates 0→100% as the timer counts
     // down, which is a tiny embellishment on top of the original
     // (which pins the bar at 100% the whole second).
-    let render_get_psyched_overlay = (rc: render_ctx*, vg: vgagraph.vgagraph_file*,
-                                       pal: uint32[],
+    let render_get_psyched_overlay = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                                       pal: const uint32[],
                                        timer_remaining: float64,
                                        timer_total: float64) ->
         // Blank the 3D viewport with the grey border color. Leave the
@@ -301,7 +301,7 @@ module pics =
     // One-time decode + nearest-neighbor scale of TITLEPIC into a
     // 320×200 ARGB buffer. Returns a heap slice the caller must hold
     // for the process lifetime.
-    let build_title_bg_cache = (vg: vgagraph.vgagraph_file*, pal: uint32[]) ->
+    let build_title_bg_cache = (vg: const vgagraph.vgagraph_file*, pal: const uint32[]) ->
         let buf = alloc(uint32[game_w * game_h] {})!
         let pic = vgagraph.load_pic(vg, id.title)
         defer free(pic)
@@ -348,7 +348,7 @@ module font =
         width: int32[256]
         pixels: uint8[]       // original decoded font chunk, held for glyph reads
 
-    let load = (vg: vgagraph.vgagraph_file*, chunk: int32) ->
+    let load = (vg: const vgagraph.vgagraph_file*, chunk: int32) ->
         // VGAGRAPH fonts are raw (not planar). The decompressed chunk is
         // the fontstruct followed by pixel data.
         let raw = vgagraph.decompress_chunk(vg, chunk)
@@ -377,7 +377,7 @@ module font =
     // Draw one character from the VGAGRAPH font. Returns the advance
     // width. Glyph pixels are row-major: byte at (col, row) =
     // pixels[row * width + col].
-    let draw_char = (rc: render_ctx*, f: info*, x: int32, y: int32,
+    let draw_char = (rc: render_ctx*, f: const info*, x: int32, y: int32,
                      ch: int32, color: uint32) ->
         if ch < 0 || ch >= 256 then return 0
         let cw = f->width[ch]
@@ -394,7 +394,7 @@ module font =
                         rc->fb[(int64) dy * 320 + (int64) dx] = color
         cw
 
-    let draw_text = (rc: render_ctx*, f: info*,
+    let draw_text = (rc: render_ctx*, f: const info*,
                      x: int32, y: int32, s: const str, color: uint32) ->
         let mut cx = x
         for i in 0..(int32) s.len
@@ -403,14 +403,14 @@ module font =
             cx = cx + advance
 
     // Measure a string's rendered pixel width (for centering).
-    let text_width = (f: info*, s: const str) ->
+    let text_width = (f: const info*, s: const str) ->
         let mut w = 0
         for i in 0..(int32) s.len
             let ch = (int32) s[(int64) i]
             if ch >= 0 && ch < 256 then w = w + f->width[ch]
         w
 
-    let draw_centered = (rc: render_ctx*, f: info*,
+    let draw_centered = (rc: render_ctx*, f: const info*,
                          y: int32, s: const str, color: uint32) ->
         let w = text_width(f, s)
         draw_text(rc, f, (game_w - w) / 2, y, s, color)
@@ -466,7 +466,7 @@ module hud =
     // Supports digits 0-9 and uppercase A-Z. Distinct from the
     // VGAGRAPH `font` module above — `hud`'s font is a tiny in-module
     // font used for HP/ammo digits and test-mode overlays.
-    let char_glyph = (ch: int32) ->
+    private let char_glyph = (ch: int32) ->
         // Digits
         if ch == 48 then 7 | (5 << 3) | (5 << 6) | (5 << 9) | (7 << 12)       // 0
         else if ch == 49 then 2 | (6 << 3) | (2 << 6) | (2 << 9) | (7 << 12)  // 1
@@ -502,9 +502,9 @@ module hud =
         else if ch == 89 then 5 | (5 << 3) | (2 << 6) | (2 << 9) | (2 << 12)  // Y
         else 0  // space or unknown
 
-    let digit_glyph = (d: int32) -> char_glyph(d + 48)
+    private let digit_glyph = (d: int32) -> char_glyph(d + 48)
 
-    let draw_digit = (rc: render_ctx*, x: int32, y: int32, d: int32, color: uint32, scale: int32) ->
+    private let draw_digit = (rc: render_ctx*, x: int32, y: int32, d: int32, color: uint32, scale: int32) ->
         let g = digit_glyph(d)
         for row in 0..5
             let bits = (g >> (row * 3)) & 7
@@ -556,7 +556,7 @@ module hud =
                                         rc->fb[(int64) py * 320 + (int64) px] = color
 
     // Draw a filled rectangle in the framebuffer.
-    let fill_rect = (rc: render_ctx*, x0: int32, y0: int32, x1: int32, y1: int32, color: uint32) ->
+    private let fill_rect = (rc: render_ctx*, x0: int32, y0: int32, x1: int32, y1: int32, color: uint32) ->
         for y in y0..y1
             for x in x0..x1
                 if x >= 0 && x < game_w && y >= 0 && y < game_h then
@@ -567,7 +567,7 @@ module hud =
     // (clamped 0..7) and the A/B/C variant from `gamestate.faceframe`
     // (0..2). Health=0 shows the final "mostly dead" row. `frame` is
     // clamped to 0..2 by the caller.
-    let face_chunk_for = (health: int32, frame: int32) ->
+    private let face_chunk_for = (health: int32, frame: int32) ->
         let mut h = health
         if h > 100 then h = 100
         if h < 0 then h = 0
@@ -579,7 +579,7 @@ module hud =
     // Face-animation byte roll. Uses its own pcg channel (see
     // struct game) so HUD rendering doesn't perturb the enemy RNG
     // stream that scripted tests rely on.
-    let face_rnd_byte = (g: game*) ->
+    private let face_rnd_byte = (g: game*) ->
         (int32) (random.pcg_random.next_uint32(&g->rng_face) & 0xFFu32)
 
     // UpdateFace: accumulate `tics` into facecount; when it exceeds
@@ -603,7 +603,7 @@ module hud =
     // N_BLANKPIC padding on the left (matches the original's
     // LatchNumber). `px`/`py` is the top-left of the LEFTMOST cell.
     // Each cell is 8x16.
-    let draw_vg_number = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[],
+    private let draw_vg_number = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                           px: int32, py: int32, digits: int32, num: int32) ->
         let mut n = if num < 0 then 0 else num
         let mut out_digits = int32[16] {}
@@ -625,7 +625,7 @@ module hud =
                 else pics.id.n_blank
             pics.draw(rc, vg, pal, chunk, x, py)
 
-    let render = (rc: render_ctx*, vg: vgagraph.vgagraph_file*, pal: uint32[], g: game*) ->
+    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[], g: game*) ->
         let bar_top = view_h                         // 160
         // Full Wolf3D status-bar graphic: all the cell outlines +
         // labels are pre-rendered into a single 320x40 image. We
@@ -686,7 +686,7 @@ module hud =
     // 0.5 s. Newlines split the message into multiple centered
     // lines stacked vertically — used by the secret cheat messages
     // to show their full original-game text.
-    let render_message = (rc: render_ctx*, f: font.info*, g: game*) ->
+    let render_message = (rc: render_ctx*, f: const font.info*, g: game*) ->
         if g->msg_timer <= 0.0 || g->msg_len <= 0 then return
         // Foreground color brightens/fades.
         let t = if g->msg_timer > 0.5 then 1.0 else g->msg_timer / 0.5

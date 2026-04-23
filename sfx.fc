@@ -109,7 +109,7 @@ module sfx =
 
     // Total number of sfx.id.* entries. The sfx_digi_slot / sfx_adlib_chunk
     // tables in main.fc are sized to this.
-    let count = 73
+    private let count = 73
 
     // --- AUDIOT enum IDs we don't currently trigger (reference only).
     //     Append a new `id.*` above when wiring one up.
@@ -143,7 +143,7 @@ module sfx =
     // Verified entry-by-entry 2026-04-20: every row here matches
     // InitDigiMap's table for WL6; missing enum entries resolve to -1
     // too (SD_PlaySound then falls back to AdLib).
-    let digi_slot = int32[73] {
+    private let digi_slot = int32[73] {
          3,   // open_door    (OPENDOORSND  -> digi 3)
          2,   // close_door   (CLOSEDOORSND -> digi 2)
          5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
@@ -223,7 +223,7 @@ module sfx =
 
     // AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this).
     // -1 to disable. Enum values taken from audiowl6.h.
-    let adlib_chunk = int32[73] {
+    private let adlib_chunk = int32[73] {
         18,   // open_door    (OPENDOORSND)
         19,   // close_door   (CLOSEDOORSND)
         24,   // atk_pistol   (ATKPISTOLSND)
@@ -308,7 +308,7 @@ module sfx =
     // fallback routes through the OPL2 chip, which has no cheap per-note
     // attenuation knob (in practice enemy/pickup sounds all have digi
     // versions, so the fall-through is silent for spatial callers).
-    let trigger_panned_gain = (sound_id: int32, ac: audio_ctx*,
+    private let trigger_panned_gain = (sound_id: int32, ac: audio_ctx*,
                                 pan: float64, gain: float64) ->
         if sound_id < 0 || sound_id >= count then return
         let digi_idx = digi_slot[sound_id]
@@ -324,7 +324,7 @@ module sfx =
                     if len >= 23 then
                         adlib.play(ac->sfx, adlib.parse(ac->ad->raw, off))
 
-    let trigger_panned = (sound_id: int32, ac: audio_ctx*, pan: float64) ->
+    private let trigger_panned = (sound_id: int32, ac: audio_ctx*, pan: float64) ->
         trigger_panned_gain(sound_id, ac, pan, 1.0)
 
     let trigger = (sound_id: int32, ac: audio_ctx*) ->

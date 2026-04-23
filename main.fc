@@ -446,7 +446,7 @@ struct render_ctx =
 
 // Sound system handle: loaded-asset refs + SFX playback state.
 struct audio_ctx =
-    vs: vswap.vswap_file*      // VSWAP — digi sound data + wall/sprite pages
+    vs: const vswap.vswap_file*      // VSWAP — digi sound data + wall/sprite pages
     ad: audio.audio_data*      // AUDIOT — AdLib SFX chunks + music
     sfx: adlib.sfx_state*      // AdLib SFX playback (owns its own OPL2 chip)
     digi: digi.player*         // 8-bit PCM playback (up to 4 slots)
@@ -474,7 +474,7 @@ struct world =
     rc: render_ctx*     // renderer scratch buffers
     ac: audio_ctx*      // sound pipeline
     sm: save_menu_ctx*  // save/load menu cache + scratch
-    vg: vgagraph.vgagraph_file*  // VGAGRAPH: fonts, status bar, BJ face,
+    vg: const vgagraph.vgagraph_file*  // VGAGRAPH: fonts, status bar, BJ face,
                                  // title screen, menu graphics.
     font: font.info*             // small menu/UI font (chunk 1)
 
@@ -486,7 +486,7 @@ struct world =
 // title-screen backdrop once so pics.blit_title_bg is a cheap memcpy on every
 // menu frame, and sizes pic_cache to hold one ARGB buffer per VGAGRAPH chunk
 // (lazily populated on first draw).
-let build_render_ctx = (vg: vgagraph.vgagraph_file*, pal: uint32[]) ->
+let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[]) ->
     let rc = alloc(render_ctx {
         fb = alloc(uint32[game_w * game_h] {})!,
         dbuf = alloc(uint32[screen_w * screen_h] {})!,
@@ -595,7 +595,7 @@ let reset_level_counters = (g: game*, lv: level*) ->
 // Shared by every transition path (next-level / restart / new-game). After
 // this runs, the player still needs position + per-level state set — caller
 // does that for its specific semantics.
-let reload_level_data = (w: world*, vs: vswap.vswap_file*) ->
+let reload_level_data = (w: world*, vs: const vswap.vswap_file*) ->
     free_level(w->lv)
     free(w->lv_data->walls)
     free(w->lv_data->objects)
@@ -612,7 +612,7 @@ let reload_level_data = (w: world*, vs: vswap.vswap_file*) ->
 // space-press on levels 0..7 and level 9; level 8 → episode-end is handled
 // by `episode_end.enter` at the caller. Preserves score, lives, weapon; clears
 // keys. The `went_secret` latch is consumed and reset here.
-let advance_next_level = (w: world*, vs: vswap.vswap_file*) ->
+let advance_next_level = (w: world*, vs: const vswap.vswap_file*) ->
     let g = w->g
     g->level_num = episode.next_level_num(g->level_num, g->went_secret)
     g->went_secret = false
@@ -632,7 +632,7 @@ let advance_next_level = (w: world*, vs: vswap.vswap_file*) ->
 
 // From episode_end, move into the first map of the next episode. If this
 // was the last episode, go to the final victory screen instead.
-let advance_next_episode = (w: world*, vs: vswap.vswap_file*) ->
+let advance_next_episode = (w: world*, vs: const vswap.vswap_file*) ->
     let g = w->g
     let ep = g->level_num / episode.levels_per
     if ep + 1 >= episode.count then
@@ -655,7 +655,7 @@ let advance_next_episode = (w: world*, vs: vswap.vswap_file*) ->
 // Restart the current level (death with lives remaining). Resets player
 // health / ammo / weapon; preserves score; decrements lives at the caller
 // to keep the pre/post-death accounting legible.
-let restart_current_level = (w: world*, vs: vswap.vswap_file*) ->
+let restart_current_level = (w: world*, vs: const vswap.vswap_file*) ->
     let g = w->g
     reload_level_data(w, vs)
     spawn.find_player_start(w->lv_data, g)
@@ -672,7 +672,7 @@ let restart_current_level = (w: world*, vs: vswap.vswap_file*) ->
 
 // Full game reset after game-over. level_num → 0; player state back to
 // fresh-start (3 lives, score 0, full HP, pistol 8 ammo).
-let restart_full_game = (w: world*, vs: vswap.vswap_file*) ->
+let restart_full_game = (w: world*, vs: const vswap.vswap_file*) ->
     let g = w->g
     g->level_num = 0
     reload_level_data(w, vs)
@@ -689,7 +689,7 @@ let restart_full_game = (w: world*, vs: vswap.vswap_file*) ->
 // Start a new game at the current level_num (set by the episode picker).
 // Identical to restart_full_game except it doesn't reset level_num to 0 —
 // used to start a selected episode.
-let start_new_game_here = (w: world*, vs: vswap.vswap_file*) ->
+let start_new_game_here = (w: world*, vs: const vswap.vswap_file*) ->
     let g = w->g
     reload_level_data(w, vs)
     spawn.find_player_start(w->lv_data, g)
@@ -720,7 +720,7 @@ let start_new_game_here = (w: world*, vs: vswap.vswap_file*) ->
 //   2. Death timer up   -> restart level or game-over
 // `on_intermission_space` and `on_gameover_space` are triggered by the
 // caller (they need input access), not by this function.
-let update_phase_transitions = (w: world*, vs: vswap.vswap_file*) ->
+let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
     let g = w->g
     let mut level_changed = false
     if g->next_level && g->phase == game_phase.playing
@@ -840,7 +840,7 @@ let tick = (w: world*, dt: float64) ->
     let _changed = update_phase_transitions(w, w->ac->vs)
 
 // Render the full game frame to fb (used before saving a screenshot).
-let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
+let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[]) ->
     match w->g->phase with
     | title ->
         title_screen.render(w->rc, w->vg, pal, w->font, w->g->phase_timer)
@@ -918,7 +918,7 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
 // Headless test mode — scripted commands for automated testing
 // ============================================================
 
-let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
+let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64) ->
     let g = w->g
     let bad = (expected: const str) ->
         io.write("bad arg '%s{arg}': expected %s{expected}\n", stderr)

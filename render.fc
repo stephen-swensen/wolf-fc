@@ -16,7 +16,7 @@ module raycaster =
     // Per-level ceiling palette indices (6 episodes × 10 levels = 60).
     // Floor is always the same (0x19); ceiling picks out each episode's
     // mood palette. Index into by g->level_num.
-    let ceil_table = int32[60] {
+    private let ceil_table = int32[60] {
         0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0xBF,
         0x4E,0x4E,0x4E,0x1D,0x8D,0x4E,0x1D,0x2D,0x1D,0x8D,
         0x1D,0x1D,0x1D,0x1D,0x1D,0x2D,0xDD,0x1D,0x1D,0x98,
@@ -40,7 +40,7 @@ module raycaster =
         if s < 0.45 then 0.45 else if s > 1.0 then 1.0 else s
 
     let render_walls = (lv: level*, rc: render_ctx*, g: game*,
-                        vs: vswap.vswap_file*, pal: uint32[]) ->
+                        vs: const vswap.vswap_file*, pal: const uint32[]) ->
         // Fill ceiling and floor with per-level colors.
         let ceil_idx = if g->level_num < 60 then ceil_table[g->level_num] else 0x1D
         let ceil_color = pal[ceil_idx]
@@ -355,7 +355,7 @@ module billboards =
 
     // Draw one sprite column from compressed VSWAP data. Iterates over
     // screen rows (not source rows) to avoid gaps when scaled up.
-    let draw_sprite_col = (rc: render_ctx*, vs: vswap.vswap_file*, pal: uint32[],
+    private let draw_sprite_col = (rc: render_ctx*, vs: const vswap.vswap_file*, pal: const uint32[],
                            page: int32, sprite_col: int32,
                            screen_x: int32, sprite_h: int32,
                            shade: float64) ->
@@ -393,7 +393,7 @@ module billboards =
     // inter-billboard z-test); the wall z-buffer clips columns
     // against walls only.
     let render = (rc: render_ctx*, g: game*,
-                  vs: vswap.vswap_file*, pal: uint32[]) ->
+                  vs: const vswap.vswap_file*, pal: const uint32[]) ->
         let inv_det = 1.0 / (g->plane_x * g->dir_y - g->dir_x * g->plane_y)
         for i in 0..rc->num_billboards
             let bb = rc->billboards[i]
@@ -547,7 +547,7 @@ module overlay =
     // rotating slot in $WOLF_FC_HOME/screenshots (or
     // ~/.wolf-fc/screenshots), writes a PNG, and prints the path to
     // stdout.
-    let take_screenshot = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
+    let take_screenshot = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[]) ->
         match paths.wolf_data_dir() with
         | none ->
             io.write("[screenshot] HOME not set; skipping\n", stdout)
