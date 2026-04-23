@@ -130,12 +130,14 @@ Subsystem files were extracted from `main.fc` in a large 2026-04 refactor. The f
 | `cutscenes.fc` | `bj_victory`, `death_cam` (with nested `sub`), `intermission`, `episode_end`, `victory_screen`, `game_over`, `title_screen` | Per-phase state machines + renderers. |
 | `menu.fc` | `menu` (with nested `nav`) | Main menu + submenus (episode, difficulty, map, save/load slot list). |
 | `render.fc` | `raycaster`, `billboards`, `overlay` | DDA raycaster, billboard sort+draw, viewport tints / dissolve / upscale / screenshot pipeline. |
-| `player.fc` | `player` (with nested `cheats`) | Player movement / collision / camera / weapon firing + MLI/BAT/IDDQD cheats. `player_radius` lives at file scope in main.fc to break a `player ↔ doors` circular module reference. |
+| `player.fc` | `player` (with nested `cheats`) | Player movement / collision / camera / weapon firing + MLI/BAT/IDDQD cheats. |
 
 ### FC module restrictions hit during the refactor
 
 - **Non-entry-point files can only contain modules.** Every `.fc` file other than `main.fc` must put every declaration inside a `module X = ...` block. File-scope `let`/`struct`/`union` is only allowed in the file that defines `let main`.
-- **Modules can't have circular references.** `player` uses `doors.passable` (for collision), and `doors.update` uses `player_radius` (for its bbox-based auto-close check). Moving `player_radius` out of `module player` and down to file scope in main.fc broke the cycle; `module player` references it by unqualified name.
+- **Modules can't have circular references.** Two cycles came up and both were broken by narrowing the contract between modules:
+  - `player ↔ doors`: `player.blocked_by_map` uses `doors.passable` for collision, and `doors.update` needs the player's collision radius for its bbox-based auto-close check. Fix: `doors.update(...)` takes `player_radius` as a parameter instead of reaching into `module player`. `tick()` in main.fc (the single caller) already has `player.radius` in scope.
+  - `overlay ↔ save` (transitive via cutscenes): `overlay.take_screenshot` needed `save.wolf_data_dir` for the screenshots directory, and `save.from_slot` calls `intermission.enter` / `episode_end.enter` which call `overlay.*` renderers. Fix: extract `wolf_data_dir` + `ensure_save_dir` into a leaf `module paths` at the top of save.fc that depends on nothing downstream; both `save` and `overlay` reach for it.
 
 - **`main.fc`** — Game engine orchestration + file-scope constants:
   - Constants (game_w=320, game_h=200, screen_w=640, screen_h=400, actual_h=480, view_h=160, sample_rate=44100)

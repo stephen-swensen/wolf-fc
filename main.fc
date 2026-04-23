@@ -140,16 +140,6 @@ let par_times = int32[60] {
     120, 150, 240, 300, 270, 330, 420, 360, 330, 0
 }
 
-// Player collision radius in tiles. Prevents the player from sliding
-// exactly onto a tile boundary, which would produce a degenerate
-// raycast and cause columns to be skipped (visible as "seeing through
-// walls"). Classic Wolf3D uses PLAYERSIZE ≈ 0.35 tiles for the same
-// reason. Lives at file scope (logically part of `module player` in
-// player.fc) to break a circular module reference — player uses
-// doors.passable, and doors.update uses `player_radius` for its
-// bbox-based auto-close check.
-let player_radius = 0.35
-
 // Difficulty constants. The three spawn-tile tiers (base, +36, +72) are
 // gated by these per wolf4sdl ScanInfoPlane: base always spawns; +36 needs
 // >= gd_medium; +72 needs >= gd_hard.
@@ -1073,7 +1063,7 @@ let tick = (w: world*, dt: float64) ->
             g->made_noise = false
             g->level_time = g->level_time + dt
             player.update(w->lv, g, dt, w->ac)
-            doors.update(w->lv, g, dt, w->ac)
+            doors.update(w->lv, g, dt, w->ac, player.radius)
             pushwall.update(w->lv, dt)
             player.update_weapon(w, dt)
             enemies.ai.update_enemies(w, dt)
@@ -1588,10 +1578,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         // enemy within 2 tiles of the player with their distance and tile.
         let px = g->pos_x
         let py = g->pos_y
-        let xl = (int32) (px - player_radius)
-        let xr = (int32) (px + player_radius)
-        let yl = (int32) (py - player_radius)
-        let yh = (int32) (py + player_radius)
+        let xl = (int32) (px - player.radius)
+        let xr = (int32) (px + player.radius)
+        let yl = (int32) (py - player.radius)
+        let yh = (int32) (py + player.radius)
         io.write("probe pos=(%7.3f{px}, %7.3f{py}) bbox_tiles: x[%d{xl}..%d{xr}] y[%d{yl}..%d{yh}]\n", stdout)
         for tx in xl..(xr + 1)
             for ty in yl..(yh + 1)

@@ -8,6 +8,41 @@
 // avoids the platform-specific float64-to-bytes dance that a binary
 // format would need.
 
+// ============================================================
+// Shared user-data-directory helpers (leaf module — kept free of
+// cross-module deps so both `save` and `render.overlay` can reach
+// for it without forming a cycle through the phase-enter calls
+// save makes into cutscenes modules).
+// ============================================================
+
+module paths =
+    import io from std::
+    import sys from std::
+
+    // Root directory for wolf-fc user data (saves, screenshots).
+    // Respects the WOLF_FC_HOME env override so test runs can point at
+    // a throwaway directory instead of scribbling on the real user's
+    // saves. Falls back to $HOME/.wolf-fc for normal use.
+    let wolf_data_dir = () ->
+        match sys.env("WOLF_FC_HOME") with
+        | some(override) -> some(alloc("%s{override}")!)
+        | none ->
+            match sys.home_dir() with
+            | none -> default(str?)
+            | some(home) -> some(alloc("%s{home}/.wolf-fc")!)
+
+    // Ensure $WOLF_FC_HOME/saves (or ~/.wolf-fc/saves) exists.
+    // Returns true if the directory is (now) available.
+    let ensure_save_dir = () ->
+        match wolf_data_dir() with
+        | none -> false
+        | some(dir) ->
+            defer free(dir)
+            io.mkdir(dir)
+            io.mkdir("%s{dir}/saves")
+            true
+
+
 module save =
     import io from std::
     import sys from std::
@@ -66,31 +101,8 @@ module save =
             free(toks[(int64) k])
         free(toks)
 
-    // Root directory for wolf-fc user data (saves, screenshots).
-    // Respects the WOLF_FC_HOME env override so test runs can point at
-    // a throwaway directory instead of scribbling on the real user's
-    // saves. Falls back to $HOME/.wolf-fc for normal use.
-    let wolf_data_dir = () ->
-        match sys.env("WOLF_FC_HOME") with
-        | some(override) -> some(alloc("%s{override}")!)
-        | none ->
-            match sys.home_dir() with
-            | none -> default(str?)
-            | some(home) -> some(alloc("%s{home}/.wolf-fc")!)
-
-    // Ensure $WOLF_FC_HOME/saves (or ~/.wolf-fc/saves) exists. Returns
-    // true if the directory is (now) available.
-    let ensure_save_dir = () ->
-        match wolf_data_dir() with
-        | none -> false
-        | some(dir) ->
-            defer free(dir)
-            io.mkdir(dir)
-            io.mkdir("%s{dir}/saves")
-            true
-
     let slot_path = (slot: int32) ->
-        match wolf_data_dir() with
+        match paths.wolf_data_dir() with
         | none -> default(str?)
         | some(dir) ->
             defer free(dir)
@@ -187,7 +199,7 @@ module save =
     // any existing slot. Metadata label is auto-generated from the
     // current level + time.
     let to_slot = (w: world*, slot: int32) ->
-        ensure_save_dir()
+        paths.ensure_save_dir()
         match slot_path(slot) with
         | none ->
             io.write("save: HOME not set, skipping\n", stderr)
@@ -574,10 +586,10 @@ module save =
         io.write("phase=%s{phase_s} hp=%d{g->health} lives=%d{g->lives} level=%d{g->level_num}\n", stderr)
         io.write("pos=(%7.4f{g->pos_x}, %7.4f{g->pos_y}) dir=(%7.4f{g->dir_x}, %7.4f{g->dir_y})\n", stderr)
         io.write("area=%d{g->area_number} keys: gold=%d{if g->has_gold_key then 1 else 0} silver=%d{if g->has_silver_key then 1 else 0}\n", stderr)
-        let xl = (int32) (g->pos_x - player_radius)
-        let xr = (int32) (g->pos_x + player_radius)
-        let yl = (int32) (g->pos_y - player_radius)
-        let yh = (int32) (g->pos_y + player_radius)
+        let xl = (int32) (g->pos_x - player.radius)
+        let xr = (int32) (g->pos_x + player.radius)
+        let yl = (int32) (g->pos_y - player.radius)
+        let yh = (int32) (g->pos_y + player.radius)
         io.write("bbox tiles: x[%d{xl}..%d{xr}] y[%d{yl}..%d{yh}]\n", stderr)
         for tx in xl..(xr + 1)
             for ty in yl..(yh + 1)

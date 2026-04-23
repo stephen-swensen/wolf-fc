@@ -105,7 +105,10 @@ module doors =
         if d->area1 >= 0 && d->area1 < areas.num_areas && lv->area_by_player[d->area1] then
             sfx.trigger(sfx.id.open_door, ac)
 
-    let update = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
+    // `player_radius` passed in rather than imported to avoid a
+    // circular module reference (player.blocked_by_map uses
+    // doors.passable, so doors mustn't depend back on module player).
+    let update = (lv: level*, g: game*, dt: float64, ac: audio_ctx*, player_radius: float64) ->
         for i in 0..lv->num_doors
             match lv->doors[i].state with
             | opening ->

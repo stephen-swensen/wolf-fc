@@ -6,26 +6,27 @@
 module player =
     import math from std::
 
-    // `player_radius` (the player's 0.35-tile collision radius) lives
-    // at file scope in main.fc to break a circular module reference
-    // — player.blocked_by_map uses doors.passable, and doors.update
-    // uses player_radius for its bbox auto-close check. Referenced
-    // here by unqualified name.
+    // Player collision radius in tiles. Prevents the player from
+    // sliding exactly onto a tile boundary, which would produce a
+    // degenerate raycast and cause columns to be skipped (visible as
+    // "seeing through walls"). Classic Wolf3D uses PLAYERSIZE ≈ 0.35
+    // tiles for the same reason.
+    let radius = 0.35
 
     // Static-decoration half-width (tiles). Blocking sprites
     // (barrels, lamps, tables, etc.) block the player as a half-tile
     // AABB centered on the tile instead of the whole 1×1 cell — you
     // can approach a barrel until your bbox edge is
-    // ~(player_radius + sprite_block_half) from its center. Tuned
-    // down from a full tile because the art typically occupies only
-    // the middle half and the original's tile-grain blocking feels
-    // too intrusive at our scale.
+    // ~(radius + sprite_block_half) from its center. Tuned down from
+    // a full tile because the art typically occupies only the middle
+    // half and the original's tile-grain blocking feels too
+    // intrusive at our scale.
     let sprite_block_half = 0.25
 
-    // Enemy exclusion radius (tiles) — squared. Roughly player_radius
-    // (0.35) + enemy body half-width (~0.25). Smaller than the full
-    // bbox so the player can squeeze past an adjacent enemy without
-    // being locked out of corridors.
+    // Enemy exclusion radius (tiles) — squared. Roughly radius (0.35)
+    // + enemy body half-width (~0.25). Smaller than the full bbox so
+    // the player can squeeze past an adjacent enemy without being
+    // locked out of corridors.
     let enemy_block_r2 = 0.55 * 0.55
 
     // True if the player's bbox at (px, py) overlaps a wall, closed
@@ -35,10 +36,10 @@ module player =
     // they're already inside of (prevents mutual-deadlock with
     // chasing actors).
     let blocked_by_map = (lv: level*, px: float64, py: float64) ->
-        let xl = (int32) (px - player_radius)
-        let xr = (int32) (px + player_radius)
-        let yl = (int32) (py - player_radius)
-        let yh = (int32) (py + player_radius)
+        let xl = (int32) (px - radius)
+        let xr = (int32) (px + radius)
+        let yl = (int32) (py - radius)
+        let yh = (int32) (py + radius)
         // Walls + doors: per-tile check on each bbox corner.
         let tile_blocks = (tx: int32, ty: int32) ->
             tilemap.tile_solid(lv, tx, ty) || (tilemap.tile_is_door(lv, tx, ty) && !doors.passable(lv, tx, ty))
@@ -46,9 +47,9 @@ module player =
            || tile_blocks(xl, yh) || tile_blocks(xr, yh) then true
         else
             // Blocking sprites: AABB overlap against a half-tile box
-            // centered on the sprite. reach = player_radius +
+            // centered on the sprite. reach = radius +
             // sprite_block_half.
-            let reach = player_radius + sprite_block_half
+            let reach = radius + sprite_block_half
             let mut hit = false
             for i in 0..lv->num_sprites
                 let s = &lv->sprites[i]

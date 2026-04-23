@@ -510,7 +510,7 @@ module overlay =
     // screenshots should copy them elsewhere before starting a new
     // session.
     let clear_screenshots = () ->
-        match save.wolf_data_dir() with
+        match paths.wolf_data_dir() with
         | none -> void()
         | some(dir) ->
             defer free(dir)
@@ -536,7 +536,7 @@ module overlay =
     // ~/.wolf-fc/screenshots), writes a PNG, and prints the path to
     // stdout.
     let take_screenshot = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
-        match save.wolf_data_dir() with
+        match paths.wolf_data_dir() with
         | none ->
             io.write("[screenshot] HOME not set; skipping\n", stdout)
             void()
