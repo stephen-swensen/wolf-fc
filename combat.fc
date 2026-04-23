@@ -107,12 +107,12 @@ module enemies =
         ambush: bool              // tile 106 (AMBUSH) — don't wake on sound, only LOS
         notified: bool            // has entered active pursuit at least once (suppresses re-alert sound)
         reaction_timer: float64   // seconds left between first detection and actual wake; 0 when not yet detected (mirrors wolf4sdl SightPlayer's temp2)
-        last_visible: bool        // set by build_billboards when the enemy was drawn in the previous frame (mirrors wolf4sdl FL_VISABLE); read by enemy_fire_at_player to pick the steeper hitchance falloff
+        last_visible: bool        // set by build_billboards when the enemy was drawn in the previous frame (mirrors wolf4sdl FL_VISABLE); read by fire_at_player to pick the steeper hitchance falloff
 
     // Tunables — see ai.update_enemies for how each is used.
     let max_enemies = 150
-    let enemy_chase_speed   = 1.5   // tiles/sec — walking chase for all humanoids
-    let enemy_patrol_speed  = 0.9   // tiles/sec — patrol pace before player is spotted
+    let chase_speed   = 1.5   // tiles/sec — walking chase for all humanoids
+    let patrol_speed  = 0.9   // tiles/sec — patrol pace before player is spotted
     let dog_chase_speed     = 3.2   // tiles/sec — dogs roughly player-run speed
     let walk_frame_time     = 0.12  // seconds per W1/W2/W3/W4 cycle frame
     let shoot_frame_time    = 0.20  // humanoid shoot-windup frame duration
@@ -189,11 +189,11 @@ module enemies =
         | blinky | pinky | clyde | inky -> 0
 
     // Movement speed while chasing (tiles/sec). Dogs sprint; bosses and
-    // ghosts move at enemy_chase_speed.
+    // ghosts move at chase_speed.
     let chase_speed_for_kind = (k: enemy_kind) ->
         match k with
         | dog -> dog_chase_speed
-        | _   -> enemy_chase_speed
+        | _   -> chase_speed
 
     // True iff the kind is a level-ending boss. Killing one ends the level.
     let kind_is_boss = (k: enemy_kind) ->
@@ -531,7 +531,7 @@ module enemies =
         // raw LOS — the original's stand actor wakes the same way.
         // (Indexing dir.vx with dir.nodir == 8 would also be a slice
         // OOB and abort the process.)
-        let enemy_sees_player = (lv: level*, g: game*, e: enemy*) ->
+        let sees_player = (lv: level*, g: game*, e: enemy*) ->
             let dx = g->pos_x - e->x
             let dy = g->pos_y - e->y
             let dist = math.sqrt(dx * dx + dy * dy)
@@ -548,11 +548,11 @@ module enemies =
         // True iff the tile at (tx, ty) is passable for an enemy trying
         // to move INTO it. Walls block; the player's tile blocks (so
         // enemies don't walk into the camera); other live enemies
-        // block. Doors of any state are routable — advance_enemy_move
+        // block. Doors of any state are routable — advance_move
         // handles the wait-for-open pause and triggers the door to
         // open, matching the original's T_Chase. `self_idx` identifies
         // the caller so it doesn't block itself.
-        let enemy_tile_passable = (lv: level*, g: game*, self_idx: int32, tx: int32, ty: int32) ->
+        let tile_passable = (lv: level*, g: game*, self_idx: int32, tx: int32, ty: int32) ->
             if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
             else
                 let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
@@ -589,11 +589,11 @@ module enemies =
                 let e = &lv->enemies[self_idx]
                 let ntx = e->tile_x + dir.dx[d]
                 let nty = e->tile_y + dir.dy[d]
-                if !enemy_tile_passable(lv, g, self_idx, ntx, nty) then false
+                if !tile_passable(lv, g, self_idx, ntx, nty) then false
                 else if dir.dx[d] != 0 && dir.dy[d] != 0 then
                     // Diagonal: require both cardinal neighbors passable too.
-                    enemy_tile_passable(lv, g, self_idx, e->tile_x + dir.dx[d], e->tile_y)
-                        && enemy_tile_passable(lv, g, self_idx, e->tile_x, e->tile_y + dir.dy[d])
+                    tile_passable(lv, g, self_idx, e->tile_x + dir.dx[d], e->tile_y)
+                        && tile_passable(lv, g, self_idx, e->tile_x, e->tile_y + dir.dy[d])
                 else true
 
         // SelectChaseDir in the original, minus the dodge variant and
@@ -661,7 +661,7 @@ module enemies =
         // closed or animating door, kicks it to opening (with sound)
         // and pauses at the current tile center until it's fully open
         // — matches the original's T_Chase OpenDoor.
-        let advance_enemy_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, speed: float64, dt: float64, is_chase: bool) ->
+        let advance_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, speed: float64, dt: float64, is_chase: bool) ->
             let mut step = speed * dt
             loop
                 if step <= 1e-6 then break
@@ -905,12 +905,12 @@ module enemies =
         // you. Detection starts a reaction-delay countdown in
         // update_enemy; the actual transition-to-chase doesn't happen
         // until the timer elapses.
-        let enemy_should_wake = (lv: level*, g: game*, e: enemy*) ->
+        let should_wake = (lv: level*, g: game*, e: enemy*) ->
             let area = (int32) lv->tile_areas[(int64) e->tile_x * 64 + (int64) e->tile_y]
             if area >= areas.num_areas then false
             else if !lv->area_by_player[area] then false
-            else if e->ambush then enemy_sees_player(lv, g, e)
-            else g->made_noise || enemy_sees_player(lv, g, e)
+            else if e->ambush then sees_player(lv, g, e)
+            else g->made_noise || sees_player(lv, g, e)
 
         // Wake up a sleeping (stand/path) enemy. Plays the per-kind
         // alert vocal the first time only; subsequent wake-ups from
@@ -956,7 +956,7 @@ module enemies =
         // obclass) apply a 2/3 distance discount before this lookup —
         // they're more accurate shooters. Other bosses fire with their
         // own obclass and do not get it.
-        let enemy_fire_at_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
+        let fire_at_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
             // Per-kind firing sound — mirrors the original's T_Shoot
             // switch. Gretel is not listed in the original switch and
             // falls through to NAZIFIRESND.
@@ -1026,7 +1026,7 @@ module enemies =
                     if e->reaction_timer <= 0.0 then
                         e->reaction_timer = 0.0
                         wake_enemy(g, e, ac)
-                else if enemy_should_wake(lv, g, e) then
+                else if should_wake(lv, g, e) then
                     e->reaction_timer = reaction_delay_for_kind(e->kind, g)
             | path ->
                 if e->reaction_timer > 0.0 then
@@ -1035,12 +1035,12 @@ module enemies =
                         e->reaction_timer = 0.0
                         wake_enemy(g, e, ac)
                     else
-                        advance_enemy_move(lv, g, ac, self_idx, enemy_patrol_speed, dt, false)
+                        advance_move(lv, g, ac, self_idx, patrol_speed, dt, false)
                         advance_walk_anim(e)
-                else if enemy_should_wake(lv, g, e) then
+                else if should_wake(lv, g, e) then
                     e->reaction_timer = reaction_delay_for_kind(e->kind, g)
                 else
-                    advance_enemy_move(lv, g, ac, self_idx, enemy_patrol_speed, dt, false)
+                    advance_move(lv, g, ac, self_idx, patrol_speed, dt, false)
                     advance_walk_anim(e)
             | chase ->
                 match e->kind with
@@ -1057,7 +1057,7 @@ module enemies =
                         e->anim_timer = shoot_frame_time
                         e->shoot_fired = false
                     else
-                        advance_enemy_move(lv, g, ac, self_idx, dog_chase_speed, dt, true)
+                        advance_move(lv, g, ac, self_idx, dog_chase_speed, dt, true)
                         advance_walk_anim(e)
                 | blinky | pinky | clyde | inky ->
                     // Pacman ghosts — chase silently and damage on
@@ -1069,7 +1069,7 @@ module enemies =
                     let ady = math.abs(g->pos_y - e->y)
                     if adx <= 1.0 && ady <= 1.0 then
                         damage_player(g, ac, 1)
-                    advance_enemy_move(lv, g, ac, self_idx, enemy_chase_speed, dt, true)
+                    advance_move(lv, g, ac, self_idx, chase_speed, dt, true)
                     advance_walk_anim(e)
                 | _ ->
                     // Shoot roll: the original uses (tics<<4)/dist against
@@ -1090,7 +1090,7 @@ module enemies =
                             e->anim_timer = shoot_frame_time
                             e->shoot_fired = false
                             return
-                    advance_enemy_move(lv, g, ac, self_idx, chase_speed_for_kind(e->kind), dt, true)
+                    advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e->kind), dt, true)
                     advance_walk_anim(e)
             | shoot ->
                 let sp = sprites_for_kind(e->kind)
@@ -1114,7 +1114,7 @@ module enemies =
                     | dog -> projectiles.enemy_bite_player(lv, g, ac, e)
                     | schabbs | giftmacher | fat | hitler_fake ->
                         projectiles.spawn(lv, ac, g, e, projectiles.kind_for_enemy(e->kind))
-                    | _   -> enemy_fire_at_player(lv, g, ac, e)
+                    | _   -> fire_at_player(lv, g, ac, e)
 
         let update_enemies = (w: world*, dt: float64) ->
             let sprite_start = w->ac->vs->sprite_start

@@ -196,10 +196,18 @@ module pics =
 
     // Overlay hold time (seconds). Level load is instant, so this is
     // pure beat — slightly longer than the original's ~1s so the
-    // progress bar doesn't flash by. trigger_get_psyched arms the
-    // timer; render_frame passes the remaining time to
-    // render_get_psyched_overlay.
+    // progress bar doesn't flash by. `trigger_get_psyched` arms the
+    // timer; `render_frame` passes the remaining time to
+    // `render_get_psyched_overlay`.
     let get_psyched_time = 1.4
+
+    // Arm the "GET PSYCHED!" overlay on the next frame of gameplay.
+    // Gated on test_mode so scripted regressions stay deterministic
+    // (a 0.7s freeze would swallow ~24 `fwd:` ticks of every
+    // cross-level test).
+    let trigger_get_psyched = (g: game*) ->
+        if !g->test_mode then
+            g->get_psyched_timer = get_psyched_time
 
     // Draw a decoded VGA-planar pic at (dst_x, dst_y) in the framebuffer.
     // Pixels outside the fb are clipped. `pal` is the 256-entry ARGB
@@ -553,14 +561,6 @@ module hud =
             for x in x0..x1
                 if x >= 0 && x < game_w && y >= 0 && y < game_h then
                     rc->fb[(int64) y * 320 + (int64) x] = color
-
-    // Draw a vertical separator line with 3D effect.
-    let draw_vsep = (rc: render_ctx*, x: int32, y0: int32, y1: int32) ->
-        for y in y0..y1
-            if x >= 0 && x < game_w && y >= 0 && y < game_h then
-                rc->fb[(int64) y * 320 + (int64) x] = 0xFF383838u32
-                if x + 1 < game_w then
-                    rc->fb[(int64) y * 320 + (int64) (x + 1)] = 0xFF909090u32
 
     // Pick the BJ face chunk from health + animation frame. The
     // original picks the expression row from `(100-health)/16`

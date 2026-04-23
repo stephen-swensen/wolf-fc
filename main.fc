@@ -22,8 +22,6 @@ let screen_h = 400
 let actual_h = 480     // 4:3 corrected height (6 * screen_h / 5)
 let view_h = 160       // 3D viewport height in game coords (HUD takes bottom 40)
 let map_size = 64
-let tex_size = 64
-let tile_area = 107    // first non-solid tile (area floors)
 
 let fov_factor = 0.66   // tan(33 deg) for ~66 deg FOV
 
@@ -50,6 +48,21 @@ module episode =
         | 4 -> "TRAIL OF THE MADMAN"
         | 5 -> "CONFRONTATION"
         | _ -> ""
+
+    // Where should the next elevator trip land, given current level
+    // and the `went_secret` latch?
+    //   - If we just came from the secret level (level 9 of episode),
+    //     return to back_to[ep] within the same episode.
+    //   - If the player used the alt-elevator switch, jump to the
+    //     secret level (level 9 of current episode).
+    //   - Otherwise, level+1 within the same episode (0..7). Level 8
+    //     is handled by the episode-end caller, not here.
+    let next_level_num = (level_num: int32, went_secret: bool) ->
+        let ep = level_num / levels_per
+        let lvl = level_num % levels_per
+        if went_secret then ep * levels_per + 9
+        else if lvl == 9 then ep * levels_per + back_to[ep]
+        else ep * levels_per + lvl + 1
 
 // ============================================================
 // Game state
@@ -578,34 +591,6 @@ let reset_level_counters = (g: game*, lv: level*) ->
     g->total_treasures = lv->total_treasures
     g->level_time = 0.0
 
-// Reset per-life player state for a death restart. Score, lives (already
-// decremented), and weapon inventory are preserved; health / ammo / weapon
-// reset to pistol with starter ammo, matching wolf4sdl SpawnPlayer on death.
-let reset_player_for_life = (g: game*) ->
-    g->health = 100
-    g->ammo = 8
-    g->weapon = 1
-    g->best_weapon = 1
-    g->fire_timer = 0.0
-    g->weapon_frame = 0
-    g->face_frame = 0
-    g->face_count = 0.0
-    g->has_gold_key = false
-    g->has_silver_key = false
-    g->next_level = false
-    g->next_level_delay = 0.0
-    g->made_noise = false
-    g->damage_flash_timer = 0.0
-    g->respawn_fade_timer = 0.0
-    g->wall_hit_cooldown = 0.0
-
-// Full game reset — triggered after "press space" on the game-over screen.
-// Lives, score, and level reset to the starting configuration.
-let reset_player_for_new_game = (g: game*) ->
-    g->score = 0
-    g->lives = 3
-    reset_player_for_life(g)
-
 // Free the current level + lv_data and load + build the level at level_num.
 // Shared by every transition path (next-level / restart / new-game). After
 // this runs, the player still needs position + per-level state set — caller
@@ -618,58 +603,18 @@ let reload_level_data = (w: world*, vs: vswap.vswap_file*) ->
     w->lv_data = maps.load("data/MAPHEAD.WL6", "data/GAMEMAPS.WL6", w->g->level_num)
     w->lv = build_level(w->lv_data, vs->sprite_start, w->g->difficulty, w->g->no_dogs)
 
-// Compute where the next elevator trip should land, given current level and
-// the `went_secret` latch. Wolf4sdl routing:
-//   - If we just came from the secret level (level 9 of episode), return to
-//     episode.back_to[ep] within the same episode.
-//   - If the player used the alt-elevator switch, jump to the secret level
-//     (level 9 of current episode).
-//   - Otherwise, level+1 within the same episode (0..7). Level 8 is handled
-//     by the episode-end caller, not here.
-let compute_next_level_num = (level_num: int32, went_secret: bool) ->
-    let ep = level_num / episode.levels_per
-    let lvl = level_num % episode.levels_per
-    if went_secret then ep * episode.levels_per + 9
-    else if lvl == 9 then ep * episode.levels_per + episode.back_to[ep]
-    else ep * episode.levels_per + lvl + 1
-
 // Clear held gameplay-input flags. Called on ack-screen exits (intermission /
 // episode-end advance) so the "any key" press that dismissed the screen
 // doesn't carry into playing as a held movement / fire — e.g. a ctrl-press
 // to advance the episode-end screen would otherwise leave the gatling firing
 // as soon as the next episode's map 0 loads.
-let clear_gameplay_input_keys = (g: game*) ->
-    g->key_up = false
-    g->key_down = false
-    g->key_left = false
-    g->key_right = false
-    g->key_fire = false
-    g->key_space = false
-    g->key_space_handled = false
-    // Also reset the weapon cooldown. player.update_weapon doesn't run outside
-    // playing, so a fire_timer left mid-cycle by the last shot before
-    // the elevator switch (or EXITTILE step) survives the whole
-    // next_level_delay → intermission → next-level freeze and then decays
-    // over the first ~86 ms of the new map — a phantom gatling animation
-    // plus the tail of the queued digi samples sounding like a stray
-    // burst of fire at level start.
-    g->fire_timer = 0.0
-    g->weapon_frame = 0
-
-// Kick off the brief "GET PSYCHED!" overlay on the next frame of gameplay.
-// Gated on test_mode so scripted regressions stay deterministic (a 0.7s
-// freeze would swallow ~24 `fwd:` ticks of every cross-level test).
-let trigger_get_psyched = (g: game*) ->
-    if !g->test_mode then
-        g->get_psyched_timer = pics.get_psyched_time
-
 // Advance to the next map per episode routing. Called after the intermission
 // space-press on levels 0..7 and level 9; level 8 → episode-end is handled
 // by `episode_end.enter` at the caller. Preserves score, lives, weapon; clears
 // keys. The `went_secret` latch is consumed and reset here.
 let advance_next_level = (w: world*, vs: vswap.vswap_file*) ->
     let g = w->g
-    g->level_num = compute_next_level_num(g->level_num, g->went_secret)
+    g->level_num = episode.next_level_num(g->level_num, g->went_secret)
     g->went_secret = false
     // Wolf3D clears keys between levels.
     g->has_gold_key = false
@@ -682,8 +627,8 @@ let advance_next_level = (w: world*, vs: vswap.vswap_file*) ->
     g->phase = game_phase.playing
     g->phase_timer = 0.0
     g->made_noise = false
-    clear_gameplay_input_keys(g)
-    trigger_get_psyched(g)
+    player.clear_input_keys(g)
+    pics.trigger_get_psyched(g)
 
 // From episode_end, move into the first map of the next episode. If this
 // was the last episode, go to the final victory screen instead.
@@ -704,8 +649,8 @@ let advance_next_episode = (w: world*, vs: vswap.vswap_file*) ->
         g->phase = game_phase.playing
         g->phase_timer = 0.0
         g->made_noise = false
-        clear_gameplay_input_keys(g)
-        trigger_get_psyched(g)
+        player.clear_input_keys(g)
+        pics.trigger_get_psyched(g)
 
 // Restart the current level (death with lives remaining). Resets player
 // health / ammo / weapon; preserves score; decrements lives at the caller
@@ -715,7 +660,7 @@ let restart_current_level = (w: world*, vs: vswap.vswap_file*) ->
     reload_level_data(w, vs)
     spawn.find_player_start(w->lv_data, g)
     reset_level_counters(g, w->lv)
-    reset_player_for_life(g)
+    player.reset_for_life(g)
     areas.update_player_area(w->lv, g)
     areas.connect(w->lv, g->area_number)
     g->phase = game_phase.playing
@@ -723,7 +668,7 @@ let restart_current_level = (w: world*, vs: vswap.vswap_file*) ->
     // Seed the respawn uncover: the new scene renders under a full red
     // stipple that thins out rapidly, rather than a hard cut to gameplay.
     g->respawn_fade_timer = player.respawn_fade_time
-    trigger_get_psyched(g)
+    pics.trigger_get_psyched(g)
 
 // Full game reset after game-over. level_num → 0; player state back to
 // fresh-start (3 lives, score 0, full HP, pistol 8 ammo).
@@ -733,13 +678,13 @@ let restart_full_game = (w: world*, vs: vswap.vswap_file*) ->
     reload_level_data(w, vs)
     spawn.find_player_start(w->lv_data, g)
     reset_level_counters(g, w->lv)
-    reset_player_for_new_game(g)
+    player.reset_for_new_game(g)
     areas.update_player_area(w->lv, g)
     areas.connect(w->lv, g->area_number)
     g->phase = game_phase.playing
     g->phase_timer = 0.0
-    clear_gameplay_input_keys(g)
-    trigger_get_psyched(g)
+    player.clear_input_keys(g)
+    pics.trigger_get_psyched(g)
 
 // Start a new game at the current level_num (set by the episode picker).
 // Identical to restart_full_game except it doesn't reset level_num to 0 —
@@ -749,7 +694,7 @@ let start_new_game_here = (w: world*, vs: vswap.vswap_file*) ->
     reload_level_data(w, vs)
     spawn.find_player_start(w->lv_data, g)
     reset_level_counters(g, w->lv)
-    reset_player_for_new_game(g)
+    player.reset_for_new_game(g)
     // Consume the BOSS FIGHT latch: teleport to the boss if the map has one.
     // Done after spawn.find_player_start + reset_level_counters so the teleport
     // overrides the map's default spawn while the level state is otherwise
@@ -763,7 +708,7 @@ let start_new_game_here = (w: world*, vs: vswap.vswap_file*) ->
     g->phase = game_phase.playing
     g->phase_timer = 0.0
     g->went_secret = false
-    trigger_get_psyched(g)
+    pics.trigger_get_psyched(g)
 
 // Game-state phase transitions triggered by timers / flags. Called every
 // frame from both the interactive loop and (between test commands) the
@@ -1066,7 +1011,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
     else if arg == "psyched" then
         // Force the GET PSYCHED overlay timer so a following ss: captures
         // the full-screen load graphic. Bypasses the normal test_mode gate
-        // in trigger_get_psyched.
+        // in pics.trigger_get_psyched.
         g->get_psyched_timer = pics.get_psyched_time
     else if arg == "gotgatling" then
         // Force the GOTGATLINGPIC face-cell swap so ss: can capture it.
@@ -1725,7 +1670,7 @@ let main = (args: str[]) ->
         areas.connect(w->lv, g->area_number)
         g->phase = game_phase.playing
         g->has_active_game = true
-        trigger_get_psyched(g)
+        pics.trigger_get_psyched(g)
     if start_near_boss then
         spawn.near_boss(w->lv, w->g)
         areas.update_player_area(w->lv, g)

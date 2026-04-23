@@ -66,6 +66,55 @@ module player =
     // purely visual.
     let damage_flash_time = 0.25
 
+    // Reset per-life player state for a death restart. Score, lives
+    // (already decremented), and weapon inventory are preserved;
+    // health / ammo / weapon reset to pistol with starter ammo —
+    // matches the original's SpawnPlayer on death.
+    let reset_for_life = (g: game*) ->
+        g->health = 100
+        g->ammo = 8
+        g->weapon = 1
+        g->best_weapon = 1
+        g->fire_timer = 0.0
+        g->weapon_frame = 0
+        g->face_frame = 0
+        g->face_count = 0.0
+        g->has_gold_key = false
+        g->has_silver_key = false
+        g->next_level = false
+        g->next_level_delay = 0.0
+        g->made_noise = false
+        g->damage_flash_timer = 0.0
+        g->respawn_fade_timer = 0.0
+        g->wall_hit_cooldown = 0.0
+
+    // Full reset triggered by "press space" on the game-over screen.
+    // Lives and score reset to the starting configuration on top of
+    // the per-life reset.
+    let reset_for_new_game = (g: game*) ->
+        g->score = 0
+        g->lives = 3
+        reset_for_life(g)
+
+    // Clear held gameplay-input flags. Called on ack-screen exits
+    // (intermission / episode-end advance) so the "any key" press
+    // that dismissed the screen doesn't also count as a held
+    // movement / fire key on the next map. Also resets the weapon
+    // cooldown so a fire_timer left mid-cycle by the last shot
+    // before the elevator switch (or EXITTILE step) doesn't survive
+    // the next_level_delay → intermission → next-level freeze and
+    // leak a phantom gatling burst into the new map's first frames.
+    let clear_input_keys = (g: game*) ->
+        g->key_up = false
+        g->key_down = false
+        g->key_left = false
+        g->key_right = false
+        g->key_fire = false
+        g->key_space = false
+        g->key_space_handled = false
+        g->fire_timer = 0.0
+        g->weapon_frame = 0
+
     // True if the player's bbox at (px, py) overlaps a wall, closed
     // door, or a blocking static sprite. Does NOT check enemy
     // overlap — that's handled in try_move with a distance

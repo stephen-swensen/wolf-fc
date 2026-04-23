@@ -99,7 +99,7 @@ module doors =
     // it), recomputes area_by_player from the player's current area,
     // then plays the open SFX. Called from the player's space-to-open
     // path (try_open) and from chasing enemies that walk into a closed
-    // door (enemies.ai.advance_enemy_move) — both of which already
+    // door (enemies.ai.advance_move) — both of which already
     // gate on `state == door_state.closed`, mirroring the original's
     // DoorOpening areaconnect++ guard (only on first frame from 0).
     let start_opening = (lv: level*, di: int32, g: game*, ac: audio_ctx*) ->
@@ -942,7 +942,7 @@ module spawn =
         // SpawnFakeHitler / SpawnHitler). Without AMBUSH they'd be
         // auto-woken by any noise in the connected area set the moment
         // their door opens; without nodir their forward-cone check in
-        // enemies.ai.enemy_sees_player can leave them blind to the
+        // enemies.ai.sees_player can leave them blind to the
         // player standing in the doorway.
         let is_boss = enemies.kind_is_boss(info.kind)
         let spawn_dir = if info.dead then dir.nodir

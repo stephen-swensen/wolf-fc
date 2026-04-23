@@ -123,14 +123,14 @@ Subsystem files were extracted from `main.fc` in a large 2026-04 refactor. The f
 | `sound.fc` | `imf`, `adlib`, `digi`, `mixer` | Wolf3D sound-format drivers. |
 | `data.fc` | `bytes`, `palette`, `vswap`, `maps`, `vgagraph`, `audio` | Wolf3D data-file loading. |
 | `sfx.fc` | `sfx` (with nested `id`) | Sound-effect trigger helpers + the 73 sound IDs + `digi_slot` / `adlib_chunk` lookup tables. |
-| `ui.fc` | `music`, `pics` (with nested `id`), `font`, `hud` | UI primitives: music track IDs + per-level `songs[]` table, VGAGRAPH pic blitter (incl. `get_psyched_*` overlay config), font, status bar + BJ face animation (incl. `got_gatling_time`). |
+| `ui.fc` | `music`, `pics` (with nested `id`), `font`, `hud` | UI primitives: music track IDs + per-level `songs[]` table, VGAGRAPH pic blitter (incl. `get_psyched_*` overlay config + `pics.trigger_get_psyched`), font, status bar + BJ face animation (incl. `got_gatling_time`). |
 | `save.fc` | `paths`, `save` | Save/load slot I/O + encoding; `save.num_slots` constant, `save.slot_info` struct. `paths` is a leaf module holding `wolf_data_dir`/`ensure_save_dir` (shared with `overlay`). |
 | `combat.fc` | `dir`, `enemies` (with nested `ai`), `projectiles`, `hitscan` | Enemy data + AI + projectiles + player hitscan. |
 | `level.fc` | `difficulty`, `tilemap`, `areas`, `spawn`, `doors`, `pushwall`, `pickups` | Level geometry + enemy/sprite spawning + door / pushwall animation + pickup collection. `difficulty` holds the 4 picker constants. |
 | `cutscenes.fc` | `bj_victory`, `death_cam` (with nested `sub`), `intermission`, `episode_end`, `victory_screen`, `game_over`, `title_screen` | Per-phase state machines + renderers. `intermission` owns the scoring constants + `par_times[]` table + `compute_*` helpers. |
 | `menu.fc` | `menu` (with nested `nav`) | Main menu + submenus (episode, difficulty, map, save/load slot list). |
 | `render.fc` | `raycaster`, `billboards`, `overlay` | DDA raycaster (owns `ceil_table[]`), billboard sort+draw, viewport tints / dissolve / upscale / screenshot pipeline. |
-| `player.fc` | `player` (with nested `cheats`) | Player movement / collision / camera / weapon firing + MLI/BAT/IDDQD cheats. Owns `move_speed`/`run_mult`/`back_mult`/`strafe_mult`/`turn_speed`/`radius` and the player-lifecycle timing constants (`elevator_wait_time`, `death_fade_time`, `death_anim_time`, `respawn_fade_time`, `damage_flash_time`). |
+| `player.fc` | `player` (with nested `cheats`) | Player movement / collision / camera / weapon firing + MLI/BAT/IDDQD cheats. Owns `move_speed`/`run_mult`/`back_mult`/`strafe_mult`/`turn_speed`/`radius`, the player-lifecycle timing constants (`elevator_wait_time`, `death_fade_time`, `death_anim_time`, `respawn_fade_time`, `damage_flash_time`), and the per-life / new-game / input-clear reset helpers (`reset_for_life`, `reset_for_new_game`, `clear_input_keys`). |
 
 ### FC module restrictions hit during the refactor
 
@@ -148,7 +148,7 @@ three top-level dispatchers (`tick`, `render_frame`, `run_test_cmd`) +
 module (see the table above).
 
 - **Resolution constants**: `game_w`/`game_h` (320×200 internal framebuffer), `screen_w`/`screen_h` (640×400 doubled), `actual_h` (480 for 4:3 letterboxing), `view_h` (160, 3D viewport height), `map_size`/`tex_size` (64), `tile_area` (107, first non-solid tile), `fov_factor` (0.66 — `tan(33°)` for ~66° FOV).
-- **`module episode`** — `levels_per` (10), `count` (6), `back_to[6]` (per-episode return target for secret-level exits), `title(ep)` (human-readable episode names).
+- **`module episode`** — `levels_per` (10), `count` (6), `back_to[6]` (per-episode return target for secret-level exits), `title(ep)` (human-readable episode names), `next_level_num(level_num, went_secret)` (elevator-routing rule).
 - **Phase enum**: `union game_phase` — the top-level phase state machine, variants `title`, `main_menu`, `playing`, `dying`, `intermission`, `bj_victory`, `death_cam`, `episode_end`, `victory`, `game_over`. Accessed as `game_phase.playing` etc. (variants that share a name with a cutscenes module like `bj_victory` / `death_cam` resolve fine in match patterns — pattern scope is separate from expression scope).
 - **Core data structs**:
   - `struct world` — god-handle `{g: game*, lv: level*, rc: render_ctx*, ac: audio_ctx*, sm: save_menu_ctx*}`. Only orchestrators take `world*`; narrow functions take just the fields they touch.
@@ -159,7 +159,7 @@ module (see the table above).
   - `struct save_menu_ctx` — `{slots, label_scratch, hex_scratch}` for the save/load menu. `slots[]` (of `save.slot_info`) is refreshed on menu entry; `label_scratch`/`hex_scratch` are reusable buffers for slot-label rendering and per-nibble save-file writes.
   - `struct billboard` — per-frame entry for the back-to-front sprite draw; built by `billboards.build` (in `render.fc`) from live enemies + live sprites + live projectiles.
 - **Factories**: `build_render_ctx(vg, pal)`, `build_save_menu_ctx()`, `build_level(lv_data, sprite_start, difficulty, no_dogs)`, `free_level(lv)`.
-- **Phase-transition routing** (the glue between subsystems): `reset_level_counters`, `reset_player_for_life`, `reset_player_for_new_game`, `reload_level_data`, `compute_next_level_num` (normal vs. secret elevator), `clear_gameplay_input_keys`, `trigger_get_psyched`, `advance_next_level`, `advance_next_episode`, `restart_current_level`, `restart_full_game`, `start_new_game_here`, `update_phase_transitions`.
+- **Phase-transition routing** (the glue between subsystems): `reset_level_counters`, `reload_level_data`, `advance_next_level`, `advance_next_episode`, `restart_current_level`, `restart_full_game`, `start_new_game_here`, `update_phase_transitions`. Single-owner helpers that these dispatchers call live in their owning modules: `player.reset_for_life` / `reset_for_new_game` / `clear_input_keys`, `pics.trigger_get_psyched`, `episode.next_level_num`.
 - **Dispatchers**:
   - `tick(w, dt)` — the single per-frame update entry. Runs `player.update` → `doors.update` → `pushwall.update` → `player.update_weapon` → `enemies.ai.update_enemies` → `enemies.ai.update_dying_enemies` → `projectiles.update_all` → `pickups.check`. **When adding a new per-frame system, add the call here, not elsewhere** — it keeps interactive and `--test` modes bit-identical.
   - `render_frame(w, vs, pal)` — the single render entry. Dispatches by phase: title / menu / playing (raycaster + billboards + HUD + damage flash + elevator fade) / dying (red stipple collapse) / intermission / bj_victory / death_cam / episode_end / victory / game_over.
