@@ -30,20 +30,6 @@ module difficulty =
 
 
 // ============================================================
-// Scoring — single chokepoint for score increments. Kept as a leaf
-// module so every feature that awards score (pickups, enemy kills,
-// intermission bonus) can route through it without tripping over
-// module-dependency cycles.
-// ============================================================
-
-module scoring =
-    // Add `amount` to the score unless IDKFA is locking it. One place
-    // covers treasure pickups, enemy kills, and intermission bonuses.
-    let add = (g: game*, amount: int32) ->
-        if !g->idkfa_mode then g->score = g->score + amount
-
-
-// ============================================================
 // Doors
 // ============================================================
 
@@ -390,19 +376,19 @@ module pickups =
                 g->has_silver_key = true
                 true
             | cross ->
-                scoring.add(g, 100)
+                add_score(g, 100)
                 g->treasures = g->treasures + 1
                 true
             | chalice ->
-                scoring.add(g, 500)
+                add_score(g, 500)
                 g->treasures = g->treasures + 1
                 true
             | bible ->
-                scoring.add(g, 1000)
+                add_score(g, 1000)
                 g->treasures = g->treasures + 1
                 true
             | crown ->
-                scoring.add(g, 5000)
+                add_score(g, 5000)
                 g->treasures = g->treasures + 1
                 true
             if !picked_up then continue
@@ -453,9 +439,6 @@ module pickups =
             | first_aid ->
                 sfx.trigger(sfx.id.health2, ac)
             | decoration               -> void()
-            // Extra life at 40,000 points
-            if g->score >= 40000 && g->score - 40000 < 5000 then
-                g->lives = g->lives + 1
 
 
 // ============================================================

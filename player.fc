@@ -89,12 +89,7 @@ module player =
         g->wall_hit_cooldown = 0.0
         // IDKFA latch persists across deaths — re-grant the full kit so
         // the player doesn't have to re-cheat after a respawn.
-        if g->idkfa_mode then
-            g->ammo = 99
-            g->weapon = 3
-            g->best_weapon = 3
-            g->has_gold_key = true
-            g->has_silver_key = true
+        if g->idkfa_mode then give_full_kit(g)
 
     // Full reset triggered by "press space" on the game-over screen.
     // Lives and score reset to the starting configuration on top of
@@ -234,12 +229,7 @@ module player =
         private let msg_time = 6.0
 
         let apply_mli = (g: game*) ->
-            g->health = 100
-            g->ammo = 99
-            g->has_gold_key = true
-            g->has_silver_key = true
-            g->weapon = 3
-            g->best_weapon = 3
+            give_full_kit(g)
             g->score = 0
             hud.show_message(g, "You now have 100% Health,\n99 Ammo and both Keys!\n\nNote that you have basically\neliminated your chances of\ngetting a high score!")
             g->msg_timer = msg_time
@@ -285,18 +275,13 @@ module player =
         // IDKFA — Doom-style "give me everything" toggle. Activating it
         // grants both keys, the chain gun with 99 ammo, and latches
         // `idkfa_mode`, which suppresses ammo decrement in update_weapon
-        // and blocks score gains via player.add_score. Deactivating
-        // leaves the gifts in the inventory but re-enables ammo drain
-        // and score accumulation.
+        // and blocks score gains through add_score. Deactivating leaves
+        // the gifts in the inventory but re-enables ammo drain and
+        // score accumulation.
         let apply_idkfa = (g: game*) ->
             g->idkfa_mode = !g->idkfa_mode
             if g->idkfa_mode then
-                g->health = 100
-                g->ammo = 99
-                g->weapon = 3
-                g->best_weapon = 3
-                g->has_gold_key = true
-                g->has_silver_key = true
+                give_full_kit(g)
                 hud.show_message(g, "A Doom fan, eh?\n\nIDKFA mode ON\n\nAll keys, full ammo,\nchain gun, and locked score!")
             else
                 hud.show_message(g, "IDKFA mode OFF")

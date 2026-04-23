@@ -62,7 +62,7 @@ module bj_victory =
     let enter = (g: game*) ->
         g->phase = game_phase.bj_victory
         g->phase_timer = 0.0
-        scoring.add(g, intermission.compute_level_bonus(g))
+        add_score(g, intermission.compute_level_bonus(g))
         g->bj_x = g->pos_x
         g->bj_y = g->pos_y
         g->bj_tile_x = (int32) g->pos_x
@@ -520,7 +520,7 @@ module intermission =
         // screen (see render). Matches the original's LevelCompleted
         // else-branch.
         if is_secret_level(g->level_num) then
-            scoring.add(g, secret_floor_bonus)
+            add_score(g, secret_floor_bonus)
             g->inter_stage = 4
             g->inter_counter = 0
             g->inter_progress = 0.0
@@ -538,7 +538,7 @@ module intermission =
         // and carries into the next level. The classic screen
         // animates the ticker counting up to this value; awarding
         // once up front keeps save/advance simpler.
-        scoring.add(g, compute_level_bonus(g))
+        add_score(g, compute_level_bonus(g))
         // Cache the animation targets. Stage starts at 0 (time
         // bonus counting).
         g->inter_stage = 0

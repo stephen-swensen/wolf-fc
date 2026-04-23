@@ -488,6 +488,43 @@ struct world =
     font: font.info*             // small menu/UI font (chunk 1)
 
 // ============================================================
+// Cross-subsystem helpers
+//
+// Small game-state mutations shared across multiple subsystems. Kept at
+// file scope in main.fc (the entry-point file, exempt from module-
+// dependency cycle detection) so any module — pickups, enemies.ai,
+// intermission, player.cheats — can reference them unqualified without
+// forcing new cross-module edges.
+// ============================================================
+
+// Extra-life milestone. Matches wolf4sdl's EXTRAPOINTS (first extra life
+// awarded when the player's score crosses 40000).
+let extra_life_score = 40000
+
+// Add `amount` to the score, honoring the IDKFA score lock. Single
+// chokepoint so the lock covers pickups, enemy kills, and intermission
+// bonuses uniformly. Also grants the 40k-score extra-life milestone.
+let add_score = (g: game*, amount: int32) ->
+    if g->idkfa_mode then return
+    let before = g->score
+    g->score = g->score + amount
+    if before < extra_life_score && g->score >= extra_life_score then
+        g->lives = g->lives + 1
+
+// Grant the full cheat kit: 100 health, 99 ammo, chain gun (+ best-
+// weapon latch), both keys. Shared by the M+L+I chord, IDKFA
+// activation, the --cheat launch flag, and reset_for_life's IDKFA
+// restock on respawn.
+let give_full_kit = (g: game*) ->
+    g->health = 100
+    g->ammo = 99
+    g->weapon = 3
+    g->best_weapon = 3
+    g->has_gold_key = true
+    g->has_silver_key = true
+
+
+// ============================================================
 // Factories
 // ============================================================
 
@@ -1677,11 +1714,7 @@ let main = (args: str[]) ->
     if arg_cheat then
         g->god_mode = true
         g->idkfa_mode = true
-        g->ammo = 99
-        g->weapon = 3
-        g->best_weapon = 3
-        g->has_gold_key = true
-        g->has_silver_key = true
+        give_full_kit(g)
 
     // --difficulty N / --level N: skip the title sequence and jump the
     // player straight into the specified map. Also respected in --test
