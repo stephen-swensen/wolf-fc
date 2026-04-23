@@ -194,17 +194,22 @@ module player =
         let cur_y = g->pos_y
         let nx = cur_x + dx
         let ny = cur_y + dy
-        let mut blocked_x = true
-        let mut blocked_y = true
-        if !blocked_by_map(lv, nx, cur_y)
-           && !move_blocked_by_enemy(lv, cur_x, cur_y, nx, cur_y) then
+        if g->noclip then
             g->pos_x = nx
-            blocked_x = false
-        if !blocked_by_map(lv, g->pos_x, ny)
-           && !move_blocked_by_enemy(lv, g->pos_x, cur_y, g->pos_x, ny) then
             g->pos_y = ny
-            blocked_y = false
-        blocked_x && blocked_y
+            false
+        else
+            let mut blocked_x = true
+            let mut blocked_y = true
+            if !blocked_by_map(lv, nx, cur_y)
+               && !move_blocked_by_enemy(lv, cur_x, cur_y, nx, cur_y) then
+                g->pos_x = nx
+                blocked_x = false
+            if !blocked_by_map(lv, g->pos_x, ny)
+               && !move_blocked_by_enemy(lv, g->pos_x, cur_y, g->pos_x, ny) then
+                g->pos_y = ny
+                blocked_y = false
+            blocked_x && blocked_y
 
     let rotate_camera = (g: game*, angle: float64) ->
         let c = math.cos(angle)
@@ -304,6 +309,55 @@ module player =
                     g->idkfa_progress = 0
             else
                 g->idkfa_progress = if k == idkfa_sequence[0] then 1 else 0
+
+        // Original-game TAB+<key> cheats. The original exposed these
+        // behind a command-line `-debugmode` flag; we keep them always
+        // available. Dispatched by main.fc's keydown handler whenever
+        // g->key_tab_held is true and the game is in the playing phase.
+
+        // TAB+G — toggle god mode. Same underlying flag as IDDQD (so
+        // the two cheats stack coherently), but with a plain "God mode
+        // ON/OFF" banner rather than IDDQD's Doom-reference nod.
+        let apply_tab_g = (g: game*) ->
+            g->god_mode = !g->god_mode
+            if g->god_mode then hud.show_message(g, "God mode ON")
+            else hud.show_message(g, "God mode OFF")
+            g->msg_timer = msg_time
+
+        // TAB+I — the original's "free items": heal up to 100, +50 ammo
+        // (capped at 99), bump to the next weapon tier if below chain
+        // gun, and grant 100 000 points. Unlike IDKFA this is a
+        // one-shot bump — pressing it again re-applies the deltas. Takes
+        // audio_ctx because add_score may fire the extra-life SFX at a
+        // 40k milestone crossed by this +100k bump.
+        let apply_tab_i = (g: game*, ac: audio_ctx*) ->
+            g->health = g->health + 99
+            if g->health > 100 then g->health = 100
+            g->ammo = g->ammo + 50
+            if g->ammo > 99 then g->ammo = 99
+            if g->best_weapon < 3 then
+                g->best_weapon = g->best_weapon + 1
+                g->weapon = g->best_weapon
+            add_score(g, 100000, ac)
+            hud.show_message(g, "Free items!")
+            g->msg_timer = msg_time
+
+        // TAB+N — toggle no-clip. player.try_move consults g->noclip
+        // and skips its collision checks while on. Raycasting and
+        // enemy AI are untouched.
+        let apply_tab_n = (g: game*) ->
+            g->noclip = !g->noclip
+            if g->noclip then hud.show_message(g, "No clipping ON")
+            else hud.show_message(g, "No clipping OFF")
+            g->msg_timer = msg_time
+
+        // TAB+E — skip to the intermission. Arms the same next_level
+        // latch the real elevator switch uses, with a zero wait so the
+        // tally screen comes up immediately.
+        let apply_tab_e = (g: game*) ->
+            if !g->next_level then
+                g->next_level = true
+                g->next_level_delay = 0.0
 
         // Called per-frame from the interactive game loop while
         // playing. Checks whether all three keys of each chord

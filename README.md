@@ -94,6 +94,16 @@ There are also two Doom-style sequence cheats (type the letters in order, no nee
 | I D D Q D | Toggle god mode (silently absorbs all damage; refills health on activation). Status bar grows a yellow outline while active. |
 | I D K F A | Toggle "all keys, full arsenal": grants both keys, chain gun, 99 ammo on activation, and latches non-depleting ammo + locked score until toggled off |
 
+And the original game's TAB-held cheats (hold TAB, press another key). The original gated these behind a `-debugmode` command-line flag; we leave them always available:
+
+| Combo | Effect |
+|-------|--------|
+| TAB + G | Toggle god mode (same flag as IDDQD, plain "God mode" banner) |
+| TAB + I | Free items: heal to 100, +50 ammo (cap 99), bump weapon one tier, +100 000 score |
+| TAB + N | Toggle no-clip (walk through walls, doors, enemies, static decorations) |
+| TAB + E | End level (skip straight to the intermission screen) |
+| TAB + H | Hurt self for 16 damage |
+
 > **Note:** On Windows, rapid Ctrl presses trigger the Sticky Keys accessibility popup. If this gets in your way during combat, turn off Sticky Keys in Settings → Accessibility → Keyboard.
 
 ## Headless Test Mode

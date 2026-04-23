@@ -166,6 +166,14 @@ struct game =
     // survives dying.
     idkfa_progress: int32
     idkfa_mode: bool
+    // Original-game TAB+<key> cheats. `key_tab_held` tracks whether TAB is
+    // currently pressed; any subsequent keydown while it's true dispatches
+    // through player.cheats.apply_tab_* (G/I/N/E/H). `noclip` is the latched
+    // state of TAB+N — when true, try_move skips wall / door / enemy / static
+    // collision so the player can walk through anything. Doesn't affect
+    // raycasting or enemy LOS, so visuals / AI behave normally.
+    key_tab_held: bool
+    noclip: bool
     // Wall-scrape sound cooldown (seconds). Prevents HITWALLSND from firing
     // every frame while the player grinds along a wall. Counts down in
     // player.update; a new bump is only announced when it hits 0.
@@ -1649,6 +1657,7 @@ let main = (args: str[]) ->
         cheat_mli_latched = false, cheat_bat_latched = false,
         iddqd_progress = 0, god_mode = false,
         idkfa_progress = 0, idkfa_mode = false,
+        key_tab_held = false, noclip = false,
         wall_hit_cooldown = 0.0,
         health = 100, ammo = 8, score = 0, lives = 3,
         level_num = 0,
@@ -2060,47 +2069,67 @@ let main = (args: str[]) ->
                         g->key_right = false
                         g->key_fire = false
                     else if !is_key_repeat then
-                        if k == sdl2.key_up then g->key_up = true
-                        if k == sdl2.key_down then g->key_down = true
-                        if k == sdl2.key_left then g->key_left = true
-                        if k == sdl2.key_right then g->key_right = true
-                        if k == sdl2.key_lshift then g->key_shift = true
-                        if k == sdl2.key_lalt then g->key_alt = true
-                        if k == sdl2.key_space then g->key_space = true
-                        if k == sdl2.key_lctrl then g->key_fire = true
-                        if k == sdl2.key_1 then g->weapon = 0
-                        if k == sdl2.key_2 then g->weapon = 1
-                        if k == sdl2.key_3 then g->weapon = 2
-                        if k == sdl2.key_4 then g->weapon = 3
-                        // Cheat-chord held-flags. M/L/I/B/A/T have no other
-                        // in-game action (M used to toggle music but that
-                        // clashed with the MLI chord; use the main menu's
-                        // SOUND entry to toggle music now).
-                        if k == sdl2.key_m then g->key_m_held = true
-                        if k == sdl2.key_l then g->key_l_held = true
-                        if k == sdl2.key_i then g->key_i_held = true
-                        if k == sdl2.key_b then g->key_b_held = true
-                        if k == sdl2.key_a then g->key_a_held = true
-                        if k == sdl2.key_t then g->key_t_held = true
-                        // IDDQD / IDKFA sequences — only progress while
-                        // in-game, matching how the chord cheats are
-                        // gated. Held keys can't auto-advance because
-                        // we're already inside the !is_key_repeat branch.
-                        if g->phase == game_phase.playing then
-                            player.cheats.advance_iddqd(g, k)
-                            player.cheats.advance_idkfa(g, k)
-                        if k == sdl2.key_s then overlay.take_screenshot(w, vs, pal)
-                        if k == sdl2.key_d then save.debug_dump_state(w)
-                        // IN_Ack: any keydown during an acknowledge screen
-                        // (intermission / episode-end / final victory) counts
-                        // as "acknowledge and advance". The advance itself
-                        // runs below (after tick) and is gated by
-                        // key_ack_handled so a held key only fires once.
-                        if g->phase == game_phase.intermission
-                           || g->phase == game_phase.episode_end
-                           || g->phase == game_phase.victory
-                           || g->phase == game_phase.game_over then
-                            g->key_ack = true
+                        // TAB+<key> cheats (from the original's debugmode
+                        // menu). When TAB is held and the pressed key maps
+                        // to a cheat, dispatch it and suppress the normal
+                        // per-key handlers so e.g. TAB+I doesn't also
+                        // latch the MLI 'I' chord or retrigger iddqd
+                        // progress. Gated to the playing phase so the
+                        // combo is inert on menus / intermission.
+                        let tab_cheat = g->key_tab_held
+                           && g->phase == game_phase.playing
+                           && (k == sdl2.key_g || k == sdl2.key_i
+                               || k == sdl2.key_n || k == sdl2.key_e
+                               || k == sdl2.key_h)
+                        if tab_cheat then
+                            if k == sdl2.key_g then player.cheats.apply_tab_g(g)
+                            if k == sdl2.key_i then player.cheats.apply_tab_i(g, w->ac)
+                            if k == sdl2.key_n then player.cheats.apply_tab_n(g)
+                            if k == sdl2.key_e then player.cheats.apply_tab_e(g)
+                            if k == sdl2.key_h then enemies.ai.damage_player(g, w->ac, 16)
+                        else
+                            if k == sdl2.key_up then g->key_up = true
+                            if k == sdl2.key_down then g->key_down = true
+                            if k == sdl2.key_left then g->key_left = true
+                            if k == sdl2.key_right then g->key_right = true
+                            if k == sdl2.key_lshift then g->key_shift = true
+                            if k == sdl2.key_lalt then g->key_alt = true
+                            if k == sdl2.key_space then g->key_space = true
+                            if k == sdl2.key_lctrl then g->key_fire = true
+                            if k == sdl2.key_tab then g->key_tab_held = true
+                            if k == sdl2.key_1 then g->weapon = 0
+                            if k == sdl2.key_2 then g->weapon = 1
+                            if k == sdl2.key_3 then g->weapon = 2
+                            if k == sdl2.key_4 then g->weapon = 3
+                            // Cheat-chord held-flags. M/L/I/B/A/T have no other
+                            // in-game action (M used to toggle music but that
+                            // clashed with the MLI chord; use the main menu's
+                            // SOUND entry to toggle music now).
+                            if k == sdl2.key_m then g->key_m_held = true
+                            if k == sdl2.key_l then g->key_l_held = true
+                            if k == sdl2.key_i then g->key_i_held = true
+                            if k == sdl2.key_b then g->key_b_held = true
+                            if k == sdl2.key_a then g->key_a_held = true
+                            if k == sdl2.key_t then g->key_t_held = true
+                            // IDDQD / IDKFA sequences — only progress while
+                            // in-game, matching how the chord cheats are
+                            // gated. Held keys can't auto-advance because
+                            // we're already inside the !is_key_repeat branch.
+                            if g->phase == game_phase.playing then
+                                player.cheats.advance_iddqd(g, k)
+                                player.cheats.advance_idkfa(g, k)
+                            if k == sdl2.key_s then overlay.take_screenshot(w, vs, pal)
+                            if k == sdl2.key_d then save.debug_dump_state(w)
+                            // IN_Ack: any keydown during an acknowledge screen
+                            // (intermission / episode-end / final victory) counts
+                            // as "acknowledge and advance". The advance itself
+                            // runs below (after tick) and is gated by
+                            // key_ack_handled so a held key only fires once.
+                            if g->phase == game_phase.intermission
+                               || g->phase == game_phase.episode_end
+                               || g->phase == game_phase.victory
+                               || g->phase == game_phase.game_over then
+                                g->key_ack = true
             if t == sdl2.keyup_event then
                 let k = event.key.keysym.sym
                 // Keyup only clears flags; not phase-sensitive.
@@ -2111,6 +2140,7 @@ let main = (args: str[]) ->
                 if k == sdl2.key_lshift then g->key_shift = false
                 if k == sdl2.key_lalt then g->key_alt = false
                 if k == sdl2.key_lctrl then g->key_fire = false
+                if k == sdl2.key_tab then g->key_tab_held = false
                 // Cheat-chord held-flags (see keydown side).
                 if k == sdl2.key_m then g->key_m_held = false
                 if k == sdl2.key_l then g->key_l_held = false
