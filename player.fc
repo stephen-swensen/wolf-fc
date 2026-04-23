@@ -227,7 +227,7 @@ module player =
                 g->iddqd_progress = if k == iddqd_sequence[0] then 1 else 0
 
         // Called per-frame from the interactive game loop while
-        // gp_playing. Checks whether all three keys of each chord
+        // playing. Checks whether all three keys of each chord
         // are held simultaneously; fires the effect once per
         // chord-press (latched until at least one of the three keys
         // is released, so a held combo doesn't retrigger every

@@ -60,7 +60,7 @@ module bj_victory =
     // there to pick his heading. Applies the level-completion bonus
     // up front so the episode-end total still reflects the map clear.
     let enter = (g: game*) ->
-        g->phase = game_phase.gp_bj_victory
+        g->phase = game_phase.bj_victory
         g->phase_timer = 0.0
         g->score = g->score + intermission.compute_level_bonus(g)
         g->bj_x = g->pos_x
@@ -88,7 +88,7 @@ module bj_victory =
         g->key_ack_handled = true
 
     // Advance the BJ actor one tick. Called from update_world while
-    // in gp_bj_victory. During the run phase the step loop matches
+    // in bj_victory. During the run phase the step loop matches
     // the original's T_BJRun: consume `move` fixed-budget, crossing
     // tile centers along the current heading and re-running
     // select_path_dir at each center to pick up the next authored
@@ -236,7 +236,7 @@ module death_cam =
         // cam kinds — skips the key drop, matching the original
         // (Schabbs/Gift/Fat/Hitler don't place a bo_key1).
         enemies.ai.kill_enemy(lv, g, ac, e, sprite_start)
-        g->phase = game_phase.gp_death_cam
+        g->phase = game_phase.death_cam
         g->phase_timer = 0.0
         g->dc_sub = sub.pre_fade
         g->dc_timer = 0.0                   // hold starts once the anim reaches enemies.enemy_state.dead
@@ -296,7 +296,7 @@ module death_cam =
         g->plane_x = 0.0 - g->dir_y * 0.66
         g->plane_y = g->dir_x * 0.66
 
-    // Per-tick update for gp_death_cam. Drives sub-phase transitions
+    // Per-tick update for death_cam. Drives sub-phase transitions
     // and feeds the fizzle-fade reveal when one is active. Dying-
     // enemy animation is pumped from the outer tick dispatch
     // (enemies.ai.update_dying_enemies), so this function doesn't
@@ -393,7 +393,7 @@ module death_cam =
         let dy = view_h - dh
         player.draw_hud_sprite(rc, vs, pal, page, dx, dy, dw, dh)
 
-    // Render one frame of the gp_death_cam cutscene. Normal viewport
+    // Render one frame of the death_cam cutscene. Normal viewport
     // during the pre-fade hold; a dissolve-to-backdrop during
     // fade_out and fade_in; a solid backdrop with the taunt pic
     // font during the taunt sub-phase; zoomed-in corpse view with a
@@ -490,7 +490,7 @@ module intermission =
     // award a flat bonus instead of ticking through kill / secret /
     // treasure ratios.
     let is_secret_level = (level_num: int32) ->
-        level_num % levels_per_episode == 9
+        level_num % episode.levels_per == 9
 
     let compute_time_left = (g: game*) ->
         let par = if g->level_num < 60 then par_times[g->level_num] else 0
@@ -512,7 +512,7 @@ module intermission =
     // gate needs at least one frame before it will fire — prevents
     // an in-flight space press from instantly skipping the screen.
     let enter = (g: game*) ->
-        g->phase = game_phase.gp_intermission
+        g->phase = game_phase.intermission
         g->phase_timer = 0.0
         // Secret-level intermissions short-circuit the whole ticker:
         // a flat 15000-point bonus, the stage counter parked at 4
@@ -743,7 +743,7 @@ module intermission =
             return
 
         write_lpic_text(rc, vg, pal, 14 * 8, 2 * 8, "FLOOR\nCOMPLETED")
-        let mapon = g->level_num % levels_per_episode + 1
+        let mapon = g->level_num % episode.levels_per + 1
         write_lpic_number(rc, vg, pal, 26 * 8, 2 * 8, mapon, false)
 
         write_lpic_text(rc, vg, pal, 14 * 8, 7 * 8, "BONUS")
@@ -817,12 +817,12 @@ module episode_end =
     // episode's map-0 or bounces back to the main menu (if this was
     // the last episode).
     let enter = (g: game*) ->
-        g->phase = game_phase.gp_episode_end
+        g->phase = game_phase.episode_end
         g->phase_timer = 0.0
         // Reset the ack latches: bj_victory.enter pre-sets
         // key_ack_handled=true to freeze BJ input, and no keyup
         // during the cutscene clears it — carrying that stale `true`
-        // into gp_episode_end would silently swallow the first
+        // into episode_end would silently swallow the first
         // press on the screen. Clearing key_ack too blocks a held
         // key from auto-advancing past the screen when we're called
         // mid-handler from the intermission path (where key_ack is
@@ -841,7 +841,7 @@ module episode_end =
     let render = (rc: render_ctx*, f: font.info*, g: game*) ->
         for i in 0..(game_w * game_h)
             rc->fb[i] = 0xFF000020u32    // deep blue backdrop
-        let ep = g->level_num / levels_per_episode
+        let ep = g->level_num / episode.levels_per
         let yellow = 0xFFFFD700u32
         let white  = 0xFFFFFFFFu32
         let gray   = 0xFFB0B0B0u32
@@ -855,11 +855,11 @@ module episode_end =
         | 4 -> "5"
         | _ -> "6"
         font.draw_centered(rc, f, 66, ep_label, yellow)
-        font.draw_centered(rc, f, 84, episode_title(ep), yellow)
+        font.draw_centered(rc, f, 84, episode.title(ep), yellow)
         hud.draw_text(rc, 70, 120, "FINAL SCORE", white, 1)
         hud.draw_number(rc, 220, 120, g->score, yellow, 1)
         font.draw_centered(rc, f, game_h - 32,
-            if ep + 1 >= num_episodes then "PRESS ANY KEY TO CONTINUE" else "PRESS ANY KEY FOR NEXT EPISODE",
+            if ep + 1 >= episode.count then "PRESS ANY KEY TO CONTINUE" else "PRESS ANY KEY FOR NEXT EPISODE",
             gray)
 
 
@@ -867,13 +867,13 @@ module victory_screen =
     // Transition to the game-complete victory screen after clearing
     // episode 6.
     let enter = (g: game*) ->
-        g->phase = game_phase.gp_victory
+        g->phase = game_phase.victory
         g->phase_timer = 0.0
         // (Same rationale as intermission.enter / episode_end.enter
         // — letting the natural KEYDOWN latch the handled flag avoids
         // eating the first press.)
 
-    // Final victory (gp_victory): shown after clearing all six
+    // Final victory (victory): shown after clearing all six
     // episodes. Space returns to the main menu.
     let render = (rc: render_ctx*, f: font.info*, g: game*) ->
         for i in 0..(game_w * game_h)

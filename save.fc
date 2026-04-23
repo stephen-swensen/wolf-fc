@@ -55,6 +55,16 @@ module save =
     // Number of save slots available in the save/load menus.
     let num_slots = 10
 
+    // Save-slot info, materialized once at entry into the save / load
+    // menus so render + input don't touch the filesystem on every
+    // frame. Empty slots have `empty=true` and zero-length `label`.
+    struct slot_info =
+        empty: bool
+        label: uint8[]
+        level_num: int32
+        difficulty: int32
+        score: int32
+
     // Split a save-file line on spaces, compacting consecutive
     // separators so the padded-width floats we write (e.g. "%14.6f")
     // parse cleanly. Returns a heap `str[]` that the caller must free
@@ -219,8 +229,8 @@ module save =
                 io.write("WLFC %d{version}\n", f)
                 // Auto-generated label — encodes episode/level for the
                 // menu.
-                let ep = g->level_num / levels_per_episode + 1
-                let lvl = g->level_num % levels_per_episode + 1
+                let ep = g->level_num / episode.levels_per + 1
+                let lvl = g->level_num % episode.levels_per + 1
                 io.write("label E%d{ep}M%d{lvl}\n", f)
                 io.write(
                     "game %d{g->level_num} %d{g->difficulty} %d{g->lives} %d{g->score} %d{g->health} %d{g->ammo} %d{g->weapon} %d{g->best_weapon} %d{if g->has_gold_key then 1 else 0} %d{if g->has_silver_key then 1 else 0} %d{if g->went_secret then 1 else 0}\n", f)
@@ -485,7 +495,7 @@ module save =
                         | _ -> void()
                     areas.connect(w->lv, g->area_number)
                     // Resume gameplay.
-                    g->phase = game_phase.gp_playing
+                    g->phase = game_phase.playing
                     g->phase_timer = 0.0
                     g->made_noise = false
                     g->key_up = false
@@ -517,7 +527,7 @@ module save =
             // Free any label from a previous refresh.
             let old_label = sm->slots[i].label
             if old_label.len > 0 then free(old_label)
-            sm->slots[i] = save_slot_info {
+            sm->slots[i] = save.slot_info {
                 empty = true,
                 label = default(uint8[]),
                 level_num = 0, difficulty = 0, score = 0
@@ -560,7 +570,7 @@ module save =
                                     buf[k] = s[k]
                                 buf
                             | none -> default(uint8[])
-                            sm->slots[i] = save_slot_info {
+                            sm->slots[i] = save.slot_info {
                                 empty = false, label = lbl,
                                 level_num = level_num,
                                 difficulty = difficulty, score = score
@@ -575,16 +585,16 @@ module save =
         let g = w->g
         let lv = w->lv
         let phase_s = match g->phase with
-        | gp_title        -> "title"
-        | gp_main_menu    -> "menu"
-        | gp_playing      -> "playing"
-        | gp_dying        -> "dying"
-        | gp_intermission -> "intermission"
-        | gp_game_over    -> "gameover"
-        | gp_bj_victory   -> "bj_victory"
-        | gp_death_cam    -> "death_cam"
-        | gp_episode_end  -> "episode_end"
-        | gp_victory      -> "victory"
+        | title        -> "title"
+        | main_menu    -> "menu"
+        | playing      -> "playing"
+        | dying        -> "dying"
+        | intermission -> "intermission"
+        | game_over    -> "gameover"
+        | bj_victory   -> "bj_victory"
+        | death_cam    -> "death_cam"
+        | episode_end  -> "episode_end"
+        | victory      -> "victory"
         io.write("\n=== DEBUG DUMP ===\n", stderr)
         io.write("phase=%s{phase_s} hp=%d{g->health} lives=%d{g->lives} level=%d{g->level_num}\n", stderr)
         io.write("pos=(%7.4f{g->pos_x}, %7.4f{g->pos_y}) dir=(%7.4f{g->dir_x}, %7.4f{g->dir_y})\n", stderr)

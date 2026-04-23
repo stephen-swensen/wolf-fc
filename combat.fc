@@ -723,7 +723,7 @@ module enemies =
         let damage_player = (g: game*, ac: audio_ctx*, dmg: int32) ->
             if dmg <= 0 then return
             match g->phase with
-            | gp_playing -> void()
+            | playing -> void()
             | _          -> return
             // IDDQD god mode: silently swallow damage. Intentionally
             // no damage flash or pain sound so the cheat reads as
@@ -739,7 +739,7 @@ module enemies =
             g->face_count = 256.0
             if g->health <= 0 then
                 g->health = 0
-                g->phase = game_phase.gp_dying
+                g->phase = game_phase.dying
                 g->phase_timer = 0.0
                 // Death scream on lethal damage; regular pain otherwise.
                 sfx.trigger(sfx.id.death_1, ac)
@@ -1122,7 +1122,7 @@ module enemies =
                 update_enemy(w->lv, w->g, w->ac, i, dt, sprite_start)
 
         // Animation-only pump for actors in die. Used during phases
-        // that freeze the rest of gameplay (gp_bj_victory, the
+        // that freeze the rest of gameplay (bj_victory, the
         // elevator pre-tally freeze) so a boss dying at the tail end
         // of a fight still plays its full die-frame cascade and lands
         // on the dead-pose sprite instead of staying stuck on its

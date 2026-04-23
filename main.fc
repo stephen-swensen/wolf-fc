@@ -33,54 +33,55 @@ let fov_factor = 0.66   // tan(33 deg) for ~66 deg FOV
 //
 //   level 0..7 : elevator → next map in same episode
 //   level 8    : elevator → episode victory screen; next episode at ep*10
-//   level 9    : elevator → back to elevator_back_to[ep] within episode
-let levels_per_episode = 10
-let num_episodes       = 6
-let elevator_back_to   = int32[6] { 1, 1, 7, 3, 5, 3 }
+//   level 9    : elevator → back to episode.back_to[ep] within episode
+module episode =
+    let levels_per = 10
+    let count      = 6
+    let back_to    = int32[6] { 1, 1, 7, 3, 5, 3 }
 
-// Human-readable episode titles (used by the episode-picker menu and the
-// per-episode victory screen).
-let episode_title = (ep: int32) ->
-    match ep with
-    | 0 -> "ESCAPE FROM WOLFENSTEIN"
-    | 1 -> "OPERATION EISENFAUST"
-    | 2 -> "DIE, FUHRER, DIE!"
-    | 3 -> "A DARK SECRET"
-    | 4 -> "TRAIL OF THE MADMAN"
-    | 5 -> "CONFRONTATION"
-    | _ -> ""
+    // Human-readable episode titles (used by the episode-picker menu
+    // and the per-episode victory screen).
+    let title = (ep: int32) ->
+        match ep with
+        | 0 -> "ESCAPE FROM WOLFENSTEIN"
+        | 1 -> "OPERATION EISENFAUST"
+        | 2 -> "DIE, FUHRER, DIE!"
+        | 3 -> "A DARK SECRET"
+        | 4 -> "TRAIL OF THE MADMAN"
+        | 5 -> "CONFRONTATION"
+        | _ -> ""
 
 // ============================================================
 // Game state
 // ============================================================
 
-// High-level game phase. Drives tick() (most systems freeze outside gp_playing)
+// High-level game phase. Drives tick() (most systems freeze outside playing)
 // and the main loop's input handling (intermission / game-over consume space to
 // advance; playing dispatches keys into the normal game code).
 //
-//   gp_playing       — normal gameplay
-//   gp_dying         — collapse animation + red screen tint after HP=0
-//   gp_intermission  — stats screen between levels (press space to continue)
-//   gp_game_over     — lives exhausted (press space to restart from level 0)
+//   playing       — normal gameplay
+//   dying         — collapse animation + red screen tint after HP=0
+//   intermission  — stats screen between levels (press space to continue)
+//   game_over     — lives exhausted (press space to restart from level 0)
 union game_phase =
-    | gp_title         // title screen shown before first game; any key → menu
-    | gp_main_menu     // nav a list with arrows. Doubles as the pause UI:
-                       // Esc from gp_playing lands here with RESUME selected.
-    | gp_playing
-    | gp_dying
-    | gp_intermission
-    | gp_game_over
-    | gp_bj_victory    // BJ runs forward + jumps + yells after the player
-                       // steps on a boss-map EXITTILE (wolf4sdl's
-                       // VictoryTile → SpawnBJVictory → ex_victorious).
-    | gp_death_cam     // boss-death cutscene for the four auto-victory bosses
-                       // (Schabbs / Gift / Fat / real Hitler). Pause on final
-                       // death frame, fizzle to black, taunt card, teleport
-                       // camera to frame the corpse, fade in, replay death
-                       // animation, hand off to intermission. Ports wolf4sdl
-                       // A_StartDeathCam.
-    | gp_episode_end   // per-episode victory screen (after boss level 8)
-    | gp_victory       // all six episodes cleared; space returns to main menu
+    | title         // title screen shown before first game; any key → menu
+    | main_menu     // nav a list with arrows. Doubles as the pause UI:
+                    // Esc from `playing` lands here with RESUME selected.
+    | playing
+    | dying
+    | intermission
+    | game_over
+    | bj_victory    // BJ runs forward + jumps + yells after the player
+                    // steps on a boss-map EXITTILE (ports the original's
+                    // VictoryTile → SpawnBJVictory → ex_victorious path).
+    | death_cam     // boss-death cutscene for the four auto-victory bosses
+                    // (Schabbs / Gift / Fat / real Hitler). Pause on final
+                    // death frame, fizzle to black, taunt card, teleport
+                    // camera to frame the corpse, fade in, replay death
+                    // animation, hand off to intermission. Ports the
+                    // original's A_StartDeathCam.
+    | episode_end   // per-episode victory screen (after boss level 8)
+    | victory       // all six episodes cleared; space returns to main menu
 
 // Menu navigation state. `menu_level` picks which list to show:
 //   0 = main menu          (NEW GAME / LOAD GAME / SAVE GAME / SOUND / QUIT)
@@ -157,7 +158,7 @@ struct game =
     has_gold_key: bool
     has_silver_key: bool
     next_level: bool
-    // Counts down in gp_playing while `next_level` is latched; when it reaches
+    // Counts down in playing while `next_level` is latched; when it reaches
     // 0 the intermission phase is entered. Gives LEVELDONESND ("elevator
     // ding") time to play in the world before the tally screen pops.
     next_level_delay: float64
@@ -200,7 +201,7 @@ struct game =
     // `spawn.near_boss` after the map loads, then cleared.
     want_near_boss: bool
 
-    // BJ victory cutscene actor state — active only during gp_bj_victory.
+    // BJ victory cutscene actor state — active only during bj_victory.
     // Spawned at the player's position; follows path-arrow tiles
     // (lv->path_arrows) tile-by-tile for 6 tiles, then jumps 4 frames with
     // YEAHSND on frame 2. See bj_victory.enter / bj_victory.tick.
@@ -216,7 +217,7 @@ struct game =
     bj_phase: int32      // 0 = running, 1 = jumping, 2 = holding final frame
     bj_yelled: bool      // YEAHSND latch (fires on entering jump frame 1)
 
-    // Death-cam cutscene state — active only during gp_death_cam.
+    // Death-cam cutscene state — active only during death_cam.
     // Sub-phases: 0 = hold on final death frame, 1 = dissolve to black,
     // 2 = taunt "Let's see you in hell!" text screen, 3 = camera teleport +
     // dissolve back in, 4 = replay death animation, 5 = hand off to
@@ -231,7 +232,7 @@ struct game =
                                     // fade-out / taunt / fade-in sub-phases
 
     // Phase state (death / intermission / game-over). Most of tick() skips
-    // when phase != gp_playing; rendering paints the appropriate overlay.
+    // when phase != playing; rendering paints the appropriate overlay.
     phase: game_phase
     phase_timer: float64       // seconds spent in current phase (for transitions)
     damage_flash_timer: float64  // red tint on damage; decays each tick
@@ -261,11 +262,11 @@ struct game =
     total_treasures: int32
 
     // Seconds elapsed in the current level (accumulates in tick during
-    // gp_playing). Compared against par_times on intermission.
+    // playing). Compared against par_times on intermission.
     level_time: float64
 
     // Intermission screen animation state. Only meaningful during
-    // gp_intermission. Mirrors wolf4sdl LevelCompleted's count-up sequence:
+    // intermission. Mirrors wolf4sdl LevelCompleted's count-up sequence:
     // time bonus ticks up first, then kill / secret / treasure ratios.
     //   stage: 0=time, 1=kill, 2=secret, 3=treasure, 4=done (awaiting space)
     //   counter: current value rendered in the active stage
@@ -328,12 +329,12 @@ struct game =
     has_active_game: bool
 
     // Fading message banner at the top of the 3D viewport. Set via
-    // hud.show_message; render_frame paints during gp_playing only. msg_buf
+    // hud.show_message; render_frame paints during playing only. msg_buf
     // is a fixed 64-byte buffer alloc'd once at game construction; we
     // never realloc — just copy into the first msg_len bytes.
     msg_buf: uint8[]
     msg_len: int32
-    msg_timer: float64    // seconds remaining; decays during gp_playing
+    msg_timer: float64    // seconds remaining; decays during playing
 
     // PRNG state. Two pcg32 streams from the same seed but different channels:
     // enemy AI rolls (sight, hit chance, damage) and BJ face idle animation.
@@ -415,7 +416,7 @@ struct render_ctx =
     billboards: billboard[]    // back-to-front draw list (statics + enemies)
     num_billboards: int32
     // Cache of the title screen, pre-decoded and palette-applied at startup.
-    // Used as the backdrop for both gp_title and gp_main_menu — without this
+    // Used as the backdrop for both title and main_menu — without this
     // cache, every menu frame re-Huffman-decompresses TITLEPIC (~64KB of
     // per-bit tree-walk) and re-palettizes 64,000 pixels, which dropped the
     // frame rate enough to underrun the audio queue and kill the music.
@@ -437,22 +438,11 @@ struct audio_ctx =
     sfx: adlib.sfx_state*      // AdLib SFX playback (owns its own OPL2 chip)
     digi: digi.player*         // 8-bit PCM playback (up to 4 slots)
 
-// Save-slot info, materialized once at entry into the save / load menus so
-// render + input don't touch the filesystem on every frame. Empty slots have
-// `empty=true`.
-struct save_slot_info =
-    empty: bool
-    label: uint8[]      // heap — "label" field parsed from the save file;
-                        // zero-length for empty slots
-    level_num: int32
-    difficulty: int32
-    score: int32
-
 // Save/load menu scratch. One instance per process — only one menu is open
 // at a time, so sharing is fine. `slots` is refreshed by save.refresh_slots
 // on menu entry; the two scratch buffers are reused across renders / writes.
 struct save_menu_ctx =
-    slots: save_slot_info[]    // length = save.num_slots
+    slots: save.slot_info[]    // length = save.num_slots
     label_scratch: uint8[]     // 32-byte reusable buffer for slot-label substrings
     hex_scratch: uint8[]       // 1-byte buffer for per-nibble save-file writes
 
@@ -500,7 +490,7 @@ let build_render_ctx = (vg: vgagraph.vgagraph_file*, pal: uint32[]) ->
 // process (only one save/load menu can be open at a time).
 let build_save_menu_ctx = () ->
     let sm = alloc(save_menu_ctx {
-        slots = alloc(save_slot_info[save.num_slots] {})!,
+        slots = alloc(save.slot_info[save.num_slots] {})!,
         label_scratch = alloc(uint8[32] {})!,
         hex_scratch = alloc(uint8[1] {})!
     })!
@@ -631,21 +621,21 @@ let reload_level_data = (w: world*, vs: vswap.vswap_file*) ->
 // Compute where the next elevator trip should land, given current level and
 // the `went_secret` latch. Wolf4sdl routing:
 //   - If we just came from the secret level (level 9 of episode), return to
-//     elevator_back_to[ep] within the same episode.
+//     episode.back_to[ep] within the same episode.
 //   - If the player used the alt-elevator switch, jump to the secret level
 //     (level 9 of current episode).
 //   - Otherwise, level+1 within the same episode (0..7). Level 8 is handled
 //     by the episode-end caller, not here.
 let compute_next_level_num = (level_num: int32, went_secret: bool) ->
-    let ep = level_num / levels_per_episode
-    let lvl = level_num % levels_per_episode
-    if went_secret then ep * levels_per_episode + 9
-    else if lvl == 9 then ep * levels_per_episode + elevator_back_to[ep]
-    else ep * levels_per_episode + lvl + 1
+    let ep = level_num / episode.levels_per
+    let lvl = level_num % episode.levels_per
+    if went_secret then ep * episode.levels_per + 9
+    else if lvl == 9 then ep * episode.levels_per + episode.back_to[ep]
+    else ep * episode.levels_per + lvl + 1
 
 // Clear held gameplay-input flags. Called on ack-screen exits (intermission /
 // episode-end advance) so the "any key" press that dismissed the screen
-// doesn't carry into gp_playing as a held movement / fire — e.g. a ctrl-press
+// doesn't carry into playing as a held movement / fire — e.g. a ctrl-press
 // to advance the episode-end screen would otherwise leave the gatling firing
 // as soon as the next episode's map 0 loads.
 let clear_gameplay_input_keys = (g: game*) ->
@@ -657,7 +647,7 @@ let clear_gameplay_input_keys = (g: game*) ->
     g->key_space = false
     g->key_space_handled = false
     // Also reset the weapon cooldown. player.update_weapon doesn't run outside
-    // gp_playing, so a fire_timer left mid-cycle by the last shot before
+    // playing, so a fire_timer left mid-cycle by the last shot before
     // the elevator switch (or EXITTILE step) survives the whole
     // next_level_delay → intermission → next-level freeze and then decays
     // over the first ~86 ms of the new map — a phantom gatling animation
@@ -689,21 +679,21 @@ let advance_next_level = (w: world*, vs: vswap.vswap_file*) ->
     reset_level_counters(g, w->lv)
     areas.update_player_area(w->lv, g)
     areas.connect(w->lv, g->area_number)
-    g->phase = game_phase.gp_playing
+    g->phase = game_phase.playing
     g->phase_timer = 0.0
     g->made_noise = false
     clear_gameplay_input_keys(g)
     trigger_get_psyched(g)
 
-// From gp_episode_end, move into the first map of the next episode. If this
+// From episode_end, move into the first map of the next episode. If this
 // was the last episode, go to the final victory screen instead.
 let advance_next_episode = (w: world*, vs: vswap.vswap_file*) ->
     let g = w->g
-    let ep = g->level_num / levels_per_episode
-    if ep + 1 >= num_episodes then
+    let ep = g->level_num / episode.levels_per
+    if ep + 1 >= episode.count then
         victory_screen.enter(g)
     else
-        g->level_num = (ep + 1) * levels_per_episode
+        g->level_num = (ep + 1) * episode.levels_per
         g->has_gold_key = false
         g->has_silver_key = false
         reload_level_data(w, vs)
@@ -711,7 +701,7 @@ let advance_next_episode = (w: world*, vs: vswap.vswap_file*) ->
         reset_level_counters(g, w->lv)
         areas.update_player_area(w->lv, g)
         areas.connect(w->lv, g->area_number)
-        g->phase = game_phase.gp_playing
+        g->phase = game_phase.playing
         g->phase_timer = 0.0
         g->made_noise = false
         clear_gameplay_input_keys(g)
@@ -728,7 +718,7 @@ let restart_current_level = (w: world*, vs: vswap.vswap_file*) ->
     reset_player_for_life(g)
     areas.update_player_area(w->lv, g)
     areas.connect(w->lv, g->area_number)
-    g->phase = game_phase.gp_playing
+    g->phase = game_phase.playing
     g->phase_timer = 0.0
     // Seed the respawn uncover: the new scene renders under a full red
     // stipple that thins out rapidly, rather than a hard cut to gameplay.
@@ -746,7 +736,7 @@ let restart_full_game = (w: world*, vs: vswap.vswap_file*) ->
     reset_player_for_new_game(g)
     areas.update_player_area(w->lv, g)
     areas.connect(w->lv, g->area_number)
-    g->phase = game_phase.gp_playing
+    g->phase = game_phase.playing
     g->phase_timer = 0.0
     clear_gameplay_input_keys(g)
     trigger_get_psyched(g)
@@ -770,7 +760,7 @@ let start_new_game_here = (w: world*, vs: vswap.vswap_file*) ->
         g->want_near_boss = false
     areas.update_player_area(w->lv, g)
     areas.connect(w->lv, g->area_number)
-    g->phase = game_phase.gp_playing
+    g->phase = game_phase.playing
     g->phase_timer = 0.0
     g->went_secret = false
     trigger_get_psyched(g)
@@ -788,7 +778,7 @@ let start_new_game_here = (w: world*, vs: vswap.vswap_file*) ->
 let update_phase_transitions = (w: world*, vs: vswap.vswap_file*) ->
     let g = w->g
     let mut level_changed = false
-    if g->next_level && g->phase == game_phase.gp_playing
+    if g->next_level && g->phase == game_phase.playing
        && g->next_level_delay <= 0.0 then
         g->next_level = false
         // Boss-map exits route through BJ victory; everything else goes
@@ -796,23 +786,23 @@ let update_phase_transitions = (w: world*, vs: vswap.vswap_file*) ->
         // play boss maps fire BJ via the EXITTILE check in player.update
         // (which doesn't set next_level), so this branch is reached only
         // by the synthetic `endepisode` test command on a boss map.
-        if g->level_num % levels_per_episode == 8 then
+        if g->level_num % episode.levels_per == 8 then
             bj_victory.enter(g)
         else
             intermission.enter(g)
-    if g->phase == game_phase.gp_dying && g->phase_timer >= player.death_anim_time then
+    if g->phase == game_phase.dying && g->phase_timer >= player.death_anim_time then
         if g->lives > 0 then
             g->lives = g->lives - 1
             restart_current_level(w, vs)
             level_changed = true
         else
-            g->phase = game_phase.gp_game_over
+            g->phase = game_phase.game_over
             g->phase_timer = 0.0
     // Death-cam cutscene has finished its replay hold; hand off to the
     // intermission tally screen, which will itself advance into
-    // gp_episode_end on space (since all death-cam boss maps are level 8
+    // episode_end on space (since all death-cam boss maps are level 8
     // within their episode).
-    if g->phase == game_phase.gp_death_cam && g->dc_sub == death_cam.sub.done then
+    if g->phase == game_phase.death_cam && g->dc_sub == death_cam.sub.done then
         intermission.enter(g)
     level_changed
 // One simulation tick — runs all per-frame game-state updates in order.
@@ -837,11 +827,11 @@ let tick = (w: world*, dt: float64) ->
     if g->got_gatling_timer > 0.0 then
         g->got_gatling_timer = g->got_gatling_timer - dt
         if g->got_gatling_timer < 0.0 then g->got_gatling_timer = 0.0
-    // Outside gp_playing only phase_timer advances + the phase-transition
+    // Outside playing only phase_timer advances + the phase-transition
     // handler runs (so death collapse → restart, etc. can fire). Enemies,
     // doors, pickups, weapon, player: all frozen.
     match g->phase with
-    | gp_playing ->
+    | playing ->
         // "GET PSYCHED!" load overlay: freeze everything while visible so
         // the player can't walk into a wall on the first frame after a
         // level transition. Processed before `next_level` so a player who
@@ -884,15 +874,15 @@ let tick = (w: world*, dt: float64) ->
             hud.update_face(g, dt)
     | _ ->
         g->phase_timer = g->phase_timer + dt
-        if g->phase == game_phase.gp_intermission then
+        if g->phase == game_phase.intermission then
             intermission.tick(g, w->ac, dt)
-        else if g->phase == game_phase.gp_bj_victory then
+        else if g->phase == game_phase.bj_victory then
             bj_victory.tick(w->lv, g, w->ac, dt)
             // Boss corpse + any other dying actors keep animating during
             // the BJ run so the player sees the death animation finish
             // (not just the first die frame freeze-framed under BJ).
             enemies.ai.update_dying_enemies(w->lv, dt)
-        else if g->phase == game_phase.gp_death_cam then
+        else if g->phase == game_phase.death_cam then
             // Pump the dying boss's animation frames before the phase
             // logic inspects e->state — death_cam.sub.pre_fade and
             // death_cam.sub.replay_hold both advance on the die → dead
@@ -907,25 +897,25 @@ let tick = (w: world*, dt: float64) ->
 // Render the full game frame to fb (used before saving a screenshot).
 let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
     match w->g->phase with
-    | gp_title ->
+    | title ->
         title_screen.render(w->rc, w->vg, pal, w->font, w->g->phase_timer)
         return
-    | gp_main_menu ->
+    | main_menu ->
         menu.render_main(w->rc, w->sm, w->vg, pal, w->font, w->g)
         return
-    | gp_intermission ->
+    | intermission ->
         intermission.render(w->rc, w->vg, pal, w->g)
         return
-    | gp_game_over ->
+    | game_over ->
         game_over.render(w->rc, w->g)
         return
-    | gp_episode_end ->
+    | episode_end ->
         episode_end.render(w->rc, w->font, w->g)
         return
-    | gp_victory ->
+    | victory ->
         victory_screen.render(w->rc, w->font, w->g)
         return
-    | gp_death_cam ->
+    | death_cam ->
         death_cam.render(w, vs, pal, w->vg)
         hud.render(w->rc, w->vg, pal, w->g)
         return
@@ -936,7 +926,7 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
     player.render_weapon(w->rc, vs, pal, w->g)
     // Damage / death red overlays — applied over the 3D view, under the HUD.
     // Phase-filtered renderers above return early, so this block only runs
-    // during gp_playing or gp_dying. Damage flash is a brief uniform alpha
+    // during playing or dying. Damage flash is a brief uniform alpha
     // blend; the longer death + respawn transitions use a spatial-hash
     // stipple so the scene fills / clears as speckled grains of red.
     let red_tint = 0x00C00000u32
@@ -945,7 +935,7 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
     else 0.0
     if flash_a > 0.0 then overlay.viewport_tint(w->rc, red_tint, flash_a)
     let stipple_progress = match w->g->phase with
-    | gp_dying ->
+    | dying ->
         // Ramp 0 → 1 over player.death_fade_time, then hold at 1 until
         // player.death_anim_time elapses and the phase transition fires.
         let t = w->g->phase_timer / player.death_fade_time
@@ -1111,16 +1101,16 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
     else if arg == "counters" then
         // Kill / secret / treasure counters + level time / par / phase.
         let phase_s = match g->phase with
-        | gp_title        -> "title"
-        | gp_main_menu    -> "menu"
-        | gp_playing      -> "playing"
-        | gp_dying        -> "dying"
-        | gp_intermission -> "intermission"
-        | gp_game_over    -> "gameover"
-        | gp_bj_victory   -> "bj_victory"
-        | gp_death_cam    -> "death_cam"
-        | gp_episode_end  -> "episode_end"
-        | gp_victory      -> "victory"
+        | title        -> "title"
+        | main_menu    -> "menu"
+        | playing      -> "playing"
+        | dying        -> "dying"
+        | intermission -> "intermission"
+        | game_over    -> "gameover"
+        | bj_victory   -> "bj_victory"
+        | death_cam    -> "death_cam"
+        | episode_end  -> "episode_end"
+        | victory      -> "victory"
         let par = if g->level_num < 60 then intermission.par_times[g->level_num] else 0
         io.write("phase=%s{phase_s} difficulty=%d{g->difficulty}\n", stdout)
         io.write("kills=%d{g->kills}/%d{g->total_kills} secrets=%d{g->secrets}/%d{g->total_secrets} treasures=%d{g->treasures}/%d{g->total_treasures}\n", stdout)
@@ -1189,32 +1179,32 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         // game-over / episode-end / victory screen. Test-mode equivalent of
         // the interactive space-bar path, but collapses animation-skip +
         // advance into one step so scripted tests don't need two hops.
-        if g->phase == game_phase.gp_intermission then
+        if g->phase == game_phase.intermission then
             if g->inter_stage < 4 then intermission.finish_anim(g)
-            if g->level_num % levels_per_episode == 8 then
+            if g->level_num % episode.levels_per == 8 then
                 episode_end.enter(g)
             else
                 advance_next_level(w, w->ac->vs)
-        else if g->phase == game_phase.gp_bj_victory then
+        else if g->phase == game_phase.bj_victory then
             // BJ cutscene collapses straight to the episode-end screen.
             // Interactive mode auto-advances on its own after the final
             // hold, but tests skip to the end so scripted sequences don't
             // need to pad with wait:200.
             episode_end.enter(g)
-        else if g->phase == game_phase.gp_death_cam then
+        else if g->phase == game_phase.death_cam then
             // Death-cam collapses to the intermission tally screen, same
             // as a natural death_cam.sub.done → intermission.enter transition.
             // Tests still need to `advance` once more to reach
-            // gp_episode_end on boss maps.
+            // episode_end on boss maps.
             intermission.enter(g)
-        else if g->phase == game_phase.gp_episode_end then
+        else if g->phase == game_phase.episode_end then
             advance_next_episode(w, w->ac->vs)
-        else if g->phase == game_phase.gp_victory then
-            g->phase = game_phase.gp_main_menu
+        else if g->phase == game_phase.victory then
+            g->phase = game_phase.main_menu
             g->menu_level = menu.nav.main
             g->menu_sel = 1     // NEW GAME — game ended, RESUME is locked
             g->has_active_game = false
-        else if g->phase == game_phase.gp_game_over then
+        else if g->phase == game_phase.game_over then
             restart_full_game(w, w->ac->vs)
     else if text.starts_with(arg, "setdifficulty:") then
         // Set difficulty + fully rebuild the current level so spawn filtering
@@ -1248,7 +1238,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
                 reset_level_counters(g, w->lv)
                 areas.update_player_area(w->lv, g)
                 areas.connect(w->lv, g->area_number)
-                g->phase = game_phase.gp_playing
+                g->phase = game_phase.playing
                 g->phase_timer = 0.0
         | none -> bad("integer level")
     else if text.starts_with(arg, "setepisode:") then
@@ -1256,15 +1246,15 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         // score/lives. Wrapper around setlevel.
         match text.parse_int32(arg[11..arg.len]) with
         | some(n) ->
-            if n < 0 || n >= num_episodes then bad("episode 0..5")
+            if n < 0 || n >= episode.count then bad("episode 0..5")
             else
-                g->level_num = n * levels_per_episode
+                g->level_num = n * episode.levels_per
                 reload_level_data(w, w->ac->vs)
                 spawn.find_player_start(w->lv_data, g)
                 reset_level_counters(g, w->lv)
                 areas.update_player_area(w->lv, g)
                 areas.connect(w->lv, g->area_number)
-                g->phase = game_phase.gp_playing
+                g->phase = game_phase.playing
                 g->phase_timer = 0.0
         | none -> bad("integer episode 0..5")
     else if text.starts_with(arg, "save:") then
@@ -1294,8 +1284,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
                 io.write("slot %d{i}: EMPTY\n", stdout)
                 void()
             else
-                let ep = s->level_num / levels_per_episode + 1
-                let lvl = s->level_num % levels_per_episode + 1
+                let ep = s->level_num / episode.levels_per + 1
+                let lvl = s->level_num % episode.levels_per + 1
                 let lbl_chars = if s->label.len > 0 then s->label else default(uint8[])
                 io.write("slot %d{i}: E%d{ep}M%d{lvl} diff=%d{s->difficulty} score=%d{s->score} label=", stdout)
                 if lbl_chars.len > 0 then io.write(lbl_chars, stdout)
@@ -1312,7 +1302,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         // death → restart → game-over flow without waiting for the enemy
         // AI to roll a lethal hit.
         g->health = 0
-        g->phase = game_phase.gp_dying
+        g->phase = game_phase.dying
         g->phase_timer = 0.0
         sfx.trigger(sfx.id.death_1, w->ac)
     else if text.starts_with(arg, "killenemy:") then
@@ -1329,41 +1319,41 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
     else if text.starts_with(arg, "setphase:") then
         // Force a phase transition for test-mode screenshot coverage.
         let p = arg[9..arg.len]
-        if p == "title" then g->phase = game_phase.gp_title
+        if p == "title" then g->phase = game_phase.title
         else if p == "menu" then
-            g->phase = game_phase.gp_main_menu
+            g->phase = game_phase.main_menu
             g->menu_level = menu.nav.main
         else if p == "diffmenu" then
-            g->phase = game_phase.gp_main_menu
+            g->phase = game_phase.main_menu
             g->menu_level = menu.nav.difficulty
         else if p == "epmenu" then
-            g->phase = game_phase.gp_main_menu
+            g->phase = game_phase.main_menu
             g->menu_level = menu.nav.episode
         else if p == "mapmenu" then
-            g->phase = game_phase.gp_main_menu
+            g->phase = game_phase.main_menu
             g->menu_level = menu.nav.map
         else if p == "savemenu" then
-            g->phase = game_phase.gp_main_menu
+            g->phase = game_phase.main_menu
             g->menu_level = menu.nav.savelist
             save.refresh_slots(w->sm)
         else if p == "loadmenu" then
-            g->phase = game_phase.gp_main_menu
+            g->phase = game_phase.main_menu
             g->menu_level = menu.nav.loadlist
             save.refresh_slots(w->sm)
-        else if p == "playing" then g->phase = game_phase.gp_playing
+        else if p == "playing" then g->phase = game_phase.playing
         else bad("title/menu/epmenu/mapmenu/diffmenu/savemenu/loadmenu/playing")
     else if arg == "phase" then
         let phase_s = match g->phase with
-        | gp_title        -> "title"
-        | gp_main_menu    -> "menu"
-        | gp_playing      -> "playing"
-        | gp_dying        -> "dying"
-        | gp_intermission -> "intermission"
-        | gp_game_over    -> "gameover"
-        | gp_bj_victory   -> "bj_victory"
-        | gp_death_cam    -> "death_cam"
-        | gp_episode_end  -> "episode_end"
-        | gp_victory      -> "victory"
+        | title        -> "title"
+        | main_menu    -> "menu"
+        | playing      -> "playing"
+        | dying        -> "dying"
+        | intermission -> "intermission"
+        | game_over    -> "gameover"
+        | bj_victory   -> "bj_victory"
+        | death_cam    -> "death_cam"
+        | episode_end  -> "episode_end"
+        | victory      -> "victory"
         io.write("phase=%s{phase_s} timer=%6.3f{g->phase_timer} lives=%d{g->lives}\n", stdout)
         void()
     else if arg == "music" then
@@ -1657,7 +1647,7 @@ let main = (args: str[]) ->
         bj_phase = 0, bj_yelled = false,
         dc_sub = 0, dc_timer = 0.0, dc_boss_idx = -1,
         dc_kill_x = 0.0, dc_kill_y = 0.0, dc_fade = 0.0,
-        phase = game_phase.gp_title, phase_timer = 0.0,
+        phase = game_phase.title, phase_timer = 0.0,
         damage_flash_timer = 0.0, respawn_fade_timer = 0.0,
         get_psyched_timer = 0.0, got_gatling_timer = 0.0,
         kills = 0, total_kills = 0,
@@ -1733,7 +1723,7 @@ let main = (args: str[]) ->
         reset_level_counters(g, w->lv)
         areas.update_player_area(w->lv, g)
         areas.connect(w->lv, g->area_number)
-        g->phase = game_phase.gp_playing
+        g->phase = game_phase.playing
         g->has_active_game = true
         trigger_get_psyched(g)
     if start_near_boss then
@@ -1750,7 +1740,7 @@ let main = (args: str[]) ->
         areas.connect(w->lv, g->area_number)
 
     // Test mode: process scripted commands, no SDL needed. Skip the
-    // title/menu entry flow — tests start directly in gp_playing so
+    // title/menu entry flow — tests start directly in playing so
     // existing regression scripts behave the same as before the UI
     // overhaul. Flags like --no-dogs may appear before or after --test; in
     // the command loop, we skip anything matching a known flag so it isn't
@@ -1759,7 +1749,7 @@ let main = (args: str[]) ->
     for i in 1..(int32) args.len
         if test_idx < 0 && args[(int64) i] == "--test" then test_idx = i
     if test_mode then
-        g->phase = game_phase.gp_playing
+        g->phase = game_phase.playing
         g->has_active_game = true
         let test_dt = 1.0 / 35.0
         for ti in (test_idx + 1)..(int32) args.len
@@ -1799,7 +1789,7 @@ let main = (args: str[]) ->
     }
     let mut obtained = default(sdl2.audio_spec)
     let audio_dev = sdl2.open_audio((any*) 0, 0, &spec, &obtained, 0)
-    // First-frame music = whatever fits the initial phase (gp_title →
+    // First-frame music = whatever fits the initial phase (title →
     // WONDERIN). Phase-driven swap below keeps this in sync afterward.
     let mut current_music_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
     let mut ms = if audio_dev > 0u32 && current_music_chunk < ad->num_chunks then
@@ -1871,14 +1861,14 @@ let main = (args: str[]) ->
                     if is_alt_enter then continue
                 // Per-phase dispatch for everything else.
                 match g->phase with
-                | gp_title ->
+                | title ->
                     // Any key advances to the main menu. Default selection
                     // = NEW GAME (RESUME is locked from the title screen).
-                    g->phase = game_phase.gp_main_menu
+                    g->phase = game_phase.main_menu
                     g->menu_level = menu.nav.main
                     g->menu_sel = 1
                     g->phase_timer = 0.0
-                | gp_main_menu ->
+                | main_menu ->
                     // Classic menu-cursor feedback: MOVEGUN1SND on up/down
                     // nav (mirrors the gun-cursor click in the original),
                     // SHOOTSND on confirm, ESCPRESSEDSND on cancel. Plays on
@@ -1911,7 +1901,7 @@ let main = (args: str[]) ->
                             | 0 ->
                                 // RESUME GAME — only reachable when active.
                                 if g->has_active_game then
-                                    g->phase = game_phase.gp_playing
+                                    g->phase = game_phase.playing
                             | 1 ->
                                 // NEW GAME → episode picker
                                 g->menu_level = menu.nav.episode
@@ -1939,16 +1929,16 @@ let main = (args: str[]) ->
                             // Esc on the main menu = RESUME if a game is
                             // active; otherwise no-op (no game to return to).
                             if g->has_active_game then
-                                g->phase = game_phase.gp_playing
+                                g->phase = game_phase.playing
                     else if g->menu_level == menu.nav.episode then
                         if k == sdl2.key_up then
-                            g->menu_sel = (g->menu_sel + num_episodes - 1) % num_episodes
+                            g->menu_sel = (g->menu_sel + episode.count - 1) % episode.count
                         else if k == sdl2.key_down then
-                            g->menu_sel = (g->menu_sel + 1) % num_episodes
+                            g->menu_sel = (g->menu_sel + 1) % episode.count
                         else if k == sdl2.key_return || k == sdl2.key_space then
                             // Remember chosen episode in level_num (as its
                             // starting map). Map picker will refine this.
-                            g->level_num = g->menu_sel * levels_per_episode
+                            g->level_num = g->menu_sel * episode.levels_per
                             g->menu_level = menu.nav.map
                             g->menu_sel = 0    // default to MAP 1
                         else if k == sdl2.key_escape then
@@ -1964,15 +1954,15 @@ let main = (args: str[]) ->
                             // menu_sel 10 = BOSS FIGHT shortcut: map 9 +
                             // near-boss teleport, consumed in start_new_
                             // game_here after the level loads.
-                            let ep = g->level_num / levels_per_episode
+                            let ep = g->level_num / episode.levels_per
                             let picked_map = if g->menu_sel == 10 then 8 else g->menu_sel
-                            g->level_num = ep * levels_per_episode + picked_map
+                            g->level_num = ep * episode.levels_per + picked_map
                             g->want_near_boss = g->menu_sel == 10
                             g->menu_level = menu.nav.difficulty
                             g->menu_sel = g->difficulty
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.episode
-                            g->menu_sel = g->level_num / levels_per_episode
+                            g->menu_sel = g->level_num / episode.levels_per
                     else if g->menu_level == menu.nav.difficulty then
                         if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + 3) % 4
@@ -1993,7 +1983,7 @@ let main = (args: str[]) ->
                             // don't drop that choice.
                             g->menu_level = menu.nav.map
                             g->menu_sel = if g->want_near_boss then 10
-                                else g->level_num % levels_per_episode
+                                else g->level_num % episode.levels_per
                             g->want_near_boss = false
                     else if g->menu_level == menu.nav.savelist then
                         if k == sdl2.key_up then
@@ -2023,14 +2013,14 @@ let main = (args: str[]) ->
                             g->menu_level = menu.nav.main
                             g->menu_sel = 2     // back to LOAD GAME
                 | _ ->
-                    // gp_playing, gp_dying, gp_intermission, gp_game_over,
-                    // gp_episode_end, gp_victory. Escape from gp_playing
+                    // playing, dying, intermission, game_over,
+                    // episode_end, victory. Escape from playing
                     // jumps to the main menu (which doubles as the pause UI
                     // — RESUME GAME is the default selection so any-key-Esc-
                     // any-key resumes immediately). Other phases consume keys
                     // for their own advance flow (handled separately below).
-                    if k == sdl2.key_escape && g->phase == game_phase.gp_playing then
-                        g->phase = game_phase.gp_main_menu
+                    if k == sdl2.key_escape && g->phase == game_phase.playing then
+                        g->phase = game_phase.main_menu
                         g->menu_level = menu.nav.main
                         g->menu_sel = 0     // RESUME GAME row
                         // Clear held inputs so the player isn't sprinting
@@ -2068,7 +2058,7 @@ let main = (args: str[]) ->
                         // matching how the chord cheats are gated. Held
                         // keys can't auto-advance because we're already
                         // inside the !is_key_repeat branch.
-                        if g->phase == game_phase.gp_playing then
+                        if g->phase == game_phase.playing then
                             player.cheats.advance_iddqd(g, k)
                         if k == sdl2.key_s then overlay.take_screenshot(w, vs, pal)
                         if k == sdl2.key_d then save.debug_dump_state(w)
@@ -2077,10 +2067,10 @@ let main = (args: str[]) ->
                         // as "acknowledge and advance". The advance itself
                         // runs below (after tick) and is gated by
                         // key_ack_handled so a held key only fires once.
-                        if g->phase == game_phase.gp_intermission
-                           || g->phase == game_phase.gp_episode_end
-                           || g->phase == game_phase.gp_victory
-                           || g->phase == game_phase.gp_game_over then
+                        if g->phase == game_phase.intermission
+                           || g->phase == game_phase.episode_end
+                           || g->phase == game_phase.victory
+                           || g->phase == game_phase.game_over then
                             g->key_ack = true
             if t == sdl2.keyup_event then
                 let k = event.key.keysym.sym
@@ -2110,7 +2100,7 @@ let main = (args: str[]) ->
         // so holding the letters on menus / intermission / death screens
         // is a no-op. Runs before tick so the refilled health/ammo/weapon
         // is visible the same frame.
-        if g->phase == game_phase.gp_playing then
+        if g->phase == game_phase.playing then
             player.cheats.check_chords(g)
 
         // Update
@@ -2124,30 +2114,30 @@ let main = (args: str[]) ->
         // or next map. The episode-end screen owns its own space-advance.
         // First press of space while the count-up is running skips animation
         // to the final "everything shown" state; next press advances.
-        if g->phase == game_phase.gp_intermission && g->phase_timer > 0.0
+        if g->phase == game_phase.intermission && g->phase_timer > 0.0
            && g->key_ack && !g->key_ack_handled then
             g->key_ack_handled = true
             if g->inter_stage < 4 then
                 intermission.finish_anim(g)
-            else if g->level_num % levels_per_episode == 8 then
+            else if g->level_num % episode.levels_per == 8 then
                 episode_end.enter(g)
             else
                 advance_next_level(w, vs)
         // Episode-end → next episode's first map (or final victory).
-        if g->phase == game_phase.gp_episode_end && g->phase_timer > 0.0
+        if g->phase == game_phase.episode_end && g->phase_timer > 0.0
            && g->key_ack && !g->key_ack_handled then
             g->key_ack_handled = true
             advance_next_episode(w, vs)
         // Final victory → return to main menu.
-        if g->phase == game_phase.gp_victory && g->phase_timer > 0.0
+        if g->phase == game_phase.victory && g->phase_timer > 0.0
            && g->key_ack && !g->key_ack_handled then
             g->key_ack_handled = true
-            g->phase = game_phase.gp_main_menu
+            g->phase = game_phase.main_menu
             g->menu_level = menu.nav.main
             g->menu_sel = 1     // NEW GAME — game ended, RESUME is locked
             g->has_active_game = false
         // Game-over: any key restarts from level 0 with a fresh game.
-        if g->phase == game_phase.gp_game_over
+        if g->phase == game_phase.game_over
            && g->key_ack && !g->key_ack_handled then
             g->key_ack_handled = true
             restart_full_game(w, vs)

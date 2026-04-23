@@ -418,19 +418,19 @@ module font =
     // Pick the AUDIOT chunk number that should be playing for the
     // current phase. Title and main menu use MENUSONG (WONDERIN).
     // Intermission uses ENDLEVEL. Per-episode and final victory screens
-    // get URAHERO and VICMARCH. All other phases (gp_playing, gp_dying,
-    // gp_game_over) use the per-level song table.
+    // get URAHERO and VICMARCH. All other phases (playing, dying,
+    // game_over) use the per-level song table.
     let music_chunk_for_phase = (phase: game_phase, level_num: int32) ->
         let mus = match phase with
-        | gp_title | gp_main_menu -> music.wonderin
-        | gp_intermission         -> music.endlevel
-        | gp_bj_victory           -> music.urahero   // same cue as the episode-end screen
+        | title | main_menu -> music.wonderin
+        | intermission         -> music.endlevel
+        | bj_victory           -> music.urahero   // same cue as the episode-end screen
         // Death-cam: keep the level track playing so the fizzle-out /
         // taunt card / fade-in all happen under the boss-level music
         // (matches the original — A_StartDeathCam doesn't switch tracks).
-        | gp_death_cam            -> if level_num >= 0 && level_num < 60 then music.songs[level_num] else 0
-        | gp_episode_end          -> music.urahero
-        | gp_victory              -> music.vicmarch
+        | death_cam            -> if level_num >= 0 && level_num < 60 then music.songs[level_num] else 0
+        | episode_end          -> music.urahero
+        | victory              -> music.vicmarch
         | _ -> if level_num >= 0 && level_num < 60 then music.songs[level_num] else 0
         261 + mus
 
@@ -652,7 +652,7 @@ module hud =
         // against SD_SoundPlaying(GETGATLINGSND).
         let face = if g->got_gatling_timer > 0.0 then pics.id.got_gatling
             else match g->phase with
-            | gp_dying     -> pics.id.face_base + 6 * 3
+            | dying     -> pics.id.face_base + 6 * 3
             | _            -> face_chunk_for(g->health, g->face_frame)
         pics.draw(rc, vg, pal, face, 136, bar_top + 4)
         // Weapon icon on the right.

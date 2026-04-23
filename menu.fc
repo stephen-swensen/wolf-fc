@@ -142,8 +142,8 @@ module menu =
                 font.draw_text(rc, f, row_x + 18, y, "EMPTY", color)
             else
                 // "LVL N  <label>  SCORE"
-                let ep = s->level_num / levels_per_episode + 1
-                let lvl = s->level_num % levels_per_episode + 1
+                let ep = s->level_num / episode.levels_per + 1
+                let lvl = s->level_num % episode.levels_per + 1
                 font.draw_text(rc, f, row_x + 18, y,
                     "E%d{ep}M%d{lvl}", color)
                 // Label (user-chosen). Fall back to a generic string
@@ -185,7 +185,7 @@ module menu =
                     else main_label(i),
                 (i: int32) -> main_is_locked(i, g->has_active_game))
         else if g->menu_level == nav.episode then
-            draw_list(rc, f, "CHOOSE EPISODE", 44, num_episodes, g->menu_sel,
+            draw_list(rc, f, "CHOOSE EPISODE", 44, episode.count, g->menu_sel,
                 (i: int32) -> episode_label(i),
                 (_: int32) -> false)
         else if g->menu_level == nav.map then
