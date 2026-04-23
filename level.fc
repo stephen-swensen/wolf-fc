@@ -2,16 +2,31 @@
 // into sibling modules (not nested under a single `level` module because
 // that would collide with the `struct level` type name in main.fc):
 //
-//   doors    — door_obj + open/close state machine
-//   pushwall — push-wall activation + per-tick slide
-//   pickups  — item_kind union + walk-over item collection
-//   tilemap  — sprite_obj + per-tile classification + map builder
-//   areas    — wolf4sdl-style area connectivity
-//   spawn    — player spawn, sprite spawn, enemy spawn, exit / push-wall
-//              markers, BJ-victory path arrows
+//   difficulty — the four picker choices (baby/easy/medium/hard)
+//   doors      — door_obj + open/close state machine
+//   pushwall   — push-wall activation + per-tick slide
+//   pickups    — item_kind union + walk-over item collection
+//   tilemap    — sprite_obj + per-tile classification + map builder
+//   areas      — wolf4sdl-style area connectivity
+//   spawn      — player spawn, sprite spawn, enemy spawn, exit / push-
+//                wall markers, BJ-victory path arrows (consumes
+//                `difficulty.*` for tier gating)
 //
 // Ordering within the file follows logical dependencies (types first,
 // then functions that compose them).
+
+
+// ============================================================
+// Difficulty — the three spawn-tile tiers (base, +36, +72) are gated
+// per wolf4sdl ScanInfoPlane: base always spawns; +36 needs >= medium;
+// +72 needs >= hard. `g->difficulty` is set from the menu selection.
+// ============================================================
+
+module difficulty =
+    let baby   = 0
+    let easy   = 1
+    let medium = 2
+    let hard   = 3
 
 
 // ============================================================
@@ -401,7 +416,7 @@ module pickups =
                 // !test_mode so scripted pickups don't hold the pic
                 // across subsequent test commands.
                 if !g->test_mode then
-                    g->got_gatling_timer = got_gatling_time
+                    g->got_gatling_timer = hud.got_gatling_time
             | clip ->
                 sfx.trigger(sfx.id.get_ammo, ac)
             | cross ->
@@ -959,10 +974,10 @@ module spawn =
     // +36 at >= medium; +72 at >= hard. Mirror the same check here so
     // lowering difficulty actually thins the roster. Pre-killed
     // corpses (tier 0, tile 124) spawn unconditionally.
-    let tier_allowed = (tier: int32, difficulty: int32) ->
+    let tier_allowed = (tier: int32, diff: int32) ->
         if tier <= 0 then true
-        else if tier == 1 then difficulty >= gd_medium
-        else difficulty >= gd_hard
+        else if tier == 1 then diff >= difficulty.medium
+        else diff >= difficulty.hard
 
     let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: int32, no_dogs: bool) ->
         lv->num_enemies = 0

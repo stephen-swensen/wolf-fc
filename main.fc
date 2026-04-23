@@ -25,145 +25,18 @@ let map_size = 64
 let tex_size = 64
 let tile_area = 107    // first non-solid tile (area floors)
 
-let move_speed = 3.5    // tiles/sec at walk
-let run_mult = 2.0
-// Per-direction multipliers on top of move_speed. Forward is 1.0 (baseline);
-// the original Wolf3D applied a 100/150 ≈ 0.67 BACKMOVESCALE to backward and
-// no asymmetry to strafe (strafe == forward). We diverge slightly: backward
-// is 0.75× and alt-strafe is 1.25×, picked for handling feel — strafe a hair
-// quicker than forward rewards using the alt-strafe key in fights, and the
-// gentler back-pedal nerf still leaves backing-out usable.
-let back_mult   = 0.75
-let strafe_mult = 1.25
-let turn_speed = 2.5    // rad/sec at walk
 let fov_factor = 0.66   // tan(33 deg) for ~66 deg FOV
 
-// Per-level ceiling palette indices (6 episodes x 10 levels = 60).
-let ceil_table = int32[60] {
-    0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0xBF,
-    0x4E,0x4E,0x4E,0x1D,0x8D,0x4E,0x1D,0x2D,0x1D,0x8D,
-    0x1D,0x1D,0x1D,0x1D,0x1D,0x2D,0xDD,0x1D,0x1D,0x98,
-    0x1D,0x9D,0x2D,0xDD,0xDD,0x9D,0x2D,0x4D,0x1D,0xDD,
-    0x7D,0x1D,0x2D,0x2D,0xDD,0xD7,0x1D,0x1D,0x1D,0x2D,
-    0x1D,0x1D,0x1D,0x1D,0xDD,0xDD,0x7D,0xDD,0xDD,0xDD
-}
-
-// Wolf3D music enum values (relative to STARTMUSIC=261; AUDIOT chunk is
-// 261 + value). Full inventory from wolf4sdl audiowl6.h. The per-level
-// `songs[]` table below and `font.music_chunk_for_phase` pick from these.
-// Entries tagged "(per level)" are only referenced through `songs[]`;
-// "(phase)" ones are used directly by font.music_chunk_for_phase; "(unused)"
-// are documented for future wiring (demos, boss cut-ins, etc.).
-let music_corner   =  0    // CORNER_MUS    (per level — E1L10 Pac-Man secret ambient)
-let music_dungeon  =  1    // DUNGEON_MUS   (per level — E2L10 secret floor)
-let music_warmarch =  2    // WARMARCH_MUS  (per level — boss levels)
-let music_getthem  =  3    // GETTHEM_MUS   (per level — E1L1 etc.)
-let music_headache =  4    // HEADACHE_MUS  (per level — E2 tracks)
-let music_hitlwltz =  5    // HITLWLTZ_MUS  (unused — Hitler waltz; not referenced)
-let music_introcw3 =  6    // INTROCW3_MUS  (per level — E3 opener)
-let music_nazi_nor =  7    // NAZI_NOR_MUS  (unused — alt normal-enemy theme)
-let music_nazi_omi =  8    // NAZI_OMI_MUS  (per level — E2 ominous track)
-let music_pow      =  9    // POW_MUS       (per level — E1 tracks)
-let music_salute   = 10    // SALUTE_MUS    (unused — marching salute fanfare)
-let music_searchn  = 11    // SEARCHN_MUS   (per level — E1 search theme)
-let music_suspense = 12    // SUSPENSE_MUS  (per level — E1 suspense)
-let music_victors  = 13    // VICTORS_MUS   (unused — alt victory theme)
-let music_wonderin = 14    // WONDERIN_MUS  (phase: title + main menu)
-let music_funkyou  = 15    // FUNKYOU_MUS   (unused — funky outro)
-let music_endlevel = 16    // ENDLEVEL_MUS  (phase: intermission)
-let music_goingaft = 17    // GOINGAFT_MUS  (per level — E2 chase)
-let music_pregnant = 18    // PREGNANT_MUS  (per level — E2 tracks)
-let music_ultimate = 19    // ULTIMATE_MUS  (per level — E3L9 secret)
-let music_nazi_rap = 20    // NAZI_RAP_MUS  (per level — E3 tracks)
-let music_zerohour = 21    // ZEROHOUR_MUS  (per level — E3 tracks)
-let music_twelfth  = 22    // TWELFTH_MUS   (per level — E3 tracks)
-let music_roster   = 23    // ROSTER_MUS    (unused — high-score roll)
-let music_urahero  = 24    // URAHERO_MUS   (phase: per-episode victory)
-let music_vicmarch = 25    // VICMARCH_MUS  (phase: final game-clear victory)
-let music_pacman   = 26    // PACMAN_MUS    (per level — Pac-Man secret rooms)
-
-// "GET PSYCHED!" overlay duration (seconds). Wolf4sdl's PreloadGraphics
-// calls `IN_UserInput(70)` (1s at 70Hz); we hold slightly longer so the
-// progress bar doesn't flash by. The original shows GETPSYCHEDPIC over a
-// grey field (VIEWCOLOR / palette 0x7f) with a progress bar across the
-// bottom of the pic. Our level load is instant, so this is pure beat.
-let get_psyched_time = 1.4
-
-// Background palette index behind the GETPSYCHEDPIC overlay. wolf4sdl's
-// `bordercol = VIEWCOLOR = 0x7f` — a mid-grey.
-let get_psyched_bg_index = 0x7f
-
-// Window dimensions for the GET PSYCHED frame, matching wolf4sdl
-// `PreloadGraphics` WindowW/H. The pic is 224x48 centered in the 3D
-// viewport; the progress bar occupies the bottom strip of this window.
-let get_psyched_pic_w = 224
-let get_psyched_pic_h = 48
-
-// "Got Gatling!" face-slot swap duration (seconds). Wolf4sdl's DrawFace
-// keeps the pic up while GETGATLINGSND is still playing. In WL6 that's
-// the AdLib chunk only (305 notes at 140 Hz = ~2.18 s of FM guitar-riff
-// pickup jingle — SOD has a digitized replacement but WL6 doesn't). We
-// hold the face a touch beyond the sound so it doesn't snap away the
-// instant the last note trails off.
-let got_gatling_time = 2.2
-
-// Seconds to hold gameplay frozen after the player pulls the elevator switch
-// before the intermission screen appears. Stands in for the original game's
-// fade-out/fade-in between Cmd_Use and LevelCompleted — lets LEVELDONESND
-// play out in the world before the score tally takes over.
-let elevator_wait_time = 1.0
-
-// Per-level music: songs[episode * 10 + level] = music enum index.
-// STARTMUSIC = 261. Chunk = 261 + songs[i].
-// GETTHEM=3, SEARCHN=11, POW=9, SUSPENSE=12, WARMARCH=2, CORNER=0,
-// NAZI_OMI=8, PREGNANT=18, GOINGAFT=17, HEADACHE=4, DUNGEON=1,
-// INTROCW3=6, NAZI_RAP=20, TWELFTH=22, ZEROHOUR=21, ULTIMATE=19, PACMAN=26
-let songs = int32[60] {
-    3,11,9,12,3,11,9,12, 2,0,
-    8,18,17,4,8,18,4,17, 2,1,
-    6,20,22,21,6,20,22,21, 19,26,
-    3,11,9,12,3,11,9,12, 2,0,
-    8,18,17,4,8,18,4,17, 2,1,
-    6,20,22,21,6,20,22,21, 19,26
-}
-
-// Par time in seconds for each of the 60 levels. Derived from the minute-
-// fraction values in wolf4sdl gamepal.h ParTimes[]: fractions of hours
-// multiplied by 3600 and rounded to whole seconds. Used for the bonus
-// computation on the intermission screen (faster than par → time bonus).
-let par_times = int32[60] {
-    90, 120, 120, 150, 90, 240, 150, 180, 420, 0,
-    90, 180, 270, 360, 120, 270, 330, 420, 360, 0,
-    120, 150, 240, 300, 270, 330, 420, 360, 330, 0,
-    90, 120, 120, 150, 90, 240, 150, 180, 420, 0,
-    90, 180, 270, 360, 120, 270, 330, 420, 360, 0,
-    120, 150, 240, 300, 270, 330, 420, 360, 330, 0
-}
-
-// Difficulty constants. The three spawn-tile tiers (base, +36, +72) are
-// gated by these per wolf4sdl ScanInfoPlane: base always spawns; +36 needs
-// >= gd_medium; +72 needs >= gd_hard.
-let gd_baby      = 0
-let gd_easy      = 1
-let gd_medium    = 2
-let gd_hard      = 3
-
-// Episode structure (Wolf3D WL6): 6 episodes × 10 levels each. Within an
-// episode, levels 0..7 are the normal maps, level 8 is the boss / finale,
-// level 9 is the secret level (reachable via ALTELEVATORTILE).
+// Episode structure (6 episodes × 10 levels each). Within an episode,
+// levels 0..7 are the normal maps, level 8 is the boss / finale, level 9
+// is the secret level (reachable via a dedicated alt-elevator switch).
 //
 //   level 0..7 : elevator → next map in same episode
 //   level 8    : elevator → episode victory screen; next episode at ep*10
 //   level 9    : elevator → back to elevator_back_to[ep] within episode
-//                (mirrors wolf4sdl's ElevatorBackTo table)
 let levels_per_episode = 10
 let num_episodes       = 6
 let elevator_back_to   = int32[6] { 1, 1, 7, 3, 5, 3 }
-
-// Wolf3D plane-0 raw value for "alt elevator switch" (overloads AREATILE[0];
-// levels are designed so that only a particular hidden-route area-0 tile is
-// adjacent to an elevator-21 tile, making the secret exit positional).
-let alt_elevator_tile  = 107
 
 // Human-readable episode titles (used by the episode-picker menu and the
 // per-episode victory screen).
@@ -215,19 +88,6 @@ union game_phase =
 //   2 = episode picker     (under NEW GAME, before difficulty)
 //   3 = save-slot list     (Save Game — 10 slots)
 //   4 = load-slot list     (Load Game — 10 slots)
-
-// Number of save slots available in the save/load menus.
-let num_save_slots = 10
-
-// Death collapse timing: the red stipple ramps up over `death_fade_time`,
-// then holds at full coverage until `death_anim_time` elapses and the
-// respawn/game-over transition fires. After a respawn, `respawn_fade_time`
-// controls how quickly the red stipple uncovers back to the new scene.
-let death_fade_time = 1.4
-let death_anim_time = 2.2
-let respawn_fade_time = 0.35
-// Red-flash duration on any damage event (seconds). Short; purely visual.
-let damage_flash_time = 0.25
 
 struct game =
     // Camera / player
@@ -376,7 +236,7 @@ struct game =
     phase_timer: float64       // seconds spent in current phase (for transitions)
     damage_flash_timer: float64  // red tint on damage; decays each tick
     // Red stipple that uncovers back to the new scene after a death-restart.
-    // Set to `respawn_fade_time` by restart_current_level; decays each tick.
+    // Set to `player.respawn_fade_time` by restart_current_level; decays each tick.
     respawn_fade_timer: float64
     // "GET PSYCHED!" overlay shown briefly on level entry. Ticks down each
     // frame; while > 0 the world is frozen (tick skips all subsystems) and
@@ -435,9 +295,9 @@ struct game =
                                    // served the same purpose.
 
     // Difficulty: 0=Daddy, 1=Don't Hurt Me, 2=Bring 'em On, 3=Death Incarnate.
-    // Controls which tile blocks spawn enemies (base/+36/+72 per wolf4sdl
-    // ScanInfoPlane). Default gd_hard (2) matches the previous single-tier
-    // behaviour; setdifficulty test command can dial it down for coverage.
+    // Controls which tile blocks spawn enemies (base/+36/+72 per
+    // ScanInfoPlane). Default `difficulty.hard` (2) matches the previous
+    // single-tier behaviour; setdifficulty test command can dial it down.
     difficulty: int32
 
     // --no-dogs CLI flag: skip spawning enemies.enemy_kind.dog actors. Latched at startup
@@ -482,19 +342,6 @@ struct game =
     // for reproducibility, sys.time() otherwise — set in main.
     rng_enemy: random.pcg_random
     rng_face: random.pcg_random
-
-// PCG channel IDs. One seed fans out to independent streams per channel; we
-// keep AI rolls and HUD-face rolls on different channels so HUD rendering
-// can't perturb the enemy sequence scripted tests depend on.
-let rng_channel_enemy = 1u64
-let rng_channel_face  = 2u64
-
-// Shared byte roll for all enemy behaviour (sight, hit chance, damage). The
-// RNG state lives on the game struct (initialised in main) rather than as a
-// module-level global so tests can pin the seed to 0 while interactive runs
-// seed from sys.time().
-let rnd_byte = (g: game*) ->
-    (int32) (random.pcg_random.next_uint32(&g->rng_enemy) & 0xFFu32)
 
 // CLI flag `--no-dogs`: when true, spawn.spawn_enemies skips every enemies.enemy_kind.dog. Pre-dead
 // dog corpses don't exist in the data (the "dead guard" marker is tile 124,
@@ -605,7 +452,7 @@ struct save_slot_info =
 // at a time, so sharing is fine. `slots` is refreshed by save.refresh_slots
 // on menu entry; the two scratch buffers are reused across renders / writes.
 struct save_menu_ctx =
-    slots: save_slot_info[]    // length = num_save_slots
+    slots: save_slot_info[]    // length = save.num_slots
     label_scratch: uint8[]     // 32-byte reusable buffer for slot-label substrings
     hex_scratch: uint8[]       // 1-byte buffer for per-nibble save-file writes
 
@@ -653,7 +500,7 @@ let build_render_ctx = (vg: vgagraph.vgagraph_file*, pal: uint32[]) ->
 // process (only one save/load menu can be open at a time).
 let build_save_menu_ctx = () ->
     let sm = alloc(save_menu_ctx {
-        slots = alloc(save_slot_info[num_save_slots] {})!,
+        slots = alloc(save_slot_info[save.num_slots] {})!,
         label_scratch = alloc(uint8[32] {})!,
         hex_scratch = alloc(uint8[1] {})!
     })!
@@ -769,41 +616,6 @@ let reset_player_for_new_game = (g: game*) ->
     g->lives = 3
     reset_player_for_life(g)
 
-// Wolf3D bonus scoring on level completion. Rewards the player for beating
-// par-time and for 100% kills / secrets / treasures. Awarded once as the
-// intermission is entered; displayed on the intermission screen.
-// Values mirror wolf4sdl's LevelCompleted calculation:
-//   time bonus: +500 per second beaten par (PAR_AMOUNT = 500)
-//   100% kills:     +10000   (PERCENT100AMT)
-//   100% secrets:   +10000
-//   100% treasures: +10000
-let par_amount_per_sec = 500
-let percent_100_bonus  = 10000
-// Flat bonus awarded for completing a secret level. Matches wolf4sdl's
-// LevelCompleted (`GivePoints(15000)` in the !normal-floor branch).
-let secret_floor_bonus = 15000
-
-// True iff `level_num` is the secret level (map 10 / index 9) of its
-// episode. Secret intermissions show a different layout and award a flat
-// bonus instead of ticking through kill / secret / treasure ratios.
-let is_secret_level = (level_num: int32) ->
-    level_num % levels_per_episode == 9
-
-let compute_time_left = (g: game*) ->
-    let par = if g->level_num < 60 then par_times[g->level_num] else 0
-    let t = (int32) g->level_time
-    if par > 0 && t < par then par - t else 0
-
-let compute_ratio = (cur: int32, tot: int32) ->
-    if tot <= 0 then 0 else (cur * 100) / tot
-
-let compute_level_bonus = (g: game*) ->
-    let time_bonus = compute_time_left(g) * par_amount_per_sec
-    let kill_bonus = if g->total_kills > 0 && g->kills >= g->total_kills then percent_100_bonus else 0
-    let secret_bonus = if g->total_secrets > 0 && g->secrets >= g->total_secrets then percent_100_bonus else 0
-    let treas_bonus = if g->total_treasures > 0 && g->treasures >= g->total_treasures then percent_100_bonus else 0
-    time_bonus + kill_bonus + secret_bonus + treas_bonus
-
 // Free the current level + lv_data and load + build the level at level_num.
 // Shared by every transition path (next-level / restart / new-game). After
 // this runs, the player still needs position + per-level state set — caller
@@ -859,7 +671,7 @@ let clear_gameplay_input_keys = (g: game*) ->
 // freeze would swallow ~24 `fwd:` ticks of every cross-level test).
 let trigger_get_psyched = (g: game*) ->
     if !g->test_mode then
-        g->get_psyched_timer = get_psyched_time
+        g->get_psyched_timer = pics.get_psyched_time
 
 // Advance to the next map per episode routing. Called after the intermission
 // space-press on levels 0..7 and level 9; level 8 → episode-end is handled
@@ -920,7 +732,7 @@ let restart_current_level = (w: world*, vs: vswap.vswap_file*) ->
     g->phase_timer = 0.0
     // Seed the respawn uncover: the new scene renders under a full red
     // stipple that thins out rapidly, rather than a hard cut to gameplay.
-    g->respawn_fade_timer = respawn_fade_time
+    g->respawn_fade_timer = player.respawn_fade_time
     trigger_get_psyched(g)
 
 // Full game reset after game-over. level_num → 0; player state back to
@@ -988,7 +800,7 @@ let update_phase_transitions = (w: world*, vs: vswap.vswap_file*) ->
             bj_victory.enter(g)
         else
             intermission.enter(g)
-    if g->phase == game_phase.gp_dying && g->phase_timer >= death_anim_time then
+    if g->phase == game_phase.gp_dying && g->phase_timer >= player.death_anim_time then
         if g->lives > 0 then
             g->lives = g->lives - 1
             restart_current_level(w, vs)
@@ -1129,19 +941,19 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
     // stipple so the scene fills / clears as speckled grains of red.
     let red_tint = 0x00C00000u32
     let flash_a = if w->g->damage_flash_timer > 0.0 then
-        w->g->damage_flash_timer / damage_flash_time * 0.45
+        w->g->damage_flash_timer / player.damage_flash_time * 0.45
     else 0.0
     if flash_a > 0.0 then overlay.viewport_tint(w->rc, red_tint, flash_a)
     let stipple_progress = match w->g->phase with
     | gp_dying ->
-        // Ramp 0 → 1 over death_fade_time, then hold at 1 until
-        // death_anim_time elapses and the phase transition fires.
-        let t = w->g->phase_timer / death_fade_time
+        // Ramp 0 → 1 over player.death_fade_time, then hold at 1 until
+        // player.death_anim_time elapses and the phase transition fires.
+        let t = w->g->phase_timer / player.death_fade_time
         if t > 1.0 then 1.0 else t
     | _ ->
         // Quick uncover back to the new scene on respawn.
         if w->g->respawn_fade_timer > 0.0 then
-            w->g->respawn_fade_timer / respawn_fade_time
+            w->g->respawn_fade_timer / player.respawn_fade_time
         else 0.0
     overlay.dissolve_stipple(w->rc, red_tint, stipple_progress)
     hud.render(w->rc, w->vg, pal, w->g)
@@ -1155,14 +967,14 @@ let render_frame = (w: world*, vs: vswap.vswap_file*, pal: uint32[]) ->
     // status bar stays visible underneath, matching the original.
     if w->g->get_psyched_timer > 0.0 then
         pics.render_get_psyched_overlay(w->rc, w->vg, pal,
-            w->g->get_psyched_timer, get_psyched_time)
+            w->g->get_psyched_timer, pics.get_psyched_time)
     // Pre-intermission fade-to-black: while `next_level` is latched and
     // gameplay is frozen, darken the entire frame linearly as next_level_delay
     // ticks down. Gives the player immediate visual feedback that the
     // elevator/boss activation registered, rather than a silent 1s hitch
     // followed by a sudden jump to the tally screen.
-    if w->g->next_level && elevator_wait_time > 0.0 then
-        let frac = 1.0 - w->g->next_level_delay / elevator_wait_time
+    if w->g->next_level && player.elevator_wait_time > 0.0 then
+        let frac = 1.0 - w->g->next_level_delay / player.elevator_wait_time
         let alpha = if frac < 0.0 then 0.0 else if frac > 1.0 then 1.0 else frac
         overlay.viewport_tint_full(w->rc, 0x000000u32, alpha)
 
@@ -1265,12 +1077,12 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         // Force the GET PSYCHED overlay timer so a following ss: captures
         // the full-screen load graphic. Bypasses the normal test_mode gate
         // in trigger_get_psyched.
-        g->get_psyched_timer = get_psyched_time
+        g->get_psyched_timer = pics.get_psyched_time
     else if arg == "gotgatling" then
         // Force the GOTGATLINGPIC face-cell swap so ss: can capture it.
         // Bypasses test_mode. The pic replaces the BJ face in hud.render
         // while the timer is active.
-        g->got_gatling_timer = got_gatling_time
+        g->got_gatling_timer = hud.got_gatling_time
     else if arg == "space" then
         g->key_space = true
         g->key_space_handled = false
@@ -1309,7 +1121,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
         | gp_death_cam    -> "death_cam"
         | gp_episode_end  -> "episode_end"
         | gp_victory      -> "victory"
-        let par = if g->level_num < 60 then par_times[g->level_num] else 0
+        let par = if g->level_num < 60 then intermission.par_times[g->level_num] else 0
         io.write("phase=%s{phase_s} difficulty=%d{g->difficulty}\n", stdout)
         io.write("kills=%d{g->kills}/%d{g->total_kills} secrets=%d{g->secrets}/%d{g->total_secrets} treasures=%d{g->treasures}/%d{g->total_treasures}\n", stdout)
         io.write("time=%6.2f{g->level_time} par=%d{par}\n", stdout)
@@ -1458,7 +1270,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
     else if text.starts_with(arg, "save:") then
         match text.parse_int32(arg[5..arg.len]) with
         | some(n) ->
-            if n < 0 || n >= num_save_slots then bad("slot 0..%d{num_save_slots - 1}")
+            if n < 0 || n >= save.num_slots then bad("slot 0..%d{save.num_slots - 1}")
             else
                 save.to_slot(w, n)
                 io.write("saved slot %d{n}\n", stdout)
@@ -1467,7 +1279,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
     else if text.starts_with(arg, "load:") then
         match text.parse_int32(arg[5..arg.len]) with
         | some(n) ->
-            if n < 0 || n >= num_save_slots then bad("slot 0..%d{num_save_slots - 1}")
+            if n < 0 || n >= save.num_slots then bad("slot 0..%d{save.num_slots - 1}")
             else
                 let ok = save.from_slot(w, w->ac->vs, n)
                 io.write("load slot %d{n}: %s{if ok then "ok" else "failed"}\n", stdout)
@@ -1476,7 +1288,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: uint32[], dt: float64) ->
     else if arg == "listsaves" then
         // Dump the on-disk save slots (label + level + score).
         save.refresh_slots(w->sm)
-        for i in 0..num_save_slots
+        for i in 0..save.num_slots
             let s = &w->sm->slots[i]
             if s->empty then
                 io.write("slot %d{i}: EMPTY\n", stdout)
@@ -1859,7 +1671,7 @@ let main = (args: str[]) ->
         inter_breathe_timer = 0.0,
         inter_pause_timer = 0.0,
         inter_end_sound_delay = 0.0,
-        difficulty = gd_hard,
+        difficulty = difficulty.hard,
         no_dogs = arg_no_dogs,
         test_mode = test_mode,
         menu_sel = 0, menu_level = menu.nav.main,
@@ -1867,8 +1679,8 @@ let main = (args: str[]) ->
         has_active_game = false,
         msg_buf = alloc(uint8[256] {})!,
         msg_len = 0, msg_timer = 0.0,
-        rng_enemy = random.pcg_random.make_with_channel(rng_seed, rng_channel_enemy),
-        rng_face = random.pcg_random.make_with_channel(rng_seed, rng_channel_face)
+        rng_enemy = random.pcg_random.make_with_channel(rng_seed, enemies.rng_channel),
+        rng_face = random.pcg_random.make_with_channel(rng_seed, hud.rng_channel)
     })!
     spawn.find_player_start(lv_data, g)
     io.write("  player at (%4.1f{g->pos_x}, %4.1f{g->pos_y})\n", stdout)
@@ -2185,9 +1997,9 @@ let main = (args: str[]) ->
                             g->want_near_boss = false
                     else if g->menu_level == menu.nav.savelist then
                         if k == sdl2.key_up then
-                            g->menu_sel = (g->menu_sel + num_save_slots - 1) % num_save_slots
+                            g->menu_sel = (g->menu_sel + save.num_slots - 1) % save.num_slots
                         else if k == sdl2.key_down then
-                            g->menu_sel = (g->menu_sel + 1) % num_save_slots
+                            g->menu_sel = (g->menu_sel + 1) % save.num_slots
                         else if k == sdl2.key_return || k == sdl2.key_space then
                             save.to_slot(w, g->menu_sel)
                             save.refresh_slots(w->sm)
@@ -2200,9 +2012,9 @@ let main = (args: str[]) ->
                             g->menu_sel = 3
                     else if g->menu_level == menu.nav.loadlist then
                         if k == sdl2.key_up then
-                            g->menu_sel = (g->menu_sel + num_save_slots - 1) % num_save_slots
+                            g->menu_sel = (g->menu_sel + save.num_slots - 1) % save.num_slots
                         else if k == sdl2.key_down then
-                            g->menu_sel = (g->menu_sel + 1) % num_save_slots
+                            g->menu_sel = (g->menu_sel + 1) % save.num_slots
                         else if k == sdl2.key_return || k == sdl2.key_space then
                             if !w->sm->slots[g->menu_sel].empty then
                                 if save.from_slot(w, vs, g->menu_sel) then

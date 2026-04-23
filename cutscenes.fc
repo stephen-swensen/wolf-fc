@@ -62,7 +62,7 @@ module bj_victory =
     let enter = (g: game*) ->
         g->phase = game_phase.gp_bj_victory
         g->phase_timer = 0.0
-        g->score = g->score + compute_level_bonus(g)
+        g->score = g->score + intermission.compute_level_bonus(g)
         g->bj_x = g->pos_x
         g->bj_y = g->pos_y
         g->bj_tile_x = (int32) g->pos_x
@@ -460,6 +460,52 @@ module intermission =
     // (elevator_wait_time), so we don't need the longer gap the
     // original inserted between Cmd_Use and LevelCompleted.
     let lead_in = 0.25
+
+    // Par time in seconds for each of the 60 levels. Derived from the
+    // minute-fraction values in the original's ParTimes[] (fractions
+    // of hours × 3600, rounded to whole seconds). Used both for the
+    // bonus computation (beat par → time bonus) and the "PAR: M:SS"
+    // display on the intermission screen.
+    let par_times = int32[60] {
+         90, 120, 120, 150,  90, 240, 150, 180, 420,   0,
+         90, 180, 270, 360, 120, 270, 330, 420, 360,   0,
+        120, 150, 240, 300, 270, 330, 420, 360, 330,   0,
+         90, 120, 120, 150,  90, 240, 150, 180, 420,   0,
+         90, 180, 270, 360, 120, 270, 330, 420, 360,   0,
+        120, 150, 240, 300, 270, 330, 420, 360, 330,   0
+    }
+
+    // Level-completion scoring. Rewards beating par-time and 100%
+    // kills / secrets / treasures. Awarded once as the intermission
+    // is entered; displayed on the intermission screen.
+    //   time bonus: +500 per second beaten par
+    //   100% kills / secrets / treasures: +10000 each
+    let par_amount_per_sec = 500
+    let percent_100_bonus  = 10000
+    // Flat bonus awarded for completing a secret level.
+    let secret_floor_bonus = 15000
+
+    // True iff `level_num` is the secret level (map 10 / index 9) of
+    // its episode. Secret intermissions show a different layout and
+    // award a flat bonus instead of ticking through kill / secret /
+    // treasure ratios.
+    let is_secret_level = (level_num: int32) ->
+        level_num % levels_per_episode == 9
+
+    let compute_time_left = (g: game*) ->
+        let par = if g->level_num < 60 then par_times[g->level_num] else 0
+        let t = (int32) g->level_time
+        if par > 0 && t < par then par - t else 0
+
+    let compute_ratio = (cur: int32, tot: int32) ->
+        if tot <= 0 then 0 else (cur * 100) / tot
+
+    let compute_level_bonus = (g: game*) ->
+        let time_bonus = compute_time_left(g) * par_amount_per_sec
+        let kill_bonus = if g->total_kills > 0 && g->kills >= g->total_kills then percent_100_bonus else 0
+        let secret_bonus = if g->total_secrets > 0 && g->secrets >= g->total_secrets then percent_100_bonus else 0
+        let treas_bonus = if g->total_treasures > 0 && g->treasures >= g->total_treasures then percent_100_bonus else 0
+        time_bonus + kill_bonus + secret_bonus + treas_bonus
 
     // Begin the intermission phase (stats screen between levels).
     // The phase timer starts at 0 so the "press space to continue"

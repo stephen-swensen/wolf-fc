@@ -52,6 +52,9 @@ module save =
 
     let version = 1
 
+    // Number of save slots available in the save/load menus.
+    let num_slots = 10
+
     // Split a save-file line on spaces, compacting consecutive
     // separators so the padded-width floats we write (e.g. "%14.6f")
     // parse cleanly. Returns a heap `str[]` that the caller must free
@@ -312,8 +315,8 @@ module save =
                     // Either way, load is now reproducible rather
                     // than inheriting whatever stream position the
                     // live game had reached.
-                    g->rng_enemy = random.pcg_random.make_with_channel(0u64, rng_channel_enemy)
-                    g->rng_face  = random.pcg_random.make_with_channel(0u64, rng_channel_face)
+                    g->rng_enemy = random.pcg_random.make_with_channel(0u64, enemies.rng_channel)
+                    g->rng_face  = random.pcg_random.make_with_channel(0u64, hud.rng_channel)
                     let mut level_loaded = false
                     let mut i = 0
                     loop
@@ -510,7 +513,7 @@ module save =
     // (not the full body) by streaming line-by-line until we've seen
     // the `game` line.
     let refresh_slots = (sm: save_menu_ctx*) ->
-        for i in 0..num_save_slots
+        for i in 0..save.num_slots
             // Free any label from a previous refresh.
             let old_label = sm->slots[i].label
             if old_label.len > 0 then free(old_label)
@@ -519,7 +522,7 @@ module save =
                 label = default(uint8[]),
                 level_num = 0, difficulty = 0, score = 0
             }
-        for i in 0..num_save_slots
+        for i in 0..save.num_slots
             match slot_path(i) with
             | none -> void()
             | some(path) ->

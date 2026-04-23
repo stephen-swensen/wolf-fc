@@ -35,6 +35,21 @@ module dir =
 
 module enemies =
     import math from std::
+    import random from std::
+
+    // PCG channel ID for enemy AI rolls (sight, hit chance, damage,
+    // reaction delay, chase-dir scan, guard-death-scream pick). Kept
+    // distinct from the HUD face channel (hud.rng_channel) so HUD
+    // rendering doesn't perturb the enemy sequence scripted tests
+    // depend on.
+    let rng_channel = 1u64
+
+    // Shared byte roll for all enemy behaviour. The RNG state lives
+    // on the game struct so scripted tests can pin the seed to 0 and
+    // interactive runs can seed from sys.time() — see main() for
+    // the seed selection.
+    let rnd_byte = (g: game*) ->
+        (int32) (random.pcg_random.next_uint32(&g->rng_enemy) & 0xFFu32)
 
     union enemy_kind =
         | guard
@@ -715,7 +730,7 @@ module enemies =
             // "nothing even touched you" rather than a hit absorbed.
             if g->god_mode then return
             g->health = g->health - dmg
-            g->damage_flash_timer = damage_flash_time
+            g->damage_flash_timer = player.damage_flash_time
             // Force the next face roll to fire on the next
             // hud.update_face tick so the new health row is visible
             // immediately (the original resets facecount in
@@ -1267,7 +1282,7 @@ module projectiles =
     // Damage per projectile kind — T_Projectile's per-class rolls in
     // the original.
     let damage_of = (k: projectile_kind, g: game*) ->
-        let roll = rnd_byte(g)
+        let roll = enemies.rnd_byte(g)
         match k with
         | needle -> (roll >> 3) + 20    // 20-51
         | rocket -> (roll >> 3) + 30    // 30-61
@@ -1360,10 +1375,10 @@ module projectiles =
         // opposite the player at (1.9, 1.9) still lands a bite.
         if math.abs(dx) > 2.0 || math.abs(dy) > 2.0 then return
         if !enemies.ai.check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then return
-        if rnd_byte(g) < 180 then
+        if enemies.rnd_byte(g) < 180 then
             // Matches T_Bite in the original: US_RndT() >> 4 → 0-15
             // (can graze for 0).
-            let dmg = rnd_byte(g) >> 4
+            let dmg = enemies.rnd_byte(g) >> 4
             enemies.ai.damage_player(g, ac, dmg)
 
 
@@ -1410,10 +1425,10 @@ module hitscan =
         if weapon == 0 then
             // Knife — fixed damage, only in melee.
             if dist > 1.5 then 0
-            else (rnd_byte(g) >> 3) + 10
+            else (enemies.rnd_byte(g) >> 3) + 10
         else
             // Firearms — damage fades with distance (hitchance roll).
-            let roll = rnd_byte(g)
+            let roll = enemies.rnd_byte(g)
             if dist < 2.0 then (roll >> 2) + 8
             else if dist < 4.0 then (roll >> 3) + 5
             else if dist < 8.0 then (roll >> 4) + 2

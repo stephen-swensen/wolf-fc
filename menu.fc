@@ -129,7 +129,7 @@ module menu =
         let gray   = 0xFFB0B0B0u32
         font.draw_centered(rc, f, 20, title, yellow)
         let items_y = 44
-        for i in 0..num_save_slots
+        for i in 0..save.num_slots
             let s = &sm->slots[i]
             let y = items_y + i * (f->height + 3)
             let is_sel = sel == i

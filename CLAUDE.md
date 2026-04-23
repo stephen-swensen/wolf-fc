@@ -123,14 +123,14 @@ Subsystem files were extracted from `main.fc` in a large 2026-04 refactor. The f
 | `sound.fc` | `imf`, `adlib`, `digi`, `mixer` | Wolf3D sound-format drivers. |
 | `data.fc` | `bytes`, `palette`, `vswap`, `maps`, `vgagraph`, `audio` | Wolf3D data-file loading. |
 | `sfx.fc` | `sfx` (with nested `id`) | Sound-effect trigger helpers + the 73 sound IDs + `digi_slot` / `adlib_chunk` lookup tables. |
-| `ui.fc` | `font`, `pics` (with nested `id`), `hud` | UI primitives: VGAGRAPH font, generic pic blitter, status bar + BJ face animation. |
-| `save.fc` | `save` | Save/load slot I/O + encoding. |
+| `ui.fc` | `music`, `pics` (with nested `id`), `font`, `hud` | UI primitives: music track IDs + per-level `songs[]` table, VGAGRAPH pic blitter (incl. `get_psyched_*` overlay config), font, status bar + BJ face animation (incl. `got_gatling_time`). |
+| `save.fc` | `paths`, `save` | Save/load slot I/O + encoding; `save.num_slots` constant. `paths` is a leaf module holding `wolf_data_dir`/`ensure_save_dir` (shared with `overlay`). |
 | `combat.fc` | `dir`, `enemies` (with nested `ai`), `projectiles`, `hitscan` | Enemy data + AI + projectiles + player hitscan. |
-| `level.fc` | `tilemap`, `areas`, `spawn`, `doors`, `pushwall`, `pickups` | Level geometry + enemy/sprite spawning + door / pushwall animation + pickup collection. |
-| `cutscenes.fc` | `bj_victory`, `death_cam` (with nested `sub`), `intermission`, `episode_end`, `victory_screen`, `game_over`, `title_screen` | Per-phase state machines + renderers. |
+| `level.fc` | `difficulty`, `tilemap`, `areas`, `spawn`, `doors`, `pushwall`, `pickups` | Level geometry + enemy/sprite spawning + door / pushwall animation + pickup collection. `difficulty` holds the 4 picker constants. |
+| `cutscenes.fc` | `bj_victory`, `death_cam` (with nested `sub`), `intermission`, `episode_end`, `victory_screen`, `game_over`, `title_screen` | Per-phase state machines + renderers. `intermission` owns the scoring constants + `par_times[]` table + `compute_*` helpers. |
 | `menu.fc` | `menu` (with nested `nav`) | Main menu + submenus (episode, difficulty, map, save/load slot list). |
-| `render.fc` | `raycaster`, `billboards`, `overlay` | DDA raycaster, billboard sort+draw, viewport tints / dissolve / upscale / screenshot pipeline. |
-| `player.fc` | `player` (with nested `cheats`) | Player movement / collision / camera / weapon firing + MLI/BAT/IDDQD cheats. |
+| `render.fc` | `raycaster`, `billboards`, `overlay` | DDA raycaster (owns `ceil_table[]`), billboard sort+draw, viewport tints / dissolve / upscale / screenshot pipeline. |
+| `player.fc` | `player` (with nested `cheats`) | Player movement / collision / camera / weapon firing + MLI/BAT/IDDQD cheats. Owns `move_speed`/`run_mult`/`back_mult`/`strafe_mult`/`turn_speed`/`radius` and the player-lifecycle timing constants (`elevator_wait_time`, `death_fade_time`, `death_anim_time`, `respawn_fade_time`, `damage_flash_time`). |
 
 ### FC module restrictions hit during the refactor
 
@@ -139,28 +139,32 @@ Subsystem files were extracted from `main.fc` in a large 2026-04 refactor. The f
   - `player ↔ doors`: `player.blocked_by_map` uses `doors.passable` for collision, and `doors.update` needs the player's collision radius for its bbox-based auto-close check. Fix: `doors.update(...)` takes `player_radius` as a parameter instead of reaching into `module player`. `tick()` in main.fc (the single caller) already has `player.radius` in scope.
   - `overlay ↔ save` (transitive via cutscenes): `overlay.take_screenshot` needed `save.wolf_data_dir` for the screenshots directory, and `save.from_slot` calls `intermission.enter` / `episode_end.enter` which call `overlay.*` renderers. Fix: extract `wolf_data_dir` + `ensure_save_dir` into a leaf `module paths` at the top of save.fc that depends on nothing downstream; both `save` and `overlay` reach for it.
 
-- **`main.fc`** — Game engine orchestration + file-scope constants:
-  - Constants (game_w=320, game_h=200, screen_w=640, screen_h=400, actual_h=480, view_h=160, sample_rate=44100)
-  - `struct world` — the god-handle: `{g: game*, lv: level*, rc: render_ctx*, ac: audio_ctx*, sm: save_menu_ctx*}`. Only orchestrators take `world*`; narrow functions take just the fields they touch.
-  - `struct game` — player state (position, direction, camera plane, input, health/ammo/score, `no_dogs` CLI flag)
-  - `struct level` — per-level mutable state: tilemap, pushwall_tiles, path_arrows (ICONARROWS direction per tile, 8=none), sprites[], doors[] (each storing the two areas it connects), door_pos[], pushwall animation, enemies[], tile_areas (wolf4sdl AREATILE numbering, 255=no area), area_connect (NUMAREAS² counter of currently-open doors per pair), area_by_player (per-area "reachable from player by open doors"). Rebuilt on level transition.
-  - `struct render_ctx` — `{fb, dbuf, zbuf, billboards, title_bg, pic_cache, screenshot_slot}` renderer scratch + caches, process-wide. `billboards[]` is rebuilt/sorted each frame from live enemies + live sprites; `title_bg` is the pre-decoded TITLEPIC backdrop (blitted by `blit_title_bg` on every menu frame); `pic_cache[chunk]` is lazily populated on first `draw_vg_pic` call with the chunk's ARGB pixels, so subsequent HUD / intermission / menu draws skip the Huffman decode + palette remap; `screenshot_slot` wraps at `screenshot_max_slots`.
-  - `struct audio_ctx` — `{vs, ad, sfx, digi}` bundle so `trigger_sound` / pickup / door code can fire sounds without globals.
-  - `struct save_menu_ctx` — `{slots, label_scratch, hex_scratch}` for the save/load menu. `slots[]` is refreshed by `refresh_save_slots` on menu entry; `label_scratch`/`hex_scratch` are reusable buffers for slot-label rendering and per-nibble save-file writes.
-  - `struct sprite_obj` — static objects (position, VSWAP page, distance)
-  - `struct enemy` — active actors (position, tile_x/y, kind, state, dir, HP, animation timer, shoot-fired latch). Direction encoding matches wolf4sdl `dirtype` (east=0, northeast=1, ..., southeast=7, nodir=8). Enemy AI rolls draw from `game.rng_enemy` (a `random.pcg_random` on channel 1); the HUD face animation uses `game.rng_face` on channel 2 so HUD rendering doesn't perturb the AI sequence. Both are seeded with the same value, 0 in `--test` mode and `sys.time()` otherwise.
-  - `struct projectile` — enemy-fired dodgeable object (Schabbs needle, Giftmacher/Fat rocket with explosion, fake Hitler flame). Stored in `level.projectiles[max_projectiles]`, slot-allocated via `alive` flag. Angles are stored y-up (standard trig) so the rotating-rocket sprite picker and the `enemy_angle_sprite` helper share a convention; movement applies a `-sin` flip to return to the world's y-down frame. Ports `T_SchabbThrow` / `T_GiftThrow` / `T_Launch` / `T_FakeFire` (spawn paths) + `T_Projectile` (per-tic step).
-  - Factories: `build_render_ctx(vg, pal)` (also pre-decodes the title backdrop), `build_save_menu_ctx()`, `build_level(lv_data, sprite_start, difficulty, no_dogs)` (also calls `spawn_enemies`), `free_level(lv)`.
-  - DDA raycaster (`render_walls`) writing to `rc->fb` (320x200 framebuffer)
-  - Billboard renderer: `build_billboards` merges `lv->sprites` + `lv->enemies` into one back-to-front list, `render_billboards` draws each via `draw_sprite_col`. Non-rotating enemy states (pain/die/dead/shoot) use fixed VSWAP pages; stand/walk/chase use `enemy_angle_sprite` to pick one of 8 facing variants.
-  - Enemy AI: `check_line_clear` (tilemap LOS), `enemy_sees_player` (LOS + 90° forward cone), `enemy_should_wake` (area_by_player gate + AMBUSH-honoring noise/sight check, mirrors wolf4sdl SightPlayer), `select_chase_dir` / `select_path_dir`, `advance_enemy_move` (tile-center grid motion), `update_enemy` (state-machine dispatch), `enemy_fire_at_player` / `enemy_bite_player`, `damage_enemy` / `kill_enemy` / `wake_enemy`. `fire_player_hitscan` is invoked from `update_weapon` on trigger pull and raises `g->made_noise` for non-knife weapons; `damage_enemy` raises it on every hit (knife included). `start_door_opening` is the single transition point that increments `area_connect` and re-runs `connect_areas`; `update_doors` decrements + re-floods on the closing→closed transition.
-  - Boss death routing: `kind_is_boss` (all 7) + `kind_has_death_cam` (Schabbs / Giftmacher / Fat / real Hitler). `damage_enemy` inspects the latter when HP hits 0: death-cam kinds route through `enter_death_cam` (new `gp_death_cam` phase, 6 sub-phases driven by `tick_death_cam`); Hans / Gretel fall through to plain `kill_enemy`, drop a gold key, and rely on the EXITTILE walk → `gp_bj_victory`. The death-cam follows the same beats as the original's auto-victory cutscene: hold on the final death frame, dissolve viewport to black (reuses `dissolve_stipple`'s spatial-hash pattern driven by a 0..1 `dc_fade`), "Let's see you in hell!" taunt card, `teleport_death_cam` (camera backed off along the kill-direction ray with wall-clip retry via `player_blocked_by_map`), dissolve back in, replay the death animation, hand off to `enter_intermission`. `drop_for_kind` now returns `decoration` for the four death-cam kinds so they don't spawn a gold key the player could never reach.
-  - Enemy projectiles: `spawn_projectile` is called from the `es_shoot` dispatch for projectile-firing kinds (Schabbs / Giftmacher / Fat / fake Hitler) instead of `enemy_fire_at_player`. `update_projectiles` runs after `update_enemies` in `tick`, stepping each live projectile, checking wall collision (`projectile_hits_wall` scans a 3×3 tile neighborhood within `proj_wall_radius`), and checking per-axis player collision within `proj_hit_radius = 0.75`. Rockets morph into a short-lived `pk_boom` sprite on wall hit (three-frame explosion + MISSILEHITSND); needles and flames free their slots silently.
-  - Audio output path: zero buffer → `imf.fill` (music) → `adlib.fill` (AdLib SFX) → `digi.fill` (8-bit PCM) → SDL queue (back-pressured via `queued_audio_size`)
-  - HUD renderer with 3x5 bitmap digit font
-  - `upscale_2x` — pixel-doubles 320x200 → 640x400 for the SDL texture
-  - Display pipeline: 640x400 texture + `SDL_RenderSetLogicalSize(640, 480)` for 4:3 (matching wolf4sdl)
-  - Classic Wolf3D input (arrows, alt-strafe, shift-run, space-open, ctrl-fire, F11-fullscreen, s-screenshot, 1-4 weapon select, Esc-quit). Music is toggled from the main menu's SOUND entry (no longer an in-game M key — M is part of the MLI cheat chord).
+### `main.fc` — entry point + orchestration
+
+Everything left in `main.fc` is either a cross-subsystem constant, a core
+data struct, a factory, a phase-transition routing helper, or one of the
+three top-level dispatchers (`tick`, `render_frame`, `run_test_cmd`) +
+`main`. Anything specific to one subsystem now lives in that subsystem's
+module (see the table above).
+
+- **Resolution constants**: `game_w`/`game_h` (320×200 internal framebuffer), `screen_w`/`screen_h` (640×400 doubled), `actual_h` (480 for 4:3 letterboxing), `view_h` (160, 3D viewport height), `map_size`/`tex_size` (64), `tile_area` (107, first non-solid tile), `fov_factor` (0.66 — `tan(33°)` for ~66° FOV).
+- **Episode structure**: `levels_per_episode` (10), `num_episodes` (6), `elevator_back_to` (per-episode return target for secret-level exits), `episode_title(ep)`.
+- **Phase enum**: `union game_phase` — the top-level phase state machine (`gp_title`, `gp_main_menu`, `gp_playing`, `gp_dying`, `gp_intermission`, `gp_bj_victory`, `gp_death_cam`, `gp_episode_end`, `gp_victory`, `gp_game_over`).
+- **Core data structs**:
+  - `struct world` — god-handle `{g: game*, lv: level*, rc: render_ctx*, ac: audio_ctx*, sm: save_menu_ctx*}`. Only orchestrators take `world*`; narrow functions take just the fields they touch.
+  - `struct game` — player state (position, direction, camera plane, input keys, health/ammo/score, phase timers, RNG channels, `no_dogs` / `test_mode` CLI flags).
+  - `struct level` — per-level mutable state: tilemap, pushwall_tiles, path_arrows, sprites[], doors[] + door_pos[] + pushwall state, enemies[], projectiles[], tile_areas + area_connect + area_by_player (area-flood reachability). Rebuilt on level transition.
+  - `struct render_ctx` — `{fb, dbuf, zbuf, billboards, title_bg, pic_cache, screenshot_slot}` renderer scratch + caches, process-wide. `billboards[]` is rebuilt/sorted each frame from live enemies + live sprites; `title_bg` is the pre-decoded TITLEPIC backdrop (blitted by `pics.blit_title_bg` on every menu frame); `pic_cache[chunk]` is lazily populated on first `pics.draw` call with the chunk's ARGB pixels, so subsequent HUD / intermission / menu draws skip the Huffman decode + palette remap; `screenshot_slot` wraps at `screenshot_max_slots`.
+  - `struct audio_ctx` — `{vs, ad, sfx, digi}` bundle so `sfx.trigger` / pickup / door code can fire sounds without globals.
+  - `struct save_slot_info` / `struct save_menu_ctx` — `{slots, label_scratch, hex_scratch}` for the save/load menu. `slots[]` is refreshed on menu entry; `label_scratch`/`hex_scratch` are reusable buffers for slot-label rendering and per-nibble save-file writes.
+  - `struct billboard` — per-frame entry for the back-to-front sprite draw; built by `billboards.build` (in `render.fc`) from live enemies + live sprites + live projectiles.
+- **Factories**: `build_render_ctx(vg, pal)`, `build_save_menu_ctx()`, `build_level(lv_data, sprite_start, difficulty, no_dogs)`, `free_level(lv)`.
+- **Phase-transition routing** (the glue between subsystems): `reset_level_counters`, `reset_player_for_life`, `reset_player_for_new_game`, `reload_level_data`, `compute_next_level_num` (normal vs. secret elevator), `clear_gameplay_input_keys`, `trigger_get_psyched`, `advance_next_level`, `advance_next_episode`, `restart_current_level`, `restart_full_game`, `start_new_game_here`, `update_phase_transitions`.
+- **Dispatchers**:
+  - `tick(w, dt)` — the single per-frame update entry. Runs `player.update` → `doors.update` → `pushwall.update` → `player.update_weapon` → `enemies.ai.update_enemies` → `enemies.ai.update_dying_enemies` → `projectiles.update_all` → `pickups.check`. **When adding a new per-frame system, add the call here, not elsewhere** — it keeps interactive and `--test` modes bit-identical.
+  - `render_frame(w, vs, pal)` — the single render entry. Dispatches by phase: title / menu / playing (raycaster + billboards + HUD + damage flash + elevator fade) / dying (red stipple collapse) / intermission / bj_victory / death_cam / episode_end / victory / game_over.
+  - `run_test_cmd(w, arg, pal, dt)` — headless `--test` mode command dispatcher (movement, state dump, save/load, facetile queries, screenshot capture).
+- **`main(args)`** — SDL init, data loading, factories, the interactive frame loop, `--test`-mode branch.
 
 ## Key Data Formats
 

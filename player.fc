@@ -13,6 +13,22 @@ module player =
     // tiles for the same reason.
     let radius = 0.35
 
+    // Movement speeds. `move_speed` is tiles/sec at walk; `run_mult`
+    // doubles it when shift is held. `back_mult`/`strafe_mult` are
+    // per-direction scalars on top of move_speed — we diverge from
+    // the original (which used 100/150 ≈ 0.67 for back and 1.0 for
+    // strafe) to make alt-strafe slightly quicker than forward
+    // (rewards its use in fights) while keeping back-pedalling usable.
+    let move_speed  = 3.5
+    let run_mult    = 2.0
+    let back_mult   = 0.75
+    let strafe_mult = 1.25
+
+    // Camera yaw rate (rad/sec at walk). Scaled by `run_mult` when
+    // shift is held — same factor as move_speed so turning "feels
+    // like" running-speed when sprinting.
+    let turn_speed  = 2.5
+
     // Static-decoration half-width (tiles). Blocking sprites
     // (barrels, lamps, tables, etc.) block the player as a half-tile
     // AABB centered on the tile instead of the whole 1×1 cell — you
@@ -28,6 +44,27 @@ module player =
     // the player can squeeze past an adjacent enemy without being
     // locked out of corridors.
     let enemy_block_r2 = 0.55 * 0.55
+
+    // Seconds to hold gameplay frozen after the player pulls the
+    // elevator switch before the intermission screen appears. Stands
+    // in for the original's fade-out/fade-in between the use action
+    // and LevelCompleted — lets LEVELDONESND play out in the world
+    // before the score tally takes over. player.update arms the
+    // timer; render_frame draws the fade overlay.
+    let elevator_wait_time = 1.0
+
+    // Death collapse timing. The red stipple ramps up over
+    // `death_fade_time`, holds at full coverage until
+    // `death_anim_time` elapses and the respawn / game-over
+    // transition fires. After a respawn, `respawn_fade_time` controls
+    // how quickly the stipple uncovers back to the new scene.
+    let death_fade_time   = 1.4
+    let death_anim_time   = 2.2
+    let respawn_fade_time = 0.35
+
+    // Red-flash duration on any damage event (seconds). Short;
+    // purely visual.
+    let damage_flash_time = 0.25
 
     // True if the player's bbox at (px, py) overlaps a wall, closed
     // door, or a blocking static sprite. Does NOT check enemy
