@@ -667,7 +667,7 @@ module hud =
             pics.draw(rc, vg, pal, pics.id.gold_key, 240, bar_top + 4)
         if g->has_silver_key then
             pics.draw(rc, vg, pal, pics.id.silver_key, 240, bar_top + 20)
-        // God-mode indicator: 2-pixel yellow outline just inside the
+        // God-mode indicator: 1-pixel yellow outline just inside the
         // HUD bar edges. Painted last so it overlays the status-bar
         // graphic + all stamped cells.
         if g->god_mode then
@@ -678,14 +678,10 @@ module hud =
             let y1 = game_h - 2
             for x in x0..(x1 + 1)
                 rc->fb[(int64) y0 * 320 + (int64) x] = yellow
-                rc->fb[(int64) (y0 + 1) * 320 + (int64) x] = yellow
                 rc->fb[(int64) y1 * 320 + (int64) x] = yellow
-                rc->fb[(int64) (y1 - 1) * 320 + (int64) x] = yellow
             for y in y0..(y1 + 1)
                 rc->fb[(int64) y * 320 + (int64) x0] = yellow
-                rc->fb[(int64) y * 320 + (int64) (x0 + 1)] = yellow
                 rc->fb[(int64) y * 320 + (int64) x1] = yellow
-                rc->fb[(int64) y * 320 + (int64) (x1 - 1)] = yellow
 
     // Copy a const str into g->msg_buf and arm the message timer.
     // The buffer caps at 63 chars (1 spare); longer messages are

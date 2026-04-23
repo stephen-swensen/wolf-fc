@@ -259,8 +259,7 @@ module player =
                 g->health = 100
                 hud.show_message(g, "A Doom fan, eh?\n\nGod mode ON")
             else
-                hud.show_message(g, "A Doom fan, eh?\n\nGod mode OFF")
-            g->msg_timer = msg_time
+                hud.show_message(g, "God mode OFF")
 
         // The IDDQD key sequence (I-D-D-Q-D).
         private let iddqd_sequence = int32[5] {
@@ -300,8 +299,7 @@ module player =
                 g->has_silver_key = true
                 hud.show_message(g, "A Doom fan, eh?\n\nIDKFA mode ON\n\nAll keys, full ammo,\nchain gun, and locked score!")
             else
-                hud.show_message(g, "A Doom fan, eh?\n\nIDKFA mode OFF")
-            g->msg_timer = msg_time
+                hud.show_message(g, "IDKFA mode OFF")
 
         // The IDKFA key sequence (I-D-K-F-A).
         private let idkfa_sequence = int32[5] {
