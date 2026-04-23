@@ -561,6 +561,33 @@ assert_contains "cheat:iddqd-blocks-projectile-damage" \
 assert_contains "cheat:bat-leaves-health-unchanged" \
     "bat state" \
     "health=100 ammo=8"
+# IDKFA toggle: grants all keys + chain gun + 99 ammo, latches ammo
+# non-depletion + score lock. Toggling again clears the latch but
+# leaves the gifted inventory in place (no "ungiving" on toggle off).
+assert_contains "cheat:idkfa-gives-everything" \
+    "idkfa state" \
+    "weapon=3 best=3"
+assert_contains "cheat:idkfa-flips-mode-on" \
+    "idkfa state" \
+    "idkfa=1"
+assert_contains "cheat:idkfa-toggles-off" \
+    "idkfa idkfa state" \
+    "idkfa=0"
+assert_contains "cheat:idkfa-gives-both-keys" \
+    "idkfa state" \
+    "gold=1 silver=1"
+assert_contains "cheat:idkfa-full-ammo" \
+    "idkfa state" \
+    "ammo=99"
+# Ammo stays at 99 across repeated fires while IDKFA latched.
+assert_contains "cheat:idkfa-ammo-non-depleting" \
+    "idkfa fire fire fire fire fire state" \
+    "ammo=99"
+# Score lock: cross pickup would normally add 100. With IDKFA on, the
+# cross is consumed but the score stays at 0.
+assert_contains "cheat:idkfa-locks-score-on-pickup" \
+    "idkfa goto:7,14 state" \
+    "score=0"
 
 section "episode structure"
 # Episode jumping via setepisode.

@@ -44,6 +44,7 @@ This compiles the FC source to C, then to a native binary, and runs it. The game
 | `--level=N` | Skip the title / menu and drop straight into map N in playing phase. `N` is `0..59` (six episodes of ten maps). Handy for jumping to a specific boss fight — see table below. |
 | `--difficulty=N` | Override the starting difficulty: `0` = Can I play Daddy, `1` = Don't Hurt Me, `2` = Bring 'Em On, `3` = I Am Death Incarnate (default). Combines with `--level`. |
 | `--near-boss` | After the level loads, teleport the player to an open tile adjacent to the first boss enemy on the map, facing the boss. No-op on maps without a boss. Combine with `--level=N` to start a specific boss fight immediately. |
+| `--cheat` | Pre-activate both Doom-style cheats (`IDDQD` god mode + `IDKFA` all-keys / all-weapons / full non-depleting ammo / locked score) from the very first frame. The gifts re-apply on every death while the IDKFA latch stays on. |
 
 ### Jump-to-boss cheat sheet
 
@@ -86,11 +87,12 @@ As in the original, two chord cheats work during gameplay — hold all three key
 | M + L + I | Refill: 100 health, 99 ammo, both keys, chaingun; score zeroed |
 | B + A + T | Flavor message only (no gameplay effect) |
 
-There's also a Doom-style sequence cheat (type the letters in order, no need to hold):
+There are also two Doom-style sequence cheats (type the letters in order, no need to hold):
 
 | Sequence | Effect |
 |----------|--------|
-| I D D Q D | Toggle god mode (silently absorbs all damage; refills health on activation) |
+| I D D Q D | Toggle god mode (silently absorbs all damage; refills health on activation). Status bar grows a yellow outline while active. |
+| I D K F A | Toggle "all keys, full arsenal": grants both keys, chain gun, 99 ammo on activation, and latches non-depleting ammo + locked score until toggled off |
 
 > **Note:** On Windows, rapid Ctrl presses trigger the Sticky Keys accessibility popup. If this gets in your way during combat, turn off Sticky Keys in Settings → Accessibility → Keyboard.
 
@@ -133,6 +135,7 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `mli` | Fire the M+L+I cheat effect (refill + chaingun + score reset) |
 | `bat` | Fire the B+A+T flavor-message cheat |
 | `iddqd` | Toggle Doom-style god mode (also refills health on activation) |
+| `idkfa` | Toggle Doom-style "all keys, full arsenal" cheat: both keys, chain gun + 99 ammo on activation, and latched non-depleting ammo + locked score until toggled off |
 | `psyched` | Force the "GET PSYCHED!" full-screen load overlay timer (debug — bypasses the test-mode gate so `ss:` can capture it) |
 | `gotgatling` | Force the GOTGATLINGPIC face-cell swap timer (debug — paints over the BJ face slot in render_hud for the duration) |
 | `facetile` | Print the tile the player is facing and the `next_level` flag (debug) |

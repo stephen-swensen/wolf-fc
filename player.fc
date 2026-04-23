@@ -87,6 +87,14 @@ module player =
         g->damage_flash_timer = 0.0
         g->respawn_fade_timer = 0.0
         g->wall_hit_cooldown = 0.0
+        // IDKFA latch persists across deaths — re-grant the full kit so
+        // the player doesn't have to re-cheat after a respawn.
+        if g->idkfa_mode then
+            g->ammo = 99
+            g->weapon = 3
+            g->best_weapon = 3
+            g->has_gold_key = true
+            g->has_silver_key = true
 
     // Full reset triggered by "press space" on the game-over screen.
     // Lives and score reset to the starting configuration on top of
@@ -274,6 +282,45 @@ module player =
                     g->iddqd_progress = 0
             else
                 g->iddqd_progress = if k == iddqd_sequence[0] then 1 else 0
+
+        // IDKFA — Doom-style "give me everything" toggle. Activating it
+        // grants both keys, the chain gun with 99 ammo, and latches
+        // `idkfa_mode`, which suppresses ammo decrement in update_weapon
+        // and blocks score gains via player.add_score. Deactivating
+        // leaves the gifts in the inventory but re-enables ammo drain
+        // and score accumulation.
+        let apply_idkfa = (g: game*) ->
+            g->idkfa_mode = !g->idkfa_mode
+            if g->idkfa_mode then
+                g->health = 100
+                g->ammo = 99
+                g->weapon = 3
+                g->best_weapon = 3
+                g->has_gold_key = true
+                g->has_silver_key = true
+                hud.show_message(g, "A Doom fan, eh?\n\nIDKFA mode ON\n\nAll keys, full ammo,\nchain gun, and locked score!")
+            else
+                hud.show_message(g, "A Doom fan, eh?\n\nIDKFA mode OFF")
+            g->msg_timer = msg_time
+
+        // The IDKFA key sequence (I-D-K-F-A).
+        private let idkfa_sequence = int32[5] {
+            sdl2.key_i, sdl2.key_d, sdl2.key_k, sdl2.key_f, sdl2.key_a
+        }
+
+        // Same state-machine shape as advance_iddqd, on I-D-K-F-A.
+        // Filtering only consumes letters that appear in the sequence so
+        // unrelated keydowns (movement, chord keys) can't reset progress.
+        let advance_idkfa = (g: game*, k: int32) ->
+            if k != sdl2.key_i && k != sdl2.key_d
+               && k != sdl2.key_k && k != sdl2.key_f && k != sdl2.key_a then return
+            if k == idkfa_sequence[g->idkfa_progress] then
+                g->idkfa_progress = g->idkfa_progress + 1
+                if g->idkfa_progress >= 5 then
+                    apply_idkfa(g)
+                    g->idkfa_progress = 0
+            else
+                g->idkfa_progress = if k == idkfa_sequence[0] then 1 else 0
 
         // Called per-frame from the interactive game loop while
         // playing. Checks whether all three keys of each chord
@@ -478,7 +525,7 @@ module player =
                 sfx.trigger(weapon_fire_snd[0], ac)
                 hitscan.fire_player(w)
             else if g->ammo > 0 then
-                g->ammo = g->ammo - 1
+                if !g->idkfa_mode then g->ammo = g->ammo - 1
                 g->fire_timer = fire_rate[g->weapon]
                 g->weapon_frame = 1
                 sfx.trigger(weapon_fire_snd[g->weapon], ac)

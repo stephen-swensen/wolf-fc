@@ -157,6 +157,15 @@ struct game =
     // returns so the player can't lose health (or die).
     iddqd_progress: int32
     god_mode: bool
+    // Doom-style IDKFA cheat. Same sequence-matching idea as IDDQD, but on
+    // the I-D-K-F-A letter sequence. Toggling it on grants all keys, the
+    // chain gun + 99 ammo, and latches `idkfa_mode` — which suppresses
+    // ammo decrement in player.update_weapon and blocks score gains through
+    // player.add_score (treasure pickups, enemy kills, intermission bonus).
+    // reset_for_life re-grants the gifts on every death so the latch
+    // survives dying.
+    idkfa_progress: int32
+    idkfa_mode: bool
     // Wall-scrape sound cooldown (seconds). Prevents HITWALLSND from firing
     // every frame while the player grinds along a wall. Counts down in
     // player.update; a new bump is only announced when it hits 0.
@@ -1008,6 +1017,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // Trigger the IDDQD god-mode toggle directly without having to
         // pipe the full I-D-D-Q-D sequence through the key event path.
         player.cheats.apply_iddqd(g)
+    else if arg == "idkfa" then
+        // Trigger the IDKFA toggle directly (see apply_iddqd comment).
+        player.cheats.apply_idkfa(g)
     else if arg == "psyched" then
         // Force the GET PSYCHED overlay timer so a following ss: captures
         // the full-screen load graphic. Bypasses the normal test_mode gate
@@ -1041,7 +1053,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         let gk = if g->has_gold_key then 1 else 0
         let sk = if g->has_silver_key then 1 else 0
         let gm = if g->god_mode then 1 else 0
-        io.write("keys: gold=%d{gk} silver=%d{sk} god=%d{gm}\n", stdout)
+        let ik = if g->idkfa_mode then 1 else 0
+        io.write("keys: gold=%d{gk} silver=%d{sk} god=%d{gm} idkfa=%d{ik}\n", stdout)
         void()
     else if arg == "counters" then
         // Kill / secret / treasure counters + level time / par / phase.
@@ -1511,6 +1524,11 @@ let main = (args: str[]) ->
     //                           No-op on maps without one (E1L1).
     //   --near-silverkey      — teleport next to the first silver-key
     //                           pickup. First silver-key map is E2L3.
+    //   --cheat               — pre-activate IDDQD + IDKFA: god mode,
+    //                           both keys, chain gun, 99 ammo (non-
+    //                           depleting), and a locked score. The
+    //                           gifts re-apply on every death-respawn
+    //                           while the IDKFA latch stays on.
     let mut test_mode = false
     let mut start_level = -1
     let mut start_difficulty = -1
@@ -1518,6 +1536,7 @@ let main = (args: str[]) ->
     let mut start_near_goldkey = false
     let mut start_near_silverkey = false
     let mut arg_no_dogs = false
+    let mut arg_cheat = false
     for i in 1..(int32) args.len
         let a = args[(int64) i]
         if a == "--no-dogs" then arg_no_dogs = true
@@ -1525,6 +1544,7 @@ let main = (args: str[]) ->
         if a == "--near-boss" then start_near_boss = true
         if a == "--near-goldkey" then start_near_goldkey = true
         if a == "--near-silverkey" then start_near_silverkey = true
+        if a == "--cheat" then arg_cheat = true
         if text.starts_with(a, "--level=") then
             match text.parse_int32(a[8..a.len]) with
             | some(n) -> if n >= 0 && n < 60 then start_level = n
@@ -1576,6 +1596,7 @@ let main = (args: str[]) ->
         key_b_held = false, key_a_held = false, key_t_held = false,
         cheat_mli_latched = false, cheat_bat_latched = false,
         iddqd_progress = 0, god_mode = false,
+        idkfa_progress = 0, idkfa_mode = false,
         wall_hit_cooldown = 0.0,
         health = 100, ammo = 8, score = 0, lives = 3,
         level_num = 0,
@@ -1649,6 +1670,19 @@ let main = (args: str[]) ->
     areas.update_player_area(w->lv, g)
     areas.connect(w->lv, g->area_number)
 
+    // --cheat: pre-activate IDDQD + IDKFA so they're live from the first
+    // frame, regardless of whether the player enters a game via --level,
+    // the NEW GAME menu, or --test. The IDKFA latch feeds reset_for_life,
+    // so the player gets re-kitted after every death too.
+    if arg_cheat then
+        g->god_mode = true
+        g->idkfa_mode = true
+        g->ammo = 99
+        g->weapon = 3
+        g->best_weapon = 3
+        g->has_gold_key = true
+        g->has_silver_key = true
+
     // --difficulty N / --level N: skip the title sequence and jump the
     // player straight into the specified map. Also respected in --test
     // mode so scripts can start on any level without a `setlevel:` prefix.
@@ -1699,6 +1733,7 @@ let main = (args: str[]) ->
         let test_dt = 1.0 / 35.0
         for ti in (test_idx + 1)..(int32) args.len
             if args[(int64) ti] == "--no-dogs" then continue
+            if args[(int64) ti] == "--cheat" then continue
             run_test_cmd(w, args[(int64) ti], pal, test_dt)
         return 0
 
@@ -1999,12 +2034,13 @@ let main = (args: str[]) ->
                         if k == sdl2.key_b then g->key_b_held = true
                         if k == sdl2.key_a then g->key_a_held = true
                         if k == sdl2.key_t then g->key_t_held = true
-                        // IDDQD sequence — only progresses while in-game,
-                        // matching how the chord cheats are gated. Held
-                        // keys can't auto-advance because we're already
-                        // inside the !is_key_repeat branch.
+                        // IDDQD / IDKFA sequences — only progress while
+                        // in-game, matching how the chord cheats are
+                        // gated. Held keys can't auto-advance because
+                        // we're already inside the !is_key_repeat branch.
                         if g->phase == game_phase.playing then
                             player.cheats.advance_iddqd(g, k)
+                            player.cheats.advance_idkfa(g, k)
                         if k == sdl2.key_s then overlay.take_screenshot(w, vs, pal)
                         if k == sdl2.key_d then save.debug_dump_state(w)
                         // IN_Ack: any keydown during an acknowledge screen
