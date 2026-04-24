@@ -880,7 +880,7 @@ let tick = (w: world*, dt: float64) ->
             // Even with the rest of gameplay frozen, dying actors keep
             // animating so anything mid-die when the elevator switch fired
             // finishes its death cascade before the tally screen.
-            enemies.ai.update_dying_enemies(w->lv, dt)
+            enemies.ai.update_dying_enemies(w->lv, w->g, dt)
         else
             // The original's PlayLoop resets madenoise at the top of each
             // frame; we follow suit so noise from one tick only wakes
@@ -906,13 +906,13 @@ let tick = (w: world*, dt: float64) ->
             // Boss corpse + any other dying actors keep animating during
             // the BJ run so the player sees the death animation finish
             // (not just the first die frame freeze-framed under BJ).
-            enemies.ai.update_dying_enemies(w->lv, dt)
+            enemies.ai.update_dying_enemies(w->lv, w->g, dt)
         else if g->phase == game_phase.death_cam then
             // Pump the dying boss's animation frames before the phase
             // logic inspects e->state — death_cam.sub.pre_fade and
             // death_cam.sub.replay_hold both advance on the die → dead
             // transition, so the tick order matters.
-            enemies.ai.update_dying_enemies(w->lv, dt)
+            enemies.ai.update_dying_enemies(w->lv, w->g, dt)
             death_cam.tick(w->lv, g, w->ac, dt)
     // Phase transitions (death collapse → restart / game-over). Main loop
     // layers music switching on top of this; test mode doesn't need music
@@ -1446,6 +1446,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
                     | giftmacher  -> "gift"
                     | fat     -> "fat"
                     | hitler_fake -> "hitler_fake"
+                    | mecha_hitler -> "mecha_hitler"
                     | hitler  -> "hitler"
                     | blinky  -> "blinky"
                     | pinky   -> "pinky"
@@ -1489,6 +1490,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             | giftmacher  -> "gift"
             | fat     -> "fat"
             | hitler_fake -> "hitler_fake"
+            | mecha_hitler -> "mecha_hitler"
             | hitler  -> "hitler"
             | blinky  -> "blinky"
             | pinky   -> "pinky"
@@ -1567,7 +1569,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             | dog -> 3
             | mutant -> 4
             | hans | schabbs | gretel | giftmacher | fat
-            | hitler_fake | hitler -> 5
+            | hitler_fake | mecha_hitler | hitler -> 5
             | blinky | pinky | clyde | inky -> 6
             by_kind[ki] = by_kind[ki] + 1
             let si = match e.state with

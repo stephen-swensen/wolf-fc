@@ -411,6 +411,7 @@ Working:
 - [x] Pacman ghosts: Blinky/Pinky/Clyde/Inky spawn from plane-1 tiles 224..227 (found on E3M10 = level 29), chase player, touch damage. Sprite indices 288..295 verified visually.
 - [x] Mutant-specific double-shot pattern (they fire twice per shoot cycle in wolf4sdl).
 - [x] Enemy projectile attacks: Schabbs syringe (`pk_needle`), Giftmacher / Fat rocket (`pk_rocket`, with boom on wall hit), fake Hitler flame (`pk_fire`). Ported from wolf4sdl's T_SchabbThrow / T_GiftThrow / T_Launch / T_FakeFire + T_Projectile. Damage rolls match the original (20-51 / 30-61 / 0-31). Rockets fire MISSILEHITSND on wall impact; flames dissipate silently.
+- [x] Mecha Hitler: the armored mech-suit stage of the E3M9 boss. Spawns from plane-1 tile 178 with 800-1200 HP, 3-bullet BOSSFIRESND bursts, MECHSTEPSND on walk frames 0 / 2. When his HP hits zero he plays a 3-frame die-anim (SCHEISTSND) and morphs the actor slot in place into `hitler` (sprite base 345) with the 500-900 HP tier from A_HitlerMorph; real Hitler's kill then routes through the regular death-cam cutscene. `--near-boss` excludes hitler_fake decoys so the teleport lands at the mech.
 
 ### Weapons and combat
 - [x] Weapon-specific hit sounds (HITENEMYSND when a shot connects).

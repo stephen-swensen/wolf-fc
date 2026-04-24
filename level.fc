@@ -756,9 +756,12 @@ module spawn =
         for i in 0..lv->num_enemies
             if bx < 0 then
                 let e = &lv->enemies[i]
+                // Episode-ending bosses only. hitler_fake decoys on
+                // E3M9 are intentionally excluded — the fight target
+                // there is Mecha Hitler, not the flamethrower clones.
                 let is_boss = match e->kind with
                 | hans | schabbs | gretel | giftmacher | fat
-                | hitler_fake | hitler -> true
+                | mecha_hitler | hitler -> true
                 | _ -> false
                 if is_boss then
                     bx = e->tile_x
@@ -933,7 +936,10 @@ module spawn =
         else if tile == 160 then
             some(enemy_spawn_info { kind = enemies.enemy_kind.hitler_fake, patrol = false, dir4 = 2, dead = false, tier = 0 })
         else if tile == 178 then
-            some(enemy_spawn_info { kind = enemies.enemy_kind.hitler, patrol = false, dir4 = 2, dead = false, tier = 0 })
+            // E3M9 boss tile: spawn the armored Mecha Hitler. Real
+            // Hitler is revealed by the death-transform in
+            // enemies.ai — he isn't placed on the map directly.
+            some(enemy_spawn_info { kind = enemies.enemy_kind.mecha_hitler, patrol = false, dir4 = 2, dead = false, tier = 0 })
         // Pacman ghosts on E1M10. Tiles 224 / 225 / 226 / 227 =
         // Blinky / Clyde / Pinky / Inky (agent report order). Tier 0.
         else if tile == 224 then

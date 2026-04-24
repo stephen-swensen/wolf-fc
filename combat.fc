@@ -68,8 +68,9 @@ module enemies =
         | gretel
         | giftmacher
         | fat
-        | hitler_fake
-        | hitler
+        | hitler_fake    // stormtrooper decoys on E3M9 (flamethrower)
+        | mecha_hitler   // armored mech-suit stage of the Hitler fight
+        | hitler         // Hitler proper, revealed after the mech cracks open
         // Pacman ghosts — E1M10 (secret level) easter egg. Don't
         // attack; chase the player; teleport him back on contact.
         | blinky
@@ -159,7 +160,7 @@ module enemies =
     private let kind_is_rotating = (k: enemy_kind) ->
         match k with
         | hans | schabbs | gretel | giftmacher | fat
-        | hitler_fake | hitler
+        | hitler_fake | mecha_hitler | hitler
         | blinky | pinky | clyde | inky -> false
         | _ -> true
 
@@ -183,7 +184,11 @@ module enemies =
         | giftmacher   -> diff_pick(850, 950, 1050, 1200)
         | fat          -> diff_pick(850, 950, 1050, 1200)
         | hitler_fake  -> diff_pick(200, 300, 400, 500)
-        | hitler       -> diff_pick(800, 950, 1050, 1200)
+        | mecha_hitler -> diff_pick(800, 950, 1050, 1200)
+        // Real Hitler tiers match A_HitlerMorph in the original —
+        // he's softer than the mech because the fight has already
+        // burned through most of the player's ammo.
+        | hitler       -> diff_pick(500, 700, 800, 900)
         | blinky | pinky | clyde | inky -> 1000  // unkillable-ish
 
     // Score granted to the player on kill. Wolf3D values.
@@ -200,6 +205,7 @@ module enemies =
         | giftmacher   -> 5000
         | fat          -> 5000
         | hitler_fake  -> 2000
+        | mecha_hitler -> 5000
         | hitler       -> 5000
         | blinky | pinky | clyde | inky -> 0
 
@@ -214,7 +220,7 @@ module enemies =
     let kind_is_boss = (k: enemy_kind) ->
         match k with
         | hans | schabbs | gretel | giftmacher | fat
-        | hitler_fake | hitler -> true
+        | hitler_fake | mecha_hitler | hitler -> true
         | _ -> false
 
     // True iff this kind ends the episode on death via the death-cam
@@ -259,6 +265,7 @@ module enemies =
         | hans | gretel -> 5    // bosses fire on both shoot frames (chain gun)
         | schabbs | giftmacher | fat -> 2  // 0b0010 — frame 1
         | hitler_fake -> 3   // 0b0011 — both frames (flame salvo)
+        | mecha_hitler -> 7  // 0b0111 — 3 bullet bursts per shoot cycle
         | _         -> 4    // 0b0100 — frame 2
 
     // Pickup item to drop on death (pickups.item_kind.decoration =
@@ -281,7 +288,7 @@ module enemies =
         // level and without dropping anything in the original.
         | hans | gretel -> pickups.item_kind.gold_key
         | schabbs | giftmacher | fat
-        | hitler_fake | hitler -> pickups.item_kind.decoration
+        | hitler_fake | mecha_hitler | hitler -> pickups.item_kind.decoration
         | blinky | pinky | clyde | inky -> pickups.item_kind.decoration
 
     // VSWAP sprite page index of the dropped pickup's shape
@@ -354,6 +361,18 @@ module enemies =
         die_frames = int32[4] { 328, 329, 330, 331 }, num_die_frames = 4,
         dead_frame = 333,
         shoot_frames = int32[4] { 325, 325, 0, 0 }, num_shoot_frames = 2
+    }
+    // Mecha Hitler — the armored mech suit. No dedicated pain pose in
+    // the original, so pain reuses SHOOT1 (the neutral "arms forward"
+    // stance). The original fires 5 shots per burst by alternating
+    // SHOOT2/SHOOT3; we compress to 3 (shoot_fire_mask = 0b0111) to
+    // stay within the 4-slot sprite_table.shoot_frames.
+    private let sprites_mecha_hitler = sprite_table {
+        stand_base = 334, walk_base = 334,
+        pain1 = 338, pain2 = 338,
+        die_frames = int32[4] { 342, 343, 344, 0 }, num_die_frames = 3,
+        dead_frame = 341,
+        shoot_frames = int32[4] { 338, 339, 340, 0 }, num_shoot_frames = 3
     }
     // Real Hitler has 7 die frames — we truncate to the 4 the struct holds.
     private let sprites_hitler = sprite_table {
@@ -430,6 +449,7 @@ module enemies =
         | giftmacher   -> sprites_giftmacher
         | fat          -> sprites_fat
         | hitler_fake  -> sprites_hitler_fake
+        | mecha_hitler -> sprites_mecha_hitler
         | hitler       -> sprites_hitler
         | blinky       -> sprites_blinky
         | pinky        -> sprites_pinky
@@ -822,6 +842,7 @@ module enemies =
             | fat          -> sfx.id.rose
             | schabbs      -> sfx.id.meingott     // "Mein Gott!"
             | hitler_fake  -> sfx.id.hitlerha
+            | mecha_hitler -> sfx.id.scheist
             | hitler       -> sfx.id.eva
             | blinky | pinky | clyde | inky -> -1
 
@@ -830,6 +851,27 @@ module enemies =
         // die frames. Caller awards score separately so stand-level
         // test commands can invoke this without accidentally buffing
         // the player.
+        // Mecha Hitler dies by cracking open — the real Hitler steps
+        // out at the same position and fights on. Mirrors the
+        // original's A_HitlerMorph action hook on s_mechadie3: reuse
+        // the actor slot, swap kind to `hitler`, reset HP to his
+        // difficulty tier, and start him in chase state so there's no
+        // LOS-wake delay before he opens fire. Kill counter and score
+        // are *not* re-awarded here — those fired when the mech's HP
+        // reached zero. Real Hitler's separate HP pool earns his own
+        // score and kill-count bump when he drops.
+        private let morph_mecha_to_hitler = (g: game*, e: enemy*) ->
+            e->kind           = enemy_kind.hitler
+            e->hp             = hp_for_kind(enemy_kind.hitler, g->difficulty)
+            e->state          = enemy_state.chase
+            e->anim_frame     = 0
+            e->anim_timer     = walk_frame_time
+            e->dir            = dir.nodir
+            e->move_remaining = 0.0
+            e->shoot_fired    = false
+            e->notified       = true
+            e->reaction_timer = 0.0
+
         let kill_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, sprite_start: int32) ->
             e->state = enemy_state.die
             e->anim_frame = 0
@@ -919,7 +961,7 @@ module enemies =
             | ss      -> 1 + rnd_byte(g) / 6    // 1..43 tics
             | dog     -> 1 + rnd_byte(g) / 8    // 1..32 tics
             | hans | schabbs | gretel | giftmacher
-            | fat | hitler_fake | hitler -> 1
+            | fat | hitler_fake | mecha_hitler | hitler -> 1
             | blinky | pinky | clyde | inky -> 1
             (float64) tics / 70.0
 
@@ -969,6 +1011,7 @@ module enemies =
                 | fat          -> sfx.id.erlauben
                 | schabbs      -> sfx.id.schabbsha
                 | hitler_fake  -> sfx.id.tot_hund
+                | mecha_hitler -> sfx.id.die
                 | hitler       -> sfx.id.die
                 | blinky | pinky | clyde | inky -> -1    // silent
                 if snd >= 0 then sfx.trigger_at(snd, ac, g, e->x, e->y)
@@ -992,7 +1035,7 @@ module enemies =
             // falls through to NAZIFIRESND.
             let snd = match e->kind with
             | ss                      -> sfx.id.ss_fire
-            | hans | hitler           -> sfx.id.boss_fire
+            | hans | mecha_hitler | hitler -> sfx.id.boss_fire
             | schabbs                 -> sfx.id.schabbs_throw
             | hitler_fake             -> sfx.id.flamethrower
             | giftmacher | fat        -> sfx.id.missile_fire
@@ -1034,7 +1077,12 @@ module enemies =
                     let sp = sprites_for_kind(e->kind)
                     e->anim_frame = e->anim_frame + 1
                     if e->anim_frame >= sp.num_die_frames then
-                        e->state = enemy_state.dead
+                        // Mecha's "death" is really the armor cracking
+                        // open to reveal Real Hitler — flip the actor
+                        // in place rather than leaving a corpse.
+                        match e->kind with
+                        | mecha_hitler -> morph_mecha_to_hitler(g, e)
+                        | _            -> e->state = enemy_state.dead
                     else
                         e->anim_timer = die_frame_time
             | pain ->
@@ -1132,7 +1180,19 @@ module enemies =
                             e->shoot_fired = false
                             return
                     advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e->kind), dt, true)
+                    let prev_walk_frame = e->anim_frame
                     advance_walk_anim(e)
+                    // Mech stomps: fire MECHSTEPSND on walk frames 0
+                    // and 2, matching the action-hook pattern on
+                    // s_mechachase1 / s_mechachase3 in the original.
+                    // Only on frame transitions, so we don't retrigger
+                    // within a single frame's hold time.
+                    match e->kind with
+                    | mecha_hitler ->
+                        if e->anim_frame != prev_walk_frame
+                            && (e->anim_frame == 0 || e->anim_frame == 2) then
+                            sfx.trigger_at(sfx.id.mech_step, ac, g, e->x, e->y)
+                    | _ -> void()
             | shoot ->
                 let sp = sprites_for_kind(e->kind)
                 if e->anim_timer <= 0.0 then
@@ -1168,7 +1228,7 @@ module enemies =
         // of a fight still plays its full die-frame cascade and lands
         // on the dead-pose sprite instead of staying stuck on its
         // first die frame.
-        let update_dying_enemies = (lv: level*, dt: float64) ->
+        let update_dying_enemies = (lv: level*, g: game*, dt: float64) ->
             for i in 0..lv->num_enemies
                 let e = &lv->enemies[i]
                 match e->state with
@@ -1178,7 +1238,9 @@ module enemies =
                         let sp = sprites_for_kind(e->kind)
                         e->anim_frame = e->anim_frame + 1
                         if e->anim_frame >= sp.num_die_frames then
-                            e->state = enemy_state.dead
+                            match e->kind with
+                            | mecha_hitler -> morph_mecha_to_hitler(g, e)
+                            | _            -> e->state = enemy_state.dead
                         else
                             e->anim_timer = die_frame_time
                 | _ -> void()

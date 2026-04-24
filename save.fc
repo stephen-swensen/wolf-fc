@@ -161,6 +161,7 @@ module save =
         | pinky        -> 13
         | clyde        -> 14
         | inky         -> 15
+        | mecha_hitler -> 16
 
     private let int_to_enemy_kind = (n: int32) ->
         match n with
@@ -179,7 +180,8 @@ module save =
         | 12 -> enemies.enemy_kind.blinky
         | 13 -> enemies.enemy_kind.pinky
         | 14 -> enemies.enemy_kind.clyde
-        | _  -> enemies.enemy_kind.inky
+        | 15 -> enemies.enemy_kind.inky
+        | _  -> enemies.enemy_kind.mecha_hitler
 
     private let enemy_state_to_int = (s: enemies.enemy_state) ->
         match s with

@@ -408,7 +408,18 @@ assert_contains "ghost:blinky-is-present" \
 # E4M9 = level 38 (Giftmacher). E5M9 = level 48 (Gretel).
 # E6M9 = level 58 (Fat Face).
 assert_contains "boss:schabbs-on-e2m9"   "setlevel:18 enemylist" "kind=schabbs"
-assert_contains "boss:hitler-on-e3m9"    "setlevel:28 enemylist" "kind=hitler"
+# E3M9 boss tile now spawns Mecha Hitler directly; Real Hitler only
+# appears via the death-transform inside enemies.ai.
+assert_contains "boss:mecha-hitler-on-e3m9" \
+    "setlevel:28 enemylist" \
+    "kind=mecha_hitler state=stand dir=8 hp=1200"
+# Killing the mech leaves its slot occupied by a fresh Real Hitler.
+# The mech plays 3 die-frames × 0.18s ≈ 0.54s before morphing, so wait
+# 25 ticks (~0.71s) before checking. Real Hitler's hard-tier HP is 900
+# per A_HitlerMorph.
+assert_regex "boss:mecha-morphs-to-real-hitler-on-kill" \
+    "setlevel:28 killenemy:2 wait:25 enemylist" \
+    'kind=hitler state=chase dir=[0-9]+ hp=900'
 assert_contains "boss:giftmacher-on-e4m9" "setlevel:38 enemylist" "kind=gift"
 assert_contains "boss:gretel-on-e5m9"    "setlevel:48 enemylist" "kind=gretel"
 assert_contains "boss:fat-face-on-e6m9"  "setlevel:58 enemylist" "kind=fat"
@@ -463,7 +474,7 @@ assert_contains "deathcam:fat-enters-death-cam-on-kill" \
     "setlevel:58 killenemy:8 phase" \
     "phase=death_cam"
 assert_contains "deathcam:hitler-enters-death-cam-on-kill" \
-    "setlevel:28 killenemy:2 phase" \
+    "setlevel:28 killenemy:2 wait:25 killenemy:2 phase" \
     "phase=death_cam"
 # Hans and Gretel do NOT enter gp_death_cam — their death flow still
 # routes through the gold-key drop + EXITTILE walk → gp_bj_victory.
