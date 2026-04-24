@@ -88,8 +88,8 @@ Documented as `src_*` constants in main.fc. Each is a Wolf3D enum value
 - [ ] **`src_heartbeat` (3) — low-health heartbeat.** Looped cue that plays
   when the player's HP drops below a threshold (matches the red face
   variant). Needs a steady re-trigger or a short looping digi.
-- [ ] **`src_slurpie` (61) / `src_goobs` (71).** Pickup-flavour extras —
-  slurp on chalice / crown, goop on enemy death. Lower priority.
+- [ ] **`src_goobs` (71).** Flavour extra — goop on enemy death. Lower
+  priority.
 
 ### Music tracks not yet surfaced
 
@@ -112,13 +112,56 @@ triggers them:
   screen TODO.
 
 ### Fidelity
-- [ ] **Survey pass against wolf4sdl.** The last two survey passes each
-  surfaced real bugs (per-axis bite ranges; T_Shoot hitchance/damage
-  formulas). Spot-check `GunAttack`, `TakeDamage`, pickup handling,
-  `UpdateFace`, and the pacman-ghost chase path for any silent divergences
-  worth closing. Queue new items here as they're found.
+- [ ] **Next survey pass.** The 2026-04-23 survey against `GunAttack`,
+  `TakeDamage`, pickup handling, `UpdateFace`, and the pacman-ghost chase
+  path closed eight divergences (see 2026-04-23 notes below). Future
+  passes should spot-check other subsystems — door interaction rules,
+  projectile spawn angles, pushwall speed, or audio mixing semantics —
+  and queue new items here as they're found.
 
-## Current State (2026-04-17)
+## Current State (2026-04-23)
+
+### Fidelity sweep vs original GunAttack / TakeDamage / GetBonus / UpdateFace / T_Ghosts (2026-04-23)
+- **Knife damage 0-15** (was 10-41): `hitscan.weapon_damage_roll` now
+  rolls `rnd_byte >> 4` for the knife, matching the original's
+  `US_RndT() >> 4`.
+- **Gun damage formula rebuilt**: tile-Chebyshev distance (max of the
+  per-axis tile deltas), three bands (<2 tiles: rnd/4; <4 tiles: rnd/6;
+  else: miss roll `rnd/12 < dist` then rnd/6). Replaces the earlier
+  four-band Euclidean-+-flat-floor formula that couldn't miss at long
+  range and couldn't graze for 0 at close range.
+- **"Can I Play Daddy" damage scaling**: `ai.damage_player` now does
+  `dmg >> 2` when difficulty is baby, matching TakeDamage's
+  `points >>= 2`. Sub-4 hits round to 0 and are silently dropped.
+- **Enemy-dropped clip split off** as `pickups.item_kind.clip_small`
+  (+4 ammo, the original's `bo_clip2`). Map-placed clips still give
+  +8 via `pickups.item_kind.clip`. `drop_for_kind` returns `clip_small`
+  for guard / officer / mutant; SS still drops the MG.
+- **Extra-life (`bo_fullheal`) now gives +25 ammo + counts as a
+  treasure pickup** in addition to the full heal and extra man. Missing
+  treasure bump was lowering achievable %treasure on maps with 1-ups.
+- **Gibs pickup wired up** (`pickups.item_kind.gibs`): plane-1 tiles 57
+  and 61 (statinfo[34] / statinfo[38]) grant +1 HP only when the
+  player is at ≤10 HP, refused otherwise. Plays the new SLURPIESND
+  (`sfx.id.slurpie`, AdLib-only chunk 61). Also clears the
+  `src_slurpie` sound TODO item.
+- **Dead-face pic fixed**: health=0 now renders `FACE8APIC` (single
+  dead-face, no A/B/C variants) instead of the old FACE7A "almost
+  dead" frame. When the killing blow was a Schabbs needle, the face
+  swaps to `MUTANTBJPIC` (original's `LastAttacker->obclass ==
+  needleobj` branch). Uses a new `g->last_hit_needle` latch,
+  reset on respawn / new game and cleared by any non-needle damage.
+- **Pacman-ghost contact tightened**: the touch box is now per-axis
+  MINACTORDIST (±0.25 tile) instead of ±1.0 tile, and a
+  `touch_cooldown` refractory window (0.25 s) stands in for the
+  original's "back up after bite" ClipMove step. Bite damage uses a
+  single `rnd_byte >> 4` roll (0-15) per approach cycle. Net DPS is
+  a lot closer to the original's feel. `touch_cooldown` saves and
+  loads (back-compat default 0 on old slots).
+- **Two new regression tests**: `pickup:dropped-clip-gives-4-ammo`
+  and `proj:baby-difficulty-quarters-rocket-damage`. Updated
+  `hitscan:knife-at-1-tile-damages-guard` expectation to hp=15
+  (guard survives a single 0-15 roll at 25 HP).
 
 ### Recent additions (this session, part 7)
 - Secret cheat chords (M+L+I and B+A+T) wired to the interactive loop.

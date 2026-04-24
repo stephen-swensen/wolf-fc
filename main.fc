@@ -266,6 +266,12 @@ struct game =
     phase: game_phase
     phase_timer: float64       // seconds spent in current phase (for transitions)
     damage_flash_timer: float64  // red tint on damage; decays each tick
+    // Latch set whenever the player's most recent damage came from a
+    // Schabbs needle projectile. Cleared by any other damage source
+    // and on respawn / new game. Read by hud.render to pick
+    // MUTANTBJPIC over FACE8APIC on the dying-face slot (original's
+    // DrawFace `LastAttacker->obclass == needleobj` branch).
+    last_hit_needle: bool
     // Red stipple that uncovers back to the new scene after a death-restart.
     // Set to `player.respawn_fade_time` by restart_current_level; decays each tick.
     respawn_fade_timer: float64

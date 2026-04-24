@@ -106,10 +106,11 @@ module sfx =
         let shoot          = 70   // SHOOTSND — menu item confirm
         let esc_pressed    = 71   // ESCPRESSEDSND — menu cancel / back
         let missile_hit    = 72   // MISSILEHITSND — rocket wall explosion
+        let slurpie        = 73   // SLURPIESND — gibs pickup slurp
 
     // Total number of sfx.id.* entries. The sfx_digi_slot / sfx_adlib_chunk
     // tables in main.fc are sized to this.
-    private let count = 73
+    private let count = 74
 
     // --- AUDIOT enum IDs we don't currently trigger (reference only).
     //     Append a new `id.*` above when wiring one up.
@@ -126,7 +127,6 @@ module sfx =
     //   game_over        = 17  GAMEOVERSND      — "game over" jingle (no digi)
     //   shoot_door       = 28  SHOOTDOORSND     — knife/bullet on door (no digi)
     //   boss_active      = 49  BOSSACTIVESND    — boss-room wake-up sting (no digi)
-    //   slurpie          = 61  SLURPIESND       — BJ slurping bonus chalice (no digi)
     //   goobs            = 71  GOOBSSND         — extra goop/gore on death (no digi)
 
     // Output sample rate for the SDL audio device (Hz). All driver
@@ -143,7 +143,7 @@ module sfx =
     // Verified entry-by-entry 2026-04-20: every row here matches
     // InitDigiMap's table for WL6; missing enum entries resolve to -1
     // too (SD_PlaySound then falls back to AdLib).
-    private let digi_slot = int32[73] {
+    private let digi_slot = int32[74] {
          3,   // open_door    (OPENDOORSND  -> digi 3)
          2,   // close_door   (CLOSEDOORSND -> digi 2)
          5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
@@ -218,12 +218,13 @@ module sfx =
         -1,   // move_gun1    (no digi — AdLib only)
         -1,   // shoot        (no digi — AdLib only)
         -1,   // esc_pressed  (no digi — AdLib only)
-        -1    // missile_hit  (no digi — AdLib only; wolfdigimap omits it)
+        -1,   // missile_hit  (no digi — AdLib only; wolfdigimap omits it)
+        -1    // slurpie       (no digi — AdLib only)
     }
 
     // AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this).
     // -1 to disable. Enum values taken from audiowl6.h.
-    private let adlib_chunk = int32[73] {
+    private let adlib_chunk = int32[74] {
         18,   // open_door    (OPENDOORSND)
         19,   // close_door   (CLOSEDOORSND)
         24,   // atk_pistol   (ATKPISTOLSND)
@@ -296,7 +297,8 @@ module sfx =
          5,   // move_gun1    (MOVEGUN1SND)
         32,   // shoot        (SHOOTSND)
         39,   // esc_pressed  (ESCPRESSEDSND)
-        86    // missile_hit  (MISSILEHITSND — AdLib-only rocket explosion)
+        86,   // missile_hit  (MISSILEHITSND — AdLib-only rocket explosion)
+        61    // slurpie      (SLURPIESND — gibs slurp)
     }
 
     // Play a sound by sfx.id.*. Prefers the digitized version (richer

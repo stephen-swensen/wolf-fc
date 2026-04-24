@@ -146,6 +146,13 @@ assert_contains "spawn:starting-weapon-1"     "state"   "weapon=1 best=1"
 section "pickups"
 assert_contains "pickup:food-heals-10"        "sethp:50 goto:29,51 state" "health=60"
 assert_contains "pickup:food-ignored-at-full" "goto:29,51 state"          "health=100"
+# Dropped clips (bo_clip2) give half the ammo of a map-placed clip: +4, not +8.
+# Kill the guard at (28,62) with three point-blank pistol shots (ammo drops
+# from 50 to 47), then step onto the drop tile. Final ammo should be 51
+# (47 + 4). A map-placed clip would leave it at 55.
+assert_contains "pickup:dropped-clip-gives-4-ammo" \
+    "goto:30,62 turnr:180 setammo:50 fire wait:15 fire wait:15 fire wait:15 goto:28,62 state" \
+    "ammo=51"
 
 section "static-sprites"
 # Wolf3D blocking decorations (barrels, wells, tables, etc.) stop the player.
@@ -177,7 +184,7 @@ assert_contains "hitscan:pistol-point-blank-kills-guard" \
     "score=100"
 assert_contains "hitscan:knife-at-1-tile-damages-guard" \
     "goto:29,62 turnr:180 setweapon:0 fire wait:10 enemylist" \
-    "kind=guard state=die dir=8 hp=-6"
+    "kind=guard state=shoot dir=2 hp=15"
 # Knife is a 1.5-tile-range melee. At 2-tile distance the hitscan misses
 # but the guard wakes to sight — verify HP is unchanged (25) rather than
 # asserting a specific post-wake AI state (those RNG-roll into shoot/chase).
@@ -489,6 +496,13 @@ assert_regex "proj:giftmacher-rocket-damages-player" \
 assert_contains "proj:fat-face-spawns-rockets" \
     "setlevel:58 enemylist" \
     "kind=fat state=stand"
+# "Can I Play Daddy" (baby) quarters incoming damage per TakeDamage's
+# `points >>= 2` branch in the original. Same Giftmacher rocket hit that
+# drops the player to 55 HP on hard leaves 89 HP on baby — 45 >> 2 = 11.
+# Both are deterministic under the seeded PCG stream.
+assert_contains "proj:baby-difficulty-quarters-rocket-damage" \
+    "--difficulty=0 setlevel:38 goto:27,19 wait:25 state" \
+    "health=89"
 
 section "cli flags"
 # --level=N drops the player straight onto level N in playing phase — the

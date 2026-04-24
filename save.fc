@@ -282,7 +282,7 @@ module save =
                     let nfd = if e->notified then 1 else 0
                     let sh = if e->shoot_fired then 1 else 0
                     io.write(
-                        "enemy %d{i} %14.6f{e->x} %14.6f{e->y} %d{e->tile_x} %d{e->tile_y} %d{ki} %d{si} %d{e->dir} %d{e->hp} %d{e->anim_frame} %14.6f{e->anim_timer} %d{sh} %14.6f{e->move_remaining} %d{amb} %d{nfd} %14.6f{e->reaction_timer}\n", f)
+                        "enemy %d{i} %14.6f{e->x} %14.6f{e->y} %d{e->tile_x} %d{e->tile_y} %d{ki} %d{si} %d{e->dir} %d{e->hp} %d{e->anim_frame} %14.6f{e->anim_timer} %d{sh} %14.6f{e->move_remaining} %d{amb} %d{nfd} %14.6f{e->reaction_timer} %14.6f{e->touch_cooldown}\n", f)
                 // PRNG state. Bits round-trip through signed int64
                 // (same width as uint64 under 2's complement); load
                 // reinterprets via (uint64). Older saves lack this
@@ -473,6 +473,10 @@ module save =
                                         e->reaction_timer = unwrap_float(toks[16])
                                     else
                                         e->reaction_timer = 0.0
+                                    if toks.len >= 18 then
+                                        e->touch_cooldown = unwrap_float(toks[17])
+                                    else
+                                        e->touch_cooldown = 0.0
                     // Recompute area_by_player from the restored door
                     // states so enemy AI sees the correct
                     // connectivity. areas.connect walks the door list

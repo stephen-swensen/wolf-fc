@@ -85,6 +85,7 @@ module player =
         g->next_level_delay = 0.0
         g->made_noise = false
         g->damage_flash_timer = 0.0
+        g->last_hit_needle = false
         g->respawn_fade_timer = 0.0
         g->wall_hit_cooldown = 0.0
         // IDKFA latch persists across deaths — re-grant the full kit so

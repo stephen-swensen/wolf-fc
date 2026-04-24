@@ -156,13 +156,19 @@ module pics =
         let n_blank     = 98      // blank digit (clears a leading digit cell)
         let n_0         = 99      // digits N_0PIC..N_9PIC = 99..108
         let n_9         = 108
-        let face_base   = 109     // FACE1APIC..FACE8APIC; 8 expressions ×
-                                  //   3 A/B/C variants.
+        let face_base   = 109     // FACE1APIC..FACE7CPIC; 7 living expressions
+                                  //   × 3 A/B/C variants = 21 chunks.
                                   //   chunk = base + expr*3 + var.
                                   //   expr 0 = 100% health grin,
-                                  //   expr 7 = dead / severely wounded.
-        let got_gatling = 131     // (unused) "YOU GOT THE GATLING GUN!" pickup
-        let mutant_bj   = 132     // (unused) mutant-BJ transformation cut-scene
+                                  //   expr 6 = "FACE7A" severely wounded.
+        let face_dead   = 130     // FACE8APIC — single dead-face pic, no
+                                  //   A/B/C variants. Shown when the player
+                                  //   dies from any attacker that isn't a
+                                  //   Schabbs needle.
+        let got_gatling = 131     // "YOU GOT THE GATLING GUN!" pickup
+        let mutant_bj   = 132     // MUTANTBJPIC — shown on the dying-face
+                                  //   slot when the killing blow was a
+                                  //   Schabbs needle projectile.
         let paused      = 133     // (unused) "PAUSED" overlay (wolf-fc
                                   //  removed the pause phase; still here
                                   //  for parity)
@@ -562,14 +568,15 @@ module hud =
 
     // Pick the BJ face chunk from health + animation frame. The
     // original picks the expression row from `(100-health)/16`
-    // (clamped 0..7) and the A/B/C variant from `gamestate.faceframe`
-    // (0..2). Health=0 shows the final "mostly dead" row. `frame` is
-    // clamped to 0..2 by the caller.
+    // (clamped 0..6 for the living-face rows) and the A/B/C variant
+    // from `gamestate.faceframe` (0..2). Health=0 is handled separately
+    // by the caller, which swaps in FACE8APIC (or MUTANTBJPIC on
+    // needle-death). `frame` is clamped to 0..2 by the caller.
     private let face_chunk_for = (health: int32, frame: int32) ->
         let mut h = health
         if h > 100 then h = 100
-        if h < 0 then h = 0
-        let idx = if h == 0 then 6 else (100 - h) / 16
+        if h < 1 then h = 1
+        let idx = (100 - h) / 16
         let clamped = if idx > 6 then 6 else idx
         let f = if frame < 0 then 0 else if frame > 2 then 2 else frame
         pics.id.face_base + clamped * 3 + f
@@ -644,13 +651,17 @@ module hud =
         draw_vg_number(rc, vg, pal, 168, num_y, 3, g->health)
         draw_vg_number(rc, vg, pal, 216, num_y, 2, g->ammo)
         // BJ face — chosen by health + the rolling A/B/C variant
-        // from update_face. Dead / dying locks to the final row,
-        // A-variant only. got_gatling_timer overrides everything
-        // while active, matching the original's DrawFace check
-        // against SD_SoundPlaying(GETGATLINGSND).
+        // from update_face. On death, the face swaps to the single
+        // FACE8APIC dead pic (or MUTANTBJPIC when the killing hit
+        // was a Schabbs needle projectile). got_gatling_timer
+        // overrides everything while active, matching the original's
+        // DrawFace check against SD_SoundPlaying(GETGATLINGSND).
+        let dead_face = if g->last_hit_needle then pics.id.mutant_bj
+            else pics.id.face_dead
         let face = if g->got_gatling_timer > 0.0 then pics.id.got_gatling
+            else if g->health <= 0 then dead_face
             else match g->phase with
-            | dying     -> pics.id.face_base + 6 * 3
+            | dying     -> dead_face
             | _            -> face_chunk_for(g->health, g->face_frame)
         pics.draw(rc, vg, pal, face, 136, bar_top + 4)
         // Weapon icon on the right.

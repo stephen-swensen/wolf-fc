@@ -285,9 +285,13 @@ module pickups =
         | first_aid     // +25 health
         | extra_life    // full health + 1 life
         // Ammo / weapons
-        | clip          // +8 ammo
+        | clip          // +8 ammo (map-placed; bo_clip in the original)
+        | clip_small    // +4 ammo (dropped by dead enemies; bo_clip2)
         | machine_gun   // weapon + ammo
         | chain_gun     // weapon + ammo
+        // Gore (Wolf3D's bo_gibs): +1 HP only when hurt below 11. The
+        // player "slurps" at the remains for a scrap of healing.
+        | gibs
         // Keys
         | gold_key
         | silver_key
@@ -313,6 +317,8 @@ module pickups =
         | 54 -> item_kind.bible
         | 55 -> item_kind.crown
         | 56 -> item_kind.extra_life
+        | 57 -> item_kind.gibs        // bo_gibs (statinfo[34])
+        | 61 -> item_kind.gibs        // bo_gibs (statinfo[38], "Gibs 2")
         | _ -> item_kind.decoration
 
     let check = (lv: level*, g: game*, ac: audio_ctx*) ->
@@ -342,17 +348,38 @@ module pickups =
                 g->health = g->health + 25
                 if g->health > 100 then g->health = 100
                 true
+            // Gibs heal a single point only when the player is already
+            // hurting — `bo_gibs` in the original refuses the pickup
+            // above 10 HP so the remains stay on the floor as emergency
+            // rations.
+            | gibs when (g->health > 10) -> false
+            | gibs ->
+                g->health = g->health + 1
+                if g->health > 100 then g->health = 100
+                true
             | extra_life ->
+                // bo_fullheal: full heal, +25 ammo, +1 life, and
+                // counts against the intermission treasure tally.
                 g->health = 100
+                g->ammo = g->ammo + 25
+                if g->ammo > 99 then g->ammo = 99
+                g->treasures = g->treasures + 1
                 grant_extra_life(g, ac)
                 true
-            | clip when (g->ammo >= 99) -> false
+            | clip | clip_small when (g->ammo >= 99) -> false
             | clip ->
                 // GiveAmmo: if player was out of ammo (dropped to
                 // knife), restore their best firearm when the clip
                 // comes in.
                 if g->ammo == 0 && g->weapon == 0 then g->weapon = g->best_weapon
                 g->ammo = g->ammo + 8
+                if g->ammo > 99 then g->ammo = 99
+                true
+            | clip_small ->
+                // Enemy drops — half the ammo of a map-placed clip
+                // (bo_clip2 in the original).
+                if g->ammo == 0 && g->weapon == 0 then g->weapon = g->best_weapon
+                g->ammo = g->ammo + 4
                 if g->ammo > 99 then g->ammo = 99
                 true
             | machine_gun ->
@@ -417,8 +444,10 @@ module pickups =
                 // across subsequent test commands.
                 if !g->test_mode then
                     g->got_gatling_timer = hud.got_gatling_time
-            | clip ->
+            | clip | clip_small ->
                 sfx.trigger(sfx.id.get_ammo, ac)
+            | gibs ->
+                sfx.trigger(sfx.id.slurpie, ac)
             | cross ->
                 sfx.trigger(sfx.id.bonus1, ac)
                 hud.show_message(g, "CROSS +100")
@@ -963,7 +992,8 @@ module spawn =
             ambush = is_boss && !info.dead,
             notified = false,
             reaction_timer = 0.0,
-            last_visible = false
+            last_visible = false,
+            touch_cooldown = 0.0
         }
         lv->num_enemies = lv->num_enemies + 1
 
