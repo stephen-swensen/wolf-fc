@@ -175,6 +175,12 @@ assert_contains "pickup:gibs-accepted-at-threshold" \
 assert_contains "pickup:gibs-accepted-below-threshold" \
     "setlevel:1 sethp:5 goto:60,39 state" \
     "health=6"
+# Cross pickup at (7,14) on E1M1 awards 100 score. Coverage for the
+# treasure branch of pickups.check (the other three treasures
+# exercise the same path).
+assert_contains "pickup:cross-awards-100-score" \
+    "goto:7,14 state" \
+    "score=100"
 
 section "static-sprites"
 # Wolf3D blocking decorations (barrels, wells, tables, etc.) stop the player.
@@ -553,14 +559,6 @@ assert_contains "cli:near-boss-no-op-without-boss" \
 assert_contains "cli:setphase-mapmenu" \
     "setphase:mapmenu phase" \
     "phase=menu"
-
-section "messages"
-# Picking up a treasure item posts a pickup message; msg_timer becomes > 0.
-# We verify the counters command doesn't show msg_timer directly, so render
-# a screenshot — the PNG tEXt metadata (saved by save_png) includes score.
-assert_contains "msg:cross-pickup-awards-100" \
-    "goto:7,14 state" \
-    "score=100"
 
 section "cheats"
 # MLI chord: full health / 99 ammo / both keys / gatling, score zeroed.

@@ -344,7 +344,7 @@ triggers them:
 - Title screen (TITLEPIC + blinking prompt).
 - Main menu with keyboard nav: New Game, Sound toggle, Quit; difficulty sub-menu (Can I Play Daddy / Don't Hurt Me / Bring 'Em On / I Am Death Incarnate).
 - Pause screen (Esc during play): dims the game frame + overlays "PAUSED".
-- In-game message banner: pickup names (gold key, treasures), fades out over 0.5s.
+- In-game message banner: used by cheat chords (IDDQD / IDKFA / MLI / BAT / noclip / free-items toggles), multi-line with fade-out. No pickup banner — the original game was silent on pickup aside from the SFX and score bump.
 - Boss enemy kinds: Hans, Schabbs, Gretel, Giftmacher, Hitler (fake/real). Non-rotating sprites, boss HP (850 / 200 / 800), killing ends the level, drops gold key.
 - Pacman ghosts (Blinky/Pinky/Clyde/Inky): non-rotating, chase-only, damages player on contact.
 - Music fade-out on intermission / game-over via imf volume field routed through opl2.fill_ticked_vol.
@@ -468,7 +468,7 @@ Cross-referenced against wolf4sdl. See the 2026-04-17 chat session for details.
 - [x] Main menu (new game / sound toggle / quit).
 - [x] Difficulty selection submenu (Can I Play Daddy / Don't Hurt Me / Bring 'em On / I Am Death Incarnate).
 - [x] Pause screen (Esc freezes + "PAUSED" overlay; Esc again returns to main menu).
-- [x] In-game text messages (pickup names, boss-key banner, fade-out timer).
+- [x] In-game text messages: cheat-chord feedback (IDDQD / IDKFA / MLI / BAT / god / noclip / free-items). Fade-out timer, multi-line. Pickup banners were briefly wired in for debug / name-learning and removed for fidelity — the original game is silent on pickup aside from SFX.
 - [x] Episode selection submenu (6 episodes, under NEW GAME).
 - [x] Save Game / Load Game menus (10 slots, ~/.wolf-fc/saves/slot_NN.sav, text format).
 

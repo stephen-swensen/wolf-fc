@@ -420,54 +420,34 @@ module pickups =
                 true
             if !picked_up then continue
             lv->sprites[i].alive = false
-            // Health items intentionally have no pickup sound
-            // (matches Wolf3D).
+            // Per-kind pickup SFX. Matches the original — no HUD
+            // banner, just a score bump and a sound. Health pickups
+            // have their own health1/health2 cue; dog_food / food and
+            // first_aid chose between them. BONUS1UPSND on extra_life
+            // already fired inside grant_extra_life above.
             match it with
-            | gold_key ->
-                sfx.trigger(sfx.id.get_key, ac)
-                hud.show_message(g, "GOLD KEY")
-            | silver_key ->
-                sfx.trigger(sfx.id.get_key, ac)
-                hud.show_message(g, "SILVER KEY")
-            | machine_gun ->
-                sfx.trigger(sfx.id.get_mg, ac)
-                hud.show_message(g, "MACHINE GUN")
-            | chain_gun ->
+            | gold_key | silver_key -> sfx.trigger(sfx.id.get_key, ac)
+            | machine_gun           -> sfx.trigger(sfx.id.get_mg, ac)
+            | chain_gun             ->
                 sfx.trigger(sfx.id.get_gat, ac)   // GETGATLINGSND — digi voice line
-                hud.show_message(g, "GATLING GUN")
                 // Face-slot swap: hud.render paints GOTGATLINGPIC in
                 // the BJ face cell while this timer is active. Matches
                 // the original's DrawFace (`if SD_SoundPlaying() ==
                 // GETGATLINGSND then show GOTGATLINGPIC else show
-                // face`). Gameplay continues uninterrupted. Gated on
-                // !test_mode so scripted pickups don't hold the pic
-                // across subsequent test commands.
+                // face`). Gated on !test_mode so scripted pickups
+                // don't hold the pic across subsequent test commands.
                 if !g->test_mode then
                     g->got_gatling_timer = hud.got_gatling_time
-            | clip | clip_small ->
-                sfx.trigger(sfx.id.get_ammo, ac)
-            | gibs ->
-                sfx.trigger(sfx.id.slurpie, ac)
-            | cross ->
-                sfx.trigger(sfx.id.bonus1, ac)
-                hud.show_message(g, "CROSS +100")
-            | chalice ->
-                sfx.trigger(sfx.id.bonus2, ac)
-                hud.show_message(g, "CHALICE +500")
-            | bible ->
-                sfx.trigger(sfx.id.bonus3, ac)
-                hud.show_message(g, "BIBLE +1000")
-            | crown ->
-                sfx.trigger(sfx.id.bonus4, ac)
-                hud.show_message(g, "CROWN +5000")
-            | extra_life ->
-                // BONUS1UPSND already fired by grant_extra_life above.
-                hud.show_message(g, "EXTRA LIFE")
-            | dog_food | food ->
-                sfx.trigger(sfx.id.health1, ac)
-            | first_aid ->
-                sfx.trigger(sfx.id.health2, ac)
-            | decoration               -> void()
+            | clip | clip_small     -> sfx.trigger(sfx.id.get_ammo, ac)
+            | gibs                  -> sfx.trigger(sfx.id.slurpie, ac)
+            | cross                 -> sfx.trigger(sfx.id.bonus1, ac)
+            | chalice               -> sfx.trigger(sfx.id.bonus2, ac)
+            | bible                 -> sfx.trigger(sfx.id.bonus3, ac)
+            | crown                 -> sfx.trigger(sfx.id.bonus4, ac)
+            | dog_food | food       -> sfx.trigger(sfx.id.health1, ac)
+            | first_aid             -> sfx.trigger(sfx.id.health2, ac)
+            | extra_life            -> void()  // sound fired by grant_extra_life
+            | decoration            -> void()
 
 
 // ============================================================
