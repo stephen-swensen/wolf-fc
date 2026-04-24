@@ -2133,7 +2133,7 @@ let main = (args: str[]) ->
                             if k == sdl2.key_i then player.cheats.apply_tab_i(g, w->ac)
                             if k == sdl2.key_n then player.cheats.apply_tab_n(g)
                             if k == sdl2.key_e then player.cheats.apply_tab_e(g)
-                            if k == sdl2.key_h then enemies.ai.damage_player(g, w->ac, 16)
+                            if k == sdl2.key_h then enemies.ai.damage_player(g, w->ac, 16, enemies.damage_source.bullet)
                         else
                             if k == sdl2.key_up then g->key_up = true
                             if k == sdl2.key_down then g->key_down = true
