@@ -44,6 +44,7 @@ This compiles the FC source to C, then to a native binary, and runs it. The game
 | `--level=N` | Skip the title / menu and drop straight into map N in playing phase. `N` is `0..59` (six episodes of ten maps). Handy for jumping to a specific boss fight — see table below. |
 | `--difficulty=N` | Override the starting difficulty: `0` = Can I play Daddy, `1` = Don't Hurt Me, `2` = Bring 'Em On, `3` = I Am Death Incarnate (default). Combines with `--level`. |
 | `--near-boss` | After the level loads, teleport the player to an open tile adjacent to the first boss enemy on the map, facing the boss. No-op on maps without a boss. Combine with `--level=N` to start a specific boss fight immediately. |
+| `--near-goldkey` / `--near-silverkey` / `--near-gibs` | Same idea but for the first gold-key / silver-key / gibs pickup on the map. Handy for eyeballing HUD changes and the gibs-at-low-HP branch without playing through. First gibs map is `E1M2` (`--level=1 --near-gibs`). |
 | `--cheat` | Pre-activate both Doom-style cheats (`IDDQD` god mode + `IDKFA` all-keys / all-weapons / full non-depleting ammo / locked score) from the very first frame. The gifts re-apply on every death while the IDKFA latch stays on. |
 
 ### Jump-to-boss cheat sheet

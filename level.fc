@@ -817,6 +817,22 @@ module spawn =
         if kx < 0 then return
         place_player_adjacent(lv, g, kx, ky)
 
+    // Same idea for the `bo_gibs` pickup. Handy for eyeballing the
+    // sprite + exercising the "below 10 HP" branch without playing
+    // through a whole level. First map with gibs is E1M2.
+    let near_gibs = (lv: level*, g: game*) ->
+        let mut kx = -1
+        let mut ky = -1
+        for i in 0..lv->num_sprites
+            if kx < 0 && lv->sprites[i].alive then
+                match lv->sprites[i].item_type with
+                | gibs ->
+                    kx = (int32) lv->sprites[i].x
+                    ky = (int32) lv->sprites[i].y
+                | _ -> void()
+        if kx < 0 then return
+        place_player_adjacent(lv, g, kx, ky)
+
     // Populate sprite list from level plane 1 data.
     // Tile values 23-72 are static objects. Shape = 2 + (tile - 23).
     let sprites = (lv: level*, lv_data: maps.level*, sprite_start: int32) ->

@@ -1631,6 +1631,8 @@ let main = (args: str[]) ->
     //                           No-op on maps without one (E1L1).
     //   --near-silverkey      — teleport next to the first silver-key
     //                           pickup. First silver-key map is E2L3.
+    //   --near-gibs           — teleport next to the first `bo_gibs`
+    //                           pile. First gibs map is E1M2.
     //   --cheat               — pre-activate IDDQD + IDKFA: god mode,
     //                           both keys, chain gun, 99 ammo (non-
     //                           depleting), and a locked score. The
@@ -1642,6 +1644,7 @@ let main = (args: str[]) ->
     let mut start_near_boss = false
     let mut start_near_goldkey = false
     let mut start_near_silverkey = false
+    let mut start_near_gibs = false
     let mut arg_no_dogs = false
     let mut arg_cheat = false
     for i in 1..(int32) args.len
@@ -1651,6 +1654,7 @@ let main = (args: str[]) ->
         if a == "--near-boss" then start_near_boss = true
         if a == "--near-goldkey" then start_near_goldkey = true
         if a == "--near-silverkey" then start_near_silverkey = true
+        if a == "--near-gibs" then start_near_gibs = true
         if a == "--cheat" then arg_cheat = true
         if text.starts_with(a, "--level=") then
             match text.parse_int32(a[8..a.len]) with
@@ -1819,6 +1823,10 @@ let main = (args: str[]) ->
         areas.connect(w->lv, g->area_number)
     if start_near_silverkey then
         spawn.near_silverkey(w->lv, w->g)
+        areas.update_player_area(w->lv, g)
+        areas.connect(w->lv, g->area_number)
+    if start_near_gibs then
+        spawn.near_gibs(w->lv, w->g)
         areas.update_player_area(w->lv, g)
         areas.connect(w->lv, g->area_number)
 
