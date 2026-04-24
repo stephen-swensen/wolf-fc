@@ -1505,6 +1505,42 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             let area = (int32) w->lv->tile_areas[(int64) e.tile_x * 64 + (int64) e.tile_y]
             io.write("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp} area=%d{area}\n", stdout)
         void()
+    else if arg == "pickups" then
+        // Per-level pickup inventory: dumps every live sprite whose
+        // item_type is something the player could actually grab
+        // (decorations are filtered out). Enemy-dropped items appear
+        // after their corpse lands, so running `killenemy:i pickups`
+        // is a way to verify drops. Format mirrors `enemylist`:
+        //   [slot] (tx,ty) kind=<kind>
+        // followed by a count line.
+        let mut count = 0
+        for i in 0..w->lv->num_sprites
+            let s = w->lv->sprites[i]
+            if !s.alive then continue
+            let ks = match s.item_type with
+            | decoration -> ""
+            | dog_food    -> "dog_food"
+            | food        -> "food"
+            | first_aid   -> "first_aid"
+            | extra_life  -> "extra_life"
+            | clip        -> "clip"
+            | clip_small  -> "clip_small"
+            | machine_gun -> "machine_gun"
+            | chain_gun   -> "chain_gun"
+            | gold_key    -> "gold_key"
+            | silver_key  -> "silver_key"
+            | cross       -> "cross"
+            | chalice     -> "chalice"
+            | bible       -> "bible"
+            | crown       -> "crown"
+            | gibs        -> "gibs"
+            if ks.len == 0 then continue
+            let tx = (int32) s.x
+            let ty = (int32) s.y
+            io.write("[%d{i}] (%d{tx},%d{ty}) kind=%s{ks}\n", stdout)
+            count = count + 1
+        io.write("pickups: count=%d{count}\n", stdout)
+        void()
     else if arg == "exittiles" then
         // List every EXITTILE marker (plane-1 tile 99) on the current map.
         // Boss-level maps place exactly one of these behind the gold-key

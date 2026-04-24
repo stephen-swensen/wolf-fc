@@ -153,6 +153,28 @@ assert_contains "pickup:food-ignored-at-full" "goto:29,51 state"          "healt
 assert_contains "pickup:dropped-clip-gives-4-ammo" \
     "goto:30,62 turnr:180 setammo:50 fire wait:15 fire wait:15 fire wait:15 goto:28,62 state" \
     "ammo=51"
+# bo_fullheal (the "one up" sprite at (14,55) on E1M1) grants full heal +
+# 25 ammo + one life + a treasure pickup. With starting ammo=8 the pickup
+# caps to 33, lives 3 -> 4.
+assert_contains "pickup:extra-life-grants-ammo-and-life" \
+    "goto:14,55 state" \
+    "health=100 ammo=33 score=0 lives=4"
+assert_contains "pickup:extra-life-counts-as-treasure" \
+    "goto:14,55 counters" \
+    "treasures=1/22"
+# bo_gibs (tiles 57 & 61) heals +1 HP only when the player is at or below
+# 10 HP. E1M2 has a single gibs at (60,39). At full HP the pickup is
+# refused (sprite stays on the floor). At HP=10 it's accepted and heals
+# to 11. At HP=5 it heals to 6.
+assert_contains "pickup:gibs-refused-above-threshold" \
+    "setlevel:1 goto:60,39 state" \
+    "health=100"
+assert_contains "pickup:gibs-accepted-at-threshold" \
+    "setlevel:1 sethp:10 goto:60,39 state" \
+    "health=11"
+assert_contains "pickup:gibs-accepted-below-threshold" \
+    "setlevel:1 sethp:5 goto:60,39 state" \
+    "health=6"
 
 section "static-sprites"
 # Wolf3D blocking decorations (barrels, wells, tables, etc.) stop the player.
