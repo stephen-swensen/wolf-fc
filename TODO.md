@@ -59,57 +59,47 @@ lump and would naturally land together.
 
 ### Sound effects not yet triggered
 
-Documented as `src_*` constants in main.fc. Each is a Wolf3D enum value
-(0..86 per `audiowl6.h`); to wire one up, add a `snd_*` binding, bump
-`snd_count`, extend `snd_digi` / `snd_adlib_enum`, and call `trigger_sound`.
+Wolf3D enum IDs (0..86 per `audiowl6.h`) that the original triggered but
+wolf-fc still doesn't. To wire one up, add an `id.*` entry in `sfx.fc`,
+bump `count`, extend the `digi_slot` / `adlib_chunk` tables, and call
+`sfx.trigger`.
 
-- [ ] **`src_select_wpn` (1) / `src_move_gun2` (4) — menu polish.** Add the
-  second half of the cursor-move click (MOVEGUN1 → MOVEGUN2) so navigation
-  sounds like the original, and play SELECTWPNSND when the player changes
-  weapon slot with 1..4 keys (wolf-fc is silent on slot change today).
-- [ ] **`src_walk1` / `src_walk2` (14 / 15) — footstep loop.** Alternating
-  footsteps while the player is moving. Tune the interval to match run /
-  walk speed.
-- [ ] **`src_player_death` (9) — BJ death scream.** We already play the
-  damage-flash + collapse animation silently; GAMEOVERSND fits here too
-  (PLAYERDEATHSND on the killing blow, `src_game_over` after the collapse).
-- [ ] **`src_game_over` (17) — game-over jingle** on lives-exhausted transition.
-- [ ] **`src_boss_active` (49) — boss-room wake-up sting.** Fire once when
-  the first boss enemy on a level wakes (enemy_should_wake transition).
-- [ ] **`src_nazi_hit_player` (7) — enemy-bullet hit on player.** We only
-  play the AdLib TAKEDAMAGE sound today; NAZIHITPLAYERSND layers on top and
-  gives the incoming shot a discrete cue.
-- [ ] **`src_no_item` (13) — refused pickup.** Couldn't-pick-up cue (e.g.
-  ammo at max, full-health pickup denied). Audible feedback only — the
-  message banner already covers the visual.
-- [ ] **`src_shoot_door` (28) — knife/bullet striking a door.** Original
-  plays this when a weapon lands on a door tile; we currently eat the hit
-  silently.
-- [ ] **`src_heartbeat` (3) — low-health heartbeat.** Looped cue that plays
-  when the player's HP drops below a threshold (matches the red face
-  variant). Needs a steady re-trigger or a short looping digi.
-- [ ] **`src_goobs` (71).** Flavour extra — goop on enemy death. Lower
-  priority.
+Audited 2026-04-25 against wolf4sdl + id's original DOS source. AUDIOT
+contains roughly a dozen additional chunks that look like fidelity gaps
+(SELECTWPNSND, HEARTBEATSND, GAMEOVERSND, WALK1/2SND, etc.) but are dead
+data — never called from any original-game source path. They've been
+retired from this list; if you ever want to wire one as a deliberate
+enhancement, add it back and flag it as a divergence.
+
+- [ ] **`MOVEGUN2SND` (4) — menu confirm beep.** Played once at the end
+  of the keybind-rebind flow in the original (`wl_menu.cpp:3859`); the
+  cursor-move click itself is MOVEGUN1, already wired as
+  `sfx.id.move_gun1`. Pairs with the configurable-input TODO.
+- [ ] **`PLAYERDEATHSND` (9) — BJ death scream.** Original plays this on
+  the killing blow in `PlayerDied` (`wl_game.cpp:1237`); wolf-fc
+  currently runs the damage-flash + collapse animation silently.
+- [ ] **`SHOOTDOORSND` (28) — keybind-menu confirm.** Despite the name,
+  this is *not* "weapon hits a door" in the original — it's the confirm
+  beep played at four sites in the keybind-config menu. Pairs with the
+  configurable-input TODO.
 
 ### Music tracks not yet surfaced
 
-The per-level `songs[]` table uses 18 of the 27 available tracks. The
-following are packaged in AUDIOT and have `music_*` constants but no caller
-triggers them:
+The per-level `songs[]` table uses 18 of the 27 available tracks. Audited
+2026-04-25: only two more tracks are actually called from the original
+Wolf3D source. The rest (HITLWLTZ, SALUTE, VICTORS, FUNKYOU) are dead
+data despite their suggestive names — retired from this list.
 
-- [ ] **`music_hitlwltz` (5) — Hitler Waltz.** Intended for the real-Hitler
-  boss room. Fine-grained music routing (current boss-room override) could
-  pick it up when `enemy.kind == ek_hitler` is alive on the level.
-- [ ] **`music_nazi_nor` (7) — alt normal-enemy theme.** Potential
-  replacement for one of the per-level slots if we later tune cadence.
-- [ ] **`music_salute` (10) — marching salute.** Could cue a boss-intro
-  moment or an episode-intro screen.
-- [ ] **`music_victors` (13) — alt victory track.** Alternative for
-  per-episode victory (currently URAHERO).
-- [ ] **`music_funkyou` (15) — funky outro.** Could play over the
-  credits screen once that ships.
-- [ ] **`music_roster` (23) — high-score roll.** Pairs with the high-scores
-  screen TODO.
+- [ ] **`music_nazi_nor` (7) — title-screen / intro music.** Defined as
+  `INTROSONG = NAZI_NOR_MUS` in `wl_menu.h`; played on the title screen
+  and the demo / attract loop. wolf-fc currently uses WONDERIN_MUS for
+  both title and main menu, but the original only used WONDERIN
+  (`MENUSONG`) for the main menu and NAZI_NOR for the title. Fix in
+  `ui.fc::music_chunk_for_phase` — split the `title | main_menu` arm
+  so `title` returns `nazi_nor` and `main_menu` keeps `wonderin`.
+- [ ] **`music_roster` (23) — high-scores roll.** Played at two sites
+  (`wl_inter.cpp:1145`, `wl_menu.cpp:852`) when the high-scores screen
+  is shown. Pairs with the high-scores TODO.
 
 ### Fidelity
 - [ ] **Next survey pass.** The 2026-04-23 survey against `GunAttack`,

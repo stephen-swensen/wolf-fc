@@ -112,22 +112,17 @@ module sfx =
     // tables in main.fc are sized to this.
     private let count = 74
 
-    // --- AUDIOT enum IDs we don't currently trigger (reference only).
-    //     Append a new `id.*` above when wiring one up.
+    // --- AUDIOT enum IDs the original triggered but wolf-fc still doesn't.
+    //     Append a new `id.*` above when wiring one up. Tracked in TODO.md.
     //
-    //   select_wpn       = 1   SELECTWPNSND     — weapon-slot switch blip (digi 46)
-    //   select_item      = 2   SELECTITEMSND    — menu "item selected" blip (no digi)
-    //   heartbeat        = 3   HEARTBEATSND     — low-health heartbeat loop (no digi)
-    //   move_gun2        = 4   MOVEGUN2SND      — menu cursor "click" (no digi)
-    //   nazi_hit_player  = 7   NAZIHITPLAYERSND — enemy bullet hit on player (no digi)
-    //   player_death     = 9   PLAYERDEATHSND   — BJ's dying scream (no digi)
-    //   no_item          = 13  NOITEMSND        — pickup refused (no digi)
-    //   walk1            = 14  WALK1SND         — footstep A (no digi)
-    //   walk2            = 15  WALK2SND         — footstep B (no digi)
-    //   game_over        = 17  GAMEOVERSND      — "game over" jingle (no digi)
-    //   shoot_door       = 28  SHOOTDOORSND     — knife/bullet on door (no digi)
-    //   boss_active      = 49  BOSSACTIVESND    — boss-room wake-up sting (no digi)
-    //   goobs            = 71  GOOBSSND         — extra goop/gore on death (no digi)
+    //   move_gun2        = 4   MOVEGUN2SND      — keybind-rebind confirm beep
+    //   player_death     = 9   PLAYERDEATHSND   — BJ's dying scream on killing blow
+    //   shoot_door       = 28  SHOOTDOORSND     — keybind-menu confirm (NOT door hits)
+    //
+    // Other AUDIOT chunks (SELECTWPNSND, HEARTBEATSND, NAZIHITPLAYERSND,
+    // WALK1/2SND, GAMEOVERSND, NOITEMSND, BOSSACTIVESND, GOOBSSND, etc.)
+    // exist as data but were never called from the original — see the
+    // 2026-04-25 audit in TODO.md. Don't add them as fidelity items.
 
     // Output sample rate for the SDL audio device (Hz). All driver
     // chips run at this rate. The int32-mix + soft-clip finalizer lives
