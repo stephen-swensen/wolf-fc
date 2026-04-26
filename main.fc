@@ -1880,12 +1880,18 @@ let main = (args: str[]) ->
     sdl2.set_hint(c"SDL_WINDOWS_DPI_AWARENESS", c"system")
     sdl2.init(sdl2.init_video | sdl2.init_audio)
 
-    // Window: resizable, maximized on start. F11 toggles fullscreen.
+    // Window: resizable, fullscreen (borderless display-sized) on start.
+    // F11 / Alt+Enter toggles between fullscreen and maximized — both
+    // paths share the body of the toggle below.
     let flags = sdl2.window_shown | sdl2.window_resizable | sdl2.window_allow_highdpi
     let win = sdl2.create_window(c"Wolf-FC",
         sdl2.pos_centered, sdl2.pos_centered, screen_w, actual_h, flags)
-    sdl2.maximize_window(win)
-    let mut fullscreen = false
+    let mut db = sdl2.rect { x = 0, y = 0, w = 0, h = 0 }
+    sdl2.get_display_bounds(0, &db)
+    sdl2.set_bordered(win, 0)
+    sdl2.set_window_position(win, db.x, db.y)
+    sdl2.set_window_size(win, db.w, db.h)
+    let mut fullscreen = true
 
     // Renderer with vsync.
     let ren = sdl2.create_renderer(win, -1, sdl2.renderer_vsync)
