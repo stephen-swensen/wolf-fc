@@ -68,6 +68,36 @@ module config =
         // Shadow depth as 0..100 percent. 0 = no shading, 100 = full
         // black at distance, 55 = original Wolf3D feel.
         shadow_depth: int32
+        // Display aspect choice for the rendering pipeline. 0=auto
+        // (detect display at startup), 1=Original 4:3 (320×200),
+        // 2=Widescreen 16:10 (384×200), 3=Widescreen 16:9 (428×200).
+        // Stored as int so the file is greppable; "auto" is encoded
+        // as 0 — `view_mode_to_fb_w` reads the value back.
+        view_mode: int32
+
+    // View-mode constants. Match the integers serialised to the
+    // config file; reorder only if you bump the version.
+    let view_mode_auto       = 0
+    let view_mode_original   = 1
+    let view_mode_widescreen_16_10 = 2
+    let view_mode_widescreen_16_9  = 3
+
+    let view_mode_label = (m: int32) ->
+        match m with
+        | 1 -> "ORIGINAL (4:3)"
+        | 2 -> "WIDESCREEN (16:10)"
+        | 3 -> "WIDESCREEN (16:9)"
+        | _ -> "AUTO"
+
+    // Map an explicit view-mode choice to its framebuffer width. Auto
+    // returns 0 — the caller is expected to fall back to display
+    // detection in that case.
+    let view_mode_to_fb_w = (m: int32) ->
+        match m with
+        | 1 -> 320
+        | 2 -> 384
+        | 3 -> 428
+        | _ -> 0
 
     let defaults = () ->
         prefs {
@@ -81,7 +111,10 @@ module config =
             // perpendicular-wall side tint (raycaster.render_walls
             // does that one separately). Our distance-fade slider is
             // an opt-in mod for players who want the look.
-            shadow_depth = 0
+            shadow_depth = 0,
+            // Auto by default — detect display at startup so users on
+            // any aspect get sensible widescreen out of the box.
+            view_mode = 0
         }
 
     // Snapshot the live preference state into a `prefs` value for
@@ -94,7 +127,8 @@ module config =
             music_on = w->g->music_on,
             sfx_on = w->ac->sfx_on,
             no_dogs = w->g->no_dogs,
-            shadow_depth = w->g->shadow_depth
+            shadow_depth = w->g->shadow_depth,
+            view_mode = w->g->view_mode
         }
 
     private let config_path = () ->
@@ -146,6 +180,11 @@ module config =
                                 else if v > 100 then 100
                                 else v
                         | none -> void()
+                    else if text.starts_with(line, "view_mode ") then
+                        match text.parse_int32(line[10..line.len]) with
+                        | some(v) ->
+                            p.view_mode = if v < 0 || v > 3 then 0 else v
+                        | none -> void()
                 p
 
     // Write the current prefs to disk. Fire-and-forget — failures
@@ -166,6 +205,7 @@ module config =
                 io.write("sfx %d{if p.sfx_on then 1 else 0}\n", f)
                 io.write("no_dogs %d{if p.no_dogs then 1 else 0}\n", f)
                 io.write("shadow_depth %d{p.shadow_depth}\n", f)
+                io.write("view_mode %d{p.view_mode}\n", f)
                 void()
 
 

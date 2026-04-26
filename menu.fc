@@ -22,6 +22,7 @@ module menu =
         let loadlist   = 4
         let sound      = 5
         let options    = 6
+        let changeview = 7
 
     // Original Wolf3D palette indices for menu chrome (from
     // `wl_menu.h`). We resolve them through `pal[]` at draw time so
@@ -41,31 +42,32 @@ module menu =
     private let pal_help       = 0x37   // bottom hint line
 
     // Main menu — original Wolf3D ordering with the unsupported rows
-    // (CONTROL, CHANGE VIEW, READ THIS!, VIEW SCORES) removed and a
-    // wolf-fc-specific OPTIONS row added for our mods (No Dogs,
-    // Shadow Depth, future toggles):
+    // (CONTROL, READ THIS!, VIEW SCORES) removed and wolf-fc-specific
+    // OPTIONS + CHANGE VIEW rows added (mods + render geometry):
     //   0 NEW GAME
     //   1 SOUND
     //   2 OPTIONS
-    //   3 LOAD GAME
-    //   4 SAVE GAME      (locked when no active game)
-    //   5 BACK TO GAME   (locked when no active game; "RESUME GAME" in OG)
-    //   6 QUIT
-    let main_len = 7
+    //   3 CHANGE VIEW
+    //   4 LOAD GAME
+    //   5 SAVE GAME      (locked when no active game)
+    //   6 BACK TO GAME   (locked when no active game; "RESUME GAME" in OG)
+    //   7 QUIT
+    let main_len = 8
 
     private let main_label = (i: int32) ->
         match i with
         | 0 -> "NEW GAME"
         | 1 -> "SOUND"
         | 2 -> "OPTIONS"
-        | 3 -> "LOAD GAME"
-        | 4 -> "SAVE GAME"
-        | 5 -> "BACK TO GAME"
-        | 6 -> "QUIT"
+        | 3 -> "CHANGE VIEW"
+        | 4 -> "LOAD GAME"
+        | 5 -> "SAVE GAME"
+        | 6 -> "BACK TO GAME"
+        | 7 -> "QUIT"
         | _ -> ""
 
     let main_is_locked = (i: int32, has_active_game: bool) ->
-        (i == 4 || i == 5) && !has_active_game
+        (i == 5 || i == 6) && !has_active_game
 
     // Sound submenu — two toggle rows. The OG's three driver dropdowns
     // (SOUND EFFECTS / DIGITIZED SOUND / MUSIC) collapse here because
@@ -230,6 +232,10 @@ module menu =
         // screen in the original).
         draw_stripes(rc, pal, 10)
         pics.draw(rc, vg, pal, pics.id.c_options, ox + 84, 0)
+        // Extend the banner's leftmost / rightmost columns out to
+        // the framebuffer edges so the OPTIONS strip looks continuous
+        // in widescreen instead of cut off.
+        pics.extend_pic_horizontally(rc, vg, ox + 84, 0, pics.id.c_options)
         // DrawWindow at (menu_x - 8, menu_y - 3) sized for our 6 rows.
         let win_h = main_len * row_h + 6
         draw_window(rc, pal, ox + menu_x - 8, menu_y - 3, menu_w, win_h)
@@ -244,7 +250,7 @@ module menu =
             // visually pops as a different action class than the regular
             // navigation rows. Locked still wins (DEACTIVE) when no game
             // is active.
-            let is_back_to_game = i == 5
+            let is_back_to_game = i == 6
             let color = if is_locked then pal[pal_deactive]
                 else if is_back_to_game && is_sel then pal[pal_readh]
                 else if is_back_to_game then pal[pal_read]
@@ -405,6 +411,45 @@ module menu =
         draw_help(rc, pal, f, "ARROWS  ENTER toggles  ESC")
 
     // ============================================================
+    // Change View — view-mode picker (Auto / Original / 16:10 / 16:9)
+    // ============================================================
+
+    let changeview_len = 4
+
+    private let render_changeview_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                                           pal: const uint32[], f: const font.info*,
+                                           g: game*, time: float64) ->
+        font.draw_centered(rc, f, 22, "CHANGE VIEW", pal[pal_readh])
+        let cv_x = rc->ui_offset_x + 36
+        let cv_y = 50
+        let cv_w = 248
+        let cv_h = changeview_len * 18 + 14
+        draw_window(rc, pal, cv_x, cv_y, cv_w, cv_h)
+        let row_top  = cv_y + 8
+        let row_step = 18
+        let x_cursor = cv_x + 8
+        let x_label  = cv_x + 36
+        for i in 0..changeview_len
+            let row_y = row_top + i * row_step
+            let is_sel = g->menu_sel == i
+            if is_sel then
+                draw_cursor(rc, vg, pal, x_cursor, row_y - 2, time)
+            let color = row_color(pal, is_sel, false)
+            font.draw_text(rc, f, x_label, row_y, config.view_mode_label(i), color)
+            // Mark the active mode (the one currently in effect) with
+            // an asterisk so the player can tell apart "Auto"
+            // (selected) from "Auto, currently 384" (in effect).
+            if i == g->view_mode then
+                font.draw_text(rc, f, x_label - 12, row_y, "*", pal[pal_readh])
+        // Footer notes the in-effect resolution + the restart caveat.
+        let info_y = cv_y + cv_h + 4
+        font.draw_centered(rc, f, info_y,
+            "ACTIVE: %d{rc->fb_w} X %d{rc->fb_h}", pal[pal_text])
+        font.draw_centered(rc, f, info_y + 10,
+            "RESTART REQUIRED FOR CHANGES TO TAKE EFFECT", pal[pal_help])
+        draw_help(rc, pal, f, "ARROWS  ENTER selects  ESC")
+
+    // ============================================================
     // Save / Load slot list — LSM_X / LSM_Y / LSM_W from wl_menu.h
     // ============================================================
 
@@ -440,6 +485,8 @@ module menu =
         // pic is 216x48, partially covering the stripe).
         draw_stripes(rc, pal, 10)
         pics.draw(rc, vg, pal, header_pic, ox + 60, 0)
+        // Same border extension as the main-menu OPTIONS banner.
+        pics.extend_pic_horizontally(rc, vg, ox + 60, 0, header_pic)
         // Menu window for the slot list.
         let win_h = save.num_slots * row_h + 10
         draw_window(rc, pal, lsm_x_off - 10, lsm_y - 5, lsm_w, win_h)
@@ -516,6 +563,8 @@ module menu =
             render_sound_list(rc, vg, pal, f, g, ac, time)
         else if g->menu_level == nav.options then
             render_options_list(rc, vg, pal, f, g, time)
+        else if g->menu_level == nav.changeview then
+            render_changeview_list(rc, vg, pal, f, g, time)
         else if g->menu_level == nav.savelist then
             render_slot(rc, vg, pal, f, g, sm, pics.id.c_savegame, g->menu_sel, false, time)
         else if g->menu_level == nav.loadlist then

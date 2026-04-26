@@ -390,6 +390,13 @@ struct game =
     // movement / hitscan code.
     plane_factor: float64
 
+    // View-mode preference (Change View menu). 0=auto-detect from
+    // display, 1=Original 4:3, 2=Widescreen 16:10, 3=Widescreen 16:9.
+    // The render geometry (fb_w / plane_factor) is captured at
+    // startup from this value. Changing the value mid-session
+    // updates the config file but only takes effect on next launch.
+    view_mode: int32
+
     // No-dogs mod toggle. Set from the Options menu (persisted in
     // ~/.wolf-fc/config) or from the --no-dogs CLI flag at launch.
     // Read by spawn.spawn_enemies; takes effect on the next level
@@ -1887,33 +1894,43 @@ let main = (args: str[]) ->
     // here (interactive only) so the world / render_ctx allocs can
     // size their framebuffers based on the user's monitor. Test mode
     // skips SDL entirely and uses the OG 320 — keeps every screenshot-
-    // diffing regression bit-identical.
+    // diffing regression bit-identical. The user's view-mode choice
+    // (config) wins over auto-detection: `Original` always picks 320,
+    // `Widescreen 16:10` always picks 384, etc.
     let mut fb_w = 320
     let mut plane_factor = fov_factor
     if !test_mode then
         sdl2.init(sdl2.init_video)
-        let mut db = sdl2.rect { x = 0, y = 0, w = 0, h = 0 }
-        sdl2.get_display_bounds(0, &db)
-        if db.w > 0 && db.h > 0 then
-            // The OG renders 320×200 to a 4:3 display with a 1.2 VGA
-            // pixel aspect → the camera's horizontal FOV is fixed by
-            // 320 columns at that aspect. For Hor+ we keep the same
-            // vertical FOV (game_h stays 200) and widen the column
-            // count proportionally to the display's aspect:
-            //     fb_w = 320 * (display_aspect / 4:3)
-            // 16:10 → 384, 16:9 → 428, 21:9 → 533.
-            let display_aspect = (float64) db.w / (float64) db.h
-            let scale = display_aspect / (4.0 / 3.0)
-            let mut w = (int32) (320.0 * scale)
-            // Round up to an even number so the 2x scale buffer width
-            // stays a multiple of 2; clamp to a reasonable max so an
-            // ultrawide monitor doesn't blow up the FB alloc.
-            if w < 320 then w = 320
-            if w > 640 then w = 640
-            if w % 2 != 0 then w = w + 1
-            fb_w = w
+        let forced_w = config.view_mode_to_fb_w(cfg.view_mode)
+        if forced_w > 0 then
+            fb_w = forced_w
             plane_factor = fov_factor * (float64) fb_w / 320.0
-            io.write("Display %d{db.w}x%d{db.h} → fb %d{fb_w}x200 (Hor+ widescreen)\n", stdout)
+            io.write("View mode %s{config.view_mode_label(cfg.view_mode)} → fb %d{fb_w}x200\n", stdout)
+            void()
+        else
+            // Auto: query the display and derive Hor+ width.
+            let mut db = sdl2.rect { x = 0, y = 0, w = 0, h = 0 }
+            sdl2.get_display_bounds(0, &db)
+            if db.w > 0 && db.h > 0 then
+                // The OG renders 320×200 to a 4:3 display with a 1.2 VGA
+                // pixel aspect → the camera's horizontal FOV is fixed by
+                // 320 columns at that aspect. For Hor+ we keep the same
+                // vertical FOV (game_h stays 200) and widen the column
+                // count proportionally to the display's aspect:
+                //     fb_w = 320 * (display_aspect / 4:3)
+                // 16:10 → 384, 16:9 → 428, 21:9 → 533.
+                let display_aspect = (float64) db.w / (float64) db.h
+                let scale = display_aspect / (4.0 / 3.0)
+                let mut w = (int32) (320.0 * scale)
+                // Round up to an even number so the 2x scale buffer width
+                // stays a multiple of 2; clamp to a reasonable max so an
+                // ultrawide monitor doesn't blow up the FB alloc.
+                if w < 320 then w = 320
+                if w > 640 then w = 640
+                if w % 2 != 0 then w = w + 1
+                fb_w = w
+                plane_factor = fov_factor * (float64) fb_w / 320.0
+                io.write("Display %d{db.w}x%d{db.h} → fb %d{fb_w}x200 (Hor+ widescreen, auto)\n", stdout)
 
     // Assemble the `world` — the handle that groups game state, level data,
     // renderer, and audio. Orchestrators take `world*`; narrower functions
@@ -1923,6 +1940,7 @@ let main = (args: str[]) ->
         dir_x = 1.0, dir_y = 0.0,
         plane_x = 0.0, plane_y = plane_factor,
         plane_factor = plane_factor,
+        view_mode = cfg.view_mode,
         key_up = false, key_down = false,
         key_left = false, key_right = false,
         key_shift = false, key_alt = false,
@@ -2326,7 +2344,7 @@ let main = (args: str[]) ->
                                 if !menu.main_is_locked(s, g->has_active_game) then break
                             g->menu_sel = s
                         else if is_confirm then
-                            // Layout: NEW / SOUND / OPTIONS / LOAD / SAVE / BACK / QUIT
+                            // Layout: NEW / SOUND / OPTIONS / VIEW / LOAD / SAVE / BACK / QUIT
                             match g->menu_sel with
                             | 0 ->
                                 // NEW GAME → episode picker
@@ -2341,21 +2359,25 @@ let main = (args: str[]) ->
                                 g->menu_level = menu.nav.options
                                 g->menu_sel = 0
                             | 3 ->
+                                // CHANGE VIEW → view-mode picker
+                                g->menu_level = menu.nav.changeview
+                                g->menu_sel = g->view_mode
+                            | 4 ->
                                 // LOAD GAME → load slot menu
                                 save.refresh_slots(w->sm)
                                 g->menu_level = menu.nav.loadlist
                                 g->menu_sel = 0
-                            | 4 ->
+                            | 5 ->
                                 // SAVE GAME (locked without an active game)
                                 if g->has_active_game then
                                     save.refresh_slots(w->sm)
                                     g->menu_level = menu.nav.savelist
                                     g->menu_sel = 0
-                            | 5 ->
+                            | 6 ->
                                 // BACK TO GAME — only reachable when active.
                                 if g->has_active_game then
                                     g->phase = game_phase.playing
-                            | 6 ->
+                            | 7 ->
                                 g->want_quit = true
                             | _ -> void()
                         else if k == sdl2.key_escape then
@@ -2431,6 +2453,23 @@ let main = (args: str[]) ->
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
                             g->menu_sel = 1     // back to SOUND row
+                    else if g->menu_level == menu.nav.changeview then
+                        // View-mode picker: arrow up/down navigates the
+                        // four modes; Enter commits the choice to the
+                        // config file. The change only takes effect on
+                        // next launch — switching the active fb_w
+                        // would require reallocating the framebuffer,
+                        // texture, etc., which is much more invasive.
+                        if k == sdl2.key_up then
+                            g->menu_sel = (g->menu_sel + menu.changeview_len - 1) % menu.changeview_len
+                        else if k == sdl2.key_down then
+                            g->menu_sel = (g->menu_sel + 1) % menu.changeview_len
+                        else if is_confirm then
+                            g->view_mode = g->menu_sel
+                            config.save(config.snapshot(w))
+                        else if k == sdl2.key_escape then
+                            g->menu_level = menu.nav.main
+                            g->menu_sel = 3     // back to CHANGE VIEW row
                     else if g->menu_level == menu.nav.options then
                         // Wolf-fc mods. Up/down navigates rows; Enter
                         // toggles boolean rows or runs the action row;
@@ -2489,7 +2528,7 @@ let main = (args: str[]) ->
                                 save.refresh_slots(w->sm)
                                 g->save_edit_active = false
                                 g->menu_level = menu.nav.main
-                                g->menu_sel = 4     // back to SAVE GAME row
+                                g->menu_sel = 5     // back to SAVE GAME row
                             else if k == sdl2.key_escape then
                                 // Cancel: clear edit buffer, stay on
                                 // slot list.
@@ -2536,7 +2575,7 @@ let main = (args: str[]) ->
                             g->save_edit_active = true
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
-                            g->menu_sel = 4     // back to SAVE GAME row
+                            g->menu_sel = 5     // back to SAVE GAME row
                     else if g->menu_level == menu.nav.loadlist then
                         if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + save.num_slots - 1) % save.num_slots
@@ -2548,7 +2587,7 @@ let main = (args: str[]) ->
                                     g->has_active_game = true
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
-                            g->menu_sel = 3     // back to LOAD GAME
+                            g->menu_sel = 4     // back to LOAD GAME
                 | _ ->
                     // playing, dying, intermission, game_over,
                     // episode_end, victory. Escape from playing
@@ -2559,7 +2598,7 @@ let main = (args: str[]) ->
                     if k == sdl2.key_escape && g->phase == game_phase.playing then
                         g->phase = game_phase.main_menu
                         g->menu_level = menu.nav.main
-                        g->menu_sel = 5     // BACK TO GAME row
+                        g->menu_sel = 6     // BACK TO GAME row
                         // Clear held inputs so the player isn't sprinting
                         // when they un-pause. (Mirrors intermission.enter's
                         // input-clear convention.)
@@ -2619,7 +2658,11 @@ let main = (args: str[]) ->
                                 player.cheats.advance_iddqd(g, k)
                                 player.cheats.advance_idkfa(g, k)
                             if k == sdl2.key_s then overlay.take_screenshot(w, vs, pal)
-                            if k == sdl2.key_d then save.debug_dump_state(w)
+                            // Debug-state dump used to live on plain D — moved
+                            // under the TAB chord so a stray D press during
+                            // gameplay doesn't spam the console.
+                            if k == sdl2.key_d && g->key_tab_held then
+                                save.debug_dump_state(w)
                             // IN_Ack: a deliberate-feeling keypress (Enter,
                             // Space, Ctrl — the OG fire key, or Esc as a
                             // "get me out of here" key) during an

@@ -737,6 +737,7 @@ module intermission =
     // secret / treasure ratios animated via tick.
     let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                   g: game*) ->
+        let ox = rc->ui_offset_x
         let bg = pal[0x7F]
         for y in 0..view_h
             for x in 0..rc->fb_w
@@ -744,27 +745,27 @@ module intermission =
 
         let breathe = ((int32) (g->inter_breathe_timer * 2.0)) % 2
         let guy_pic = if breathe == 0 then pics.id.l_guy else pics.id.l_guy2
-        pics.draw(rc, vg, pal, guy_pic, 0, 16)
+        pics.draw(rc, vg, pal, guy_pic, ox + 0, 16)
 
         if is_secret_level(g->level_num) then
-            write_lpic_text(rc, vg, pal, 14 * 8, 4 * 8, "SECRET FLOOR\n COMPLETED!")
-            write_lpic_text(rc, vg, pal, 10 * 8, 16 * 8, "15000 BONUS!")
+            write_lpic_text(rc, vg, pal, ox + 14 * 8, 4 * 8, "SECRET FLOOR\n COMPLETED!")
+            write_lpic_text(rc, vg, pal, ox + 10 * 8, 16 * 8, "15000 BONUS!")
             return
 
-        write_lpic_text(rc, vg, pal, 14 * 8, 2 * 8, "FLOOR\nCOMPLETED")
+        write_lpic_text(rc, vg, pal, ox + 14 * 8, 2 * 8, "FLOOR\nCOMPLETED")
         let mapon = g->level_num % episode.levels_per + 1
-        write_lpic_number(rc, vg, pal, 26 * 8, 2 * 8, mapon, false)
+        write_lpic_number(rc, vg, pal, ox + 26 * 8, 2 * 8, mapon, false)
 
-        write_lpic_text(rc, vg, pal, 14 * 8, 7 * 8, "BONUS")
-        write_lpic_number(rc, vg, pal, 36 * 8, 7 * 8, g->inter_bonus_shown, true)
+        write_lpic_text(rc, vg, pal, ox + 14 * 8, 7 * 8, "BONUS")
+        write_lpic_number(rc, vg, pal, ox + 36 * 8, 7 * 8, g->inter_bonus_shown, true)
 
-        write_lpic_text(rc, vg, pal, 16 * 8, 10 * 8, "TIME")
-        write_lpic_text(rc, vg, pal, 16 * 8, 12 * 8, " PAR")
+        write_lpic_text(rc, vg, pal, ox + 16 * 8, 10 * 8, "TIME")
+        write_lpic_text(rc, vg, pal, ox + 16 * 8, 12 * 8, " PAR")
         let mut sec_total = (int32) g->level_time
         if sec_total > 99 * 60 then sec_total = 99 * 60
         let mm = sec_total / 60
         let ss = sec_total % 60
-        let mut tx = 26 * 8
+        let mut tx = ox + 26 * 8
         pics.draw(rc, vg, pal, pics.id.l_num0 + mm / 10, tx, 10 * 8)
         tx = tx + 16
         pics.draw(rc, vg, pal, pics.id.l_num0 + mm % 10, tx, 10 * 8)
@@ -775,7 +776,7 @@ module intermission =
         tx = tx + 16
         pics.draw(rc, vg, pal, pics.id.l_num0 + ss % 10, tx, 10 * 8)
         let par = if g->level_num < 60 then par_times[g->level_num] else 0
-        tx = 26 * 8
+        tx = ox + 26 * 8
         if par <= 0 then
             write_lpic_text(rc, vg, pal, tx, 12 * 8, "??:??")
         else
@@ -791,9 +792,9 @@ module intermission =
             tx = tx + 16
             pics.draw(rc, vg, pal, pics.id.l_num0 + ps % 10, tx, 12 * 8)
 
-        write_lpic_text(rc, vg, pal, 9 * 8, 14 * 8, "KILL RATIO    %")
-        write_lpic_text(rc, vg, pal, 5 * 8, 16 * 8, "SECRET RATIO    %")
-        write_lpic_text(rc, vg, pal, 1 * 8, 18 * 8, "TREASURE RATIO    %")
+        write_lpic_text(rc, vg, pal, ox + 9 * 8, 14 * 8, "KILL RATIO    %")
+        write_lpic_text(rc, vg, pal, ox + 5 * 8, 16 * 8, "SECRET RATIO    %")
+        write_lpic_text(rc, vg, pal, ox + 1 * 8, 18 * 8, "TREASURE RATIO    %")
         let kr_shown = if g->inter_stage > 1 then g->inter_target_kr
                        else if g->inter_stage == 1 then g->inter_counter
                        else -1
@@ -803,7 +804,7 @@ module intermission =
         let tr_shown = if g->inter_stage > 3 then g->inter_target_tr
                        else if g->inter_stage == 3 then g->inter_counter
                        else -1
-        let ratio_right = 37 * 8
+        let ratio_right = ox + 37 * 8
         if kr_shown >= 0 then
             write_lpic_number(rc, vg, pal, ratio_right, 14 * 8, kr_shown, true)
         if sr_shown >= 0 then
@@ -864,22 +865,24 @@ module episode_end =
     //   ratio percentages right-aligned at column (RATIOX+24)*8 = 240
     let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                   pal: const uint32[], f: const font.info*, g: game*) ->
+        let ox = rc->ui_offset_x
         // VIEWCOLOR fill on the 3D viewport area only — leave the HUD
-        // strip below alone.
+        // strip below alone. Spans the whole framebuffer so widescreen
+        // side panels are the same neutral grey as the centre.
         let bg = pal[0x7F]
         for y in 0..view_h
             let base = y * rc->fb_w
             for x in 0..rc->fb_w
                 rc->fb[base + x] = bg
         // BJ-wins art on the left (L_BJWINSPIC).
-        pics.draw(rc, vg, pal, pics.id.l_bjwins, 8, 4)
+        pics.draw(rc, vg, pal, pics.id.l_bjwins, ox + 8, 4)
         // Big-font headers + labels.
-        intermission.write_lpic_text(rc, vg, pal, 18 * 8,  2 * 8, "you win!")
-        intermission.write_lpic_text(rc, vg, pal, 14 * 8,  6 * 8, "total time")
-        intermission.write_lpic_text(rc, vg, pal, 12 * 8, 12 * 8, "averages")
-        intermission.write_lpic_text(rc, vg, pal, 14 * 8, 14 * 8, "kill    %")
-        intermission.write_lpic_text(rc, vg, pal, 10 * 8, 16 * 8, "secret    %")
-        intermission.write_lpic_text(rc, vg, pal,  6 * 8, 18 * 8, "treasure    %")
+        intermission.write_lpic_text(rc, vg, pal, ox + 18 * 8,  2 * 8, "you win!")
+        intermission.write_lpic_text(rc, vg, pal, ox + 14 * 8,  6 * 8, "total time")
+        intermission.write_lpic_text(rc, vg, pal, ox + 12 * 8, 12 * 8, "averages")
+        intermission.write_lpic_text(rc, vg, pal, ox + 14 * 8, 14 * 8, "kill    %")
+        intermission.write_lpic_text(rc, vg, pal, ox + 10 * 8, 16 * 8, "secret    %")
+        intermission.write_lpic_text(rc, vg, pal, ox +  6 * 8, 18 * 8, "treasure    %")
         // Total time MM:SS digits, drawn explicitly per-digit so the
         // leading zero is forced (e.g. "05:30", not "5:30").
         let mut total_sec = g->ep_time_total
@@ -889,8 +892,8 @@ module episode_end =
         if min > 99 then
             min = 99
             sec = 99
-        let time_x = 14 * 8 + 1   // OG: TIMEX*8 + 1
-        let time_y = 8 * 8        // OG: TIMEY*8
+        let time_x = ox + 14 * 8 + 1   // OG: TIMEX*8 + 1
+        let time_y = 8 * 8             // OG: TIMEY*8
         pics.draw(rc, vg, pal, pics.id.l_num0 + min / 10, time_x,      time_y)
         pics.draw(rc, vg, pal, pics.id.l_num0 + min % 10, time_x + 16, time_y)
         pics.draw(rc, vg, pal, pics.id.l_colon,           time_x + 32, time_y)
@@ -902,7 +905,7 @@ module episode_end =
         let kr = g->ep_kr_total / div
         let sr = g->ep_sr_total / div
         let tr = g->ep_tr_total / div
-        let ratio_right_x = 30 * 8     // 240
+        let ratio_right_x = ox + 30 * 8     // 240
         intermission.write_lpic_number(rc, vg, pal, ratio_right_x, 14 * 8, kr, true)
         intermission.write_lpic_number(rc, vg, pal, ratio_right_x, 16 * 8, sr, true)
         intermission.write_lpic_number(rc, vg, pal, ratio_right_x, 18 * 8, tr, true)
@@ -1297,15 +1300,34 @@ module endart_screen =
 
 module game_over =
     // Game-over screen: black background, big "GAME OVER", score, prompt.
+    // Every line uses `overlay.draw_centered_text`, which centres on
+    // `rc->fb_w` — so the text re-centres on its own when the frame-
+    // buffer goes wide.
     let render = (rc: render_ctx*, g: game*) ->
-        for i in 0..(rc->fb_w * game_h)
+        for i in 0..(rc->fb_w * rc->fb_h)
             rc->fb[i] = 0xFF000000u32
         let red = 0xFFD00000u32
         let white = 0xFFFFFFFFu32
         overlay.draw_centered_text(rc, 40, "GAME", red, 3)
         overlay.draw_centered_text(rc, 70, "OVER", red, 3)
-        hud.draw_text(rc, 80, 120, "FINAL SCORE", white, 1)
-        hud.draw_number(rc, 220, 120, g->score, white, 1)
+        // FINAL SCORE row is two pieces — the label and the number —
+        // that need to read as one centred line. Measure them, lay
+        // out together so the gap between them stays fixed regardless
+        // of fb_w.
+        let label_chars = 11      // "FINAL SCORE"
+        let label_w = label_chars * 4   // 3px glyph + 1px gap, scale=1
+        let mut digits = if g->score == 0 then 1 else 0
+        let mut n = g->score
+        loop
+            if n == 0 then break
+            n = n / 10
+            digits = digits + 1
+        let num_w = digits * 4
+        let gap = 16
+        let total_w = label_w + gap + num_w
+        let x0 = (rc->fb_w - total_w) / 2
+        hud.draw_text(rc, x0, 120, "FINAL SCORE", white, 1)
+        hud.draw_number(rc, x0 + label_w + gap + num_w - 4, 120, g->score, white, 1)
         overlay.draw_centered_text(rc, 140, "PRESS ANY KEY", white, 1)
 
 

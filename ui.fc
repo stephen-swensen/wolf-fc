@@ -305,41 +305,61 @@ module pics =
             for bx in 0..fill_w
                 rc->fb[row + bar_x + bx] = col
 
-    // One-time decode of TITLEPIC into an `fb_w × fb_h` ARGB buffer,
-    // letterboxed inside the wider framebuffer if Hor+ widescreen is
-    // active. The OG title art is 320x200, so we render it at native
-    // size centred horizontally (no stretch), with palette[BORDCOLOR]
-    // (the menu red) filling the side panels — matches the OG menu's
-    // backdrop tone. Returns a heap slice the caller must hold for the
-    // process lifetime.
+    // One-time decode of TITLEPIC into an `fb_w × fb_h` ARGB buffer.
+    // Stretched horizontally to fill the framebuffer width — matches
+    // the Steam Wolf3D approach for widescreen displays (the title
+    // art is one of the few places that's tolerant of a small aspect
+    // distortion, since there's no precise geometry the player reads
+    // off; in 4:3 mode dst_w == src_w so no scale happens). Returns a
+    // heap slice the caller must hold for the process lifetime.
     let build_title_bg_cache = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                                 fb_w: int32, fb_h: int32) ->
         let buf = alloc(uint32[fb_w * fb_h] {})!
-        // Side panels: BORDCOLOR (palette 0x29 — same colour the menu
-        // backdrop uses, so the title bleeds visually into the menu).
-        let bord = pal[0x29]
-        for i in 0..(fb_w * fb_h)
-            buf[i] = bord
         let pic = vgagraph.load_pic(vg, id.title)
         defer free(pic)
         if pic.len == 0 then return buf
         let w = vgagraph.pic_width(vg, id.title)
         let h = vgagraph.pic_height(vg, id.title)
         if w <= 0 || h <= 0 then return buf
-        // Centre the 320x200 title art in the framebuffer; if the
-        // framebuffer happens to be exactly 320 wide (4:3 mode) the
-        // offset is 0 and the side-panel fill is harmless.
-        let dst_w = if w < fb_w then w else fb_w
-        let dst_h = if h < fb_h then h else fb_h
-        let off_x = (fb_w - dst_w) / 2
-        let off_y = (fb_h - dst_h) / 2
-        for py in 0..dst_h
-            let sy = (int64) py * (int64) h / (int64) dst_h
-            for px in 0..dst_w
-                let sx = (int64) px * (int64) w / (int64) dst_w
+        for py in 0..fb_h
+            let sy = (int64) py * (int64) h / (int64) fb_h
+            for px in 0..fb_w
+                let sx = (int64) px * (int64) w / (int64) fb_w
                 let pix = pic[sy * (int64) w + sx]
-                buf[(int64) (off_y + py) * (int64) fb_w + (int64) (off_x + px)] = pal[(int32) pix]
+                buf[(int64) py * (int64) fb_w + (int64) px] = pal[(int32) pix]
         buf
+
+    // After drawing a 320-relative pic at (x, y), tile its leftmost
+    // and rightmost columns out to the framebuffer edges so the
+    // banner reads as a continuous strip in widescreen — natural
+    // extension instead of an obvious cut-off. No-op in 4:3 (the pic
+    // already sits flush). Reads ARGB from the just-written fb so it
+    // doesn't have to know the pic's pixel format.
+    let extend_pic_horizontally = (rc: render_ctx*,
+                                    vg: const vgagraph.vgagraph_file*,
+                                    pic_x: int32, pic_y: int32, chunk: int32) ->
+        let pw = vgagraph.pic_width(vg, chunk)
+        let ph = vgagraph.pic_height(vg, chunk)
+        if pw <= 0 || ph <= 0 then return
+        let stride = (int64) rc->fb_w
+        let left_x = if pic_x >= 0 then pic_x else 0
+        let right_x = pic_x + pw - 1
+        for r in 0..ph
+            let dy = pic_y + r
+            if dy < 0 || dy >= rc->fb_h then continue
+            let row = (int64) dy * stride
+            let left_px = rc->fb[row + (int64) left_x]
+            let right_px = rc->fb[row + (int64) right_x]
+            let mut x = 0
+            loop
+                if x >= pic_x then break
+                rc->fb[row + (int64) x] = left_px
+                x = x + 1
+            x = pic_x + pw
+            loop
+                if x >= rc->fb_w then break
+                rc->fb[row + (int64) x] = right_px
+                x = x + 1
 
     // Blit the cached title backdrop into the framebuffer.
     let blit_title_bg = (rc: render_ctx*) ->
@@ -659,12 +679,13 @@ module hud =
         // Hor+ widescreen: the 3D viewport above renders fullscreen
         // (0..fb_w), but the status-bar graphic is 320 wide and we
         // centre it. Side panels below view_h would otherwise show
-        // last-frame leftovers, so paint them with palette[0x29]
-        // (BORDCOLOR — the menu/title red, which visually blends with
-        // the dark border baked into the statusbar pic).
+        // last-frame leftovers, so paint them with palette[0x7f]
+        // (VIEWCOLOR — the same neutral grey the level intermission
+        // uses; reads as a continuation of the floor without the
+        // attention-grabbing red of BORDCOLOR).
         let ox = rc->ui_offset_x
         if ox > 0 then
-            let fill = pal[0x29]
+            let fill = pal[0x7f]
             for y in bar_top..rc->fb_h
                 let row = y * rc->fb_w
                 for x in 0..ox
