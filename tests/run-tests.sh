@@ -776,22 +776,42 @@ assert_contains "save:rng-state-round-trips" \
     "score=100"
 
 section "config / preferences"
-# Default prefs (no config file): both toggles ON. WOLF_FC_HOME is per-test
-# fresh, so on a clean run no config has been written.
-assert_contains "config:defaults-music-on"   "prefs"   "music=1"
-assert_contains "config:defaults-sfx-on"     "prefs"   "sfx=1"
+# Default prefs (no config file): toggles ON, no_dogs OFF, shadow_depth 55.
+# WOLF_FC_HOME is per-test fresh, so on a clean run no config has been written.
+assert_contains "config:defaults-music-on"        "prefs"   "music=1"
+assert_contains "config:defaults-sfx-on"          "prefs"   "sfx=1"
+assert_contains "config:defaults-no-dogs-off"     "prefs"   "no_dogs=0"
+assert_contains "config:defaults-shadow-default"  "prefs"   "shadow_depth=55"
 # Config file pre-seeded by the harness: the binary should pick it up and
 # the first `prefs` dump should reflect it.
 mkdir -p "$WOLF_FC_TEST_HOME"
 printf 'WLFC_CONFIG 1\nmusic 0\nsfx 0\n' > "$WOLF_FC_TEST_HOME/config"
-assert_contains "config:loads-music-off"     "prefs"   "music=0"
-assert_contains "config:loads-sfx-off"       "prefs"   "sfx=0"
+assert_contains "config:loads-music-off"          "prefs"   "music=0"
+assert_contains "config:loads-sfx-off"            "prefs"   "sfx=0"
 # Mixed prefs round-trip cleanly.
 printf 'WLFC_CONFIG 1\nmusic 1\nsfx 0\n' > "$WOLF_FC_TEST_HOME/config"
-assert_contains "config:mixed-music-on"      "prefs"   "music=1"
-assert_contains "config:mixed-sfx-off"       "prefs"   "sfx=0"
+assert_contains "config:mixed-music-on"           "prefs"   "music=1"
+assert_contains "config:mixed-sfx-off"            "prefs"   "sfx=0"
+# Options-section prefs round-trip too: a config with no_dogs=1 +
+# shadow_depth=80 should be reflected on the next launch.
+printf 'WLFC_CONFIG 1\nmusic 1\nsfx 1\nno_dogs 1\nshadow_depth 80\n' > "$WOLF_FC_TEST_HOME/config"
+assert_contains "config:loads-no-dogs-on"         "prefs"   "no_dogs=1"
+assert_contains "config:loads-shadow-80"          "prefs"   "shadow_depth=80"
+# Out-of-range shadow_depth is clamped to 0..100 on load.
+printf 'WLFC_CONFIG 1\nshadow_depth 500\n' > "$WOLF_FC_TEST_HOME/config"
+assert_contains "config:shadow-clamps-high"       "prefs"   "shadow_depth=100"
+printf 'WLFC_CONFIG 1\nshadow_depth -50\n' > "$WOLF_FC_TEST_HOME/config"
+assert_contains "config:shadow-clamps-low"        "prefs"   "shadow_depth=0"
+# CLI --no-dogs forces the toggle on, even if the config has it off.
+printf 'WLFC_CONFIG 1\nno_dogs 0\n' > "$WOLF_FC_TEST_HOME/config"
+assert_contains "config:cli-no-dogs-overrides"    "--no-dogs prefs"  "no_dogs=1"
 # Reset config so subsequent runs of this script start clean.
 rm -f "$WOLF_FC_TEST_HOME/config"
+
+# setphase:optionsmenu lands in the OPTIONS submenu.
+assert_contains "cli:setphase-optionsmenu" \
+    "setphase:optionsmenu phase" \
+    "phase=menu"
 
 # ----------------------------------------------------------------------
 # Summary

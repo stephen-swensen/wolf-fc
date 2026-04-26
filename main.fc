@@ -343,9 +343,16 @@ struct game =
     // single-tier behaviour; setdifficulty test command can dial it down.
     difficulty: int32
 
-    // --no-dogs CLI flag: skip spawning enemies.enemy_kind.dog actors. Latched at startup
-    // from main's argv scan; read by spawn.spawn_enemies.
+    // No-dogs mod toggle. Set from the Options menu (persisted in
+    // ~/.wolf-fc/config) or from the --no-dogs CLI flag at launch.
+    // Read by spawn.spawn_enemies; takes effect on the next level
+    // build (changing it mid-level doesn't despawn live dogs).
     no_dogs: bool
+    // Shadow Depth (0..100). Controls how dark walls / sprites get
+    // at long distance — 0 disables shading, 100 lets things go to
+    // full black, 55 ≈ original Wolf3D feel. Read every frame by the
+    // raycaster + billboards via `raycaster.shadow_floor_from_depth`.
+    shadow_depth: int32
     // --test CLI flag: suppresses UX-only flourishes that would otherwise
     // freeze gameplay by a fixed duration (GET PSYCHED overlay, pickup
     // overlay). Tests advance the world `dt = 1/35` per tick, so a 0.7s
@@ -1400,6 +1407,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         else if p == "soundmenu" then
             g->phase = game_phase.main_menu
             g->menu_level = menu.nav.sound
+        else if p == "optionsmenu" then
+            g->phase = game_phase.main_menu
+            g->menu_level = menu.nav.options
         else if p == "savemenu" then
             g->phase = game_phase.main_menu
             g->menu_level = menu.nav.savelist
@@ -1409,7 +1419,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             g->menu_level = menu.nav.loadlist
             save.refresh_slots(w->sm)
         else if p == "playing" then g->phase = game_phase.playing
-        else bad("pg13/title/menu/epmenu/diffmenu/soundmenu/savemenu/loadmenu/playing")
+        else bad("pg13/title/menu/epmenu/diffmenu/soundmenu/optionsmenu/savemenu/loadmenu/playing")
     else if arg == "phase" then
         let phase_s = match g->phase with
         | pg13         -> "pg13"
@@ -1437,7 +1447,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // `$WOLF_FC_HOME/config` at startup, defaults when missing).
         let m = if g->music_on then 1 else 0
         let s = if w->ac->sfx_on then 1 else 0
-        io.write("prefs music=%d{m} sfx=%d{s}\n", stdout)
+        let nd = if g->no_dogs then 1 else 0
+        io.write("prefs music=%d{m} sfx=%d{s} no_dogs=%d{nd} shadow_depth=%d{g->shadow_depth}\n", stdout)
         void()
     else if arg == "digi_slots" then
         // Dump the digi-mixer slot table. Verifies wolf4sdl-style dedup:
@@ -1794,7 +1805,11 @@ let main = (args: str[]) ->
         inter_pause_timer = 0.0,
         inter_end_sound_delay = 0.0,
         difficulty = difficulty.hard,
-        no_dogs = arg_no_dogs,
+        // CLI flag takes precedence over the persisted config — `--no-dogs`
+        // is always "force on", absence falls back to whatever the user
+        // last toggled in the Options menu.
+        no_dogs = if arg_no_dogs then true else cfg.no_dogs,
+        shadow_depth = cfg.shadow_depth,
         test_mode = test_mode,
         menu_sel = 0, menu_level = menu.nav.main, save_edit_active = false,
         music_on = cfg.music_on, want_quit = false,
@@ -2067,7 +2082,7 @@ let main = (args: str[]) ->
                                 if !menu.main_is_locked(s, g->has_active_game) then break
                             g->menu_sel = s
                         else if is_confirm then
-                            // OG layout: NEW / SOUND / LOAD / SAVE / BACK / QUIT
+                            // Layout: NEW / SOUND / OPTIONS / LOAD / SAVE / BACK / QUIT
                             match g->menu_sel with
                             | 0 ->
                                 // NEW GAME → episode picker
@@ -2078,21 +2093,25 @@ let main = (args: str[]) ->
                                 g->menu_level = menu.nav.sound
                                 g->menu_sel = 0
                             | 2 ->
+                                // OPTIONS → wolf-fc mods submenu
+                                g->menu_level = menu.nav.options
+                                g->menu_sel = 0
+                            | 3 ->
                                 // LOAD GAME → load slot menu
                                 save.refresh_slots(w->sm)
                                 g->menu_level = menu.nav.loadlist
                                 g->menu_sel = 0
-                            | 3 ->
+                            | 4 ->
                                 // SAVE GAME (locked without an active game)
                                 if g->has_active_game then
                                     save.refresh_slots(w->sm)
                                     g->menu_level = menu.nav.savelist
                                     g->menu_sel = 0
-                            | 4 ->
+                            | 5 ->
                                 // BACK TO GAME — only reachable when active.
                                 if g->has_active_game then
                                     g->phase = game_phase.playing
-                            | 5 ->
+                            | 6 ->
                                 g->want_quit = true
                             | _ -> void()
                         else if k == sdl2.key_escape then
@@ -2147,13 +2166,40 @@ let main = (args: str[]) ->
                                 music_on = g->music_on
                                 if !music_on && audio_dev > 0u32 then
                                     sdl2.clear_audio(audio_dev)
-                            config.save(config.prefs {
-                                music_on = g->music_on,
-                                sfx_on = w->ac->sfx_on
-                            })
+                            config.save(config.snapshot(w))
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
                             g->menu_sel = 1     // back to SOUND row
+                    else if g->menu_level == menu.nav.options then
+                        // Wolf-fc mods. Up/down navigates rows; Enter
+                        // toggles boolean rows; Left/Right adjusts
+                        // slider rows by ±5%. Every commit persists
+                        // the full prefs struct via config.snapshot —
+                        // never partial — so other unrelated toggles
+                        // round-trip cleanly.
+                        if k == sdl2.key_up then
+                            g->menu_sel = (g->menu_sel + menu.options_len - 1) % menu.options_len
+                        else if k == sdl2.key_down then
+                            g->menu_sel = (g->menu_sel + 1) % menu.options_len
+                        else if is_confirm
+                            && menu.option_kind(g->menu_sel) == menu.option_kind_toggle then
+                            // Toggle row 0 = No Dogs.
+                            if g->menu_sel == 0 then
+                                g->no_dogs = !g->no_dogs
+                            config.save(config.snapshot(w))
+                        else if (k == sdl2.key_left || k == sdl2.key_right)
+                            && menu.option_kind(g->menu_sel) == menu.option_kind_slider then
+                            // Slider row 1 = Shadow Depth (±5%, clamped).
+                            let delta = if k == sdl2.key_left then -5 else 5
+                            if g->menu_sel == 1 then
+                                let mut v = g->shadow_depth + delta
+                                if v < 0 then v = 0
+                                if v > 100 then v = 100
+                                g->shadow_depth = v
+                            config.save(config.snapshot(w))
+                        else if k == sdl2.key_escape then
+                            g->menu_level = menu.nav.main
+                            g->menu_sel = 2     // back to OPTIONS row
                     else if g->menu_level == menu.nav.savelist then
                         // Inline save-name entry: while editing, every
                         // keydown mutates `sm->edit_buf` instead of
@@ -2173,7 +2219,7 @@ let main = (args: str[]) ->
                                 save.refresh_slots(w->sm)
                                 g->save_edit_active = false
                                 g->menu_level = menu.nav.main
-                                g->menu_sel = 3
+                                g->menu_sel = 4     // back to SAVE GAME row
                             else if k == sdl2.key_escape then
                                 // Cancel: clear edit buffer, stay on
                                 // slot list.
@@ -2220,7 +2266,7 @@ let main = (args: str[]) ->
                             g->save_edit_active = true
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
-                            g->menu_sel = 3
+                            g->menu_sel = 4     // back to SAVE GAME row
                     else if g->menu_level == menu.nav.loadlist then
                         if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + save.num_slots - 1) % save.num_slots
@@ -2232,7 +2278,7 @@ let main = (args: str[]) ->
                                     g->has_active_game = true
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
-                            g->menu_sel = 2     // back to LOAD GAME
+                            g->menu_sel = 3     // back to LOAD GAME
                 | _ ->
                     // playing, dying, intermission, game_over,
                     // episode_end, victory. Escape from playing
@@ -2243,7 +2289,7 @@ let main = (args: str[]) ->
                     if k == sdl2.key_escape && g->phase == game_phase.playing then
                         g->phase = game_phase.main_menu
                         g->menu_level = menu.nav.main
-                        g->menu_sel = 4     // BACK TO GAME row
+                        g->menu_sel = 5     // BACK TO GAME row
                         // Clear held inputs so the player isn't sprinting
                         // when they un-pause. (Mirrors intermission.enter's
                         // input-clear convention.)

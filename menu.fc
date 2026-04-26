@@ -21,6 +21,7 @@ module menu =
         let savelist   = 3
         let loadlist   = 4
         let sound      = 5
+        let options    = 6
 
     // Original Wolf3D palette indices for menu chrome (from
     // `wl_menu.h`). We resolve them through `pal[]` at draw time so
@@ -36,33 +37,60 @@ module menu =
     private let pal_help       = 0x37   // bottom hint line
 
     // Main menu — original Wolf3D ordering with the unsupported rows
-    // (CONTROL, CHANGE VIEW, READ THIS!, VIEW SCORES) removed:
+    // (CONTROL, CHANGE VIEW, READ THIS!, VIEW SCORES) removed and a
+    // wolf-fc-specific OPTIONS row added for our mods (No Dogs,
+    // Shadow Depth, future toggles):
     //   0 NEW GAME
     //   1 SOUND
-    //   2 LOAD GAME
-    //   3 SAVE GAME      (locked when no active game)
-    //   4 BACK TO GAME   (locked when no active game; "RESUME GAME" in OG)
-    //   5 QUIT
-    let main_len = 6
+    //   2 OPTIONS
+    //   3 LOAD GAME
+    //   4 SAVE GAME      (locked when no active game)
+    //   5 BACK TO GAME   (locked when no active game; "RESUME GAME" in OG)
+    //   6 QUIT
+    let main_len = 7
 
     private let main_label = (i: int32) ->
         match i with
         | 0 -> "NEW GAME"
         | 1 -> "SOUND"
-        | 2 -> "LOAD GAME"
-        | 3 -> "SAVE GAME"
-        | 4 -> "BACK TO GAME"
-        | 5 -> "QUIT"
+        | 2 -> "OPTIONS"
+        | 3 -> "LOAD GAME"
+        | 4 -> "SAVE GAME"
+        | 5 -> "BACK TO GAME"
+        | 6 -> "QUIT"
         | _ -> ""
 
     let main_is_locked = (i: int32, has_active_game: bool) ->
-        (i == 3 || i == 4) && !has_active_game
+        (i == 4 || i == 5) && !has_active_game
 
     // Sound submenu — two toggle rows. The OG's three driver dropdowns
     // (SOUND EFFECTS / DIGITIZED SOUND / MUSIC) collapse here because
     // every driver routes through the same AdLib + digi mixer in
     // wolf-fc.
     let sound_len = 2
+
+    // Options submenu — wolf-fc mods. Grow this list as new toggles /
+    // sliders land; matched by `render_options_list` and by main.fc's
+    // options-nav handler.
+    //   0 No Dogs       (toggle)
+    //   1 Shadow Depth  (0..100% slider, Left/Right adjusts)
+    let options_len = 2
+
+    let option_kind_toggle = 0
+    let option_kind_slider = 1
+
+    // Per-row metadata: kind (toggle / slider) + label.
+    private let option_label = (i: int32) ->
+        match i with
+        | 0 -> "NO DOGS"
+        | 1 -> "SHADOW DEPTH"
+        | _ -> ""
+
+    let option_kind = (i: int32) ->
+        match i with
+        | 0 -> option_kind_toggle
+        | 1 -> option_kind_slider
+        | _ -> option_kind_toggle
 
     private let diff_label = (i: int32) ->
         match i with
@@ -310,6 +338,44 @@ module menu =
         draw_help(rc, pal, f, "ARROWS  ENTER toggles  ESC")
 
     // ============================================================
+    // Options submenu — wolf-fc mods (No Dogs, Shadow Depth, ...)
+    // ============================================================
+
+    private let render_options_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                                        pal: const uint32[], f: const font.info*,
+                                        g: game*, time: float64) ->
+        font.draw_centered(rc, f, 38, "OPTIONS", pal[pal_highlight])
+        // Generously sized box (the row count grows over time as more
+        // mods land — the current 2-row setup leaves headroom).
+        let op_x = 40
+        let op_y = 60
+        let op_w = 240
+        let op_h = options_len * 20 + 16
+        draw_window(rc, pal, op_x, op_y, op_w, op_h)
+        let row_top  = op_y + 10
+        let row_step = 20
+        let x_cursor = op_x + 8
+        let x_label  = op_x + 36
+        let x_value  = op_x + op_w - 56
+        for i in 0..options_len
+            let row_y = row_top + i * row_step
+            let is_sel = g->menu_sel == i
+            if is_sel then
+                draw_cursor(rc, vg, pal, x_cursor, row_y - 2, time)
+            let color = row_color(pal, is_sel, false)
+            font.draw_text(rc, f, x_label, row_y, option_label(i), color)
+            // Right-side value: ON/OFF for toggles, "NN%" for sliders.
+            // Each row prints its own value because the match arms
+            // would mix str / const str otherwise.
+            if i == 0 then
+                let v = if g->no_dogs then "ON" else "OFF"
+                font.draw_text(rc, f, x_value, row_y, v, color)
+            else if i == 1 then
+                font.draw_text(rc, f, x_value, row_y,
+                    "%d{g->shadow_depth}%", color)
+        draw_help(rc, pal, f, "ARROWS  ENTER toggles  ESC")
+
+    // ============================================================
     // Save / Load slot list — LSM_X / LSM_Y / LSM_W from wl_menu.h
     // ============================================================
 
@@ -417,6 +483,8 @@ module menu =
             render_difficulty_list(rc, vg, pal, f, g, time)
         else if g->menu_level == nav.sound then
             render_sound_list(rc, vg, pal, f, g, ac, time)
+        else if g->menu_level == nav.options then
+            render_options_list(rc, vg, pal, f, g, time)
         else if g->menu_level == nav.savelist then
             render_slot(rc, vg, pal, f, g, sm, pics.id.c_savegame, g->menu_sel, false, time)
         else if g->menu_level == nav.loadlist then

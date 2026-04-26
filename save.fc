@@ -57,12 +57,38 @@ module config =
 
     private let version = 1
 
+    // Persisted user preferences. Add new fields here as more mods
+    // and toggles land — the load path silently ignores unknown keys
+    // and the save path always writes every known field, so old
+    // configs upgrade cleanly without a version bump.
     struct prefs =
         music_on: bool
         sfx_on: bool
+        no_dogs: bool
+        // Shadow depth as 0..100 percent. 0 = no shading, 100 = full
+        // black at distance, 55 = original Wolf3D feel.
+        shadow_depth: int32
 
     let defaults = () ->
-        prefs { music_on = true, sfx_on = true }
+        prefs {
+            music_on = true,
+            sfx_on = true,
+            no_dogs = false,
+            shadow_depth = 55
+        }
+
+    // Snapshot the live preference state into a `prefs` value for
+    // persistence. Any time a menu commit changes one toggle the
+    // caller passes the whole world handle here, ensuring the file
+    // round-trips every field — never zero one out by partial
+    // construction.
+    let snapshot = (w: world*) ->
+        prefs {
+            music_on = w->g->music_on,
+            sfx_on = w->ac->sfx_on,
+            no_dogs = w->g->no_dogs,
+            shadow_depth = w->g->shadow_depth
+        }
 
     private let config_path = () ->
         match paths.wolf_data_dir() with
@@ -100,6 +126,19 @@ module config =
                         match text.parse_int32(line[4..line.len]) with
                         | some(v) -> p.sfx_on = v != 0
                         | none -> void()
+                    else if text.starts_with(line, "no_dogs ") then
+                        match text.parse_int32(line[8..line.len]) with
+                        | some(v) -> p.no_dogs = v != 0
+                        | none -> void()
+                    else if text.starts_with(line, "shadow_depth ") then
+                        match text.parse_int32(line[13..line.len]) with
+                        | some(v) ->
+                            // Clamp to 0..100 in case a hand-edited
+                            // config falls outside the slider range.
+                            p.shadow_depth = if v < 0 then 0
+                                else if v > 100 then 100
+                                else v
+                        | none -> void()
                 p
 
     // Write the current prefs to disk. Fire-and-forget — failures
@@ -118,6 +157,8 @@ module config =
                 io.write("WLFC_CONFIG %d{version}\n", f)
                 io.write("music %d{if p.music_on then 1 else 0}\n", f)
                 io.write("sfx %d{if p.sfx_on then 1 else 0}\n", f)
+                io.write("no_dogs %d{if p.no_dogs then 1 else 0}\n", f)
+                io.write("shadow_depth %d{p.shadow_depth}\n", f)
                 void()
 
 

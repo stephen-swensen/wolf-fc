@@ -34,10 +34,24 @@ module raycaster =
         0xFF000000u32 | ((uint32) (r * factor) << 16) |
             ((uint32) (g * factor) << 8) | (uint32) (b * factor)
 
-    // Compute shade factor from perpendicular distance.
-    let dist_shade = (dist: float64) ->
+    // Compute shade factor from perpendicular distance. `floor` is
+    // the minimum brightness as distance grows large — clamped at
+    // [0.0, 1.0]. floor=1.0 disables distance shading entirely
+    // (no shadows); floor=0.0 lets things go fully black at the
+    // far end. The original game's behaviour falls out at floor≈0.45.
+    let dist_shade = (dist: float64, floor: float64) ->
         let s = 1.0 - dist / 24.0
-        if s < 0.45 then 0.45 else if s > 1.0 then 1.0 else s
+        if s < floor then floor else if s > 1.0 then 1.0 else s
+
+    // Convert a Shadow Depth percentage (0..100) to the minimum-
+    // brightness floor passed to `dist_shade`. 0% → floor 1.0 (no
+    // shading), 100% → floor 0.0 (full black at distance), default
+    // 55% → floor 0.45 (matches the original).
+    let shadow_floor_from_depth = (depth_pct: int32) ->
+        let mut p = depth_pct
+        if p < 0 then p = 0
+        if p > 100 then p = 100
+        1.0 - (float64) p / 100.0
 
     let render_walls = (lv: level*, rc: render_ctx*, g: game*,
                         vs: const vswap.vswap_file*, pal: const uint32[]) ->
@@ -45,6 +59,8 @@ module raycaster =
         let ceil_idx = if g->level_num < 60 then ceil_table[g->level_num] else 0x1D
         let ceil_color = pal[ceil_idx]
         let floor_color = pal[0x19]
+        // Shadow depth from the user's Options-menu setting.
+        let shadow_floor = shadow_floor_from_depth(g->shadow_depth)
         let half = view_h / 2
         for y in 0..half
             for x in 0..game_w
@@ -269,7 +285,7 @@ module raycaster =
                 tex_pos = tex_pos + step_v
 
                 let pix = vswap.wall_pixel(vs, tex_page, tex_x, tex_y)
-                let mut shade = dist_shade(perp_dist)
+                let mut shade = dist_shade(perp_dist, shadow_floor)
                 if side == 1 then shade = shade * 0.75
                 rc->fb[(int64) y * 320 + (int64) col] = shade_color(pal[(int32) pix], shade)
 
@@ -395,6 +411,7 @@ module billboards =
     let render = (rc: render_ctx*, g: game*,
                   vs: const vswap.vswap_file*, pal: const uint32[]) ->
         let inv_det = 1.0 / (g->plane_x * g->dir_y - g->dir_x * g->plane_y)
+        let shadow_floor = raycaster.shadow_floor_from_depth(g->shadow_depth)
         for i in 0..rc->num_billboards
             let bb = rc->billboards[i]
             let sx = bb.x - g->pos_x
@@ -412,7 +429,7 @@ module billboards =
                 if stripe >= 0 && stripe < game_w then
                     if ty < rc->zbuf[stripe] then
                         let tex_col = (stripe - draw_x0) * 64 / spr_h
-                        let spr_shade = raycaster.dist_shade(ty)
+                        let spr_shade = raycaster.dist_shade(ty, shadow_floor)
                         draw_sprite_col(rc, vs, pal, bb.shape_page,
                             tex_col, stripe, spr_h, spr_shade)
 
