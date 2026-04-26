@@ -928,12 +928,13 @@ module pg13_screen =
     // PG-13 splash. The VGAGRAPH pic (88x64) is small relative to the
     // 320x200 screen; the original fills the entire backdrop with the
     // pic's body color (palette index 0x82, the warning-card cyan) and
-    // stamps the pic at native size — the pic's outer pixels match the
-    // fill, so it visually "extends" to all four edges. The pic is
-    // positioned bottom-right of centre, which is also faithful.
+    // stamps the pic at native size at (216, 110) — bottom-right of
+    // centre, ~16 px from the right edge and ~26 px from the bottom.
+    // The pic's outer pixels match the fill, so it visually "extends"
+    // to all four edges. Coordinates match the original.
     private let bg_index = 0x82
-    private let pic_x    = 116
-    private let pic_y    = 68
+    private let pic_x    = 216
+    private let pic_y    = 110
     let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[]) ->
         let bg = pal[bg_index]
         for i in 0..(game_w * game_h)
