@@ -2135,35 +2135,50 @@ let main = (args: str[]) ->
                     sdl2.set_logical_size(ren, screen_w, actual_h)
                     if is_alt_enter then continue
                 // Per-phase dispatch for everything else.
+                // Deliberate-feeling ack keys (Enter / Space / Ctrl) —
+                // matches the IN_Ack restriction below so modifier-only
+                // / function-key bumps don't skip past intro screens.
+                let is_ack_key_intro = k == sdl2.key_return
+                    || k == sdl2.key_space
+                    || k == sdl2.key_lctrl
                 match g->phase with
                 | pg13 ->
-                    // Any key advances to the title screen. update_phase_
-                    // transitions also auto-advances after a few seconds.
-                    g->phase = game_phase.title
-                    g->phase_timer = 0.0
+                    // Advance to the title screen on Enter / Space / Ctrl.
+                    // update_phase_transitions also auto-advances after a
+                    // few seconds.
+                    if is_ack_key_intro then
+                        g->phase = game_phase.title
+                        g->phase_timer = 0.0
                 | endart ->
-                    // Per-page navigation (no IN_Ack catch-all):
-                    //   Left / Up / PageUp     → previous page
-                    //   Esc                    → skip remaining pages
-                    //   Anything else (Enter / Space / Right / Down /
-                    //   PageDown / letters)    → next page; past last
-                    //                            → advance_next_episode
+                    // Per-page navigation:
+                    //   Left / Up / PageUp                  → previous page
+                    //   Esc                                 → skip remaining
+                    //   Right / Down / PageDown / Enter /
+                    //     Space / Ctrl                      → next page;
+                    //                                          past last →
+                    //                                          advance_next_episode
+                    // Other keys (modifiers, letters, etc.) are no-ops so a
+                    // stray Shift bump doesn't skip a page.
                     if !is_key_repeat then
                         if k == sdl2.key_left || k == sdl2.key_up
                                 || k == sdl2.key_pageup then
                             endart_screen.prev_page(g)
                         else if k == sdl2.key_escape then
                             advance_next_episode(w, vs)
-                        else
+                        else if k == sdl2.key_right || k == sdl2.key_down
+                                || k == sdl2.key_pagedown
+                                || is_ack_key_intro then
                             if endart_screen.next_page(g) then
                                 advance_next_episode(w, vs)
                 | title ->
-                    // Any key advances to the main menu. Default selection
-                    // = NEW GAME (RESUME is locked from the title screen).
-                    g->phase = game_phase.main_menu
-                    g->menu_level = menu.nav.main
-                    g->menu_sel = 0     // NEW GAME row in OG layout
-                    g->phase_timer = 0.0
+                    // Advance to the main menu on Enter / Space / Ctrl.
+                    // Default selection = NEW GAME (RESUME is locked from
+                    // the title screen).
+                    if is_ack_key_intro then
+                        g->phase = game_phase.main_menu
+                        g->menu_level = menu.nav.main
+                        g->menu_sel = 0     // NEW GAME row in OG layout
+                        g->phase_timer = 0.0
                 | main_menu ->
                     // Classic menu-cursor feedback: MOVEGUN1SND on up/down
                     // nav, SHOOTSND on confirm into a submenu, MOVEGUN2SND
@@ -2479,15 +2494,24 @@ let main = (args: str[]) ->
                                 player.cheats.advance_idkfa(g, k)
                             if k == sdl2.key_s then overlay.take_screenshot(w, vs, pal)
                             if k == sdl2.key_d then save.debug_dump_state(w)
-                            // IN_Ack: any keydown during an acknowledge screen
-                            // (intermission / episode-end / final victory) counts
-                            // as "acknowledge and advance". The advance itself
-                            // runs below (after tick) and is gated by
-                            // key_ack_handled so a held key only fires once.
-                            if g->phase == game_phase.intermission
+                            // IN_Ack: a deliberate-feeling keypress (Enter,
+                            // Space, or Ctrl — the OG fire key) during an
+                            // acknowledge screen (intermission / episode-end
+                            // / final victory / game-over) counts as
+                            // "acknowledge and advance". The OG accepted
+                            // any LastScan including modifier keys, but on
+                            // modern keyboards a stray Shift / Win / Menu
+                            // / function key shouldn't skip past the screen.
+                            // The advance itself runs below (after tick)
+                            // and is gated by key_ack_handled so a held
+                            // key only fires once.
+                            let is_ack_key = k == sdl2.key_return
+                                || k == sdl2.key_space
+                                || k == sdl2.key_lctrl
+                            if is_ack_key && (g->phase == game_phase.intermission
                                || g->phase == game_phase.episode_end
                                || g->phase == game_phase.victory
-                               || g->phase == game_phase.game_over then
+                               || g->phase == game_phase.game_over) then
                                 g->key_ack = true
             if t == sdl2.keyup_event then
                 let k = event.key.keysym.sym
