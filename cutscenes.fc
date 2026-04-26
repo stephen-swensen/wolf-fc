@@ -914,7 +914,6 @@ module title_screen =
         if blink_on then
             font.draw_centered(rc, f, game_h - 22, "PRESS ANY KEY", 0xFFFFFF00u32)
 
-
 // ============================================================
 // PG-13 splash — short intro pic before the title sequence
 // ============================================================

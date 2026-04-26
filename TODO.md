@@ -130,14 +130,24 @@ Reworked the pre-game flow against the original Wolf3D layout. Constraints
 that aren't supported (driver-selection radios, screen-size chooser,
 keybind editor) are dropped rather than greyed; everything else lands on
 OG art.
-- **PG-13 splash** as a new `game_phase.pg13` runs first at startup,
-  draws `vg_pg13` centered on a black palette-0 backdrop, auto-advances
-  after 6 s (`pg13_screen.auto_advance_time`), or skips on any keypress
-  to the title.
-- **Title music split**: `title` plays NAZI_NOR_MUS (INTROSONG) and
-  `pg13` / `main_menu` stay on WONDERIN_MUS (MENUSONG) — the music_chunk_
-  for_phase arm split makes the title→menu transition actually swap
-  tracks now.
+- **Signon screen skipped.** The OG had a `SIGNON.BIN` banner image
+  linked into the EXE before the PG-13 splash (memory-check ritual,
+  hardware probe). The asset isn't in WL6 data files — only in id's
+  source release as `WOLFSRC/OBJ/SIGNON.OBJ` — so we don't have it on
+  a typical Wolf-FC install. Recreating it from primitives looked
+  amateur next to the painted original; we'd rather start at PG-13
+  than fake the splash badly. Could be revisited if we add a loader
+  for a user-supplied `SIGNON.BIN`.
+- **PG-13 splash** (`game_phase.pg13`) is the first screen now. Fills
+  the full 320x200 with palette index 0x82 (the warning-card cyan)
+  and stamps `vg_pg13` at native size at (116, 68) so the pic's outer
+  pixels blend into the fill — visually fills the screen. Matches
+  wolf4sdl's PG13() exactly. Auto-advance after 6 s
+  (`pg13_screen.auto_advance_time`) or skip on any keypress.
+- **Music continuity**: NAZI_NOR_MUS (INTROSONG) plays through the
+  PG-13 splash and the title screen — both phases share the same
+  chunk so the swap logic no-ops on the transition and the music
+  plays unbroken. `main_menu` switches to WONDERIN_MUS (MENUSONG).
 - **Menu rendering rebuilt** in `menu.fc` with WL6 art: blinking
   `c_cursor1`/`2` gun cursor at 3.5 Hz on the selected row,
   `c_baby`/`c_easy`/`c_normal`/`c_hard` face cards on the difficulty

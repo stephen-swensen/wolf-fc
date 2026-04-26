@@ -428,16 +428,17 @@ module font =
         imf.init_from_chunk(ad->raw, off, (int64) len, (float64) sfx.sample_rate)
 
     // Pick the AUDIOT chunk number that should be playing for the
-    // current phase. Title uses INTROSONG (NAZI_NOR); the main menu
-    // (and the PG-13 splash, which is a brief beat between the title
-    // sequence) uses MENUSONG (WONDERIN). Intermission uses ENDLEVEL.
-    // Per-episode and final victory screens get URAHERO and VICMARCH.
-    // All other phases (playing, dying, game_over) use the per-level
-    // song table.
+    // current phase. INTROSONG (NAZI_NOR) plays continuously through
+    // the PG-13 splash and the title screen — the two phases share
+    // the chunk so the swap logic no-ops on the transition and the
+    // music plays unbroken. The main menu switches to MENUSONG
+    // (WONDERIN). Intermission uses ENDLEVEL. Per-episode and final
+    // victory screens get URAHERO and VICMARCH. All other phases
+    // (playing, dying, game_over) use the per-level song table.
     let music_chunk_for_phase = (phase: game_phase, level_num: int32) ->
         let mus = match phase with
-        | title                -> music.nazi_nor
-        | pg13 | main_menu     -> music.wonderin
+        | pg13 | title         -> music.nazi_nor      // INTROSONG
+        | main_menu            -> music.wonderin      // MENUSONG
         | intermission         -> music.endlevel
         | bj_victory           -> music.urahero   // same cue as the episode-end screen
         // Death-cam: keep the level track playing so the fizzle-out /

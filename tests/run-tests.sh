@@ -570,8 +570,8 @@ assert_contains "cli:near-boss-no-op-without-boss" \
 assert_contains "cli:setphase-soundmenu" \
     "setphase:soundmenu phase" \
     "phase=menu"
-# setphase:pg13 enters the parental-advisory splash. Used by the intro
-# sequence; the phase command verifies routing.
+# setphase:pg13 enters the parental-advisory splash. The phase command
+# confirms routing.
 assert_contains "cli:setphase-pg13" \
     "setphase:pg13 phase" \
     "phase=pg13"
@@ -703,8 +703,12 @@ section "music routing"
 # its wolf3d-original track instead of whatever per-level song was last
 # loaded. Asserting the chunk number is enough — the audio path itself
 # isn't exercised in headless mode.
+# INTROSONG (NAZI_NOR) plays continuously through the PG-13 splash and
+# the title page; MENUSONG (WONDERIN) starts when the player enters the
+# main menu. The two intro phases share the chunk so the swap logic
+# no-ops on the transition.
+assert_contains "music:pg13-plays-nazi-nor"       "setphase:pg13 music"       "audiot offset=7"
 assert_contains "music:title-plays-nazi-nor"      "setphase:title music"      "audiot offset=7"
-assert_contains "music:pg13-plays-wonderin"       "setphase:pg13 music"       "audiot offset=14"
 assert_contains "music:menu-plays-wonderin"       "setphase:menu music"       "audiot offset=14"
 assert_contains "music:gameplay-uses-songs-table" "music"                     "audiot offset=3"
 assert_contains "music:intermission-plays-endlevel" \

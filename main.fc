@@ -79,6 +79,9 @@ module episode =
 union game_phase =
     | pg13          // PG-13 parental-advisory splash shown once at startup;
                     // any key (or a short auto-timer) advances to title.
+                    // Original Wolf3D had a SIGNON banner (a separate
+                    // SIGNON.BIN linked into the EXE) before this; we
+                    // skip it since the asset isn't in WL6 data files.
     | title         // title screen shown before first game; any key → menu
     | main_menu     // nav a list with arrows. Doubles as the pause UI:
                     // Esc from `playing` lands here with RESUME selected.
