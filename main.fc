@@ -2192,11 +2192,16 @@ let main = (args: str[]) ->
                     // branch.
                     let is_confirm = k == sdl2.key_return || k == sdl2.key_space
                     let is_commit  = is_confirm && g->menu_level == menu.nav.sound
+                    // The episode picker's hidden number shortcut (0..9)
+                    // counts as a confirm too — same drilling-into-a-
+                    // submenu effect, so it deserves the same SHOOTSND.
+                    let is_episode_floor_key = g->menu_level == menu.nav.episode
+                        && (k == sdl2.key_0 || (k >= sdl2.key_1 && k <= sdl2.key_9))
                     if k == sdl2.key_up || k == sdl2.key_down then
                         sfx.trigger(sfx.id.move_gun1, w->ac)
                     else if is_commit then
                         sfx.trigger(sfx.id.move_gun2, w->ac)
-                    else if is_confirm then
+                    else if is_confirm || is_episode_floor_key then
                         sfx.trigger(sfx.id.shoot, w->ac)
                     else if k == sdl2.key_escape then
                         sfx.trigger(sfx.id.esc_pressed, w->ac)
