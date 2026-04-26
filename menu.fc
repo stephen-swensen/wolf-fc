@@ -34,6 +34,10 @@ module menu =
     private let pal_stripe     = 0x2c   // accent line under stripes
     private let pal_text       = 0x17   // normal text (off-white)
     private let pal_highlight  = 0x13   // selected text (cyan)
+    private let pal_read       = 0x4a   // BACK TO GAME normal — orange
+    private let pal_readh      = 0x47   // section titles + BACK TO GAME
+                                        //   selected — bright yellow,
+                                        //   matches OG's `READHCOLOR`
     private let pal_help       = 0x37   // bottom hint line
 
     // Main menu — original Wolf3D ordering with the unsupported rows
@@ -229,8 +233,19 @@ module menu =
             let is_locked = main_is_locked(i, g->has_active_game)
             if is_sel then
                 draw_cursor(rc, vg, pal, menu_x, row_y - 2, time)
+            // BACK TO GAME (row 5) uses the OG's "read this!"-style
+            // colours (READCOLOR / READHCOLOR — orange / yellow) so it
+            // visually pops as a different action class than the regular
+            // navigation rows. Locked still wins (DEACTIVE) when no game
+            // is active.
+            let is_back_to_game = i == 5
+            let color = if is_locked then pal[pal_deactive]
+                else if is_back_to_game && is_sel then pal[pal_readh]
+                else if is_back_to_game then pal[pal_read]
+                else if is_sel then pal[pal_highlight]
+                else pal[pal_text]
             font.draw_text(rc, f, menu_x + menu_indent, row_y,
-                main_label(i), row_color(pal, is_sel, is_locked))
+                main_label(i), color)
         draw_help(rc, pal, f, "ARROWS  ENTER  ESC")
 
     // ============================================================
@@ -251,7 +266,7 @@ module menu =
         // PrintY=2 with WindowX/WindowY zeroed — effectively centered
         // above the box; we tuck it just inside the frame's top edge).
         font.draw_centered(rc, f, ne_y - 14, "WHICH EPISODE TO PLAY?",
-            pal[pal_highlight])
+            pal[pal_readh])
         let row_step = 26
         let x_cursor = ne_x + 4
         let x_card   = ne_x + 32
@@ -286,7 +301,7 @@ module menu =
         let nm_h = 4 * row_h + 15
         // Header above the frame.
         font.draw_text(rc, f, nm_x + 20, nm_y - 32,
-            "HOW TOUGH ARE YOU?", pal[pal_highlight])
+            "HOW TOUGH ARE YOU?", pal[pal_readh])
         draw_window(rc, pal, nm_x - 5, nm_y - 10, nm_w, nm_h)
         // The selected face card on the right edge of the window.
         pics.draw(rc, vg, pal, diff_card(g->menu_sel), nm_x + 185, nm_y + 7)
@@ -309,7 +324,7 @@ module menu =
     private let render_sound_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                       pal: const uint32[], f: const font.info*,
                                       g: game*, ac: audio_ctx*, time: float64) ->
-        font.draw_centered(rc, f, 38, "SOUND", pal[pal_highlight])
+        font.draw_centered(rc, f, 38, "SOUND", pal[pal_readh])
         // A single window (the OG stacks three driver-dropdown windows
         // here; we only have on/off so one box is enough). SM_X=48,
         // SM_W=250 in the OG.
@@ -349,7 +364,7 @@ module menu =
     private let render_options_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                         pal: const uint32[], f: const font.info*,
                                         g: game*, time: float64) ->
-        font.draw_centered(rc, f, 38, "OPTIONS", pal[pal_highlight])
+        font.draw_centered(rc, f, 38, "OPTIONS", pal[pal_readh])
         // Generously sized box (the row count grows over time as more
         // mods land — the current 2-row setup leaves headroom).
         let op_x = 40
