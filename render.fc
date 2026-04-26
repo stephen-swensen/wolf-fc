@@ -64,14 +64,14 @@ module raycaster =
         let shadow_floor = shadow_floor_from_depth(g->shadow_depth)
         let half = view_h / 2
         for y in 0..half
-            for x in 0..game_w
-                rc->fb[(int64) y * 320 + (int64) x] = ceil_color
+            for x in 0..rc->fb_w
+                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = ceil_color
         for y in half..view_h
-            for x in 0..game_w
-                rc->fb[(int64) y * 320 + (int64) x] = floor_color
+            for x in 0..rc->fb_w
+                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = floor_color
 
         // Reset z-buffer.
-        for i in 0..game_w
+        for i in 0..rc->fb_w
             rc->zbuf[i] = 1e6
 
         // Push-wall sub-tile offset. pw_fx/pw_fy are the world-space
@@ -84,8 +84,8 @@ module raycaster =
         let pw_fy = (float64) lv->pushwall.tile_y + pw_sub * (float64) lv->pushwall.dir_y
 
         // Cast one ray per screen column.
-        for col in 0..game_w
-            let cam_x = 2.0 * (float64) col / (float64) game_w - 1.0
+        for col in 0..rc->fb_w
+            let cam_x = 2.0 * (float64) col / (float64) rc->fb_w - 1.0
             let ray_dx = g->dir_x + g->plane_x * cam_x
             let ray_dy = g->dir_y + g->plane_y * cam_x
             let mut map_x = (int32) g->pos_x
@@ -288,7 +288,7 @@ module raycaster =
                 let pix = vswap.wall_pixel(vs, tex_page, tex_x, tex_y)
                 let mut shade = dist_shade(perp_dist, shadow_floor)
                 if side == 1 then shade = shade * 0.75
-                rc->fb[(int64) y * 320 + (int64) col] = shade_color(pal[(int32) pix], shade)
+                rc->fb[(int64) y * (int64) rc->fb_w + (int64) col] = shade_color(pal[(int32) pix], shade)
 
 
 // ============================================================
@@ -401,7 +401,7 @@ module billboards =
                     let ey = if sy1 > view_h then view_h else sy1
                     loop
                         if sy >= ey then break
-                        rc->fb[(int64) sy * 320 + (int64) screen_x] = color
+                        rc->fb[(int64) sy * (int64) rc->fb_w + (int64) screen_x] = color
                         sy = sy + 1
 
     // Render the sorted billboards (static sprites + enemies). Caller
@@ -420,14 +420,14 @@ module billboards =
             let tx = inv_det * (g->dir_y * sx - g->dir_x * sy)
             let ty = inv_det * (g->plane_x * sy - g->plane_y * sx)
             if ty <= 0.1 then continue
-            let scr_x = (int32) ((float64) (game_w / 2) * (1.0 + tx / ty))
+            let scr_x = (int32) ((float64) (rc->fb_w / 2) * (1.0 + tx / ty))
             let spr_h = (int32) ((float64) view_h / ty)
             if spr_h < 1 then continue
             let half = spr_h / 2
             let draw_x0 = scr_x - half
             let draw_x1 = scr_x + half
             for stripe in draw_x0..draw_x1
-                if stripe >= 0 && stripe < game_w then
+                if stripe >= 0 && stripe < rc->fb_w then
                     if ty < rc->zbuf[stripe] then
                         let tex_col = (stripe - draw_x0) * 64 / spr_h
                         let spr_shade = raycaster.dist_shade(ty, shadow_floor)
@@ -457,12 +457,12 @@ module overlay =
         let tg = (float64) ((tint >> 8) & 0xFFu32) * a
         let tb = (float64) (tint & 0xFFu32) * a
         for y in 0..view_h
-            for x in 0..game_w
-                let c = rc->fb[(int64) y * 320 + (int64) x]
+            for x in 0..rc->fb_w
+                let c = rc->fb[(int64) y * (int64) rc->fb_w + (int64) x]
                 let r = (float64) ((c >> 16) & 0xFFu32) * inv + tr
                 let g = (float64) ((c >> 8) & 0xFFu32) * inv + tg
                 let b = (float64) (c & 0xFFu32) * inv + tb
-                rc->fb[(int64) y * 320 + (int64) x] =
+                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] =
                     0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
 
     // Variant of viewport_tint that covers the whole framebuffer
@@ -475,12 +475,12 @@ module overlay =
         let tg = (float64) ((tint >> 8) & 0xFFu32) * a
         let tb = (float64) (tint & 0xFFu32) * a
         for y in 0..game_h
-            for x in 0..game_w
-                let c = rc->fb[(int64) y * 320 + (int64) x]
+            for x in 0..rc->fb_w
+                let c = rc->fb[(int64) y * (int64) rc->fb_w + (int64) x]
                 let r = (float64) ((c >> 16) & 0xFFu32) * inv + tr
                 let g = (float64) ((c >> 8) & 0xFFu32) * inv + tg
                 let b = (float64) (c & 0xFFu32) * inv + tb
-                rc->fb[(int64) y * 320 + (int64) x] =
+                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] =
                     0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
 
     // Stippled red dissolve driven by a per-pixel spatial hash. For
@@ -495,12 +495,12 @@ module overlay =
         let threshold = (uint32) (p * 65536.0)
         let color = 0xFF000000u32 | (tint & 0x00FFFFFFu32)
         for y in 0..view_h
-            for x in 0..game_w
+            for x in 0..rc->fb_w
                 let mut h = (uint32) x * 0x9E3779B1u32 + (uint32) y * 0xC2B2AE35u32
                 h = (h ^ (h >> 13u32)) * 0x85EBCA6Bu32
                 h = (h ^ (h >> 16u32)) & 0xFFFFu32
                 if h < threshold then
-                    rc->fb[(int64) y * 320 + (int64) x] = color
+                    rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = color
 
     // Draw a centered string in the 3D viewport using the 3x5 bitmap
     // font, scaled up to `scale` px per bit. Used by the intermission
@@ -508,17 +508,19 @@ module overlay =
     let draw_centered_text = (rc: render_ctx*, y: int32, s: const str, color: uint32, scale: int32) ->
         let slen = (int32) s.len
         let tw = slen * (3 * scale + scale) - scale
-        let x = (game_w - tw) / 2
+        let x = (rc->fb_w - tw) / 2
         hud.draw_text(rc, x, y, s, color, scale)
 
-    // Upscale fb (320x200) to dbuf (640x400) with nearest-neighbor 2x.
+    // Upscale fb (fb_w x fb_h) to dbuf (2*fb_w x 2*fb_h) with
+    // nearest-neighbor 2x. Stride uses rc->screen_w (= 2 * fb_w) so
+    // widescreen framebuffers blit correctly.
     let upscale_2x = (rc: render_ctx*) ->
-        for y in 0..game_h
-            for x in 0..game_w
-                let c = rc->fb[(int64) y * (int64) game_w + (int64) x]
+        for y in 0..rc->fb_h
+            for x in 0..rc->fb_w
+                let c = rc->fb[(int64) y * (int64) rc->fb_w + (int64) x]
                 let dx = (int64) x * 2
                 let dy = (int64) y * 2
-                let sw = (int64) screen_w
+                let sw = (int64) rc->screen_w
                 rc->dbuf[dy * sw + dx] = c
                 rc->dbuf[dy * sw + dx + 1] = c
                 rc->dbuf[(dy + 1) * sw + dx] = c
@@ -533,7 +535,7 @@ module overlay =
         let sk = if g->has_silver_key then 1 else 0
         let meta = alloc("level=%d{g->level_num + 1}\npos=(%7.3f{g->pos_x}, %7.3f{g->pos_y})\ndir=(%7.4f{g->dir_x}, %7.4f{g->dir_y})\nhealth=%d{g->health}\nammo=%d{g->ammo}\nscore=%d{g->score}\nlives=%d{g->lives}\nweapon=%d{g->weapon}\nkeys=gold:%d{gk},silver:%d{sk}")!
         defer free(meta)
-        png.write(path, w->rc->fb, game_w, game_h, meta)
+        png.write(path, w->rc->fb, w->rc->fb_w, game_h, meta)
 
     // Clear any screenshot files left over from a previous session
     // so each run starts numbering from 000. Users who want to keep

@@ -394,7 +394,7 @@ module death_cam =
         let page = vs->sprite_start + sprite_offset
         let dw = view_h
         let dh = view_h
-        let dx = (game_w - dw) / 2
+        let dx = (rc->fb_w - dw) / 2
         let dy = view_h - dh
         player.draw_hud_sprite(rc, vs, pal, page, dx, dy, dw, dh)
 
@@ -739,8 +739,8 @@ module intermission =
                   g: game*) ->
         let bg = pal[0x7F]
         for y in 0..view_h
-            for x in 0..game_w
-                rc->fb[(int64) y * (int64) game_w + (int64) x] = bg
+            for x in 0..rc->fb_w
+                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = bg
 
         let breathe = ((int32) (g->inter_breathe_timer * 2.0)) % 2
         let guy_pic = if breathe == 0 then pics.id.l_guy else pics.id.l_guy2
@@ -868,8 +868,8 @@ module episode_end =
         // strip below alone.
         let bg = pal[0x7F]
         for y in 0..view_h
-            let base = y * game_w
-            for x in 0..game_w
+            let base = y * rc->fb_w
+            for x in 0..rc->fb_w
                 rc->fb[base + x] = bg
         // BJ-wins art on the left (L_BJWINSPIC).
         pics.draw(rc, vg, pal, pics.id.l_bjwins, 8, 4)
@@ -1109,10 +1109,13 @@ module endart_screen =
     private let draw_window_border = (rc: render_ctx*,
                                        vg: const vgagraph.vgagraph_file*,
                                        pal: const uint32[]) ->
-        pics.draw(rc, vg, pal, pics.id.h_topwindow,    0,    0)
-        pics.draw(rc, vg, pal, pics.id.h_leftwindow,   0,    8)
-        pics.draw(rc, vg, pal, pics.id.h_rightwindow,  312,  8)
-        pics.draw(rc, vg, pal, pics.id.h_bottominfo,   8,  176)
+        // Centred in the 320 OG layout column for widescreen (ox = 0
+        // in 4:3, > 0 otherwise).
+        let ox = rc->ui_offset_x
+        pics.draw(rc, vg, pal, pics.id.h_topwindow,    ox + 0,    0)
+        pics.draw(rc, vg, pal, pics.id.h_leftwindow,   ox + 0,    8)
+        pics.draw(rc, vg, pal, pics.id.h_rightwindow,  ox + 312,  8)
+        pics.draw(rc, vg, pal, pics.id.h_bottominfo,   ox + 8,    176)
 
     // Print the "pg N of M" footer the original adds at the bottom of
     // each page (READHCOLOR, fontnumber 0).
@@ -1126,7 +1129,7 @@ module endart_screen =
                   pal: const uint32[], f: const font.info*, g: game*) ->
         // Backdrop + window frame.
         let bg = pal[backcolor]
-        for i in 0..(game_w * game_h)
+        for i in 0..(rc->fb_w * game_h)
             rc->fb[i] = bg
         draw_window_border(rc, vg, pal)
         if g->endart_total_pages == 0 || g->endart_data.len == 0 then return
@@ -1138,7 +1141,7 @@ module endart_screen =
         let mut rights = int32[18] {}
         for i in 0..text_rows
             lefts[i]  = left_margin
-            rights[i] = game_w - right_margin
+            rights[i] = rc->fb_w - right_margin
         // Skip the ^P line itself.
         let mut i = skip_to_eol(g->endart_data, start + 2)
         let mut st = layout_state {
@@ -1178,8 +1181,8 @@ module endart_screen =
                         if dy < 0 || dy >= game_h then continue
                         for xx in 0..pw_n.value
                             let dx = px_n.value + xx
-                            if dx < 0 || dx >= game_w then continue
-                            rc->fb[(int64) dy * 320 + (int64) dx] = bcol
+                            if dx < 0 || dx >= rc->fb_w then continue
+                            rc->fb[(int64) dy * (int64) rc->fb_w + (int64) dx] = bcol
                 else if cmd == 0x3Bu8 then
                     // ^; comment: skip to end of line.
                     st.cursor = skip_to_eol(data, st.cursor)
@@ -1295,7 +1298,7 @@ module endart_screen =
 module game_over =
     // Game-over screen: black background, big "GAME OVER", score, prompt.
     let render = (rc: render_ctx*, g: game*) ->
-        for i in 0..(game_w * game_h)
+        for i in 0..(rc->fb_w * game_h)
             rc->fb[i] = 0xFF000000u32
         let red = 0xFFD00000u32
         let white = 0xFFFFFFFFu32
@@ -1339,6 +1342,9 @@ module pg13_screen =
     private let pic_y    = 110
     let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[]) ->
         let bg = pal[bg_index]
-        for i in 0..(game_w * game_h)
+        for i in 0..(rc->fb_w * rc->fb_h)
             rc->fb[i] = bg
-        pics.draw(rc, vg, pal, pics.id.pg13, pic_x, pic_y)
+        // Add ui_offset_x so the OG-relative (216, 110) lands centred
+        // in widescreen, with the side panels filled in the same cyan
+        // body colour as the pic — visually seamless.
+        pics.draw(rc, vg, pal, pics.id.pg13, rc->ui_offset_x + pic_x, pic_y)

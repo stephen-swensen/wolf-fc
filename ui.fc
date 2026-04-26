@@ -244,8 +244,8 @@ module pics =
             if dy < 0 || dy >= game_h then continue
             for x in 0..w
                 let dx = dst_x + x
-                if dx < 0 || dx >= game_w then continue
-                rc->fb[(int64) dy * 320 + (int64) dx] = buf[(int64) y * (int64) w + (int64) x]
+                if dx < 0 || dx >= rc->fb_w then continue
+                rc->fb[(int64) dy * (int64) rc->fb_w + (int64) dx] = buf[(int64) y * (int64) w + (int64) x]
 
     // "GET PSYCHED!" level-load overlay. Matches the original's
     // PreloadGraphics: fill the 3D view area with VIEWCOLOR (palette
@@ -263,8 +263,8 @@ module pics =
         // status bar (y >= view_h) untouched.
         let bg = pal[get_psyched_bg_index]
         for y in 0..view_h
-            let base = y * game_w
-            for x in 0..game_w
+            let base = y * rc->fb_w
+            for x in 0..rc->fb_w
                 rc->fb[base + x] = bg
         // Center the pic within the viewport. Use the VGAGRAPH-reported
         // size in case the pic is ever re-packed; wolf3d's is 224x48.
@@ -272,7 +272,7 @@ module pics =
         let ph = vgagraph.pic_height(vg, id.get_psyched)
         let pic_w = if pw > 0 then pw else get_psyched_pic_w
         let pic_h = if ph > 0 then ph else get_psyched_pic_h
-        let pic_x = (game_w - pic_w) / 2
+        let pic_x = (rc->fb_w - pic_w) / 2
         let pic_y = (view_h - pic_h) / 2
         draw(rc, vg, pal, id.get_psyched, pic_x, pic_y)
         // Progress bar: the original offsets it to (WindowX+5,
@@ -286,7 +286,7 @@ module pics =
         let bar_hilight = pal[0x32]
         // Trough (always full-width black strip 2px tall).
         for by in 0..2
-            let row = (bar_y + by) * game_w
+            let row = (bar_y + by) * rc->fb_w
             for bx in 0..bar_full_w
                 rc->fb[row + bar_x + bx] = bg_col
         // Filled portion: 0 → 100% as timer_remaining goes from total → 0.
@@ -297,7 +297,7 @@ module pics =
             else if fill_w_f > (float64) bar_full_w then bar_full_w
             else (int32) fill_w_f
         for by in 0..2
-            let row = (bar_y + by) * game_w
+            let row = (bar_y + by) * rc->fb_w
             let col = if by == 0 then bar_hilight else bar_col
             // The original draws the main bar full-width then the
             // highlight one pixel shorter. For simplicity we paint both
@@ -305,29 +305,46 @@ module pics =
             for bx in 0..fill_w
                 rc->fb[row + bar_x + bx] = col
 
-    // One-time decode + nearest-neighbor scale of TITLEPIC into a
-    // 320×200 ARGB buffer. Returns a heap slice the caller must hold
-    // for the process lifetime.
-    let build_title_bg_cache = (vg: const vgagraph.vgagraph_file*, pal: const uint32[]) ->
-        let buf = alloc(uint32[game_w * game_h] {})!
+    // One-time decode of TITLEPIC into an `fb_w × fb_h` ARGB buffer,
+    // letterboxed inside the wider framebuffer if Hor+ widescreen is
+    // active. The OG title art is 320x200, so we render it at native
+    // size centred horizontally (no stretch), with palette[BORDCOLOR]
+    // (the menu red) filling the side panels — matches the OG menu's
+    // backdrop tone. Returns a heap slice the caller must hold for the
+    // process lifetime.
+    let build_title_bg_cache = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
+                                fb_w: int32, fb_h: int32) ->
+        let buf = alloc(uint32[fb_w * fb_h] {})!
+        // Side panels: BORDCOLOR (palette 0x29 — same colour the menu
+        // backdrop uses, so the title bleeds visually into the menu).
+        let bord = pal[0x29]
+        for i in 0..(fb_w * fb_h)
+            buf[i] = bord
         let pic = vgagraph.load_pic(vg, id.title)
         defer free(pic)
         if pic.len == 0 then return buf
         let w = vgagraph.pic_width(vg, id.title)
         let h = vgagraph.pic_height(vg, id.title)
         if w <= 0 || h <= 0 then return buf
-        for py in 0..game_h
-            let sy = (int64) py * (int64) h / (int64) game_h
-            for px in 0..game_w
-                let sx = (int64) px * (int64) w / (int64) game_w
+        // Centre the 320x200 title art in the framebuffer; if the
+        // framebuffer happens to be exactly 320 wide (4:3 mode) the
+        // offset is 0 and the side-panel fill is harmless.
+        let dst_w = if w < fb_w then w else fb_w
+        let dst_h = if h < fb_h then h else fb_h
+        let off_x = (fb_w - dst_w) / 2
+        let off_y = (fb_h - dst_h) / 2
+        for py in 0..dst_h
+            let sy = (int64) py * (int64) h / (int64) dst_h
+            for px in 0..dst_w
+                let sx = (int64) px * (int64) w / (int64) dst_w
                 let pix = pic[sy * (int64) w + sx]
-                buf[(int64) py * (int64) game_w + (int64) px] = pal[(int32) pix]
+                buf[(int64) (off_y + py) * (int64) fb_w + (int64) (off_x + px)] = pal[(int32) pix]
         buf
 
     // Blit the cached title backdrop into the framebuffer.
     let blit_title_bg = (rc: render_ctx*) ->
         if rc->title_bg.len == 0 then return
-        for i in 0..(game_w * game_h)
+        for i in 0..(rc->fb_w * rc->fb_h)
             rc->fb[i] = rc->title_bg[i]
 
 
@@ -397,8 +414,8 @@ module font =
                 if px != 0u8 then
                     let dx = x + col
                     let dy = y + row
-                    if dx >= 0 && dx < game_w && dy >= 0 && dy < game_h then
-                        rc->fb[(int64) dy * 320 + (int64) dx] = color
+                    if dx >= 0 && dx < rc->fb_w && dy >= 0 && dy < game_h then
+                        rc->fb[(int64) dy * (int64) rc->fb_w + (int64) dx] = color
         cw
 
     let draw_text = (rc: render_ctx*, f: const info*,
@@ -420,7 +437,7 @@ module font =
     let draw_centered = (rc: render_ctx*, f: const info*,
                          y: int32, s: const str, color: uint32) ->
         let w = text_width(f, s)
-        draw_text(rc, f, (game_w - w) / 2, y, s, color)
+        draw_text(rc, f, (rc->fb_w - w) / 2, y, s, color)
 
     // Load an IMF music player from an AUDIOT chunk number. Grouped
     // with font because it reuses the VGAGRAPH-pipeline approach — a
@@ -525,8 +542,8 @@ module hud =
                         for sx in 0..scale
                             let px = x + col * scale + sx
                             let py = y + row * scale + sy
-                            if px >= 0 && px < game_w && py >= 0 && py < game_h then
-                                rc->fb[(int64) py * 320 + (int64) px] = color
+                            if px >= 0 && px < rc->fb_w && py >= 0 && py < game_h then
+                                rc->fb[(int64) py * (int64) rc->fb_w + (int64) px] = color
 
     let draw_number = (rc: render_ctx*, x: int32, y: int32, num: int32, color: uint32, scale: int32) ->
         let mut n = num
@@ -563,15 +580,15 @@ module hud =
                                 for sx in 0..scale
                                     let px = cx + col * scale + sx
                                     let py = y + row * scale + sy
-                                    if px >= 0 && px < game_w && py >= 0 && py < game_h then
-                                        rc->fb[(int64) py * 320 + (int64) px] = color
+                                    if px >= 0 && px < rc->fb_w && py >= 0 && py < game_h then
+                                        rc->fb[(int64) py * (int64) rc->fb_w + (int64) px] = color
 
     // Draw a filled rectangle in the framebuffer.
     private let fill_rect = (rc: render_ctx*, x0: int32, y0: int32, x1: int32, y1: int32, color: uint32) ->
         for y in y0..y1
             for x in x0..x1
-                if x >= 0 && x < game_w && y >= 0 && y < game_h then
-                    rc->fb[(int64) y * 320 + (int64) x] = color
+                if x >= 0 && x < rc->fb_w && y >= 0 && y < game_h then
+                    rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = color
 
     // Pick the BJ face chunk from health + animation frame. The
     // original picks the expression row from `(100-health)/16`
@@ -639,11 +656,26 @@ module hud =
 
     let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[], g: game*) ->
         let bar_top = view_h                         // 160
+        // Hor+ widescreen: the 3D viewport above renders fullscreen
+        // (0..fb_w), but the status-bar graphic is 320 wide and we
+        // centre it. Side panels below view_h would otherwise show
+        // last-frame leftovers, so paint them with palette[0x29]
+        // (BORDCOLOR — the menu/title red, which visually blends with
+        // the dark border baked into the statusbar pic).
+        let ox = rc->ui_offset_x
+        if ox > 0 then
+            let fill = pal[0x29]
+            for y in bar_top..rc->fb_h
+                let row = y * rc->fb_w
+                for x in 0..ox
+                    rc->fb[(int64) (row + x)] = fill
+                for x in (ox + 320)..rc->fb_w
+                    rc->fb[(int64) (row + x)] = fill
         // Full Wolf3D status-bar graphic: all the cell outlines +
         // labels are pre-rendered into a single 320x40 image. We
         // paint it, then stamp digits / face / keys / weapon-icon
         // over the empty cells.
-        pics.draw(rc, vg, pal, pics.id.statusbar, 0, bar_top)
+        pics.draw(rc, vg, pal, pics.id.statusbar, ox, bar_top)
         // Cell x-coords (in pixels) and widths (in 8-px "cells"),
         // from the original's LatchNumber calls:
         //   floor : x=16, 2 cells
@@ -652,11 +684,11 @@ module hud =
         //   health: x=168, 3 cells
         //   ammo  : x=216, 2 cells
         let num_y = bar_top + 16
-        draw_vg_number(rc, vg, pal, 16, num_y, 2, (g->level_num % episode.levels_per) + 1)
-        draw_vg_number(rc, vg, pal, 48, num_y, 6, g->score)
-        draw_vg_number(rc, vg, pal, 112, num_y, 1, g->lives)
-        draw_vg_number(rc, vg, pal, 168, num_y, 3, g->health)
-        draw_vg_number(rc, vg, pal, 216, num_y, 2, g->ammo)
+        draw_vg_number(rc, vg, pal, ox + 16, num_y, 2, (g->level_num % episode.levels_per) + 1)
+        draw_vg_number(rc, vg, pal, ox + 48, num_y, 6, g->score)
+        draw_vg_number(rc, vg, pal, ox + 112, num_y, 1, g->lives)
+        draw_vg_number(rc, vg, pal, ox + 168, num_y, 3, g->health)
+        draw_vg_number(rc, vg, pal, ox + 216, num_y, 2, g->ammo)
         // BJ face — chosen by health + the rolling A/B/C variant
         // from update_face. On death, the face swaps to the single
         // FACE8APIC dead pic (or MUTANTBJPIC when the killing hit
@@ -670,37 +702,41 @@ module hud =
             else match g->phase with
             | dying     -> dead_face
             | _            -> face_chunk_for(g->health, g->face_frame)
-        pics.draw(rc, vg, pal, face, 136, bar_top + 4)
+        pics.draw(rc, vg, pal, face, ox + 136, bar_top + 4)
         // Weapon icon on the right.
         let weapon_chunk = match g->weapon with
         | 1 -> pics.id.pistol
         | 2 -> pics.id.mg
         | 3 -> pics.id.chain
         | _ -> pics.id.knife
-        pics.draw(rc, vg, pal, weapon_chunk, 256, bar_top + 8)
+        pics.draw(rc, vg, pal, weapon_chunk, ox + 256, bar_top + 8)
         // Key indicators — two slots on the right edge. Positions
         // match the original StatusDrawPic coords (30,4) and (30,20)
         // → x=240.
         if g->has_gold_key then
-            pics.draw(rc, vg, pal, pics.id.gold_key, 240, bar_top + 4)
+            pics.draw(rc, vg, pal, pics.id.gold_key, ox + 240, bar_top + 4)
         if g->has_silver_key then
-            pics.draw(rc, vg, pal, pics.id.silver_key, 240, bar_top + 20)
+            pics.draw(rc, vg, pal, pics.id.silver_key, ox + 240, bar_top + 20)
         // Cheat indicators: a single vertical stripe inside the HUD
-        // edge. Gold on the left = god mode (MLI / IDDQD). Silver on
-        // the right = IDKFA. Painted last so they overlay the
-        // status-bar graphic + all stamped cells.
+        // edge (relative to the centred status-bar). Gold on the left
+        // = god mode (MLI / IDDQD). Silver on the right = IDKFA.
+        // Painted last so they overlay the status-bar graphic + all
+        // stamped cells.
         let y0 = bar_top + 1
-        let y1 = game_h - 2
+        let y1 = rc->fb_h - 2
         if g->god_mode then
             let gold = 0xFFFFD700u32
-            let x = 1
+            let x = ox + 1
             for y in y0..(y1 + 1)
-                rc->fb[(int64) y * 320 + (int64) x] = gold
+                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = gold
         if g->idkfa_mode then
             let silver = 0xFFC0C0C0u32
-            let x = game_w - 2
+            // Right edge of the centred 320 status bar, not the
+            // framebuffer right edge — keeps the indicator pinned to
+            // the HUD strip in widescreen.
+            let x = ox + 320 - 2
             for y in y0..(y1 + 1)
-                rc->fb[(int64) y * 320 + (int64) x] = silver
+                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = silver
 
     // Copy a const str into g->msg_buf and arm the message timer.
     // The buffer caps at 63 chars (1 spare); longer messages are
@@ -740,7 +776,7 @@ module hud =
                 for j in line_start..i
                     let ch = (int32) g->msg_buf[j]
                     if ch >= 0 && ch < 256 then w = w + f->width[ch]
-                let mut cx = (game_w - w) / 2
+                let mut cx = (rc->fb_w - w) / 2
                 for j in line_start..i
                     cx = cx + font.draw_char(rc, f, cx, y, (int32) g->msg_buf[j], color)
                 y = y + line_h

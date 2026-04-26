@@ -680,23 +680,23 @@ module spawn =
                     | 0 ->
                         g->dir_x = 0.0
                         g->dir_y = -1.0
-                        g->plane_x = fov_factor
+                        g->plane_x = g->plane_factor
                         g->plane_y = 0.0
                     | 1 ->
                         g->dir_x = 1.0
                         g->dir_y = 0.0
                         g->plane_x = 0.0
-                        g->plane_y = fov_factor
+                        g->plane_y = g->plane_factor
                     | 2 ->
                         g->dir_x = 0.0
                         g->dir_y = 1.0
-                        g->plane_x = 0.0 - fov_factor
+                        g->plane_x = 0.0 - g->plane_factor
                         g->plane_y = 0.0
                     | 3 ->
                         g->dir_x = -1.0
                         g->dir_y = 0.0
                         g->plane_x = 0.0
-                        g->plane_y = 0.0 - fov_factor
+                        g->plane_y = 0.0 - g->plane_factor
                     | _ -> void()  // unreachable per obj==19..22 guard above
                     return
         // Fallback if no spawn found
@@ -705,7 +705,7 @@ module spawn =
         g->dir_x = 1.0
         g->dir_y = 0.0
         g->plane_x = 0.0
-        g->plane_y = fov_factor
+        g->plane_y = g->plane_factor
 
     // Drop the player on an open floor tile adjacent to
     // (target_x, target_y), facing the target. Candidate offsets
@@ -719,14 +719,15 @@ module spawn =
         let offs_dy = int32[8] {  2,  1, -2, -1,  0,  0,  0,  0 }
         let face_dx = float64[8] {  0.0,  0.0,  0.0,  0.0, -1.0, -1.0,  1.0,  1.0 }
         let face_dy = float64[8] { -1.0, -1.0,  1.0,  1.0,  0.0,  0.0,  0.0,  0.0 }
+        let pf = g->plane_factor
         let plane_x = float64[8] {
-            fov_factor, fov_factor,
-            0.0 - fov_factor, 0.0 - fov_factor,
+            pf, pf,
+            0.0 - pf, 0.0 - pf,
             0.0, 0.0, 0.0, 0.0 }
         let plane_y = float64[8] {
             0.0, 0.0, 0.0, 0.0,
-            0.0 - fov_factor, 0.0 - fov_factor,
-            fov_factor, fov_factor }
+            0.0 - pf, 0.0 - pf,
+            pf, pf }
         let mut placed = false
         for i in 0..8
             if !placed then

@@ -15,7 +15,8 @@ import random from std::
 // Constants
 // ============================================================
 
-let game_w = 320       // internal game resolution
+let game_w = 320       // internal game resolution (current; will become
+                       // rc->fb_w in Hor+ widescreen pass)
 let game_h = 200
 let screen_w = 640     // display resolution (2x scale)
 let screen_h = 400
@@ -23,7 +24,11 @@ let actual_h = 480     // 4:3 corrected height (6 * screen_h / 5)
 let view_h = 160       // 3D viewport height in game coords (HUD takes bottom 40)
 let map_size = 64
 
-let fov_factor = 0.66   // tan(33 deg) for ~66 deg FOV
+// `tan(33°)` — the OG horizontal FOV for the OG 320-wide framebuffer.
+// `game.plane_factor` is set at startup from this scaled by `fb_w / 320`
+// so a wider framebuffer gets a proportionally wider FOV (Hor+
+// widescreen: same vertical FOV, more horizontal).
+let fov_factor = 0.66
 
 // Episode structure (6 episodes × 10 levels each). Within an episode,
 // levels 0..7 are the normal maps, level 8 is the boss / finale, level 9
@@ -375,6 +380,16 @@ struct game =
     // `menu_sel = g->difficulty`; `setdifficulty` dials it externally.
     difficulty: int32
 
+    // Camera plane length. Combined with `dir_x/dir_y` it sets the
+    // raycaster's horizontal FOV: the column at the right edge of the
+    // viewport casts toward `dir + plane`, so wider plane = wider
+    // FOV. Set at startup from the display aspect ratio for Hor+
+    // widescreen — the OG's value is `tan(33°) ≈ 0.66` at 320 wide;
+    // at 384 wide it's 0.66 * 384/320 ≈ 0.792, etc. Read by spawn
+    // (which seeds plane_x/plane_y based on facing direction) and by
+    // movement / hitscan code.
+    plane_factor: float64
+
     // No-dogs mod toggle. Set from the Options menu (persisted in
     // ~/.wolf-fc/config) or from the --no-dogs CLI flag at launch.
     // Read by spawn.spawn_enemies; takes effect on the next level
@@ -500,8 +515,19 @@ struct billboard =
 // Renderer scratch buffers. Process-wide and rewritten every frame; not
 // part of save-state. Held in its own struct so no one reaches for globals.
 struct render_ctx =
-    fb: uint32[]       // 320x200 ARGB — primary software-rendered frame
-    dbuf: uint32[]     // 640x400 ARGB — 2x nearest-neighbor upscale of fb
+    // Hor+ widescreen geometry. `fb_w` is the framebuffer width — set
+    // at startup from the display aspect (320 for 4:3, 384 for 16:10,
+    // 428 for 16:9, etc.); the OG vertical FOV is preserved (game_h
+    // stays 200) and the horizontal FOV grows so the player sees more
+    // peripheral world. UI elements live in a 320-wide region centred
+    // at `ui_offset_x = (fb_w - 320) / 2`; the 3D viewport (raycaster
+    // + billboards) and full-screen fills span 0..fb_w.
+    fb_w: int32
+    fb_h: int32
+    screen_w: int32    // display texture width = 2 * fb_w
+    ui_offset_x: int32
+    fb: uint32[]       // fb_w x fb_h ARGB — primary software-rendered frame
+    dbuf: uint32[]     // (2*fb_w) x (2*fb_h) ARGB — 2x nearest-neighbor upscale of fb
     zbuf: float64[]    // per-column wall perp-distance, for sprite clipping
     billboards: billboard[]    // back-to-front draw list (statics + enemies)
     num_billboards: int32
@@ -625,18 +651,27 @@ let give_full_kit = (g: game*) ->
 // Factories
 // ============================================================
 
-// Allocate renderer scratch buffers. One instance per process. Decodes the
-// title-screen backdrop once so pics.blit_title_bg is a cheap memcpy on every
-// menu frame, and sizes pic_cache to hold one ARGB buffer per VGAGRAPH chunk
-// (lazily populated on first draw).
-let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[]) ->
+// Allocate renderer scratch buffers. One instance per process. `fb_w`
+// is the framebuffer width — typically the OG 320, or wider for
+// Hor+ widescreen (384 / 428 / etc., set from the display aspect).
+// `fb_h` stays 200 (vertical FOV preserved). The dbuf upscale buffer
+// is 2x both dimensions. Decodes the title-screen backdrop once so
+// pics.blit_title_bg is a cheap memcpy on every menu frame, and sizes
+// pic_cache to hold one ARGB buffer per VGAGRAPH chunk (lazily
+// populated on first draw).
+let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
+                        fb_w: int32, fb_h: int32) ->
     let rc = alloc(render_ctx {
-        fb = alloc(uint32[game_w * game_h] {})!,
-        dbuf = alloc(uint32[screen_w * screen_h] {})!,
-        zbuf = alloc(float64[game_w] {})!,
+        fb_w = fb_w,
+        fb_h = fb_h,
+        screen_w = fb_w * 2,
+        ui_offset_x = (fb_w - 320) / 2,
+        fb = alloc(uint32[fb_w * fb_h] {})!,
+        dbuf = alloc(uint32[(fb_w * 2) * (fb_h * 2)] {})!,
+        zbuf = alloc(float64[fb_w] {})!,
         billboards = alloc(billboard[tilemap.max_sprites + enemies.max_enemies + projectiles.max_projectiles] {})!,
         num_billboards = 0,
-        title_bg = pics.build_title_bg_cache(vg, pal),
+        title_bg = pics.build_title_bg_cache(vg, pal, fb_w, fb_h),
         pic_cache = alloc(uint32[][vg->num_chunks] {})!,
         screenshot_slot = 0
     })!
@@ -1258,10 +1293,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             match text.parse_int32(parts[0]) with
             | some(n) ->
                 // Clear the fb black first so metadata is obvious.
-                for i in 0..(game_w * game_h)
+                for i in 0..(w->rc->fb_w * game_h)
                     w->rc->fb[i] = 0xFF000000u32
                 pics.draw(w->rc, w->vg, pal, n, 0, 0)
-                png.write(parts[1], w->rc->fb, game_w, game_h, "vg")
+                png.write(parts[1], w->rc->fb, w->rc->fb_w, game_h, "vg")
                 io.write("Saved %s{parts[1]}\n", stdout)
                 void()
             | none -> bad("integer chunk number")
@@ -1270,17 +1305,17 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
     else if text.starts_with(arg, "vgrenderfont:") then
         // Render the entire font ASCII range onto the fb and save. Useful
         // for verifying the font loader extracts correct glyphs.
-        for i in 0..(game_w * game_h)
+        for i in 0..(w->rc->fb_w * game_h)
             w->rc->fb[i] = 0xFF000000u32
         let mut py = 8
         let mut px = 8
         for ch in 32..127
             let adv = font.draw_char(w->rc, w->font, px, py, ch, 0xFFFFFFFFu32)
             px = px + adv + 1
-            if px > game_w - 16 then
+            if px > w->rc->fb_w - 16 then
                 px = 8
                 py = py + w->font->height + 2
-        png.write(arg[13..arg.len], w->rc->fb, game_w, game_h, "font")
+        png.write(arg[13..arg.len], w->rc->fb, w->rc->fb_w, game_h, "font")
         io.write("Saved %s{arg[13..arg.len]}\n", stdout)
         void()
     else if text.starts_with(arg, "vginfo:") then
@@ -1848,13 +1883,46 @@ let main = (args: str[]) ->
     // file falls back to defaults — see save.fc::config.
     let cfg = config.load()
 
+    // Detect display aspect for Hor+ widescreen. We init SDL_VIDEO
+    // here (interactive only) so the world / render_ctx allocs can
+    // size their framebuffers based on the user's monitor. Test mode
+    // skips SDL entirely and uses the OG 320 — keeps every screenshot-
+    // diffing regression bit-identical.
+    let mut fb_w = 320
+    let mut plane_factor = fov_factor
+    if !test_mode then
+        sdl2.init(sdl2.init_video)
+        let mut db = sdl2.rect { x = 0, y = 0, w = 0, h = 0 }
+        sdl2.get_display_bounds(0, &db)
+        if db.w > 0 && db.h > 0 then
+            // The OG renders 320×200 to a 4:3 display with a 1.2 VGA
+            // pixel aspect → the camera's horizontal FOV is fixed by
+            // 320 columns at that aspect. For Hor+ we keep the same
+            // vertical FOV (game_h stays 200) and widen the column
+            // count proportionally to the display's aspect:
+            //     fb_w = 320 * (display_aspect / 4:3)
+            // 16:10 → 384, 16:9 → 428, 21:9 → 533.
+            let display_aspect = (float64) db.w / (float64) db.h
+            let scale = display_aspect / (4.0 / 3.0)
+            let mut w = (int32) (320.0 * scale)
+            // Round up to an even number so the 2x scale buffer width
+            // stays a multiple of 2; clamp to a reasonable max so an
+            // ultrawide monitor doesn't blow up the FB alloc.
+            if w < 320 then w = 320
+            if w > 640 then w = 640
+            if w % 2 != 0 then w = w + 1
+            fb_w = w
+            plane_factor = fov_factor * (float64) fb_w / 320.0
+            io.write("Display %d{db.w}x%d{db.h} → fb %d{fb_w}x200 (Hor+ widescreen)\n", stdout)
+
     // Assemble the `world` — the handle that groups game state, level data,
     // renderer, and audio. Orchestrators take `world*`; narrower functions
     // still take just the sub-contexts they need.
     let g = alloc(game {
         pos_x = 1.5, pos_y = 1.5,
         dir_x = 1.0, dir_y = 0.0,
-        plane_x = 0.0, plane_y = fov_factor,
+        plane_x = 0.0, plane_y = plane_factor,
+        plane_factor = plane_factor,
         key_up = false, key_down = false,
         key_left = false, key_right = false,
         key_shift = false, key_alt = false,
@@ -1934,7 +2002,7 @@ let main = (args: str[]) ->
         g = g,
         lv = build_level(lv_data, vs->sprite_start, g->difficulty, g->no_dogs),
         lv_data = lv_data,
-        rc = build_render_ctx(vg, pal),
+        rc = build_render_ctx(vg, pal, fb_w, game_h),
         ac = alloc(audio_ctx {
             vs = vs,
             ad = ad,
@@ -2031,9 +2099,18 @@ let main = (args: str[]) ->
     // Window: resizable, fullscreen (borderless display-sized) on start.
     // F11 / Alt+Enter toggles between fullscreen and maximized — both
     // paths share the body of the toggle below.
+    // Display geometry. The framebuffer is fb_w × fb_h (set above
+    // from the display aspect — see Hor+ widescreen detection); the
+    // texture is 2× both dims; the logical-size scale-out target
+    // applies the VGA 1.2 pixel aspect (game_h * 1.2 * 2 = 480) so a
+    // 4:3 fb (320 wide) renders at 640×480 and a 16:10 fb (384 wide)
+    // renders at 768×480.
+    let runtime_screen_w = w->rc->screen_w
+    let runtime_screen_h = w->rc->fb_h * 2
+    let runtime_actual_h = (w->rc->fb_h * 12 / 10) * 2   // VGA pixel-aspect-corrected (1.2)
     let flags = sdl2.window_shown | sdl2.window_resizable | sdl2.window_allow_highdpi
     let win = sdl2.create_window(c"Wolf-FC",
-        sdl2.pos_centered, sdl2.pos_centered, screen_w, actual_h, flags)
+        sdl2.pos_centered, sdl2.pos_centered, runtime_screen_w, runtime_actual_h, flags)
     let mut db = sdl2.rect { x = 0, y = 0, w = 0, h = 0 }
     sdl2.get_display_bounds(0, &db)
     sdl2.set_bordered(win, 0)
@@ -2043,15 +2120,15 @@ let main = (args: str[]) ->
 
     // Renderer with vsync.
     let ren = sdl2.create_renderer(win, -1, sdl2.renderer_vsync)
-    sdl2.set_logical_size(ren, screen_w, actual_h)
+    sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
     sdl2.show_cursor(0)
 
     // Nearest-neighbor scaling — must be set BEFORE creating the texture.
     sdl2.set_hint(c"SDL_RENDER_SCALE_QUALITY", c"nearest")
 
-    // Streaming texture at 640x400.
+    // Streaming texture at 2× framebuffer dims.
     let tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
-        sdl2.tex_streaming, screen_w, screen_h)
+        sdl2.tex_streaming, runtime_screen_w, runtime_screen_h)
 
     // Set up audio device and start music. Output is stereo (2 channels
     // interleaved L,R,…) so enemy SFX can pan spatially via digi.
@@ -2133,7 +2210,7 @@ let main = (args: str[]) ->
                         sdl2.set_bordered(win, 1)
                         sdl2.restore_window(win)
                         sdl2.maximize_window(win)
-                    sdl2.set_logical_size(ren, screen_w, actual_h)
+                    sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
                     if is_alt_enter then continue
                 // Per-phase dispatch for everything else.
                 // Deliberate-feeling ack keys (Enter / Space / Ctrl / Esc)
@@ -2670,7 +2747,7 @@ let main = (args: str[]) ->
         // Upload framebuffer to texture and display.
         // Upscale 320x200 → 640x400, upload, and present.
         overlay.upscale_2x(w->rc)
-        sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, screen_w * 4)
+        sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
         sdl2.clear(ren)
         sdl2.render_copy(ren, tex, (any*) 0, (any*) 0)
         sdl2.present(ren)

@@ -592,7 +592,7 @@ module player =
         for sc in hdr.left_pix..(hdr.right_pix + 1)
             let sx0 = dst_x + sc * dst_w / 64
             let sx1 = dst_x + (sc + 1) * dst_w / 64
-            if sx1 <= 0 || sx0 >= game_w then continue
+            if sx1 <= 0 || sx0 >= rc->fb_w then continue
             let data_off = (int64) hdr.col_offsets[sc]
             let mut off = base + data_off
             loop
@@ -611,9 +611,9 @@ module player =
                     let y0 = if sy0 < 0 then 0 else sy0
                     let y1 = if sy1 > view_h then view_h else sy1
                     for sx in sx0..sx1
-                        if sx < 0 || sx >= game_w then continue
+                        if sx < 0 || sx >= rc->fb_w then continue
                         for sy in y0..y1
-                            rc->fb[(int64) sy * 320 + (int64) sx] = color
+                            rc->fb[(int64) sy * (int64) rc->fb_w + (int64) sx] = color
 
     // Draw the currently-held weapon sprite centered at the bottom
     // of the 3D viewport. Sprite page =
@@ -632,6 +632,6 @@ module player =
         // only the bottom portion of the weapon is actually drawn.
         let dw = view_h
         let dh = view_h
-        let dx = (game_w - dw) / 2
+        let dx = (rc->fb_w - dw) / 2
         let dy = view_h - dh + bob
         draw_hud_sprite(rc, vs, pal, page, dx, dy, dw, dh)

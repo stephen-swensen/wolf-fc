@@ -150,8 +150,8 @@ module menu =
                 let mut xx = x0
                 loop
                     if xx >= x1 then break
-                    if xx >= 0 && xx < game_w then
-                        rc->fb[(int64) yy * 320 + (int64) xx] = c
+                    if xx >= 0 && xx < rc->fb_w then
+                        rc->fb[(int64) yy * (int64) rc->fb_w + (int64) xx] = c
                     xx = xx + 1
             yy = yy + 1
 
@@ -172,18 +172,22 @@ module menu =
 
     // OG `DrawStripes`: a 320-wide, 24-tall black bar at the top of
     // the screen with an accent line at y+22, used as the title-bar
-    // stripe across every menu screen.
+    // stripe across every menu screen. Positions the 320-wide bar at
+    // the centred OG-layout origin so widescreen side panels stay
+    // BORDCOLOR.
     private let draw_stripes = (rc: render_ctx*, pal: const uint32[], y: int32) ->
-        fill_rect(rc, 0, y, 320, y + 24, pal[0x00])
-        fill_rect(rc, 0, y + 22, 320, y + 23, pal[pal_stripe])
+        let ox = rc->ui_offset_x
+        fill_rect(rc, ox, y, ox + 320, y + 24, pal[0x00])
+        fill_rect(rc, ox, y + 22, ox + 320, y + 23, pal[pal_stripe])
 
     // Background common to every menu screen: full-screen BORDCOLOR
-    // fill. The black title stripe (`draw_stripes`) is added per-menu
-    // because the OG only draws it on the main and load/save screens
-    // (where a header pic floats over it); the episode / difficulty
-    // / sound menus skip it.
+    // fill (spans the entire framebuffer including widescreen side
+    // panels). The black title stripe (`draw_stripes`) is added
+    // per-menu because the OG only draws it on the main and load/save
+    // screens (where a header pic floats over it); the episode /
+    // difficulty / sound menus skip it.
     private let draw_backdrop = (rc: render_ctx*, pal: const uint32[]) ->
-        fill_rect(rc, 0, 0, game_w, game_h, pal[pal_bordcolor])
+        fill_rect(rc, 0, 0, rc->fb_w, rc->fb_h, pal[pal_bordcolor])
 
     // Cursor blink at ~3.5 Hz alternating C_CURSOR1PIC / C_CURSOR2PIC.
     private let cursor_chunk = (time: float64) ->
@@ -194,10 +198,11 @@ module menu =
                                pal: const uint32[], x: int32, y: int32, time: float64) ->
         pics.draw(rc, vg, pal, cursor_chunk(time), x, y)
 
-    // Bottom-of-screen help line.
+    // Bottom-of-screen help line. Centred via font.draw_centered which
+    // uses rc->fb_w, so the text stays screen-centred in widescreen.
     private let draw_help = (rc: render_ctx*, pal: const uint32[],
                              f: const font.info*, text: const str) ->
-        font.draw_centered(rc, f, game_h - 12, text, pal[pal_help])
+        font.draw_centered(rc, f, rc->fb_h - 12, text, pal[pal_help])
 
     // Pick a row's text colour given selected / locked flags. Mirrors
     // the OG's `color_norml` / `color_hlite` arrays.
@@ -219,20 +224,21 @@ module menu =
     private let render_main_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                     pal: const uint32[], f: const font.info*,
                                     g: game*, time: float64) ->
+        let ox = rc->ui_offset_x
         // Stripe + header pic at the top (the OG main menu reuses
         // C_OPTIONSPIC since the main menu and "options" are the same
         // screen in the original).
         draw_stripes(rc, pal, 10)
-        pics.draw(rc, vg, pal, pics.id.c_options, 84, 0)
+        pics.draw(rc, vg, pal, pics.id.c_options, ox + 84, 0)
         // DrawWindow at (menu_x - 8, menu_y - 3) sized for our 6 rows.
         let win_h = main_len * row_h + 6
-        draw_window(rc, pal, menu_x - 8, menu_y - 3, menu_w, win_h)
+        draw_window(rc, pal, ox + menu_x - 8, menu_y - 3, menu_w, win_h)
         for i in 0..main_len
             let row_y = menu_y + i * row_h
             let is_sel = g->menu_sel == i
             let is_locked = main_is_locked(i, g->has_active_game)
             if is_sel then
-                draw_cursor(rc, vg, pal, menu_x, row_y - 2, time)
+                draw_cursor(rc, vg, pal, ox + menu_x, row_y - 2, time)
             // BACK TO GAME (row 5) uses the OG's "read this!"-style
             // colours (READCOLOR / READHCOLOR — orange / yellow) so it
             // visually pops as a different action class than the regular
@@ -244,7 +250,7 @@ module menu =
                 else if is_back_to_game then pal[pal_read]
                 else if is_sel then pal[pal_highlight]
                 else pal[pal_text]
-            font.draw_text(rc, f, menu_x + menu_indent, row_y,
+            font.draw_text(rc, f, ox + menu_x + menu_indent, row_y,
                 main_label(i), color)
         draw_help(rc, pal, f, "ARROWS  ENTER  ESC")
 
@@ -257,7 +263,9 @@ module menu =
                                         g: game*, time: float64) ->
         // Episode picker geometry from wl_menu.h: NE_X=10, NE_Y=23,
         // NE_W=300, NE_H≈154. Cards drawn at NE_X+32 + i*26.
-        let ne_x = 10
+        // ui_offset_x recentres the OG-relative coords inside a wider
+        // framebuffer for Hor+ widescreen.
+        let ne_x = rc->ui_offset_x + 10
         let ne_y = 23
         let ne_w = 300
         let ne_h = 6 * 26 + 4
@@ -294,8 +302,9 @@ module menu =
         // OG geometry: NM_X=50, NM_Y=100, NM_W=225, NM_H=67 (4 text
         // rows at row_h=13). The selected difficulty's face card
         // (24x32) is drawn separately at (NM_X+185, NM_Y+7) — only
-        // the chosen row's card shows.
-        let nm_x = 50
+        // the chosen row's card shows. ui_offset_x recentres for
+        // widescreen.
+        let nm_x = rc->ui_offset_x + 50
         let nm_y = 100
         let nm_w = 225
         let nm_h = 4 * row_h + 15
@@ -328,7 +337,7 @@ module menu =
         // A single window (the OG stacks three driver-dropdown windows
         // here; we only have on/off so one box is enough). SM_X=48,
         // SM_W=250 in the OG.
-        let sm_x = 40
+        let sm_x = rc->ui_offset_x + 40
         let sm_y = 60
         let sm_w = 240
         let sm_h = sound_len * 36 + 8
@@ -367,7 +376,7 @@ module menu =
         font.draw_centered(rc, f, 38, "OPTIONS", pal[pal_readh])
         // Generously sized box (the row count grows over time as more
         // mods land — the current 2-row setup leaves headroom).
-        let op_x = 40
+        let op_x = rc->ui_offset_x + 40
         let op_y = 60
         let op_w = 240
         let op_h = options_len * 20 + 16
@@ -424,14 +433,16 @@ module menu =
                        pal: const uint32[], f: const font.info*,
                        g: game*, sm: save_menu_ctx*, header_pic: int32,
                        sel: int32, load_mode: bool, time: float64) ->
+        let ox = rc->ui_offset_x
+        let lsm_x_off = ox + lsm_x   // ui-offset-aware base x
         // Stripe + header pic at top of screen (the OG draws stripes
         // first, then VWB_DrawPic(60, 0, C_LOADGAMEPIC/C_SAVEGAMEPIC) —
         // pic is 216x48, partially covering the stripe).
         draw_stripes(rc, pal, 10)
-        pics.draw(rc, vg, pal, header_pic, 60, 0)
+        pics.draw(rc, vg, pal, header_pic, ox + 60, 0)
         // Menu window for the slot list.
         let win_h = save.num_slots * row_h + 10
-        draw_window(rc, pal, lsm_x - 10, lsm_y - 5, lsm_w, win_h)
+        draw_window(rc, pal, lsm_x_off - 10, lsm_y - 5, lsm_w, win_h)
         let editing = is_editing_save(g)
         let cursor_blink = ((int32) (time * 3.5)) % 2 == 0
         for i in 0..save.num_slots
@@ -443,7 +454,7 @@ module menu =
             // row's colour. Selected row uses HIGHLIGHT, others use
             // TEXTCOLOR / DEACTIVE.
             let color = row_color(pal, is_sel, is_locked)
-            let box_x = lsm_x + lsm_indent
+            let box_x = lsm_x_off + lsm_indent
             let box_y = row_y
             let box_w = lsm_w - lsm_indent - 15
             let box_h = 11
@@ -453,7 +464,7 @@ module menu =
             fill_rect(rc, box_x + box_w, box_y, box_x + box_w + 1, box_y + box_h + 1, color)
             // Cursor on the left of the selected row.
             if is_sel then
-                draw_cursor(rc, vg, pal, lsm_x, row_y - 2, time)
+                draw_cursor(rc, vg, pal, lsm_x_off, row_y - 2, time)
             // Slot contents: while editing the selected save row, show
             // the in-progress name instead of the static slot label.
             let text_x = box_x + 2
