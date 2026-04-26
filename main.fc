@@ -2255,10 +2255,27 @@ let main = (args: str[]) ->
                             if g->has_active_game then
                                 g->phase = game_phase.playing
                     else if g->menu_level == menu.nav.episode then
+                        // Hidden floor-jump shortcut: pressing 1..9 on the
+                        // episode picker drops the player straight onto
+                        // floor 1..9 of the highlighted episode (skipping
+                        // the floors before it); pressing 0 jumps to the
+                        // secret bonus floor (floor 10 / level index 9).
+                        // Same `level_num = ep*10 + offset` math the rest
+                        // of the menu uses; no other state is mutated, so
+                        // the difficulty picker still gates the actual
+                        // game start.
+                        let floor_offset = if k == sdl2.key_0 then 9
+                            else if k >= sdl2.key_1 && k <= sdl2.key_9 then k - sdl2.key_1
+                            else -1
                         if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + episode.count - 1) % episode.count
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % episode.count
+                        else if floor_offset >= 0 then
+                            g->level_num = g->menu_sel * episode.levels_per + floor_offset
+                            g->want_near_boss = false
+                            g->menu_level = menu.nav.difficulty
+                            g->menu_sel = g->difficulty
                         else if is_confirm then
                             // Episode pick → straight to difficulty.
                             // level_num resets to the episode's first map.
