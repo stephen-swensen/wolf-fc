@@ -3,6 +3,8 @@
 //
 //   pg13_screen      — PG-13 parental-advisory splash shown once at startup
 //   title_screen     — shown before the first menu; any key → main menu
+//   endart_screen    — per-episode story-text pages between episode_end
+//                      and the next-episode advance (chunks 143..148)
 //   game_over        — death collapse post-animation screen
 //   intermission     — per-level tally screen (time / kill / secret /
 //                      treasure counters)
@@ -64,6 +66,9 @@ module bj_victory =
         g->phase = game_phase.bj_victory
         g->phase_timer = 0.0
         add_score(g, intermission.compute_level_bonus(g), ac)
+        // bj_victory bypasses intermission, so record the boss-level
+        // stats here so they show up in the episode-end averages.
+        record_level_for_episode(g)
         g->bj_x = g->pos_x
         g->bj_y = g->pos_y
         g->bj_tile_x = (int32) g->pos_x
@@ -515,6 +520,10 @@ module intermission =
     let enter = (g: game*, ac: audio_ctx*) ->
         g->phase = game_phase.intermission
         g->phase_timer = 0.0
+        // Snapshot the just-finished level's ratios + time into the
+        // per-episode running totals before the screen runs (it will
+        // mutate inter_target_* but the source counters stay stable).
+        record_level_for_episode(g)
         // Secret-level intermissions short-circuit the whole ticker:
         // a flat 15000-point bonus, the stage counter parked at 4
         // (animation done), and a static "SECRET FLOOR / COMPLETED!"
@@ -702,7 +711,7 @@ module intermission =
     // Write a number using the big L_NUM pics. `align_right` = true
     // right-aligns the last digit at pixel column `x`; false starts
     // the first digit at x.
-    private let write_lpic_number = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
+    let write_lpic_number = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                              x: int32, y: int32, num: int32, align_right: bool) ->
         let mut n = if num < 0 then 0 else num
         let mut digits = int32[12] {}
@@ -835,33 +844,440 @@ module episode_end =
         g->has_gold_key = false
         g->has_silver_key = false
 
-    // Per-episode victory screen: shown after the intermission on
-    // level 8 (boss / finale) of each episode. Simple text screen —
-    // no ENDART, no BJ art for now. Space advances to the next
-    // episode.
-    let render = (rc: render_ctx*, f: const font.info*, g: game*) ->
+    // Per-episode victory screen — the OG `Victory()` layout. The 3D
+    // viewport area is filled with VIEWCOLOR (palette 0x7F), the BJ-
+    // wins art (L_BJWINSPIC) goes top-left, the LEVELEND big-font
+    // pics carry every label and digit. Numbers use the same per-
+    // tile placement the original reaches via `Write(x, y, "...")`.
+    // The HUD status bar at the bottom of the screen stays untouched
+    // so the player's score / lives / face still show during the
+    // tally — matches the OG split-screen layout.
+    //
+    // Layout coordinates (in 8-px tiles, OG TIMEX/TIMEY/RATIOX/RATIOY):
+    //   "you win!"          (18, 2)
+    //   L_BJWINSPIC         pixel (8, 4)
+    //   "total time"        (14, 6)         (TIMEX, TIMEY-2)
+    //   MM:SS digits        pixel (TIMEX*8+1, TIMEY*8) = (113, 64)
+    //   "averages"          (12, 12)        (RATIOY-2)
+    //   "kill    %"         (14, 14)        (RATIOX+8, RATIOY)
+    //   "secret    %"       (10, 16)        (RATIOX+4, RATIOY+2)
+    //   "treasure    %"     (6,  18)        (RATIOX,   RATIOY+4)
+    //   ratio percentages right-aligned at column (RATIOX+24)*8 = 240
+    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                  pal: const uint32[], f: const font.info*, g: game*) ->
+        // VIEWCOLOR fill on the 3D viewport area only — leave the HUD
+        // strip below alone.
+        let bg = pal[0x7F]
+        for y in 0..view_h
+            let base = y * game_w
+            for x in 0..game_w
+                rc->fb[base + x] = bg
+        // BJ-wins art on the left (L_BJWINSPIC).
+        pics.draw(rc, vg, pal, pics.id.l_bjwins, 8, 4)
+        // Big-font headers + labels.
+        intermission.write_lpic_text(rc, vg, pal, 18 * 8,  2 * 8, "you win!")
+        intermission.write_lpic_text(rc, vg, pal, 14 * 8,  6 * 8, "total time")
+        intermission.write_lpic_text(rc, vg, pal, 12 * 8, 12 * 8, "averages")
+        intermission.write_lpic_text(rc, vg, pal, 14 * 8, 14 * 8, "kill    %")
+        intermission.write_lpic_text(rc, vg, pal, 10 * 8, 16 * 8, "secret    %")
+        intermission.write_lpic_text(rc, vg, pal,  6 * 8, 18 * 8, "treasure    %")
+        // Total time MM:SS digits, drawn explicitly per-digit so the
+        // leading zero is forced (e.g. "05:30", not "5:30").
+        let mut total_sec = g->ep_time_total
+        if total_sec < 0 then total_sec = 0
+        let mut min = total_sec / 60
+        let mut sec = total_sec % 60
+        if min > 99 then
+            min = 99
+            sec = 99
+        let time_x = 14 * 8 + 1   // OG: TIMEX*8 + 1
+        let time_y = 8 * 8        // OG: TIMEY*8
+        pics.draw(rc, vg, pal, pics.id.l_num0 + min / 10, time_x,      time_y)
+        pics.draw(rc, vg, pal, pics.id.l_num0 + min % 10, time_x + 16, time_y)
+        pics.draw(rc, vg, pal, pics.id.l_colon,           time_x + 32, time_y)
+        pics.draw(rc, vg, pal, pics.id.l_num0 + sec / 10, time_x + 40, time_y)
+        pics.draw(rc, vg, pal, pics.id.l_num0 + sec % 10, time_x + 56, time_y)
+        // Average kill / secret / treasure percentages. Right-edge
+        // column is RATIOX+24 = 30 → pixel x = 240.
+        let div = if g->ep_levels_played > 0 then g->ep_levels_played else 1
+        let kr = g->ep_kr_total / div
+        let sr = g->ep_sr_total / div
+        let tr = g->ep_tr_total / div
+        let ratio_right_x = 30 * 8     // 240
+        intermission.write_lpic_number(rc, vg, pal, ratio_right_x, 14 * 8, kr, true)
+        intermission.write_lpic_number(rc, vg, pal, ratio_right_x, 16 * 8, sr, true)
+        intermission.write_lpic_number(rc, vg, pal, ratio_right_x, 18 * 8, tr, true)
+        // HUD status bar at the bottom — same draw path as gameplay.
+        hud.render(rc, vg, pal, g)
+
+
+// ============================================================
+// Per-episode ending text — VGAGRAPH chunks 143..148 hold one
+// article-markup chunk per episode. Article syntax (case-insensitive
+// for the command letter):
+//   ^P              start of a page (or "any further pages")
+//   ^E              end of file
+//   ^Cnn            change text color to palette index nn (2 hex digits)
+//   ^Bx,y,w,h       fill rect at (x,y) sized w*h with the back colour
+//   ^Lyyy,xxx       jump to row at y, x; rest of line skipped
+//   ^>              jump to x=160 (right column)
+//   ^Gy,x,p         draw graphic chunk p at (x,y), reflow margins
+//   ^Tx,y,p,t       (timed pic) — we draw the pic and ignore the timer
+//   ^;              comment to end of line
+// Pages are word-wrapped between an outer four-piece window-frame
+// border (HELP_LUMP chunks 6..9). Layout constants below mirror the
+// original game's text layout.
+// ============================================================
+
+module endart_screen =
+    private let backcolor    = 0x11
+    private let top_margin   = 16
+    private let bot_margin   = 32
+    private let left_margin  = 16
+    private let right_margin = 16
+    private let font_height  = 10
+    private let space_width  = 7
+    private let pic_margin   = 8
+    private let screen_mid   = 160
+    let max_pages = 8
+    // OG's TEXTROWS = (200 - 16 - 32) / 10 = 15. Hardcoded so it can
+    // sit at module scope (game_h isn't a constant here).
+    private let text_rows    = 15
+
+    private let is_caret = (b: uint8) -> b == 0x5Eu8           // '^'
+    private let is_p     = (b: uint8) -> b == 0x50u8 || b == 0x70u8   // P / p
+    private let is_e     = (b: uint8) -> b == 0x45u8 || b == 0x65u8   // E / e
+    private let is_digit = (b: uint8) -> b >= 0x30u8 && b <= 0x39u8
+
+    // Hex digit -> 0..15, or -1 for non-hex.
+    private let hex_val = (b: uint8) ->
+        if b >= 0x30u8 && b <= 0x39u8 then (int32) b - 0x30
+        else if b >= 0x41u8 && b <= 0x46u8 then (int32) b - 0x41 + 10
+        else if b >= 0x61u8 && b <= 0x66u8 then (int32) b - 0x61 + 10
+        else -1
+
+    // Read a base-10 number starting at offset `i`, skipping any
+    // leading non-digits. Returns the parsed value plus the byte
+    // offset of the first character past the number — matches the
+    // shape of the original article parser's `ParseNumber`.
+    private struct num_at =
+        value: int32
+        next:  int32
+
+    private let read_number = (data: uint8[], i: int32) ->
+        let mut j = i
+        loop
+            if j >= (int32) data.len then break
+            if is_digit(data[(int64) j]) then break
+            j = j + 1
+        let mut val = 0
+        loop
+            if j >= (int32) data.len then break
+            if !is_digit(data[(int64) j]) then break
+            val = val * 10 + (int32) data[(int64) j] - 0x30
+            j = j + 1
+        num_at { value = val, next = j }
+
+    // Skip the rest of the current line (including the trailing '\n').
+    private let skip_to_eol = (data: uint8[], i: int32) ->
+        let mut j = i
+        loop
+            if j >= (int32) data.len then break
+            let b = data[(int64) j]
+            j = j + 1
+            if b == 10u8 then break
+        j
+
+    // Count ^P pages in the article, stopping at ^E or end of data.
+    let count_pages = (data: uint8[]) ->
+        let mut count = 0
+        let mut j = 0
+        loop
+            if j >= (int32) data.len - 1 then break
+            if is_caret(data[(int64) j]) then
+                let c = data[(int64) j + 1]
+                if is_e(c) then break
+                if is_p(c) then count = count + 1
+                j = j + 2
+            else
+                j = j + 1
+        count
+
+    // Cache the byte offset of each ^P (up to `max_pages`) so the
+    // renderer can jump straight to the requested page.
+    let collect_page_offsets = (data: uint8[], out: int32[]) ->
+        let mut idx = 0
+        let mut j = 0
+        loop
+            if j >= (int32) data.len - 1 then break
+            if idx >= (int32) out.len then break
+            if is_caret(data[(int64) j]) then
+                let c = data[(int64) j + 1]
+                if is_e(c) then break
+                if is_p(c) then
+                    out[(int64) idx] = j
+                    idx = idx + 1
+                j = j + 2
+            else
+                j = j + 1
+        idx
+
+    // Begin showing the article for `episode` (0-indexed). Decompresses
+    // the chunk, computes page offsets, and arms key_ack so a held
+    // press from the previous phase doesn't auto-advance through.
+    let enter = (g: game*, vg: const vgagraph.vgagraph_file*, episode: int32) ->
+        if g->endart_data.len > 0 then free(g->endart_data)
+        if g->endart_page_offsets.len > 0 then free(g->endart_page_offsets)
+        let chunk = pics.id.t_endart1 + episode
+        let data = vgagraph.decompress_chunk(vg, chunk)
+        let total = count_pages(data)
+        let cap = if total > max_pages then max_pages else total
+        let offs = alloc(int32[cap] {})!
+        let _filled = collect_page_offsets(data, offs)
+        g->endart_data = data
+        g->endart_page_offsets = offs
+        g->endart_total_pages = cap
+        g->endart_page = 0
+        g->phase = game_phase.endart
+        g->phase_timer = 0.0
+        g->key_ack = false
+        g->key_ack_handled = false
+
+    // Advance to the next page. Returns true if the article is done
+    // (the caller should then transition to advance_next_episode).
+    let next_page = (g: game*) ->
+        if g->endart_page + 1 >= g->endart_total_pages then true
+        else
+            g->endart_page = g->endart_page + 1
+            g->phase_timer = 0.0
+            false
+
+    // Word-handling state during render. Kept locally; one set of
+    // per-row margins per render call (^G can shrink them on rows the
+    // graphic occupies).
+    private struct layout_state =
+        px: int32
+        py: int32
+        rowon: int32
+        fontcolor: int32
+        cursor: int32         // current byte offset into endart_data
+        done: bool
+
+    // NewLine: advance to the next row, snap px to that row's left
+    // margin. If we ran past the bottom of the page, set done=true so
+    // the caller stops processing markup.
+    private let newline = (st: layout_state*, lefts: int32[]) ->
+        st->rowon = st->rowon + 1
+        if st->rowon >= text_rows then
+            st->done = true
+            return
+        st->px = lefts[(int64) st->rowon]
+        st->py = st->py + font_height
+
+    // Try to draw `word` (length n) at (px, py) in the current font
+    // colour. Wraps if it doesn't fit.
+    private let render_word = (rc: render_ctx*, pal: const uint32[],
+                                f: const font.info*, st: layout_state*,
+                                lefts: int32[], rights: int32[],
+                                word: uint8[], n: int32) ->
+        let mut wwidth = 0
+        for k in 0..n
+            let ch = (int32) word[(int64) k]
+            if ch >= 0 && ch < 256 then wwidth = wwidth + f->width[ch]
+        loop
+            if st->done then break
+            if st->px + wwidth <= rights[(int64) st->rowon] then break
+            newline(st, lefts)
+        if st->done then return
+        let color = pal[st->fontcolor]
+        let mut cx = st->px
+        for k in 0..n
+            let ch = (int32) word[(int64) k]
+            cx = cx + font.draw_char(rc, f, cx, st->py, ch, color)
+        st->px = cx
+
+    // Draw the rectangular four-piece help-window border. Skips any
+    // pic that isn't present (size 0×0) so a stripped lump still
+    // renders the page contents legibly.
+    private let draw_window_border = (rc: render_ctx*,
+                                       vg: const vgagraph.vgagraph_file*,
+                                       pal: const uint32[]) ->
+        pics.draw(rc, vg, pal, pics.id.h_topwindow,    0,    0)
+        pics.draw(rc, vg, pal, pics.id.h_leftwindow,   0,    8)
+        pics.draw(rc, vg, pal, pics.id.h_rightwindow,  312,  8)
+        pics.draw(rc, vg, pal, pics.id.h_bottominfo,   8,  176)
+
+    // Print the "pg N of M" footer the original adds at the bottom of
+    // each page (READHCOLOR, fontnumber 0).
+    private let draw_page_number = (rc: render_ctx*, pal: const uint32[],
+                                     f: const font.info*, page: int32, total: int32) ->
+        let color = pal[0x4f]
+        let label = "PG %d{page + 1} OF %d{total}"
+        font.draw_text(rc, f, 213, 183, label, color)
+
+    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                  pal: const uint32[], f: const font.info*, g: game*) ->
+        // Backdrop + window frame.
+        let bg = pal[backcolor]
         for i in 0..(game_w * game_h)
-            rc->fb[i] = 0xFF000020u32    // deep blue backdrop
-        let ep = g->level_num / episode.levels_per
-        let yellow = 0xFFFFD700u32
-        let white  = 0xFFFFFFFFu32
-        let gray   = 0xFFB0B0B0u32
-        overlay.draw_centered_text(rc, 20, "YOU WIN", yellow, 3)
-        font.draw_centered(rc, f, 56, "EPISODE", white)
-        let ep_label = match ep with
-        | 0 -> "1"
-        | 1 -> "2"
-        | 2 -> "3"
-        | 3 -> "4"
-        | 4 -> "5"
-        | _ -> "6"
-        font.draw_centered(rc, f, 66, ep_label, yellow)
-        font.draw_centered(rc, f, 84, episode.title(ep), yellow)
-        hud.draw_text(rc, 70, 120, "FINAL SCORE", white, 1)
-        hud.draw_number(rc, 220, 120, g->score, yellow, 1)
-        font.draw_centered(rc, f, game_h - 32,
-            if ep + 1 >= episode.count then "PRESS ANY KEY TO CONTINUE" else "PRESS ANY KEY FOR NEXT EPISODE",
-            gray)
+            rc->fb[i] = bg
+        draw_window_border(rc, vg, pal)
+        if g->endart_total_pages == 0 || g->endart_data.len == 0 then return
+        let mut page = g->endart_page
+        if page >= g->endart_total_pages then page = g->endart_total_pages - 1
+        let start = g->endart_page_offsets[(int64) page]
+        // Per-row margin arrays — ^G updates the rows it overlaps.
+        let mut lefts  = int32[18] {}
+        let mut rights = int32[18] {}
+        for i in 0..text_rows
+            lefts[i]  = left_margin
+            rights[i] = game_w - right_margin
+        // Skip the ^P line itself.
+        let mut i = skip_to_eol(g->endart_data, start + 2)
+        let mut st = layout_state {
+            px = lefts[0],
+            py = top_margin,
+            rowon = 0,
+            fontcolor = 0,
+            cursor = i,
+            done = false
+        }
+        let data = g->endart_data
+        let dn = (int32) data.len
+        // Single-word scratch buffer (OG's WORDLIMIT = 80).
+        let mut word_buf = uint8[80] {}
+        loop
+            if st.done then break
+            if st.cursor >= dn then break
+            let b = data[(int64) st.cursor]
+            // ^X command.
+            if is_caret(b) then
+                if st.cursor + 1 >= dn then break
+                let cmd = data[(int64) st.cursor + 1]
+                // ^P or ^E ends the page.
+                if is_p(cmd) || is_e(cmd) then break
+                // Advance past '^' + command letter.
+                st.cursor = st.cursor + 2
+                if cmd == 0x42u8 || cmd == 0x62u8 then
+                    // ^B y x w h — fill rect with back colour.
+                    let py_n = read_number(data, st.cursor)
+                    let px_n = read_number(data, py_n.next)
+                    let pw_n = read_number(data, px_n.next)
+                    let ph_n = read_number(data, pw_n.next)
+                    st.cursor = skip_to_eol(data, ph_n.next)
+                    let bcol = pal[backcolor]
+                    for yy in 0..ph_n.value
+                        let dy = py_n.value + yy
+                        if dy < 0 || dy >= game_h then continue
+                        for xx in 0..pw_n.value
+                            let dx = px_n.value + xx
+                            if dx < 0 || dx >= game_w then continue
+                            rc->fb[(int64) dy * 320 + (int64) dx] = bcol
+                else if cmd == 0x3Bu8 then
+                    // ^; comment: skip to end of line.
+                    st.cursor = skip_to_eol(data, st.cursor)
+                else if cmd == 0x43u8 || cmd == 0x63u8 then
+                    // ^Cnn — two hex digits set the font colour.
+                    if st.cursor + 1 < dn then
+                        let h1 = hex_val(data[(int64) st.cursor])
+                        let h2 = hex_val(data[(int64) st.cursor + 1])
+                        if h1 >= 0 && h2 >= 0 then
+                            st.fontcolor = (h1 * 16 + h2) & 0xFF
+                        st.cursor = st.cursor + 2
+                else if cmd == 0x3Eu8 then
+                    // ^>  jump to x=160 (right column).
+                    st.px = screen_mid
+                else if cmd == 0x4Cu8 || cmd == 0x6Cu8 then
+                    // ^L yyy,xxx — jump to row at y, then x.
+                    let py_n = read_number(data, st.cursor)
+                    let px_n = read_number(data, py_n.next)
+                    let new_row = (py_n.value - top_margin) / font_height
+                    let snap_y  = top_margin + new_row * font_height
+                    st.rowon = if new_row < 0 then 0
+                        else if new_row >= text_rows then text_rows - 1
+                        else new_row
+                    st.py = snap_y
+                    st.px = px_n.value
+                    st.cursor = skip_to_eol(data, px_n.next)
+                else if cmd == 0x47u8 || cmd == 0x67u8
+                        || cmd == 0x54u8 || cmd == 0x74u8 then
+                    // ^G y,x,p — draw graphic; ^T y,x,p,t — timed pic
+                    // (we draw it and ignore the timer).
+                    let py_n  = read_number(data, st.cursor)
+                    let px_n  = read_number(data, py_n.next)
+                    let pic_n = read_number(data, px_n.next)
+                    let after = if cmd == 0x54u8 || cmd == 0x74u8 then
+                        let _t = read_number(data, pic_n.next)
+                        _t.next
+                    else pic_n.next
+                    st.cursor = skip_to_eol(data, after)
+                    let aligned_x = px_n.value & ~7
+                    pics.draw(rc, vg, pal, pic_n.value, aligned_x, py_n.value)
+                    let pic_w = vgagraph.pic_width(vg, pic_n.value)
+                    let pic_h = vgagraph.pic_height(vg, pic_n.value)
+                    if pic_w > 0 && pic_h > 0 then
+                        // Adjust per-row margins so text reflows around
+                        // the graphic — left margin if pic mid-x is on
+                        // the left half, right margin otherwise.
+                        let pic_mid = px_n.value + pic_w / 2
+                        let new_margin = if pic_mid > screen_mid then
+                            px_n.value - pic_margin   // becomes new right margin
+                        else
+                            px_n.value + pic_w + pic_margin   // becomes new left margin
+                        let mut top_r = (py_n.value - top_margin) / font_height
+                        if top_r < 0 then top_r = 0
+                        let mut bot_r = (py_n.value + pic_h - top_margin) / font_height
+                        if bot_r >= text_rows then bot_r = text_rows - 1
+                        for r in top_r..(bot_r + 1)
+                            if pic_mid > screen_mid then
+                                rights[r] = new_margin
+                            else
+                                lefts[r] = new_margin
+                        // If the current line's px is now left of the
+                        // new left-margin, snap it forward.
+                        if st.px < lefts[(int64) st.rowon] then
+                            st.px = lefts[(int64) st.rowon]
+                else
+                    // Unknown command — eat one char so we don't loop.
+                    void()
+                continue
+            // Tab — snap px to next 8-pixel boundary.
+            if b == 9u8 then
+                st.px = (st.px + 8) & ~7
+                st.cursor = st.cursor + 1
+                continue
+            // Newline.
+            if b == 10u8 then
+                st.cursor = st.cursor + 1
+                newline(&st, lefts)
+                continue
+            // Other whitespace / control.
+            if b <= 32u8 then
+                st.cursor = st.cursor + 1
+                continue
+            // Word.
+            let mut wlen = 0
+            loop
+                if st.cursor >= dn then break
+                let bb = data[(int64) st.cursor]
+                if bb <= 32u8 then break
+                if is_caret(bb) then break
+                if wlen >= (int32) word_buf.len then break
+                word_buf[(int64) wlen] = bb
+                wlen = wlen + 1
+                st.cursor = st.cursor + 1
+            render_word(rc, pal, f, &st, lefts, rights, word_buf, wlen)
+            // Eat trailing spaces — each adds SPACEWIDTH to px so OG
+            // multi-space layouts (alignment via spaces) survive.
+            loop
+                if st.cursor >= dn then break
+                if data[(int64) st.cursor] != 32u8 then break
+                st.px = st.px + space_width
+                st.cursor = st.cursor + 1
+        draw_page_number(rc, pal, f, page, g->endart_total_pages)
+        // The bottom-info window pic (`h_bottominfo`) already carries
+        // the "[<-] PAGE  ESC EXITS" prompt baked in, so no separate
+        // hint text is needed.
 
 
 module victory_screen =

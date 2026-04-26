@@ -76,13 +76,13 @@ module pics =
         // --- README_LUMP (chunks 3..9). Backdrop art for the original's
         // in-game "Read This!" help screen (IN_Help). The help screen
         // itself isn't implemented.
-        let h_bj          = 3     // (unused) BJ holding the castle keys
-        let h_castle      = 4     // (unused) blazing castle silhouette
-        let h_blaze       = 5     // (unused) flame ring behind the castle
-        let h_topwindow   = 6     // (unused) help-window top border
-        let h_leftwindow  = 7     // (unused) help-window left border
-        let h_rightwindow = 8     // (unused) help-window right border
-        let h_bottominfo  = 9     // (unused) help-window bottom info strip
+        let h_bj          = 3     // BJ holding the castle keys (article ^G art)
+        let h_castle      = 4     // blazing castle silhouette (article ^G art)
+        let h_blaze       = 5     // flame ring behind the castle (article ^G art)
+        let h_topwindow   = 6     // article-window top border
+        let h_leftwindow  = 7     // article-window left border
+        let h_rightwindow = 8     // article-window right border
+        let h_bottominfo  = 9     // article-window bottom info strip
 
         // --- CONTROLS_LUMP (chunks 10..42). Menu / options art used by
         // the original's Options → Control / Sound / Customize
@@ -184,12 +184,12 @@ module pics =
         let t_demo1     = 140     // (unused) demo slot 1
         let t_demo2     = 141     // (unused) demo slot 2
         let t_demo3     = 142     // (unused) demo slot 3
-        let t_endart1   = 143     // (unused) episode-1 ending text page
-        let t_endart2   = 144     // (unused) episode-2 ending text page
-        let t_endart3   = 145     // (unused) episode-3 ending text page
-        let t_endart4   = 146     // (unused) episode-4 ending text page
-        let t_endart5   = 147     // (unused) episode-5 ending text page
-        let t_endart6   = 148     // (unused) episode-6 ending text page
+        let t_endart1   = 143     // episode-1 ending article (gp_endart phase)
+        let t_endart2   = 144     // episode-2 ending article
+        let t_endart3   = 145     // episode-3 ending article
+        let t_endart4   = 146     // episode-4 ending article
+        let t_endart5   = 147     // episode-5 ending article
+        let t_endart6   = 148     // episode-6 ending article
 
     // GET PSYCHED overlay config. Background fill palette index
     // (VIEWCOLOR: a mid-grey) and fallback pic dimensions used if the
@@ -446,6 +446,7 @@ module font =
         // (matches the original — A_StartDeathCam doesn't switch tracks).
         | death_cam            -> if level_num >= 0 && level_num < 60 then music.songs[level_num] else 0
         | episode_end          -> music.urahero
+        | endart               -> music.urahero    // continues from episode_end
         | victory              -> music.vicmarch
         | _ -> if level_num >= 0 && level_num < 60 then music.songs[level_num] else 0
         261 + mus

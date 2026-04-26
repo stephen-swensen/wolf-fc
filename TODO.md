@@ -43,10 +43,14 @@ lump and would naturally land together.
 - [ ] **`vg_mutant_bj` (132) — mutant-BJ transformation cut-scene.** Brief
   full-screen overlay during E2's Schabbs finale when the injection hits
   (wolf4sdl ties it to the same flow that ends with ENDART text).
-- [ ] **`vg_t_endart1`..`vg_t_endart6` (143..148) — per-episode ending text
-  pages.** Shown after BJ wins a given episode (between the bj-victory and
-  the episode-end screen). New `gp_endart` phase that draws the art + waits
-  for ack, then falls through to the current `gp_episode_end`.
+- [x] **`vg_t_endart1`..`vg_t_endart6` (143..148) — per-episode ending text
+  pages.** New `game_phase.endart` sits between `episode_end` and the
+  next-episode advance. The article-markup parser handles the OG syntax
+  (^P pages, ^Cnn colors, ^Bx,y,w,h fills, ^Lyyy,xxx jumps, ^>, ^Gy,x,p
+  graphics with margin reflow, ^Tx,y,p,t timed pics treated as ^G,
+  ^; comments) and word-wraps the text inside the four-piece help-window
+  border (h_topwindow / h_leftwindow / h_rightwindow / h_bottominfo).
+  Music continues with URAHERO_MUS across episode_end → endart → next.
 - [ ] **"Read This!" help screen (3..9 + 138).** Original Help menu option
   pages through a layered backdrop (`vg_h_castle` + `vg_h_blaze` + `vg_h_bj`
   inside the `vg_h_*window` frame, or the alternate `vg_t_helpart`) showing

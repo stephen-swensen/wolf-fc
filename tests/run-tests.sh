@@ -685,6 +685,37 @@ assert_contains "episode:victory-advance-to-menu" \
     "setlevel:58 endepisode wait:2 advance advance advance phase" \
     "phase=menu"
 
+section "endart (per-episode story pages)"
+# Each WL6 ENDART chunk has multiple pages. The parser's `count_pages`
+# walks the article markup; we sanity-check by entering the article
+# for episode 1 and asserting on the page count it found.
+assert_contains "endart:e1-has-2-pages" \
+    "setlevel:0 setphase:endart endart_state" \
+    "endart page=1 of 2"
+assert_contains "endart:e3-has-2-pages" \
+    "setlevel:20 setphase:endart endart_state" \
+    "endart page=1 of 2"
+assert_contains "endart:e6-has-2-pages" \
+    "setlevel:50 setphase:endart endart_state" \
+    "endart page=1 of 2"
+# Stepping through pages: endartnext on the last page transitions to
+# advance_next_episode (level=10 for ep 1 → ep 2's first map).
+assert_contains "endart:next-page-advances" \
+    "setlevel:8 setphase:endart endartnext endart_state" \
+    "endart page=2 of 2"
+assert_contains "endart:past-last-routes-to-next-episode" \
+    "setlevel:8 setphase:endart endartnext endartnext state" \
+    "level=10"
+# The phase command exposes the new `endart` phase string.
+assert_contains "endart:phase-name" \
+    "setphase:endart phase" \
+    "phase=endart"
+# Music continues with URAHERO across episode_end → endart so the
+# transition doesn't restart the player.
+assert_contains "endart:keeps-urahero" \
+    "setphase:endart music" \
+    "audiot offset=24"
+
 section "audio mixer"
 # Same-sound dedup: rapid retriggers of the same digi sound should share a
 # single mix slot rather than fan out across all four (which used to

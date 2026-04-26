@@ -732,6 +732,7 @@ module save =
         | bj_victory   -> "bj_victory"
         | death_cam    -> "death_cam"
         | episode_end  -> "episode_end"
+        | endart       -> "endart"
         | victory      -> "victory"
         io.write("\n=== DEBUG DUMP ===\n", stderr)
         io.write("phase=%s{phase_s} hp=%d{g->health} lives=%d{g->lives} level=%d{g->level_num}\n", stderr)

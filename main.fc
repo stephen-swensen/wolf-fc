@@ -99,6 +99,11 @@ union game_phase =
                     // animation, hand off to intermission. Ports the
                     // original's A_StartDeathCam.
     | episode_end   // per-episode victory screen (after boss level 8)
+    | endart        // per-episode story-text page(s) shown after the
+                    // episode-end stats screen — VGAGRAPH chunks 143..148
+                    // hold article-markup data (^P pages, ^Cnn colors,
+                    // ^Gx,y,p inline graphics, word-wrapped text). Any
+                    // key advances pages; final page → advance_next_episode.
     | victory       // all six episodes cleared; space returns to main menu
 
 // Menu navigation state. `menu_level` picks which list to show:
@@ -252,6 +257,29 @@ struct game =
     bj_anim_timer: float64
     bj_phase: int32      // 0 = running, 1 = jumping, 2 = holding final frame
     bj_yelled: bool      // YEAHSND latch (fires on entering jump frame 1)
+
+    // Per-episode running totals for the Victory() screen at
+    // episode_end. Each completed level adds its kill / secret /
+    // treasure percent + level time to these. ep_levels_played is
+    // the divisor for averages. ep_recorded_current is a dedup latch
+    // — set when the just-finished level was already recorded, so
+    // bj_victory + intermission paths don't double-count the boss
+    // level. Reset on new game / next episode.
+    ep_kr_total: int32
+    ep_sr_total: int32
+    ep_tr_total: int32
+    ep_time_total: int32
+    ep_levels_played: int32
+    ep_recorded_current: bool
+
+    // Per-episode ending text — active only during gp_endart.
+    // `endart_data` is the decompressed VGAGRAPH chunk for the current
+    // episode (chunks 143..148 hold article-markup). Page offsets are
+    // computed once on entry so the renderer can jump to any page in O(1).
+    endart_data: uint8[]
+    endart_page_offsets: int32[]
+    endart_total_pages: int32
+    endart_page: int32         // 0-indexed; final page index = total_pages - 1
 
     // Death-cam cutscene state — active only during death_cam.
     // Sub-phases: 0 = hold on final death frame, 1 = dissolve to black,
@@ -725,6 +753,32 @@ let reload_level_data = (w: world*, vs: const vswap.vswap_file*) ->
 // space-press on levels 0..7 and level 9; level 8 → episode-end is handled
 // by `episode_end.enter` at the caller. Preserves score, lives, weapon; clears
 // keys. The `went_secret` latch is consumed and reset here.
+// Add the current level's kill / secret / treasure percent + time to
+// the per-episode running totals. Idempotent for a given level via
+// the `ep_recorded_current` latch — both intermission.enter and
+// bj_victory.enter call this, but only the first one for a given
+// level actually adds.
+let record_level_for_episode = (g: game*) ->
+    if g->ep_recorded_current then return
+    let kr = if g->total_kills > 0 then 100 * g->kills / g->total_kills else 100
+    let sr = if g->total_secrets > 0 then 100 * g->secrets / g->total_secrets else 100
+    let tr = if g->total_treasures > 0 then 100 * g->treasures / g->total_treasures else 100
+    g->ep_kr_total = g->ep_kr_total + kr
+    g->ep_sr_total = g->ep_sr_total + sr
+    g->ep_tr_total = g->ep_tr_total + tr
+    g->ep_time_total = g->ep_time_total + (int32) g->level_time
+    g->ep_levels_played = g->ep_levels_played + 1
+    g->ep_recorded_current = true
+
+// Wipe the running totals at the start of a new episode / game.
+let reset_episode_totals = (g: game*) ->
+    g->ep_kr_total = 0
+    g->ep_sr_total = 0
+    g->ep_tr_total = 0
+    g->ep_time_total = 0
+    g->ep_levels_played = 0
+    g->ep_recorded_current = false
+
 let advance_next_level = (w: world*, vs: const vswap.vswap_file*) ->
     let g = w->g
     g->level_num = episode.next_level_num(g->level_num, g->went_secret)
@@ -732,6 +786,8 @@ let advance_next_level = (w: world*, vs: const vswap.vswap_file*) ->
     // Wolf3D clears keys between levels.
     g->has_gold_key = false
     g->has_silver_key = false
+    // Re-arm per-episode recording for the upcoming level.
+    g->ep_recorded_current = false
     reload_level_data(w, vs)
     spawn.find_player_start(w->lv_data, g)
     reset_level_counters(g, w->lv)
@@ -754,6 +810,8 @@ let advance_next_episode = (w: world*, vs: const vswap.vswap_file*) ->
         g->level_num = (ep + 1) * episode.levels_per
         g->has_gold_key = false
         g->has_silver_key = false
+        // Fresh episode → wipe the per-episode totals.
+        reset_episode_totals(g)
         reload_level_data(w, vs)
         spawn.find_player_start(w->lv_data, g)
         reset_level_counters(g, w->lv)
@@ -770,6 +828,9 @@ let advance_next_episode = (w: world*, vs: const vswap.vswap_file*) ->
 // to keep the pre/post-death accounting legible.
 let restart_current_level = (w: world*, vs: const vswap.vswap_file*) ->
     let g = w->g
+    // Re-arm episode recording so re-finishing the level still
+    // contributes to the running totals.
+    g->ep_recorded_current = false
     reload_level_data(w, vs)
     spawn.find_player_start(w->lv_data, g)
     reset_level_counters(g, w->lv)
@@ -788,6 +849,7 @@ let restart_current_level = (w: world*, vs: const vswap.vswap_file*) ->
 let restart_full_game = (w: world*, vs: const vswap.vswap_file*) ->
     let g = w->g
     g->level_num = 0
+    reset_episode_totals(g)
     reload_level_data(w, vs)
     spawn.find_player_start(w->lv_data, g)
     reset_level_counters(g, w->lv)
@@ -804,6 +866,7 @@ let restart_full_game = (w: world*, vs: const vswap.vswap_file*) ->
 // used to start a selected episode.
 let start_new_game_here = (w: world*, vs: const vswap.vswap_file*) ->
     let g = w->g
+    reset_episode_totals(g)
     reload_level_data(w, vs)
     spawn.find_player_start(w->lv_data, g)
     reset_level_counters(g, w->lv)
@@ -977,7 +1040,10 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
         game_over.render(w->rc, w->g)
         return
     | episode_end ->
-        episode_end.render(w->rc, w->font, w->g)
+        episode_end.render(w->rc, w->vg, pal, w->font, w->g)
+        return
+    | endart ->
+        endart_screen.render(w->rc, w->vg, pal, w->font, w->g)
         return
     | victory ->
         victory_screen.render(w->rc, w->font, w->g)
@@ -1182,6 +1248,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         | bj_victory   -> "bj_victory"
         | death_cam    -> "death_cam"
         | episode_end  -> "episode_end"
+        | endart       -> "endart"
         | victory      -> "victory"
         let par = if g->level_num < 60 then intermission.par_times[g->level_num] else 0
         io.write("phase=%s{phase_s} difficulty=%d{g->difficulty}\n", stdout)
@@ -1270,6 +1337,14 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             // episode_end on boss maps.
             intermission.enter(g, w->ac)
         else if g->phase == game_phase.episode_end then
+            // Test-mode advance bypasses the endart article entirely
+            // so scripted sequences match the existing one-`advance`-
+            // per-screen contract. Use the `endart` test command if
+            // you specifically want to exercise the article phase.
+            advance_next_episode(w, w->ac->vs)
+        else if g->phase == game_phase.endart then
+            // From endart, `advance` skips the remaining pages and
+            // jumps straight to advance_next_episode (or victory).
             advance_next_episode(w, w->ac->vs)
         else if g->phase == game_phase.victory then
             g->phase = game_phase.main_menu
@@ -1421,7 +1496,27 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             g->menu_level = menu.nav.loadlist
             save.refresh_slots(w->sm)
         else if p == "playing" then g->phase = game_phase.playing
-        else bad("pg13/title/menu/epmenu/diffmenu/soundmenu/optionsmenu/savemenu/loadmenu/playing")
+        else if p == "endart" then
+            // Enter the per-episode ending article for whichever
+            // episode the current level belongs to. The article is
+            // already loaded by enter(); tests can drive it via
+            // `endartnext` to step pages or `advance` to skip.
+            let ep = g->level_num / episode.levels_per
+            endart_screen.enter(g, w->vg, ep)
+        else bad("pg13/title/menu/epmenu/diffmenu/soundmenu/optionsmenu/savemenu/loadmenu/playing/endart")
+    else if arg == "endartnext" then
+        // Step one page in the endart article. If there's no next
+        // page, route through advance_next_episode (matches the
+        // interactive ack handler).
+        if g->phase == game_phase.endart then
+            if endart_screen.next_page(g) then
+                advance_next_episode(w, w->ac->vs)
+        void()
+    else if arg == "endart_state" then
+        // Dump current article state (page + total). Useful for tests
+        // that want to verify the parser found N pages.
+        io.write("endart page=%d{g->endart_page + 1} of %d{g->endart_total_pages}\n", stdout)
+        void()
     else if arg == "phase" then
         let phase_s = match g->phase with
         | pg13         -> "pg13"
@@ -1434,6 +1529,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         | bj_victory   -> "bj_victory"
         | death_cam    -> "death_cam"
         | episode_end  -> "episode_end"
+        | endart       -> "endart"
         | victory      -> "victory"
         io.write("phase=%s{phase_s} timer=%6.3f{g->phase_timer} lives=%d{g->lives}\n", stdout)
         void()
@@ -1792,6 +1888,12 @@ let main = (args: str[]) ->
         bj_phase = 0, bj_yelled = false,
         dc_sub = 0, dc_timer = 0.0, dc_boss_idx = -1,
         dc_kill_x = 0.0, dc_kill_y = 0.0, dc_fade = 0.0,
+        endart_data = alloc(uint8[0] {})!,
+        endart_page_offsets = alloc(int32[0] {})!,
+        endart_total_pages = 0, endart_page = 0,
+        ep_kr_total = 0, ep_sr_total = 0, ep_tr_total = 0,
+        ep_time_total = 0, ep_levels_played = 0,
+        ep_recorded_current = false,
         phase = game_phase.pg13, phase_timer = 0.0,
         damage_flash_timer = 0.0, respawn_fade_timer = 0.0,
         get_psyched_timer = 0.0, got_gatling_timer = 0.0,
@@ -2368,6 +2470,7 @@ let main = (args: str[]) ->
                             // key_ack_handled so a held key only fires once.
                             if g->phase == game_phase.intermission
                                || g->phase == game_phase.episode_end
+                               || g->phase == game_phase.endart
                                || g->phase == game_phase.victory
                                || g->phase == game_phase.game_over then
                                 g->key_ack = true
@@ -2423,11 +2526,20 @@ let main = (args: str[]) ->
                 episode_end.enter(g)
             else
                 advance_next_level(w, vs)
-        // Episode-end → next episode's first map (or final victory).
+        // Episode-end → per-episode ending text article. The article's
+        // last page advances to advance_next_episode (or final victory
+        // for episode 6).
         if g->phase == game_phase.episode_end && g->phase_timer > 0.0
            && g->key_ack && !g->key_ack_handled then
             g->key_ack_handled = true
-            advance_next_episode(w, vs)
+            let ep = g->level_num / episode.levels_per
+            endart_screen.enter(g, w->vg, ep)
+        // Endart pages → next page; past the last → next episode.
+        if g->phase == game_phase.endart && g->phase_timer > 0.0
+           && g->key_ack && !g->key_ack_handled then
+            g->key_ack_handled = true
+            if endart_screen.next_page(g) then
+                advance_next_episode(w, vs)
         // Final victory → return to main menu.
         if g->phase == game_phase.victory && g->phase_timer > 0.0
            && g->key_ack && !g->key_ack_handled then
