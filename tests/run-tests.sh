@@ -706,14 +706,20 @@ assert_contains "endart:e3-has-2-pages" \
 assert_contains "endart:e6-has-2-pages" \
     "setlevel:50 setphase:endart endart_state" \
     "endart page=1 of 2"
-# Stepping through pages: endartnext on the last page returns to
-# the main menu (matching the interactive forward-past-last flow,
-# and the OG ShowArticle → GameLoop → control-panel chain).
+# Stepping forward through pages and pressing forward past the last
+# page is a no-op — only Esc (`endartexit`) leaves the article, faithful
+# to the OG ShowArticle loop's `do { ... } while (LastScan != sc_Escape)`.
 assert_contains "endart:next-page-advances" \
     "setlevel:8 setphase:endart endartnext endart_state" \
     "endart page=2 of 2"
-assert_contains "endart:past-last-routes-to-menu" \
+assert_contains "endart:past-last-is-noop" \
+    "setlevel:8 setphase:endart endartnext endartnext endart_state" \
+    "endart page=2 of 2"
+assert_contains "endart:past-last-stays-in-endart" \
     "setlevel:8 setphase:endart endartnext endartnext phase" \
+    "phase=endart"
+assert_contains "endart:exit-returns-to-menu" \
+    "setlevel:8 setphase:endart endartexit phase" \
     "phase=menu"
 # The phase command exposes the new `endart` phase string.
 assert_contains "endart:phase-name" \

@@ -1487,13 +1487,17 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             endart_screen.enter(g, w->vg, ep)
         else bad("pg13/title/menu/epmenu/diffmenu/soundmenu/optionsmenu/savemenu/loadmenu/playing/endart")
     else if arg == "endartnext" then
-        // Step one page in the endart article. If there's no next
-        // page, return to the main menu (matches the interactive
-        // forward-past-last flow).
+        // Step one page in the endart article. Past the last page
+        // this is a no-op — matches the interactive forward-past-last
+        // behaviour (only Esc / `endartexit` actually leaves the
+        // article).
         if g->phase == game_phase.endart then
-            if endart_screen.next_page(g) then
-                return_to_menu_post_episode(g)
-        void()
+            endart_screen.next_page(g)
+    else if arg == "endartexit" then
+        // Simulate Esc on the endart article: returns to the main
+        // menu (the only way out of the article in the OG flow).
+        if g->phase == game_phase.endart then
+            return_to_menu_post_episode(g)
     else if arg == "endart_state" then
         // Dump current article state (page + total). Useful for tests
         // that want to verify the parser found N pages.
@@ -2146,17 +2150,23 @@ let main = (args: str[]) ->
                     //   Right / Down / PageDown      → next page
                     //   Enter / Space / Ctrl         → next page
                     //   Esc                          → exit the article →
-                    //                                  main menu (matches
-                    //                                  the on-screen "ESC
-                    //                                  EXITS" hint)
-                    //   Forward past the last page  → main menu (the OG
-                    //                                  loop just stays on
-                    //                                  the final page; we
-                    //                                  return to menu so
-                    //                                  forward isn't a
-                    //                                  dead-end no-op)
-                    // Other keys (modifiers, letters, etc.) are no-ops so
-                    // a stray bump doesn't skip a page.
+                    //                                  main menu (the
+                    //                                  only key that
+                    //                                  actually leaves
+                    //                                  the article;
+                    //                                  matches the on-
+                    //                                  screen "ESC EXITS"
+                    //                                  hint and the OG
+                    //                                  `do { ... } while
+                    //                                  (LastScan != Esc
+                    //                                  && !ci.button1)`)
+                    //   Forward past the last page   → no-op (stays on
+                    //                                  the final page;
+                    //                                  player still has
+                    //                                  to press Esc to
+                    //                                  leave)
+                    // Other keys (modifiers, letters, etc.) are no-ops
+                    // so a stray bump doesn't skip a page.
                     if !is_key_repeat then
                         if k == sdl2.key_left || k == sdl2.key_up
                                 || k == sdl2.key_pageup then
@@ -2168,8 +2178,9 @@ let main = (args: str[]) ->
                                 || k == sdl2.key_return
                                 || k == sdl2.key_space
                                 || k == sdl2.key_lctrl then
-                            if endart_screen.next_page(g) then
-                                return_to_menu_post_episode(g)
+                            // next_page no-ops past the last page — the
+                            // user has to press Esc to exit the article.
+                            endart_screen.next_page(g)
                 | title ->
                     // Advance to the main menu on an ack key. Default
                     // selection = NEW GAME (RESUME is locked from the

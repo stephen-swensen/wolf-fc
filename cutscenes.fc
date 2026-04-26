@@ -1042,14 +1042,14 @@ module endart_screen =
         g->key_ack = false
         g->key_ack_handled = false
 
-    // Advance to the next page. Returns true if the article is done
-    // (the caller should then transition back to the main menu).
+    // Advance to the next page; clamps at the last page (a no-op
+    // there, matching the OG ShowArticle loop where forward keys on
+    // the final page just don't do anything — the player has to press
+    // Esc to leave).
     let next_page = (g: game*) ->
-        if g->endart_page + 1 >= g->endart_total_pages then true
-        else
+        if g->endart_page + 1 < g->endart_total_pages then
             g->endart_page = g->endart_page + 1
             g->phase_timer = 0.0
-            false
 
     // Step back one page; clamps at page 0. No exit-the-article
     // semantics — that's the caller's job (Esc / past-last route to
