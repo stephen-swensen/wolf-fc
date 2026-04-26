@@ -7,10 +7,17 @@ next-up candidates; everything below is nice-to-have polish or a survey pass.
 
 ### Gameplay
 ### UI / Menus
-- [ ] **Configurable input / options menus.** Original has dedicated Control,
-  Sound, and Screen Size submenus under Options. Lots of UI, modest gameplay
-  impact. Could include a simple keybind editor plus the PC-speaker/AdLib/
-  SoundBlaster radio buttons (even if all three route to our mixer today).
+- [ ] **Configurable input.** Keybind editor under a CONTROL submenu, plus
+  the original's CUSTOMIZE CONTROLS layout. The art lump (`vg_c_control` /
+  `vg_c_customize`) is in place; what's missing is the actual rebind
+  flow + a config file to persist the bindings. Pairs with `MOVEGUN2SND`
+  rebind-confirm sites (already wired to the SOUND submenu commit beep
+  but the original also fires it from each keybind row).
+- [ ] **CHANGE VIEW (screen-size) submenu.** Skipped on purpose — wolf-fc
+  is locked to 4:3 letterboxed at 320×200 → 2× → `SDL_RenderSetLogicalSize
+  (640, 480)`, and there's no framerate gain to be had from shrinking the
+  3D viewport. Listed for posterity; don't implement unless the rendering
+  pipeline changes.
 
 ### VGAGRAPH art not yet surfaced
 
@@ -19,10 +26,12 @@ Constants for every chunk exist in main.fc under the `vg_*` prefix (with
 of the gap and implementation size. Many are grouped because they share a
 lump and would naturally land together.
 
-- [ ] **`vg_pg13` (chunk 88) — PG-13 parental-advisory splash.** Shown between
-  the startup logos and the title screen in the original (brief timed
-  full-screen pic, any key advances). New phase `gp_pg13` before `gp_title`,
-  short timer, same ack-key handling as the title.
+- [x] **`vg_pg13` (chunk 88) — PG-13 parental-advisory splash.** New
+  `game_phase.pg13` runs first at startup; any key advances to the title
+  screen, with a 6 s auto-advance fallback (`pg13_screen.auto_advance_time`).
+  Music is already running at this point — `font.music_chunk_for_phase`
+  routes the splash to WONDERIN_MUS, same as the menu, so the pre-title
+  sequence has continuous audio.
 - [ ] **`vg_credits` (89) — credits screen.** Main-menu entry (CREDITS) that
   draws the full-screen pic and waits for any key. Needs a new menu slot and
   a tiny phase.
@@ -43,12 +52,17 @@ lump and would naturally land together.
   inside the `vg_h_*window` frame, or the alternate `vg_t_helpart`) showing
   controls / items / enemies. Needs a new menu entry, a pageable text/image
   renderer, and static strings from id_in's help tables.
-- [ ] **Menu art lump (10..42) — replace text menus with original graphics.**
-  Largest UI item. Every submenu in the original (Options / Sound / Control
-  / Customize / Load / Save / Episode / Difficulty / Codes / High Scores) has
-  dedicated art: headers, a blinking 2-frame cursor (`vg_c_cursor1/2`), and
-  per-row selected / not-selected backdrops. Pairs naturally with the
-  configurable-input TODO above.
+- [x] **Menu art lump (10..42) — replace text menus with original graphics.**
+  `menu.fc` now blits the OG cursor (`c_cursor1`/`2`, blinking at 3.5 Hz),
+  the difficulty face cards (`c_baby`/`c_easy`/`c_normal`/`c_hard`), the
+  episode cards (`c_episode1..6`), the load/save header pics
+  (`c_loadgame`/`c_savegame`), and the SOUND submenu's section headers
+  (`c_fx_title`/`c_music_title`). Submenus the port doesn't support
+  (Control / Customize / Change View / Read This! / View Scores) are
+  hidden rather than greyed; the per-row selected / not-selected
+  backdrops (`c_selected`/`c_notselected`) aren't used since the framed
+  box plus cursor reads cleanly without them. Codes / High Scores are
+  separate TODOs (`vg_credits`, `vg_highscores`).
 - [ ] **`vg_order` (136) / `vg_error` (137).** Shareware order screen
   (probably skip or redirect to a short credits note — wolf-fc isn't
   shareware) and a generic error screen we could route fatal data-load
@@ -71,10 +85,12 @@ data — never called from any original-game source path. They've been
 retired from this list; if you ever want to wire one as a deliberate
 enhancement, add it back and flag it as a divergence.
 
-- [ ] **`MOVEGUN2SND` (4) — menu confirm beep.** Played once at the end
-  of the keybind-rebind flow in the original (`wl_menu.cpp:3859`); the
-  cursor-move click itself is MOVEGUN1, already wired as
-  `sfx.id.move_gun1`. Pairs with the configurable-input TODO.
+- [x] **`MOVEGUN2SND` (4) — menu commit beep.** Wired as
+  `sfx.id.move_gun2` (chunk 4, AdLib only). Plays on Enter inside the
+  SOUND submenu when the player toggles a row. Other menus drilling
+  into a submenu still fire SHOOTSND. The original game also plays
+  this at the end of the keybind-rebind flow — that site will land
+  with the configurable-input TODO above.
 - [ ] **`PLAYERDEATHSND` (9) — BJ death scream.** Original plays this on
   the killing blow in `PlayerDied` (`wl_game.cpp:1237`); wolf-fc
   currently runs the damage-flash + collapse animation silently.
@@ -90,13 +106,11 @@ The per-level `songs[]` table uses 18 of the 27 available tracks. Audited
 Wolf3D source. The rest (HITLWLTZ, SALUTE, VICTORS, FUNKYOU) are dead
 data despite their suggestive names — retired from this list.
 
-- [ ] **`music_nazi_nor` (7) — title-screen / intro music.** Defined as
-  `INTROSONG = NAZI_NOR_MUS` in `wl_menu.h`; played on the title screen
-  and the demo / attract loop. wolf-fc currently uses WONDERIN_MUS for
-  both title and main menu, but the original only used WONDERIN
-  (`MENUSONG`) for the main menu and NAZI_NOR for the title. Fix in
-  `ui.fc::music_chunk_for_phase` — split the `title | main_menu` arm
-  so `title` returns `nazi_nor` and `main_menu` keeps `wonderin`.
+- [x] **`music_nazi_nor` (7) — title-screen / intro music.** Split the
+  `music_chunk_for_phase` arm: `title` plays NAZI_NOR (INTROSONG),
+  `pg13` and `main_menu` keep WONDERIN. Demo / attract loop is the
+  remaining unwired site, but that depends on a demo recorder which
+  isn't planned.
 - [ ] **`music_roster` (23) — high-scores roll.** Played at two sites
   (`wl_inter.cpp:1145`, `wl_menu.cpp:852`) when the high-scores screen
   is shown. Pairs with the high-scores TODO.
@@ -108,6 +122,54 @@ data despite their suggestive names — retired from this list.
   passes should spot-check other subsystems — door interaction rules,
   projectile spawn angles, pushwall speed, or audio mixing semantics —
   and queue new items here as they're found.
+
+## Current State (2026-04-25)
+
+### Intro / menu / episode-select sweep (2026-04-25)
+Reworked the pre-game flow against the original Wolf3D layout. Constraints
+that aren't supported (driver-selection radios, screen-size chooser,
+keybind editor) are dropped rather than greyed; everything else lands on
+OG art.
+- **PG-13 splash** as a new `game_phase.pg13` runs first at startup,
+  draws `vg_pg13` centered on a black palette-0 backdrop, auto-advances
+  after 6 s (`pg13_screen.auto_advance_time`), or skips on any keypress
+  to the title.
+- **Title music split**: `title` plays NAZI_NOR_MUS (INTROSONG) and
+  `pg13` / `main_menu` stay on WONDERIN_MUS (MENUSONG) — the music_chunk_
+  for_phase arm split makes the title→menu transition actually swap
+  tracks now.
+- **Menu rendering rebuilt** in `menu.fc` with WL6 art: blinking
+  `c_cursor1`/`2` gun cursor at 3.5 Hz on the selected row,
+  `c_baby`/`c_easy`/`c_normal`/`c_hard` face cards on the difficulty
+  picker, `c_episode1..6` cards on the episode picker, `c_loadgame`/
+  `c_savegame` header pics on the save/load slot screens, and
+  `c_fx_title`/`c_music_title` row-label pics on the SOUND submenu.
+  All menus draw inside a 1-pixel framed box (palette-style border +
+  fill) over the dimmed title art so rows stay readable.
+- **Main menu reordered to OG layout** (NEW GAME / SOUND / LOAD GAME /
+  SAVE GAME / BACK TO GAME / QUIT). RESUME GAME → BACK TO GAME (matches
+  the original's "BACK TO DEMO/GAME" wording). SAVE GAME and BACK TO
+  GAME are locked when there's no active game; up/down nav skips
+  locked rows. Esc from playing now lands on BACK TO GAME (was 0/RESUME).
+- **SOUND submenu** with two ON/OFF toggles: SOUND EFFECTS (gates
+  `sfx.trigger_panned_gain` via the new `audio_ctx.sfx_on`) and MUSIC
+  (existing `g->music_on`). The original's three driver dropdowns
+  (PC speaker / AdLib / SoundBlaster radios) are folded into single
+  toggles since wolf-fc always mixes AdLib + digi through one path.
+- **Floor (map) picker dropped** from the menu. Was an early debug
+  helper; the underlying support stays (`--level=N`, `--near-boss`
+  CLI flags, `setlevel:N` test command) so test scripts and CLI flags
+  are unaffected.
+- **MOVEGUN2SND wired** as `sfx.id.move_gun2`. Fires on Enter inside
+  the SOUND submenu (commit-a-setting beep). Other menu confirms still
+  use SHOOTSND (drilling into a submenu).
+- **Sound effects mute toggle** routes through `audio_ctx.sfx_on`,
+  checked at the top of `trigger_panned_gain`. Both spatial and
+  centered triggers honor it.
+- New regression tests: `cli:setphase-pg13`, `cli:setphase-soundmenu`,
+  `cli:pg13-auto-advances-to-title`, plus updated music routing tests
+  (`music:title-plays-nazi-nor`, `music:pg13-plays-wonderin`). Test
+  count: 138 → 140.
 
 ## Current State (2026-04-23)
 

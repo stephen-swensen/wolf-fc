@@ -1,55 +1,59 @@
 // Wolf-FC menu — the main menu + its submenus (episode picker,
-// difficulty, map select, save / load slot list). Rendering only; the
+// difficulty, sound, save / load slot list). Rendering only; the
 // actual menu navigation logic (cursor movement, selection) lives in
 // main.fc's event loop since it has to observe every phase of the game.
+//
+// Layout uses original-game art where it exists in the WL6 lump
+// (CONTROLS_LUMP chunks 10..42 — gun cursor frames, episode / difficulty
+// cards, header pics) and a simple framed box otherwise. Submenus the
+// original game ships that this port doesn't support — Control,
+// Customize Controls, Change View (screen-size), Read This!, View
+// Scores — are not present at all rather than greyed out, since we
+// don't have a working backend for them.
 
 module menu =
-    // Menu navigation state. `g->menu_level` picks which list to show:
-    //   main        = main menu (RESUME / NEW GAME / LOAD GAME /
-    //                 SAVE GAME / SOUND / QUIT)
-    //   difficulty  = difficulty picker (under NEW GAME, after episode
-    //                 select)
-    //   episode     = episode picker (under NEW GAME, before difficulty)
-    //   savelist    = save-slot list (Save Game — 10 slots)
-    //   loadlist    = load-slot list (Load Game — 10 slots)
-    //   map         = follows episode: picks the starting map within
-    //                 the episode. Rows 0..9 are maps 1..10 (with 9 /
-    //                 10 annotated with BOSS / SECRET); row 10 is a
-    //                 BOSS FIGHT shortcut that loads map 9 + teleports
-    //                 the player next to the boss.
+    // Menu navigation state. `g->menu_level` picks which list to show.
     module nav =
         let main       = 0
         let difficulty = 1
         let episode    = 2
         let savelist   = 3
         let loadlist   = 4
-        let map        = 5
+        let sound      = 5
 
-    // Main menu:
-    //   0 RESUME GAME (only when has_active_game; locked otherwise)
-    //   1 NEW GAME
+    // Main menu — original Wolf3D ordering with the unsupported rows
+    // (CONTROL, CHANGE VIEW, READ THIS!, VIEW SCORES) removed:
+    //   0 NEW GAME
+    //   1 SOUND
     //   2 LOAD GAME
-    //   3 SAVE GAME   (only when has_active_game; locked otherwise)
-    //   4 SOUND       (toggles music_on)
+    //   3 SAVE GAME      (locked when no active game)
+    //   4 BACK TO GAME   (locked when no active game; "RESUME GAME" in OG)
     //   5 QUIT
     let main_len = 6
 
     private let main_label = (i: int32) ->
         match i with
-        | 0 -> "RESUME"
-        | 1 -> "NEW GAME"
+        | 0 -> "NEW GAME"
+        | 1 -> "SOUND"
         | 2 -> "LOAD GAME"
         | 3 -> "SAVE GAME"
-        | 4 -> "SOUND"
+        | 4 -> "BACK TO GAME"
         | 5 -> "QUIT"
         | _ -> ""
 
     // Locked = visible but not selectable. Up/down navigation skips
-    // locked rows; pressing Enter on a locked row (which only happens
-    // via direct `setmenu_sel` paths from external test commands) is
-    // a no-op.
+    // locked rows; pressing Enter on a locked row is a no-op.
     let main_is_locked = (i: int32, has_active_game: bool) ->
-        (i == 0 || i == 3) && !has_active_game
+        (i == 3 || i == 4) && !has_active_game
+
+    // Sound submenu — two toggle rows. The original's three sound-driver
+    // dropdowns (SOUND EFFECTS / DIGITIZED SOUND / MUSIC) collapse here
+    // because every driver routes through the same AdLib + digi mixer in
+    // wolf-fc. The two settings that still mean something independently
+    // are mute toggles for the SFX channel and the music channel.
+    //   0 SOUND EFFECTS  (g->ac->sfx_on)
+    //   1 MUSIC          (g->music_on)
+    let sound_len = 2
 
     private let diff_label = (i: int32) ->
         match i with
@@ -59,144 +63,330 @@ module menu =
         | 3 -> "I AM DEATH INCARNATE!"
         | _ -> ""
 
-    // Episode picker labels — short for menu fit.
+    // Original-game face card per difficulty (24x32). Drawn alongside
+    // the row label so the picker reads like the OG difficulty screen.
+    private let diff_card = (i: int32) ->
+        match i with
+        | 0 -> pics.id.c_baby
+        | 1 -> pics.id.c_easy
+        | 2 -> pics.id.c_normal
+        | 3 -> pics.id.c_hard
+        | _ -> -1
+
+    // Episode names match the original; numbered prefix keeps the
+    // text readable against the small 48x24 cards.
     private let episode_label = (i: int32) ->
         match i with
-        | 0 -> "EPISODE 1  ESCAPE FROM WOLFENSTEIN"
-        | 1 -> "EPISODE 2  OPERATION EISENFAUST"
-        | 2 -> "EPISODE 3  DIE, FUHRER, DIE!"
-        | 3 -> "EPISODE 4  A DARK SECRET"
-        | 4 -> "EPISODE 5  TRAIL OF THE MADMAN"
-        | 5 -> "EPISODE 6  CONFRONTATION"
+        | 0 -> "ESCAPE FROM WOLFENSTEIN"
+        | 1 -> "OPERATION EISENFAUST"
+        | 2 -> "DIE, FUHRER, DIE!"
+        | 3 -> "A DARK SECRET"
+        | 4 -> "TRAIL OF THE MADMAN"
+        | 5 -> "CONFRONTATION"
         | _ -> ""
 
-    // Map picker sub-submenu: 10 maps per episode plus a BOSS FIGHT
-    // shortcut that starts on map 9 and teleports the player next to
-    // the boss. Maps 9 and 10 get annotations to highlight the boss /
-    // secret routing.
-    let map_len = 11
-
-    private let map_label = (i: int32) ->
+    private let episode_card = (i: int32) ->
         match i with
-        | 0 -> "FLOOR 1"
-        | 1 -> "FLOOR 2"
-        | 2 -> "FLOOR 3"
-        | 3 -> "FLOOR 4"
-        | 4 -> "FLOOR 5"
-        | 5 -> "FLOOR 6"
-        | 6 -> "FLOOR 7"
-        | 7 -> "FLOOR 8"
-        | 8 -> "FLOOR 9  (BOSS)"
-        | 9 -> "FLOOR 10  (SECRET)"
-        | 10 -> "BOSS FIGHT"
-        | _ -> ""
+        | 0 -> pics.id.c_episode1
+        | 1 -> pics.id.c_episode2
+        | 2 -> pics.id.c_episode3
+        | 3 -> pics.id.c_episode4
+        | 4 -> pics.id.c_episode5
+        | 5 -> pics.id.c_episode6
+        | _ -> -1
 
-    // Draw a list-style menu: centered title, one highlighted row per
-    // item, chevrons around the selected row. `label_fn` returns the
-    // text for item i. Used by the main / episode / difficulty
-    // submenus; save-load slots paint separately because their rows
-    // encode per-slot metadata.
-    private let draw_list = (rc: render_ctx*, f: const font.info*, title: const str,
-                     items_y: int32, n: int32, sel: int32,
-                     label_fn: (int32) -> const str, locked_fn: (int32) -> bool) ->
-        let yellow = 0xFFFFD700u32
-        let white  = 0xFFFFFFFFu32
-        let dull   = 0xFF707070u32
-        font.draw_centered(rc, f, 24, title, yellow)
-        for i in 0..n
-            let y = items_y + i * (f->height + 4)
-            let is_sel = sel == i
-            let is_locked = locked_fn(i)
-            let color = if is_locked then dull
-                        else if is_sel then yellow else white
-            let label = label_fn(i)
-            font.draw_centered(rc, f, y, label, color)
+    // Original-game palette indices for the menu frame. 0x29 is a deep
+    // brown-red used as the menu border in the OG; 0x14 is the pale
+    // body fill. We pick concrete ARGB values so the menu frame stays
+    // legible against any backdrop without re-routing through the
+    // palette table.
+    private let frame_border = 0xFFB8B8B8u32
+    private let frame_fill   = 0xFF202020u32
+
+    // Colours pulled from the OG palette feel — bright gold for the
+    // selected row, off-white for normal, dim grey for locked.
+    private let color_sel    = 0xFFFFFF55u32
+    private let color_normal = 0xFFE0E0E0u32
+    private let color_locked = 0xFF707070u32
+    private let color_header = 0xFFFFFF55u32
+    private let color_help   = 0xFF909090u32
+
+    // Filled rect with palette-style colour. Used for the menu's framed
+    // box so the rows sit on a solid backdrop rather than the dimmed
+    // title art.
+    private let fill_rect = (rc: render_ctx*, x0: int32, y0: int32, x1: int32, y1: int32, c: uint32) ->
+        let mut yy = y0
+        loop
+            if yy >= y1 then break
+            if yy >= 0 && yy < game_h then
+                let mut xx = x0
+                loop
+                    if xx >= x1 then break
+                    if xx >= 0 && xx < game_w then
+                        rc->fb[(int64) yy * 320 + (int64) xx] = c
+                    xx = xx + 1
+            yy = yy + 1
+
+    // Outlined frame: 1-pixel border in `border`, filled with `fill`.
+    private let draw_frame = (rc: render_ctx*, x: int32, y: int32, w: int32, h: int32) ->
+        fill_rect(rc, x, y, x + w, y + h, frame_fill)
+        // Top + bottom edges.
+        fill_rect(rc, x, y, x + w, y + 1, frame_border)
+        fill_rect(rc, x, y + h - 1, x + w, y + h, frame_border)
+        // Left + right edges.
+        fill_rect(rc, x, y, x + 1, y + h, frame_border)
+        fill_rect(rc, x + w - 1, y, x + w, y + h, frame_border)
+
+    // Backdrop common to every menu screen: title art + a darken-overlay
+    // so the menu frame and text stand out. The frame on top is what
+    // actually carries the menu rows.
+    private let draw_backdrop = (rc: render_ctx*) ->
+        pics.blit_title_bg(rc)
+        overlay.viewport_tint_full(rc, 0x00000000u32, 0.55)
+
+    // Pick the cursor frame for the current phase time. The original
+    // alternates two gun-cursor pics (c_cursor1 / c_cursor2) at
+    // ~3.5 Hz; we approximate.
+    private let cursor_chunk = (time: float64) ->
+        let on = ((int32) (time * 3.5)) % 2 == 0
+        if on then pics.id.c_cursor1 else pics.id.c_cursor2
+
+    // Draw the gun cursor at (x, y) where (x, y) is the top-left.
+    // Cursor pic is 24x16; rows here are 13-14 tall, so the cursor
+    // overhangs slightly above-and-below — exactly like the OG.
+    private let draw_cursor = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                               pal: const uint32[], x: int32, y: int32, time: float64) ->
+        pics.draw(rc, vg, pal, cursor_chunk(time), x, y)
+
+    // Render one row of a generic list-style menu: cursor (if selected)
+    // at left, label text. Color picks itself from selected / locked.
+    private let draw_row = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                            pal: const uint32[], f: const font.info*,
+                            time: float64, x_cursor: int32, x_label: int32,
+                            row_y: int32, label: const str,
+                            is_sel: bool, is_locked: bool) ->
+        if is_sel then
+            draw_cursor(rc, vg, pal, x_cursor, row_y - 4, time)
+        let color = if is_locked then color_locked
+                    else if is_sel then color_sel else color_normal
+        font.draw_text(rc, f, x_label, row_y, label, color)
+
+    // Bottom-of-screen help line.
+    private let draw_help = (rc: render_ctx*, f: const font.info*, text: const str) ->
+        font.draw_centered(rc, f, game_h - 12, text, color_help)
+
+    // ============================================================
+    // Main menu
+    // ============================================================
+
+    // Layout: 160-wide framed box centered on screen. Rows are in a
+    // single column, cursor at the row's left edge.
+    private let render_main_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                                    pal: const uint32[], f: const font.info*,
+                                    g: game*, time: float64) ->
+        let frame_x = 80
+        let frame_y = 30
+        let frame_w = 160
+        let frame_h = 130
+        draw_frame(rc, frame_x, frame_y, frame_w, frame_h)
+        font.draw_centered(rc, f, frame_y + 6, "MAIN MENU", color_header)
+        let row_top  = frame_y + 22
+        let row_step = 16
+        let x_cursor = frame_x + 14
+        let x_label  = frame_x + 44
+        for i in 0..main_len
+            let row_y = row_top + i * row_step
+            let is_sel = g->menu_sel == i
+            let is_locked = main_is_locked(i, g->has_active_game)
+            // Special-case the BACK TO GAME row label: when no active
+            // game is present we still show it (locked) but the player
+            // sees it identical to NEW GAME context — matches the OG
+            // dimming.
+            let label = main_label(i)
+            draw_row(rc, vg, pal, f, time, x_cursor, x_label, row_y,
+                     label, is_sel, is_locked)
+        draw_help(rc, f, "ARROWS  ENTER  ESC")
+
+    // ============================================================
+    // Episode picker
+    // ============================================================
+
+    // Six rows, each with the OG 48x24 episode card on the left and the
+    // episode title text on the right. Cursor sits to the left of the card.
+    private let render_episode_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                                        pal: const uint32[], f: const font.info*,
+                                        g: game*, time: float64) ->
+        let frame_x = 16
+        let frame_y = 12
+        let frame_w = game_w - 32
+        let frame_h = 180
+        draw_frame(rc, frame_x, frame_y, frame_w, frame_h)
+        font.draw_centered(rc, f, frame_y + 4, "WHICH EPISODE?", color_header)
+        let row_top  = frame_y + 18
+        let row_step = 26
+        let x_cursor = frame_x + 4
+        let x_card   = frame_x + 30
+        let x_label  = frame_x + 84
+        for i in 0..episode.count
+            let row_y = row_top + i * row_step
+            let is_sel = g->menu_sel == i
             if is_sel then
-                let w = font.text_width(f, label)
-                let cx = (game_w - w) / 2
-                font.draw_text(rc, f, cx - 14, y, ">", yellow)
-                font.draw_text(rc, f, cx + w + 6, y, "<", yellow)
+                draw_cursor(rc, vg, pal, x_cursor, row_y + 4, time)
+            pics.draw(rc, vg, pal, episode_card(i), x_card, row_y)
+            let color = if is_sel then color_sel else color_normal
+            // Two-line label: "EPISODE N" header + descriptive title.
+            font.draw_text(rc, f, x_label, row_y + 2,
+                "EPISODE %d{i + 1}", color)
+            font.draw_text(rc, f, x_label, row_y + 12,
+                episode_label(i), color)
+        draw_help(rc, f, "ARROWS  ENTER  ESC")
 
-    // Render the save or load slot menu. Each row shows "N <label>"
-    // or "N EMPTY". The save-picker highlights all slots (writable);
-    // the load-picker greys empty slots so they're visually
-    // unselectable.
-    private let render_slot = (rc: render_ctx*, sm: save_menu_ctx*, f: const font.info*,
-                       title: const str, sel: int32, load_mode: bool) ->
-        let yellow = 0xFFFFD700u32
-        let white  = 0xFFFFFFFFu32
-        let dull   = 0xFF707070u32
-        let gray   = 0xFFB0B0B0u32
-        font.draw_centered(rc, f, 20, title, yellow)
-        let items_y = 44
+    // ============================================================
+    // Difficulty picker
+    // ============================================================
+
+    // Four rows, each with the BJ-face difficulty card centered above
+    // its label. We arrange two rows × four columns? No — original
+    // game lays them out as a single column too, with the active card
+    // shown alongside.
+    private let render_difficulty_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                                           pal: const uint32[], f: const font.info*,
+                                           g: game*, time: float64) ->
+        let frame_x = 36
+        let frame_y = 14
+        let frame_w = game_w - 72
+        let frame_h = 172
+        draw_frame(rc, frame_x, frame_y, frame_w, frame_h)
+        font.draw_centered(rc, f, frame_y + 4, "HOW TOUGH ARE YOU?", color_header)
+        let row_top  = frame_y + 22
+        let row_step = 36
+        let x_cursor = frame_x + 4
+        let x_card   = frame_x + 28
+        let x_label  = frame_x + 60
+        for i in 0..4
+            let row_y = row_top + i * row_step
+            let is_sel = g->menu_sel == i
+            if is_sel then
+                draw_cursor(rc, vg, pal, x_cursor, row_y + 8, time)
+            pics.draw(rc, vg, pal, diff_card(i), x_card, row_y)
+            let color = if is_sel then color_sel else color_normal
+            font.draw_text(rc, f, x_label, row_y + 12, diff_label(i), color)
+        draw_help(rc, f, "ARROWS  ENTER  ESC")
+
+    // ============================================================
+    // Sound submenu
+    // ============================================================
+
+    // Two simple toggles. Each row uses the OG 136x16 section header
+    // (c_fx_title / c_music_title) as its row label, with ON/OFF text
+    // right-aligned. Skips the original's c_digi_title since wolf-fc
+    // has no separate digitized-sound channel: SFX = AdLib + digi
+    // mixed, so the SFX toggle covers both.
+    private let render_sound_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                                      pal: const uint32[], f: const font.info*,
+                                      g: game*, ac: audio_ctx*, time: float64) ->
+        let frame_x = 50
+        let frame_y = 38
+        let frame_w = 220
+        let frame_h = 110
+        draw_frame(rc, frame_x, frame_y, frame_w, frame_h)
+        font.draw_centered(rc, f, frame_y + 6, "SOUND", color_header)
+        let row_top  = frame_y + 26
+        let row_step = 36
+        let x_cursor = frame_x + 8
+        let x_label  = frame_x + 36
+        let label_pic = (i: int32) ->
+            match i with
+            | 0 -> pics.id.c_fx_title    // "SOUND EFFECTS" 136x16
+            | 1 -> pics.id.c_music_title // "MUSIC" 136x16
+            | _ -> -1
+        let is_on = (i: int32) ->
+            if i == 0 then ac->sfx_on else g->music_on
+        for i in 0..sound_len
+            let row_y = row_top + i * row_step
+            let is_sel = g->menu_sel == i
+            if is_sel then
+                draw_cursor(rc, vg, pal, x_cursor, row_y, time)
+            pics.draw(rc, vg, pal, label_pic(i), x_label, row_y)
+            let value = if is_on(i) then "ON" else "OFF"
+            let color = if is_sel then color_sel else color_normal
+            // Right-align the ON/OFF value inside the frame.
+            let vw = font.text_width(f, value)
+            font.draw_text(rc, f, frame_x + frame_w - 16 - vw,
+                row_y + 4, value, color)
+        draw_help(rc, f, "ARROWS  ENTER toggles  ESC")
+
+    // ============================================================
+    // Save / Load slot list
+    // ============================================================
+
+    // 10-slot list. Slot art is too cramped to use the OG floppy icon
+    // per row; we keep the textual layout but stamp the c_loadgame /
+    // c_savegame header pic at the top.
+    private let render_slot = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                       pal: const uint32[], f: const font.info*,
+                       sm: save_menu_ctx*, header_pic: int32, sel: int32,
+                       load_mode: bool, time: float64) ->
+        let frame_x = 16
+        let frame_y = 8
+        let frame_w = game_w - 32
+        let frame_h = 184
+        draw_frame(rc, frame_x, frame_y, frame_w, frame_h)
+        // Header pic centred at the top of the frame. The pic is 216x48.
+        let hw = vgagraph.pic_width(vg, header_pic)
+        let hh = vgagraph.pic_height(vg, header_pic)
+        let header_w = if hw > 0 then hw else 216
+        let header_h = if hh > 0 then hh else 48
+        pics.draw(rc, vg, pal, header_pic,
+            frame_x + (frame_w - header_w) / 2, frame_y + 4)
+        let row_top  = frame_y + header_h + 8
+        let row_step = 11
+        let x_cursor = frame_x + 8
+        let x_num    = frame_x + 38
+        let x_lvl    = frame_x + 56
+        let x_label  = frame_x + 96
+        let x_score  = frame_x + frame_w - 60
         for i in 0..save.num_slots
             let s = &sm->slots[i]
-            let y = items_y + i * (f->height + 3)
+            let row_y = row_top + i * row_step
             let is_sel = sel == i
             let is_locked = load_mode && s->empty
-            let color = if is_locked then dull
-                        else if is_sel then yellow else white
-            let row_x = 40
-            font.draw_text(rc, f, row_x, y, "%d{i + 1}", color)
+            if is_sel then
+                draw_cursor(rc, vg, pal, x_cursor, row_y - 3, time)
+            let color = if is_locked then color_locked
+                        else if is_sel then color_sel else color_normal
+            font.draw_text(rc, f, x_num, row_y, "%d{i + 1}", color)
             if s->empty then
-                font.draw_text(rc, f, row_x + 18, y, "EMPTY", color)
+                font.draw_text(rc, f, x_lvl, row_y, "EMPTY", color)
             else
-                // "LVL N  <label>  SCORE"
                 let ep = s->level_num / episode.levels_per + 1
                 let lvl = s->level_num % episode.levels_per + 1
-                font.draw_text(rc, f, row_x + 18, y,
-                    "E%d{ep}M%d{lvl}", color)
-                // Label (user-chosen). Fall back to a generic string
-                // if unset.
+                font.draw_text(rc, f, x_lvl, row_y, "E%d{ep}M%d{lvl}", color)
                 if s->label.len > 0 then
-                    // Draw up to ~22 chars of label.
                     let mut limit = (int32) s->label.len
                     if limit > 22 then limit = 22
-                    // Copy to a tiny scratch buffer so we can treat it
-                    // as const str.
                     for j in 0..limit
                         sm->label_scratch[j] = s->label[j]
                     sm->label_scratch[limit] = 0u8
                     let slab = (const str) sm->label_scratch[0..(int64) limit]
-                    font.draw_text(rc, f, row_x + 60, y, slab, color)
-                font.draw_text(rc, f, row_x + 180, y, "%d{s->score}", color)
-            if is_sel then
-                font.draw_text(rc, f, 20, y, ">", yellow)
-                font.draw_text(rc, f, game_w - 28, y, "<", yellow)
-        font.draw_centered(rc, f, game_h - 24,
-            "UP/DOWN  ENTER  ESC", gray)
+                    font.draw_text(rc, f, x_label, row_y, slab, color)
+                font.draw_text(rc, f, x_score, row_y, "%d{s->score}", color)
+        draw_help(rc, f, "ARROWS  ENTER  ESC")
 
     let render_main = (rc: render_ctx*, sm: save_menu_ctx*,
                        vg: const vgagraph.vgagraph_file*, pal: const uint32[],
-                       f: const font.info*, g: game*) ->
-        // Tint the title as a backdrop (slightly dimmed so the menu
-        // pops).
-        pics.blit_title_bg(rc)
-        // Darken overlay so menu text stays readable over the title
-        // art.
-        overlay.viewport_tint_full(rc, 0x00000000u32, 0.55)
+                       f: const font.info*, g: game*, ac: audio_ctx*) ->
+        draw_backdrop(rc)
+        let time = g->phase_timer
         if g->menu_level == nav.main then
-            draw_list(rc, f, "MAIN MENU", 50, main_len, g->menu_sel,
-                (i: int32) ->
-                    // SOUND row gets an inline ON/OFF; RESUME and
-                    // SAVE rows are locked without an active game.
-                    if i == 4 then
-                        if g->music_on then "SOUND:  ON" else "SOUND: OFF"
-                    else main_label(i),
-                (i: int32) -> main_is_locked(i, g->has_active_game))
+            render_main_list(rc, vg, pal, f, g, time)
         else if g->menu_level == nav.episode then
-            draw_list(rc, f, "CHOOSE EPISODE", 44, episode.count, g->menu_sel,
-                (i: int32) -> episode_label(i),
-                (_: int32) -> false)
-        else if g->menu_level == nav.map then
-            draw_list(rc, f, "CHOOSE FLOOR", 32, map_len, g->menu_sel,
-                (i: int32) -> map_label(i),
-                (_: int32) -> false)
+            render_episode_list(rc, vg, pal, f, g, time)
         else if g->menu_level == nav.difficulty then
-            draw_list(rc, f, "CHOOSE DIFFICULTY", 56, 4, g->menu_sel,
-                (i: int32) -> diff_label(i),
-                (_: int32) -> false)
+            render_difficulty_list(rc, vg, pal, f, g, time)
+        else if g->menu_level == nav.sound then
+            render_sound_list(rc, vg, pal, f, g, ac, time)
         else if g->menu_level == nav.savelist then
-            render_slot(rc, sm, f, "SAVE GAME", g->menu_sel, false)
+            render_slot(rc, vg, pal, f, sm, pics.id.c_savegame, g->menu_sel, false, time)
         else if g->menu_level == nav.loadlist then
-            render_slot(rc, sm, f, "LOAD GAME", g->menu_sel, true)
+            render_slot(rc, vg, pal, f, sm, pics.id.c_loadgame, g->menu_sel, true, time)

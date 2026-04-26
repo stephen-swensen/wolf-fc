@@ -565,11 +565,21 @@ assert_contains "cli:near-boss-teleports-to-hans-on-e1m9" \
 assert_contains "cli:near-boss-no-op-without-boss" \
     "--level=0 --near-boss state" \
     "pos=( 29.5000,  57.5000)"
-# setphase:mapmenu lands in the NEW GAME → MAP submenu. The submenu itself
-# has no stdout dump, but the phase command confirms menu state.
-assert_contains "cli:setphase-mapmenu" \
-    "setphase:mapmenu phase" \
+# setphase:soundmenu lands in the SOUND submenu. The submenu itself has
+# no stdout dump, but the phase command confirms menu state.
+assert_contains "cli:setphase-soundmenu" \
+    "setphase:soundmenu phase" \
     "phase=menu"
+# setphase:pg13 enters the parental-advisory splash. Used by the intro
+# sequence; the phase command verifies routing.
+assert_contains "cli:setphase-pg13" \
+    "setphase:pg13 phase" \
+    "phase=pg13"
+# PG-13 splash auto-advances to the title screen after pg13_screen.auto_
+# advance_time seconds (~6 s). `wait:` ticks at 35Hz, so 245 ticks = 7 s.
+assert_contains "cli:pg13-auto-advances-to-title" \
+    "setphase:pg13 wait:245 phase" \
+    "phase=title"
 
 section "cheats"
 # MLI chord: full health / 99 ammo / both keys / gatling, score zeroed.
@@ -693,7 +703,8 @@ section "music routing"
 # its wolf3d-original track instead of whatever per-level song was last
 # loaded. Asserting the chunk number is enough — the audio path itself
 # isn't exercised in headless mode.
-assert_contains "music:title-plays-wonderin"      "setphase:title music"      "audiot offset=14"
+assert_contains "music:title-plays-nazi-nor"      "setphase:title music"      "audiot offset=7"
+assert_contains "music:pg13-plays-wonderin"       "setphase:pg13 music"       "audiot offset=14"
 assert_contains "music:menu-plays-wonderin"       "setphase:menu music"       "audiot offset=14"
 assert_contains "music:gameplay-uses-songs-table" "music"                     "audiot offset=3"
 assert_contains "music:intermission-plays-endlevel" \

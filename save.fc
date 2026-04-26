@@ -591,6 +591,7 @@ module save =
         let g = w->g
         let lv = w->lv
         let phase_s = match g->phase with
+        | pg13         -> "pg13"
         | title        -> "title"
         | main_menu    -> "menu"
         | playing      -> "playing"

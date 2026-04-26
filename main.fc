@@ -77,6 +77,8 @@ module episode =
 //   intermission  — stats screen between levels (press space to continue)
 //   game_over     — lives exhausted (press space to restart from level 0)
 union game_phase =
+    | pg13          // PG-13 parental-advisory splash shown once at startup;
+                    // any key (or a short auto-timer) advances to title.
     | title         // title screen shown before first game; any key → menu
     | main_menu     // nav a list with arrows. Doubles as the pause UI:
                     // Esc from `playing` lands here with RESUME selected.
@@ -97,11 +99,12 @@ union game_phase =
     | victory       // all six episodes cleared; space returns to main menu
 
 // Menu navigation state. `menu_level` picks which list to show:
-//   0 = main menu          (NEW GAME / LOAD GAME / SAVE GAME / SOUND / QUIT)
-//   1 = difficulty picker  (under NEW GAME, after episode select)
-//   2 = episode picker     (under NEW GAME, before difficulty)
-//   3 = save-slot list     (Save Game — 10 slots)
-//   4 = load-slot list     (Load Game — 10 slots)
+//   main        (NEW GAME / SOUND / LOAD GAME / SAVE GAME / RESUME / QUIT)
+//   difficulty  (under NEW GAME, after episode select)
+//   episode     (under NEW GAME, before difficulty)
+//   savelist    (Save Game — 10 slots)
+//   loadlist    (Load Game — 10 slots)
+//   sound       (Music ON/OFF + Sound Effects ON/OFF)
 
 struct game =
     // Camera / player
@@ -473,6 +476,10 @@ struct audio_ctx =
     ad: audio.audio_data*      // AUDIOT — AdLib SFX chunks + music
     sfx: adlib.sfx_state*      // AdLib SFX playback (owns its own OPL2 chip)
     digi: digi.player*         // 8-bit PCM playback (up to 4 slots)
+    // Sound submenu's "Sound Effects: ON/OFF" toggle. Read by sfx.trigger_*
+    // — when false, every sfx call no-ops. Music has its own gate
+    // (`music_on` on `game`, consulted in the main-loop mixer).
+    sfx_on: bool
 
 // Save/load menu scratch. One instance per process — only one menu is open
 // at a time, so sharing is fine. `slots` is refreshed by save.refresh_slots
@@ -829,6 +836,12 @@ let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
     // within their episode).
     if g->phase == game_phase.death_cam && g->dc_sub == death_cam.sub.done then
         intermission.enter(g, w->ac)
+    // PG-13 splash auto-advances to the title after a short hold so a
+    // walked-away player doesn't come back to a stuck splash. Any keypress
+    // also advances (handled in the main loop, not here).
+    if g->phase == game_phase.pg13 && g->phase_timer >= pg13_screen.auto_advance_time then
+        g->phase = game_phase.title
+        g->phase_timer = 0.0
     level_changed
 // One simulation tick — runs all per-frame game-state updates in order.
 // Used by both the interactive game loop and the headless test mode so
@@ -922,11 +935,14 @@ let tick = (w: world*, dt: float64) ->
 // Render the full game frame to fb (used before saving a screenshot).
 let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[]) ->
     match w->g->phase with
+    | pg13 ->
+        pg13_screen.render(w->rc, w->vg, pal)
+        return
     | title ->
         title_screen.render(w->rc, w->vg, pal, w->font, w->g->phase_timer)
         return
     | main_menu ->
-        menu.render_main(w->rc, w->sm, w->vg, pal, w->font, w->g)
+        menu.render_main(w->rc, w->sm, w->vg, pal, w->font, w->g, w->ac)
         return
     | intermission ->
         intermission.render(w->rc, w->vg, pal, w->g)
@@ -1130,6 +1146,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
     else if arg == "counters" then
         // Kill / secret / treasure counters + level time / par / phase.
         let phase_s = match g->phase with
+        | pg13         -> "pg13"
         | title        -> "title"
         | main_menu    -> "menu"
         | playing      -> "playing"
@@ -1231,7 +1248,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         else if g->phase == game_phase.victory then
             g->phase = game_phase.main_menu
             g->menu_level = menu.nav.main
-            g->menu_sel = 1     // NEW GAME — game ended, RESUME is locked
+            g->menu_sel = 0     // NEW GAME row — game ended, BACK TO GAME locked
             g->has_active_game = false
         else if g->phase == game_phase.game_over then
             restart_full_game(w, w->ac->vs)
@@ -1348,7 +1365,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
     else if text.starts_with(arg, "setphase:") then
         // Force a phase transition for test-mode screenshot coverage.
         let p = arg[9..arg.len]
-        if p == "title" then g->phase = game_phase.title
+        if p == "pg13" then
+            g->phase = game_phase.pg13
+            g->phase_timer = 0.0
+        else if p == "title" then g->phase = game_phase.title
         else if p == "menu" then
             g->phase = game_phase.main_menu
             g->menu_level = menu.nav.main
@@ -1358,9 +1378,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         else if p == "epmenu" then
             g->phase = game_phase.main_menu
             g->menu_level = menu.nav.episode
-        else if p == "mapmenu" then
+        else if p == "soundmenu" then
             g->phase = game_phase.main_menu
-            g->menu_level = menu.nav.map
+            g->menu_level = menu.nav.sound
         else if p == "savemenu" then
             g->phase = game_phase.main_menu
             g->menu_level = menu.nav.savelist
@@ -1370,9 +1390,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             g->menu_level = menu.nav.loadlist
             save.refresh_slots(w->sm)
         else if p == "playing" then g->phase = game_phase.playing
-        else bad("title/menu/epmenu/mapmenu/diffmenu/savemenu/loadmenu/playing")
+        else bad("pg13/title/menu/epmenu/diffmenu/soundmenu/savemenu/loadmenu/playing")
     else if arg == "phase" then
         let phase_s = match g->phase with
+        | pg13         -> "pg13"
         | title        -> "title"
         | main_menu    -> "menu"
         | playing      -> "playing"
@@ -1727,7 +1748,7 @@ let main = (args: str[]) ->
         bj_phase = 0, bj_yelled = false,
         dc_sub = 0, dc_timer = 0.0, dc_boss_idx = -1,
         dc_kill_x = 0.0, dc_kill_y = 0.0, dc_fade = 0.0,
-        phase = game_phase.title, phase_timer = 0.0,
+        phase = game_phase.pg13, phase_timer = 0.0,
         damage_flash_timer = 0.0, respawn_fade_timer = 0.0,
         get_psyched_timer = 0.0, got_gatling_timer = 0.0,
         kills = 0, total_kills = 0,
@@ -1767,7 +1788,8 @@ let main = (args: str[]) ->
             vs = vs,
             ad = ad,
             sfx = adlib.init((float64) sfx.sample_rate),
-            digi = digi.init(vs)
+            digi = digi.init(vs),
+            sfx_on = true
         })!,
         sm = build_save_menu_ctx(),
         vg = vg,
@@ -1955,29 +1977,43 @@ let main = (args: str[]) ->
                     if is_alt_enter then continue
                 // Per-phase dispatch for everything else.
                 match g->phase with
+                | pg13 ->
+                    // Any key advances to the title screen. update_phase_
+                    // transitions also auto-advances after a few seconds.
+                    g->phase = game_phase.title
+                    g->phase_timer = 0.0
                 | title ->
                     // Any key advances to the main menu. Default selection
                     // = NEW GAME (RESUME is locked from the title screen).
                     g->phase = game_phase.main_menu
                     g->menu_level = menu.nav.main
-                    g->menu_sel = 1
+                    g->menu_sel = 0     // NEW GAME row in OG layout
                     g->phase_timer = 0.0
                 | main_menu ->
                     // Classic menu-cursor feedback: MOVEGUN1SND on up/down
-                    // nav (mirrors the gun-cursor click in the original),
-                    // SHOOTSND on confirm, ESCPRESSEDSND on cancel. Plays on
+                    // nav, SHOOTSND on confirm into a submenu, MOVEGUN2SND
+                    // on commit-a-setting (sound toggles), ESCPRESSEDSND on
+                    // cancel. The submenu-confirm vs setting-commit split
+                    // matches the original: SHOOTSND drilling-in,
+                    // MOVEGUN2SND finalising a config change. Plays on
                     // every menu level — the dispatch below just mutates
-                    // menu_sel / menu_level, so a single site up here covers
-                    // all sub-menus without sprinkling calls per branch.
+                    // menu_sel / menu_level, so a single site up here
+                    // covers all sub-menus without sprinkling calls per
+                    // branch.
+                    let is_confirm = k == sdl2.key_return || k == sdl2.key_space
+                    let is_commit  = is_confirm && g->menu_level == menu.nav.sound
                     if k == sdl2.key_up || k == sdl2.key_down then
                         sfx.trigger(sfx.id.move_gun1, w->ac)
-                    else if k == sdl2.key_return || k == sdl2.key_space then
+                    else if is_commit then
+                        sfx.trigger(sfx.id.move_gun2, w->ac)
+                    else if is_confirm then
                         sfx.trigger(sfx.id.shoot, w->ac)
                     else if k == sdl2.key_escape then
                         sfx.trigger(sfx.id.esc_pressed, w->ac)
                     if g->menu_level == menu.nav.main then
-                        // Up/down navigation skips locked rows so RESUME and
-                        // SAVE without an active game don't get in the way.
+                        // Up/down navigation skips locked rows so SAVE
+                        // and BACK TO GAME without an active game don't
+                        // get in the way.
                         if k == sdl2.key_up then
                             let mut s = g->menu_sel
                             for _ in 0..menu.main_len
@@ -1990,18 +2026,19 @@ let main = (args: str[]) ->
                                 s = (s + 1) % menu.main_len
                                 if !menu.main_is_locked(s, g->has_active_game) then break
                             g->menu_sel = s
-                        else if k == sdl2.key_return || k == sdl2.key_space then
+                        else if is_confirm then
+                            // OG layout: NEW / SOUND / LOAD / SAVE / BACK / QUIT
                             match g->menu_sel with
                             | 0 ->
-                                // RESUME GAME — only reachable when active.
-                                if g->has_active_game then
-                                    g->phase = game_phase.playing
-                            | 1 ->
                                 // NEW GAME → episode picker
                                 g->menu_level = menu.nav.episode
                                 g->menu_sel = 0
+                            | 1 ->
+                                // SOUND → sound submenu
+                                g->menu_level = menu.nav.sound
+                                g->menu_sel = 0
                             | 2 ->
-                                // LOAD GAME → load slot menu (reads slot cache)
+                                // LOAD GAME → load slot menu
                                 save.refresh_slots(w->sm)
                                 g->menu_level = menu.nav.loadlist
                                 g->menu_sel = 0
@@ -2012,16 +2049,15 @@ let main = (args: str[]) ->
                                     g->menu_level = menu.nav.savelist
                                     g->menu_sel = 0
                             | 4 ->
-                                g->music_on = !g->music_on
-                                music_on = g->music_on
-                                if !music_on && audio_dev > 0u32 then
-                                    sdl2.clear_audio(audio_dev)
+                                // BACK TO GAME — only reachable when active.
+                                if g->has_active_game then
+                                    g->phase = game_phase.playing
                             | 5 ->
                                 g->want_quit = true
                             | _ -> void()
                         else if k == sdl2.key_escape then
-                            // Esc on the main menu = RESUME if a game is
-                            // active; otherwise no-op (no game to return to).
+                            // Esc on the main menu = back to game if one
+                            // is active; otherwise no-op.
                             if g->has_active_game then
                                 g->phase = game_phase.playing
                     else if g->menu_level == menu.nav.episode then
@@ -2029,68 +2065,59 @@ let main = (args: str[]) ->
                             g->menu_sel = (g->menu_sel + episode.count - 1) % episode.count
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % episode.count
-                        else if k == sdl2.key_return || k == sdl2.key_space then
-                            // Remember chosen episode in level_num (as its
-                            // starting map). Map picker will refine this.
+                        else if is_confirm then
+                            // Episode pick → straight to difficulty.
+                            // level_num resets to the episode's first map.
                             g->level_num = g->menu_sel * episode.levels_per
-                            g->menu_level = menu.nav.map
-                            g->menu_sel = 0    // default to MAP 1
-                        else if k == sdl2.key_escape then
-                            g->menu_level = menu.nav.main
-                            g->menu_sel = 1     // back to NEW GAME
-                    else if g->menu_level == menu.nav.map then
-                        if k == sdl2.key_up then
-                            g->menu_sel = (g->menu_sel + menu.map_len - 1) % menu.map_len
-                        else if k == sdl2.key_down then
-                            g->menu_sel = (g->menu_sel + 1) % menu.map_len
-                        else if k == sdl2.key_return || k == sdl2.key_space then
-                            // menu_sel 0..9 = map index within episode.
-                            // menu_sel 10 = BOSS FIGHT shortcut: map 9 +
-                            // near-boss teleport, consumed in start_new_
-                            // game_here after the level loads.
-                            let ep = g->level_num / episode.levels_per
-                            let picked_map = if g->menu_sel == 10 then 8 else g->menu_sel
-                            g->level_num = ep * episode.levels_per + picked_map
-                            g->want_near_boss = g->menu_sel == 10
+                            g->want_near_boss = false
                             g->menu_level = menu.nav.difficulty
                             g->menu_sel = g->difficulty
                         else if k == sdl2.key_escape then
-                            g->menu_level = menu.nav.episode
-                            g->menu_sel = g->level_num / episode.levels_per
+                            g->menu_level = menu.nav.main
+                            g->menu_sel = 0     // back to NEW GAME row
                     else if g->menu_level == menu.nav.difficulty then
                         if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + 3) % 4
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % 4
-                        else if k == sdl2.key_return || k == sdl2.key_space then
+                        else if is_confirm then
                             g->difficulty = g->menu_sel
-                            // g->level_num already holds the full ep*10+map
-                            // index from the map picker. g->want_near_boss
-                            // is consumed inside start_new_game_here.
+                            // g->level_num already holds the chosen episode's
+                            // first map (set when leaving the episode picker).
                             start_new_game_here(w, vs)
                             g->has_active_game = true
                         else if k == sdl2.key_escape then
-                            // Preserve map / boss-fight picker selection:
-                            // if the user had BOSS FIGHT selected (which
-                            // sets want_near_boss and level_num = ep*10+8),
-                            // land them back on row 10 so Escape-loops
-                            // don't drop that choice.
-                            g->menu_level = menu.nav.map
-                            g->menu_sel = if g->want_near_boss then 10
-                                else g->level_num % episode.levels_per
-                            g->want_near_boss = false
+                            g->menu_level = menu.nav.episode
+                            g->menu_sel = g->level_num / episode.levels_per
+                    else if g->menu_level == menu.nav.sound then
+                        if k == sdl2.key_up then
+                            g->menu_sel = (g->menu_sel + menu.sound_len - 1) % menu.sound_len
+                        else if k == sdl2.key_down then
+                            g->menu_sel = (g->menu_sel + 1) % menu.sound_len
+                        else if is_confirm then
+                            // Toggle the row's setting in place.
+                            //   row 0 = SOUND EFFECTS → ac->sfx_on
+                            //   row 1 = MUSIC         → g->music_on
+                            if g->menu_sel == 0 then
+                                w->ac->sfx_on = !w->ac->sfx_on
+                            else
+                                g->music_on = !g->music_on
+                                music_on = g->music_on
+                                if !music_on && audio_dev > 0u32 then
+                                    sdl2.clear_audio(audio_dev)
+                        else if k == sdl2.key_escape then
+                            g->menu_level = menu.nav.main
+                            g->menu_sel = 1     // back to SOUND row
                     else if g->menu_level == menu.nav.savelist then
                         if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + save.num_slots - 1) % save.num_slots
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % save.num_slots
-                        else if k == sdl2.key_return || k == sdl2.key_space then
+                        else if is_confirm then
                             save.to_slot(w, g->menu_sel)
                             save.refresh_slots(w->sm)
-                            // Return to main menu after save (back to the
-                            // SAVE GAME row).
                             g->menu_level = menu.nav.main
-                            g->menu_sel = 3
+                            g->menu_sel = 3     // back to SAVE GAME row
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
                             g->menu_sel = 3
@@ -2099,7 +2126,7 @@ let main = (args: str[]) ->
                             g->menu_sel = (g->menu_sel + save.num_slots - 1) % save.num_slots
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % save.num_slots
-                        else if k == sdl2.key_return || k == sdl2.key_space then
+                        else if is_confirm then
                             if !w->sm->slots[g->menu_sel].empty then
                                 if save.from_slot(w, vs, g->menu_sel) then
                                     g->has_active_game = true
@@ -2110,13 +2137,13 @@ let main = (args: str[]) ->
                     // playing, dying, intermission, game_over,
                     // episode_end, victory. Escape from playing
                     // jumps to the main menu (which doubles as the pause UI
-                    // — RESUME GAME is the default selection so any-key-Esc-
+                    // — BACK TO GAME is the default selection so any-key-Esc-
                     // any-key resumes immediately). Other phases consume keys
                     // for their own advance flow (handled separately below).
                     if k == sdl2.key_escape && g->phase == game_phase.playing then
                         g->phase = game_phase.main_menu
                         g->menu_level = menu.nav.main
-                        g->menu_sel = 0     // RESUME GAME row
+                        g->menu_sel = 4     // BACK TO GAME row
                         // Clear held inputs so the player isn't sprinting
                         // when they un-pause. (Mirrors intermission.enter's
                         // input-clear convention.)
@@ -2250,7 +2277,7 @@ let main = (args: str[]) ->
             g->key_ack_handled = true
             g->phase = game_phase.main_menu
             g->menu_level = menu.nav.main
-            g->menu_sel = 1     // NEW GAME — game ended, RESUME is locked
+            g->menu_sel = 0     // NEW GAME row — game ended, BACK TO GAME locked
             g->has_active_game = false
         // Game-over: any key restarts from level 0 with a fresh game.
         if g->phase == game_phase.game_over

@@ -107,15 +107,15 @@ module sfx =
         let esc_pressed    = 71   // ESCPRESSEDSND — menu cancel / back
         let missile_hit    = 72   // MISSILEHITSND — rocket wall explosion
         let slurpie        = 73   // SLURPIESND — gibs pickup slurp
+        let move_gun2      = 74   // MOVEGUN2SND — menu commit / setting changed
 
     // Total number of sfx.id.* entries. The sfx_digi_slot / sfx_adlib_chunk
     // tables in main.fc are sized to this.
-    private let count = 74
+    private let count = 75
 
     // --- AUDIOT enum IDs the original triggered but wolf-fc still doesn't.
     //     Append a new `id.*` above when wiring one up. Tracked in TODO.md.
     //
-    //   move_gun2        = 4   MOVEGUN2SND      — keybind-rebind confirm beep
     //   player_death     = 9   PLAYERDEATHSND   — BJ's dying scream on killing blow
     //   shoot_door       = 28  SHOOTDOORSND     — keybind-menu confirm (NOT door hits)
     //
@@ -138,7 +138,7 @@ module sfx =
     // Verified entry-by-entry 2026-04-20: every row here matches
     // InitDigiMap's table for WL6; missing enum entries resolve to -1
     // too (SD_PlaySound then falls back to AdLib).
-    private let digi_slot = int32[74] {
+    private let digi_slot = int32[75] {
          3,   // open_door    (OPENDOORSND  -> digi 3)
          2,   // close_door   (CLOSEDOORSND -> digi 2)
          5,   // atk_pistol   (ATKPISTOLSND -> digi 5)
@@ -214,12 +214,13 @@ module sfx =
         -1,   // shoot        (no digi — AdLib only)
         -1,   // esc_pressed  (no digi — AdLib only)
         -1,   // missile_hit  (no digi — AdLib only; wolfdigimap omits it)
-        -1    // slurpie       (no digi — AdLib only)
+        -1,   // slurpie       (no digi — AdLib only)
+        -1    // move_gun2     (no digi — AdLib only)
     }
 
     // AdLib fallback: Wolf3D sound-enum value (AUDIOT chunk = 87 + this).
     // -1 to disable. Enum values taken from audiowl6.h.
-    private let adlib_chunk = int32[74] {
+    private let adlib_chunk = int32[75] {
         18,   // open_door    (OPENDOORSND)
         19,   // close_door   (CLOSEDOORSND)
         24,   // atk_pistol   (ATKPISTOLSND)
@@ -293,7 +294,8 @@ module sfx =
         32,   // shoot        (SHOOTSND)
         39,   // esc_pressed  (ESCPRESSEDSND)
         86,   // missile_hit  (MISSILEHITSND — AdLib-only rocket explosion)
-        61    // slurpie      (SLURPIESND — gibs slurp)
+        61,   // slurpie      (SLURPIESND — gibs slurp)
+         4    // move_gun2    (MOVEGUN2SND — menu commit beep)
     }
 
     // Play a sound by sfx.id.*. Prefers the digitized version (richer
@@ -308,6 +310,9 @@ module sfx =
     private let trigger_panned_gain = (sound_id: int32, ac: audio_ctx*,
                                 pan: float64, gain: float64) ->
         if sound_id < 0 || sound_id >= count then return
+        // Honour the Sound submenu's "Sound Effects: OFF" toggle. Music
+        // has its own gate at the mixer (see main loop's `music_on`).
+        if !ac->sfx_on then return
         let digi_idx = digi_slot[sound_id]
         if digi_idx >= 0 then
             digi.play_with_gain(ac->digi, digi_idx, pan, gain)

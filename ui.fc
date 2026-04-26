@@ -23,14 +23,14 @@ module music =
     let headache =  4    // HEADACHE_MUS  (per level — E2 tracks)
     let hitlwltz =  5    // HITLWLTZ_MUS  (unused — Hitler waltz; not referenced)
     let introcw3 =  6    // INTROCW3_MUS  (per level — E3 opener)
-    let nazi_nor =  7    // NAZI_NOR_MUS  (unused — alt normal-enemy theme)
+    let nazi_nor =  7    // NAZI_NOR_MUS  (phase: title — INTROSONG)
     let nazi_omi =  8    // NAZI_OMI_MUS  (per level — E2 ominous track)
     let pow      =  9    // POW_MUS       (per level — E1 tracks)
     let salute   = 10    // SALUTE_MUS    (unused — marching salute fanfare)
     let searchn  = 11    // SEARCHN_MUS   (per level — E1 search theme)
     let suspense = 12    // SUSPENSE_MUS  (per level — E1 suspense)
     let victors  = 13    // VICTORS_MUS   (unused — alt victory theme)
-    let wonderin = 14    // WONDERIN_MUS  (phase: title + main menu)
+    let wonderin = 14    // WONDERIN_MUS  (phase: pg13 splash + main menu)
     let funkyou  = 15    // FUNKYOU_MUS   (unused — funky outro)
     let endlevel = 16    // ENDLEVEL_MUS  (phase: intermission)
     let goingaft = 17    // GOINGAFT_MUS  (per level — E2 chase)
@@ -139,7 +139,7 @@ module pics =
         // --- Title lump (chunks 86..90). One-off full-screen / banner art.
         let statusbar  = 86       // 320x40 in-game status bar
         let title      = 87       // title screen (TITLEPIC)
-        let pg13       = 88       // (unused) parental-advisory splash
+        let pg13       = 88       // parental-advisory splash (gp_pg13 phase)
         let credits    = 89       // (unused) credits screen
         let highscores = 90       // (unused) high-scores screen header
 
@@ -428,13 +428,16 @@ module font =
         imf.init_from_chunk(ad->raw, off, (int64) len, (float64) sfx.sample_rate)
 
     // Pick the AUDIOT chunk number that should be playing for the
-    // current phase. Title and main menu use MENUSONG (WONDERIN).
-    // Intermission uses ENDLEVEL. Per-episode and final victory screens
-    // get URAHERO and VICMARCH. All other phases (playing, dying,
-    // game_over) use the per-level song table.
+    // current phase. Title uses INTROSONG (NAZI_NOR); the main menu
+    // (and the PG-13 splash, which is a brief beat between the title
+    // sequence) uses MENUSONG (WONDERIN). Intermission uses ENDLEVEL.
+    // Per-episode and final victory screens get URAHERO and VICMARCH.
+    // All other phases (playing, dying, game_over) use the per-level
+    // song table.
     let music_chunk_for_phase = (phase: game_phase, level_num: int32) ->
         let mus = match phase with
-        | title | main_menu -> music.wonderin
+        | title                -> music.nazi_nor
+        | pg13 | main_menu     -> music.wonderin
         | intermission         -> music.endlevel
         | bj_victory           -> music.urahero   // same cue as the episode-end screen
         // Death-cam: keep the level track playing so the fizzle-out /

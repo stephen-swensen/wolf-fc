@@ -1,6 +1,7 @@
 // Wolf-FC cutscenes and non-playing screens. Each phase module owns its
 // entry point, per-tick state machine (if any), and renderer.
 //
+//   pg13_screen      — PG-13 parental-advisory splash shown once at startup
 //   title_screen     — shown before the first menu; any key → main menu
 //   game_over        — death collapse post-animation screen
 //   intermission     — per-level tally screen (time / kill / secret /
@@ -912,3 +913,29 @@ module title_screen =
         let blink_on = ((int32) (time * 1.6667)) % 2 == 0
         if blink_on then
             font.draw_centered(rc, f, game_h - 22, "PRESS ANY KEY", 0xFFFFFF00u32)
+
+
+// ============================================================
+// PG-13 splash — short intro pic before the title sequence
+// ============================================================
+
+module pg13_screen =
+    // Auto-advance after this many seconds even without a keypress, so
+    // a player who walks away comes back to a usable screen rather
+    // than a stuck splash. Matches the rough cadence of the original's
+    // intro flow.
+    let auto_advance_time = 6.0
+
+    // PG-13 splash. Pal index 0 is black in the WL6 palette, which
+    // gives a plain dark backdrop the centered pic floats over.
+    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[]) ->
+        let bg = pal[0x00]
+        for i in 0..(game_w * game_h)
+            rc->fb[i] = bg
+        let pw = vgagraph.pic_width(vg, pics.id.pg13)
+        let ph = vgagraph.pic_height(vg, pics.id.pg13)
+        let w = if pw > 0 then pw else 88
+        let h = if ph > 0 then ph else 64
+        let x = (game_w - w) / 2
+        let y = (game_h - h) / 2
+        pics.draw(rc, vg, pal, pics.id.pg13, x, y)
