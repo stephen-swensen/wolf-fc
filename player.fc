@@ -352,11 +352,20 @@ module player =
             else hud.show_message(g, "No clipping OFF")
             g->msg_timer = msg_time
 
-        // TAB+E — skip to the intermission. Arms the same next_level
-        // latch the real elevator switch uses, with a zero wait so the
-        // tally screen comes up immediately.
+        // TAB+E — debug "level done" skip. On a regular floor (and on
+        // the secret floor) it arms the elevator-switch path so the
+        // intermission tally fires; on a boss floor (level % 10 == 8)
+        // we'd normally route through bj_victory, but BJ needs the
+        // map's path arrows to walk (set up only on the EXITTILE
+        // approach after a real boss kill), so a debug-skip lands him
+        // on dir.nodir and the cutscene stalls forever. We skip that
+        // and call episode_end directly — TAB+E is a level-done
+        // shortcut, not a cinematic trigger.
         let apply_tab_e = (g: game*) ->
-            if !g->next_level then
+            if g->level_num % episode.levels_per == 8 then
+                record_level_for_episode(g)
+                episode_end.enter(g)
+            else if !g->next_level then
                 g->next_level = true
                 g->next_level_delay = 0.0
 
