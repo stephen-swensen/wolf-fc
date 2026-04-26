@@ -9,7 +9,6 @@
 //   intermission     — per-level tally screen (time / kill / secret /
 //                      treasure counters)
 //   episode_end      — per-episode victory (after boss level 8)
-//   victory_screen   — all six episodes cleared
 //   bj_victory       — BJ actor runs + jumps + yells after the player
 //                      steps on a boss-level EXITTILE
 //   death_cam        — boss auto-victory cutscene for Schabbs / Giftmacher
@@ -1044,7 +1043,7 @@ module endart_screen =
         g->key_ack_handled = false
 
     // Advance to the next page. Returns true if the article is done
-    // (the caller should then transition to advance_next_episode).
+    // (the caller should then transition back to the main menu).
     let next_page = (g: game*) ->
         if g->endart_page + 1 >= g->endart_total_pages then true
         else
@@ -1053,8 +1052,8 @@ module endart_screen =
             false
 
     // Step back one page; clamps at page 0. No exit-the-article
-    // semantics — that's the caller's job (Esc routes through
-    // advance_next_episode, this is just for Up/Left/PageUp paging).
+    // semantics — that's the caller's job (Esc / past-last route to
+    // the main menu, this is just for Up/Left/PageUp paging).
     let prev_page = (g: game*) ->
         if g->endart_page > 0 then
             g->endart_page = g->endart_page - 1
@@ -1288,30 +1287,9 @@ module endart_screen =
         // hint text is needed.
 
 
-module victory_screen =
-    // Transition to the game-complete victory screen after clearing
-    // episode 6.
-    let enter = (g: game*) ->
-        g->phase = game_phase.victory
-        g->phase_timer = 0.0
-        // (Same rationale as intermission.enter / episode_end.enter
-        // — letting the natural KEYDOWN latch the handled flag avoids
-        // eating the first press.)
-
-    // Final victory (victory): shown after clearing all six
-    // episodes. Space returns to the main menu.
-    let render = (rc: render_ctx*, f: const font.info*, g: game*) ->
-        for i in 0..(game_w * game_h)
-            rc->fb[i] = 0xFF200000u32    // deep red
-        let gold   = 0xFFFFD700u32
-        let white  = 0xFFFFFFFFu32
-        let gray   = 0xFFB0B0B0u32
-        overlay.draw_centered_text(rc, 20, "YOU WON", gold, 3)
-        overlay.draw_centered_text(rc, 54, "THE GAME", gold, 3)
-        font.draw_centered(rc, f, 104, "BJ HAS ESCAPED THE CASTLE", white)
-        hud.draw_text(rc, 70, 124, "FINAL SCORE", white, 1)
-        hud.draw_number(rc, 220, 124, g->score, gold, 1)
-        font.draw_centered(rc, f, game_h - 32, "PRESS ANY KEY", gray)
+// (No `victory_screen` module — the OG WL6 doesn't have an all-six-
+// episodes-cleared screen. Each episode-end's article exits to the
+// main menu, regardless of which episode was just completed.)
 
 
 module game_over =

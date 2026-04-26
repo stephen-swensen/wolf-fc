@@ -102,9 +102,11 @@ union game_phase =
     | endart        // per-episode story-text page(s) shown after the
                     // episode-end stats screen — VGAGRAPH chunks 143..148
                     // hold article-markup data (^P pages, ^Cnn colors,
-                    // ^Gx,y,p inline graphics, word-wrapped text). Any
-                    // key advances pages; final page → advance_next_episode.
-    | victory       // all six episodes cleared; space returns to main menu
+                    // ^Gx,y,p inline graphics, word-wrapped text). Forward
+                    // keys page through; Esc or forward-past-last → main
+                    // menu (matches the OG, where Victory()'s embedded
+                    // ShowArticle ends GameLoop and pops to the control
+                    // panel — no auto-advance to the next episode).
 
 // Menu navigation state. `menu_level` picks which list to show:
 //   main        (NEW GAME / SOUND / LOAD GAME / SAVE GAME / RESUME / QUIT)
@@ -799,29 +801,18 @@ let advance_next_level = (w: world*, vs: const vswap.vswap_file*) ->
     player.clear_input_keys(g)
     pics.trigger_get_psyched(g)
 
-// From episode_end, move into the first map of the next episode. If this
-// was the last episode, go to the final victory screen instead.
-let advance_next_episode = (w: world*, vs: const vswap.vswap_file*) ->
-    let g = w->g
-    let ep = g->level_num / episode.levels_per
-    if ep + 1 >= episode.count then
-        victory_screen.enter(g)
-    else
-        g->level_num = (ep + 1) * episode.levels_per
-        g->has_gold_key = false
-        g->has_silver_key = false
-        // Fresh episode → wipe the per-episode totals.
-        reset_episode_totals(g)
-        reload_level_data(w, vs)
-        spawn.find_player_start(w->lv_data, g)
-        reset_level_counters(g, w->lv)
-        areas.update_player_area(w->lv, g)
-        areas.connect(w->lv, g->area_number)
-        g->phase = game_phase.playing
-        g->phase_timer = 0.0
-        g->made_noise = false
-        player.clear_input_keys(g)
-        pics.trigger_get_psyched(g)
+// End-of-episode → main menu. The OG GameLoop returns from
+// ex_victorious back to the control panel; players replay individual
+// episodes from the menu, with no auto-advance to the next one.
+// Used by the endart phase exit + by the test-mode `advance` command
+// when leaving episode_end / endart.
+let return_to_menu_post_episode = (g: game*) ->
+    g->phase = game_phase.main_menu
+    g->menu_level = menu.nav.main
+    g->menu_sel = 0     // NEW GAME row — game ended, BACK TO GAME locked
+    g->has_active_game = false
+    g->has_gold_key = false
+    g->has_silver_key = false
 
 // Restart the current level (death with lives remaining). Resets player
 // health / ammo / weapon; preserves score; decrements lives at the caller
@@ -1045,9 +1036,6 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
     | endart ->
         endart_screen.render(w->rc, w->vg, pal, w->font, w->g)
         return
-    | victory ->
-        victory_screen.render(w->rc, w->font, w->g)
-        return
     | death_cam ->
         death_cam.render(w, vs, pal, w->vg)
         hud.render(w->rc, w->vg, pal, w->g)
@@ -1249,7 +1237,6 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         | death_cam    -> "death_cam"
         | episode_end  -> "episode_end"
         | endart       -> "endart"
-        | victory      -> "victory"
         let par = if g->level_num < 60 then intermission.par_times[g->level_num] else 0
         io.write("phase=%s{phase_s} difficulty=%d{g->difficulty}\n", stdout)
         io.write("kills=%d{g->kills}/%d{g->total_kills} secrets=%d{g->secrets}/%d{g->total_secrets} treasures=%d{g->treasures}/%d{g->total_treasures}\n", stdout)
@@ -1337,20 +1324,15 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             // episode_end on boss maps.
             intermission.enter(g, w->ac)
         else if g->phase == game_phase.episode_end then
-            // Test-mode advance bypasses the endart article entirely
-            // so scripted sequences match the existing one-`advance`-
-            // per-screen contract. Use the `endart` test command if
-            // you specifically want to exercise the article phase.
-            advance_next_episode(w, w->ac->vs)
+            // Test-mode advance from episode_end → endart, matching the
+            // interactive ack flow. Use `endartnext` / `endart_state` to
+            // step pages within the article.
+            let ep = g->level_num / episode.levels_per
+            endart_screen.enter(g, w->vg, ep)
         else if g->phase == game_phase.endart then
-            // From endart, `advance` skips the remaining pages and
-            // jumps straight to advance_next_episode (or victory).
-            advance_next_episode(w, w->ac->vs)
-        else if g->phase == game_phase.victory then
-            g->phase = game_phase.main_menu
-            g->menu_level = menu.nav.main
-            g->menu_sel = 0     // NEW GAME row — game ended, BACK TO GAME locked
-            g->has_active_game = false
+            // Test-mode advance from endart → main menu, matching the
+            // interactive Esc / past-last-page flow.
+            return_to_menu_post_episode(g)
         else if g->phase == game_phase.game_over then
             restart_full_game(w, w->ac->vs)
     else if text.starts_with(arg, "setdifficulty:") then
@@ -1506,11 +1488,11 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         else bad("pg13/title/menu/epmenu/diffmenu/soundmenu/optionsmenu/savemenu/loadmenu/playing/endart")
     else if arg == "endartnext" then
         // Step one page in the endart article. If there's no next
-        // page, route through advance_next_episode (matches the
-        // interactive ack handler).
+        // page, return to the main menu (matches the interactive
+        // forward-past-last flow).
         if g->phase == game_phase.endart then
             if endart_screen.next_page(g) then
-                advance_next_episode(w, w->ac->vs)
+                return_to_menu_post_episode(g)
         void()
     else if arg == "endart_state" then
         // Dump current article state (page + total). Useful for tests
@@ -1530,7 +1512,6 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         | death_cam    -> "death_cam"
         | episode_end  -> "episode_end"
         | endart       -> "endart"
-        | victory      -> "victory"
         io.write("phase=%s{phase_s} timer=%6.3f{g->phase_timer} lives=%d{g->lives}\n", stdout)
         void()
     else if arg == "music" then
@@ -2109,7 +2090,7 @@ let main = (args: str[]) ->
                 // is held; `repeat != 0` flags the duplicates. We want repeats
                 // for menu nav (hold ↓ to scroll save slots) but NOT for
                 // gameplay keys — a ctrl held through the episode-end screen
-                // would otherwise re-raise key_fire after advance_next_episode
+                // would otherwise re-raise key_fire after the level reset
                 // clears it, so the gatling fires on the first frame of the
                 // next level. Checked per-branch below.
                 let is_key_repeat = event.key.repeat != 0u8
@@ -2154,30 +2135,41 @@ let main = (args: str[]) ->
                         g->phase_timer = 0.0
                 | endart ->
                     // Per-page navigation, faithful to the original
-                    // ShowArticle loop:
+                    // ShowArticle loop. The OG GameLoop's ex_victorious
+                    // case calls `Victory()` (stats + EndText article)
+                    // and then `return`s back to the control panel —
+                    // there is no auto-advance to the next episode.
+                    // Players replay each episode by re-picking it from
+                    // the main menu.
+                    //
                     //   Left / Up / PageUp           → previous page
                     //   Right / Down / PageDown      → next page
                     //   Enter / Space / Ctrl         → next page
-                    //   Esc                          → exit the article
-                    //                                  (the bottom-info
-                    //                                  window pic literally
-                    //                                  shows "ESC EXITS")
-                    // Past the last page, advancing routes to the next
-                    // episode. Other keys (modifiers, letters, etc.) are
-                    // no-ops so a stray bump doesn't skip a page.
+                    //   Esc                          → exit the article →
+                    //                                  main menu (matches
+                    //                                  the on-screen "ESC
+                    //                                  EXITS" hint)
+                    //   Forward past the last page  → main menu (the OG
+                    //                                  loop just stays on
+                    //                                  the final page; we
+                    //                                  return to menu so
+                    //                                  forward isn't a
+                    //                                  dead-end no-op)
+                    // Other keys (modifiers, letters, etc.) are no-ops so
+                    // a stray bump doesn't skip a page.
                     if !is_key_repeat then
                         if k == sdl2.key_left || k == sdl2.key_up
                                 || k == sdl2.key_pageup then
                             endart_screen.prev_page(g)
                         else if k == sdl2.key_escape then
-                            advance_next_episode(w, vs)
+                            return_to_menu_post_episode(g)
                         else if k == sdl2.key_right || k == sdl2.key_down
                                 || k == sdl2.key_pagedown
                                 || k == sdl2.key_return
                                 || k == sdl2.key_space
                                 || k == sdl2.key_lctrl then
                             if endart_screen.next_page(g) then
-                                advance_next_episode(w, vs)
+                                return_to_menu_post_episode(g)
                 | title ->
                     // Advance to the main menu on an ack key. Default
                     // selection = NEW GAME (RESUME is locked from the
@@ -2520,7 +2512,6 @@ let main = (args: str[]) ->
                                 || k == sdl2.key_escape
                             if is_ack_key && (g->phase == game_phase.intermission
                                || g->phase == game_phase.episode_end
-                               || g->phase == game_phase.victory
                                || g->phase == game_phase.game_over) then
                                 g->key_ack = true
             if t == sdl2.keyup_event then
@@ -2576,25 +2567,18 @@ let main = (args: str[]) ->
             else
                 advance_next_level(w, vs)
         // Episode-end → per-episode ending text article. The article's
-        // last page advances to advance_next_episode (or final victory
-        // for episode 6).
+        // last page (or Esc) returns to the main menu — the OG GameLoop
+        // returns from ex_victorious back to the control panel; players
+        // replay episodes individually from the menu.
         if g->phase == game_phase.episode_end && g->phase_timer > 0.0
            && g->key_ack && !g->key_ack_handled then
             g->key_ack_handled = true
             let ep = g->level_num / episode.levels_per
             endart_screen.enter(g, w->vg, ep)
         // Endart paging is handled directly in the keydown event below
-        // (Left/Up/PageUp = back, Esc = skip to next episode, anything
-        // else = forward) — not via the IN_Ack latch since the IN_Ack
+        // (Left/Up/PageUp = back, Esc = exit-to-menu, forward keys =
+        // next page) — not via the IN_Ack latch since the IN_Ack
         // pattern can't distinguish key direction.
-        // Final victory → return to main menu.
-        if g->phase == game_phase.victory && g->phase_timer > 0.0
-           && g->key_ack && !g->key_ack_handled then
-            g->key_ack_handled = true
-            g->phase = game_phase.main_menu
-            g->menu_level = menu.nav.main
-            g->menu_sel = 0     // NEW GAME row — game ended, BACK TO GAME locked
-            g->has_active_game = false
         // Game-over: any key restarts from level 0 with a fresh game.
         if g->phase == game_phase.game_over
            && g->key_ack && !g->key_ack_handled then

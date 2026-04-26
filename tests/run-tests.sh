@@ -667,21 +667,29 @@ assert_contains "episode:level-8-advance-enters-episode-end" \
 assert_contains "episode:bj-victory-auto-advances" \
     "setlevel:8 endepisode wait:200 phase" \
     "phase=episode_end"
-# Pressing advance again on episode_end starts the next episode's map 0.
-assert_contains "episode:episode-end-advance-to-next-ep" \
-    "setlevel:8 endepisode wait:2 advance advance state" \
-    "level=10"
+# Advance from episode_end enters the per-episode endart article
+# (matches the OG flow: Victory() embeds EndText() before returning).
+assert_contains "episode:episode-end-advance-enters-endart" \
+    "setlevel:8 endepisode wait:2 advance advance phase" \
+    "phase=endart"
+# Advancing past the article returns to the main menu — the OG
+# GameLoop returns from ex_victorious back to the control panel,
+# with no auto-advance to the next episode.
+assert_contains "episode:endart-advance-returns-to-menu" \
+    "setlevel:8 endepisode wait:2 advance advance advance phase" \
+    "phase=menu"
 # Level 9 (secret) advance routes back to elevator_back_to[ep]. For
 # ep=0 that's level 1 (E1M2).
 assert_contains "episode:secret-level-routes-back" \
     "setlevel:9 endepisode wait:2 advance state" \
     "level=1"
-# Episode 6 end → final victory screen.
-assert_contains "episode:last-episode-end-goes-to-victory" \
+# Episode 6 end → endart → main menu. The OG WL6 has no special
+# all-six-cleared screen; episode 6 ends the same way every other
+# episode does.
+assert_contains "episode:last-episode-end-enters-endart" \
     "setlevel:58 endepisode wait:2 advance advance phase" \
-    "phase=victory"
-# Victory → main menu: simulated by advance on gp_victory.
-assert_contains "episode:victory-advance-to-menu" \
+    "phase=endart"
+assert_contains "episode:last-episode-endart-returns-to-menu" \
     "setlevel:58 endepisode wait:2 advance advance advance phase" \
     "phase=menu"
 
@@ -698,14 +706,15 @@ assert_contains "endart:e3-has-2-pages" \
 assert_contains "endart:e6-has-2-pages" \
     "setlevel:50 setphase:endart endart_state" \
     "endart page=1 of 2"
-# Stepping through pages: endartnext on the last page transitions to
-# advance_next_episode (level=10 for ep 1 → ep 2's first map).
+# Stepping through pages: endartnext on the last page returns to
+# the main menu (matching the interactive forward-past-last flow,
+# and the OG ShowArticle → GameLoop → control-panel chain).
 assert_contains "endart:next-page-advances" \
     "setlevel:8 setphase:endart endartnext endart_state" \
     "endart page=2 of 2"
-assert_contains "endart:past-last-routes-to-next-episode" \
-    "setlevel:8 setphase:endart endartnext endartnext state" \
-    "level=10"
+assert_contains "endart:past-last-routes-to-menu" \
+    "setlevel:8 setphase:endart endartnext endartnext phase" \
+    "phase=menu"
 # The phase command exposes the new `endart` phase string.
 assert_contains "endart:phase-name" \
     "setphase:endart phase" \
@@ -753,9 +762,11 @@ assert_contains "music:bj-victory-plays-urahero" \
 assert_contains "music:episode-end-plays-urahero" \
     "setlevel:8 endepisode wait:2 advance music" \
     "audiot offset=24"
-assert_contains "music:final-victory-plays-vicmarch" \
-    "setlevel:58 endepisode wait:2 advance advance music" \
-    "audiot offset=25"
+# URAHERO continues into the endart article so the ack→article
+# transition doesn't restart the player.
+assert_contains "music:endart-keeps-urahero" \
+    "setlevel:8 endepisode wait:2 advance advance music" \
+    "audiot offset=24"
 
 section "save / load"
 # Fresh slot state: WOLF_FC_HOME points at a per-run temp dir (see top of

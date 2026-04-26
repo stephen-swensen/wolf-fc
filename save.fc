@@ -733,7 +733,6 @@ module save =
         | death_cam    -> "death_cam"
         | episode_end  -> "episode_end"
         | endart       -> "endart"
-        | victory      -> "victory"
         io.write("\n=== DEBUG DUMP ===\n", stderr)
         io.write("phase=%s{phase_s} hp=%d{g->health} lives=%d{g->lives} level=%d{g->level_num}\n", stderr)
         io.write("pos=(%7.4f{g->pos_x}, %7.4f{g->pos_y}) dir=(%7.4f{g->dir_x}, %7.4f{g->dir_y})\n", stderr)

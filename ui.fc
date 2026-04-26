@@ -41,7 +41,10 @@ module music =
     let twelfth  = 22    // TWELFTH_MUS   (per level — E3 tracks)
     let roster   = 23    // ROSTER_MUS    (unused — high-score roll)
     let urahero  = 24    // URAHERO_MUS   (phase: per-episode victory)
-    let vicmarch = 25    // VICMARCH_MUS  (phase: final game-clear victory)
+    let vicmarch = 25    // VICMARCH_MUS  (unused — wolf-fc has no all-six-
+                         //                episodes-cleared screen; OG WL6
+                         //                doesn't either, so this only fired
+                         //                in the SoD ending we don't ship)
     let pacman   = 26    // PACMAN_MUS    (per level — Pac-Man secret rooms)
 
     // Per-level music: songs[episode * 10 + level] = music track id.
@@ -447,7 +450,6 @@ module font =
         | death_cam            -> if level_num >= 0 && level_num < 60 then music.songs[level_num] else 0
         | episode_end          -> music.urahero
         | endart               -> music.urahero    // continues from episode_end
-        | victory              -> music.vicmarch
         | _ -> if level_num >= 0 && level_num < 60 then music.songs[level_num] else 0
         261 + mus
 
