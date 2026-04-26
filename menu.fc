@@ -379,7 +379,12 @@ module menu =
                     let ew = font.text_width(f, edit)
                     font.draw_text(rc, f, text_x + ew, text_y, "_", color)
             else if s->empty then
-                font.draw_text(rc, f, text_x, text_y, "EMPTY", color)
+                // Centered placeholder inside the row's box, matching
+                // the OG's `- empty -` rendering for unused slots.
+                let placeholder = "- empty -"
+                let pw = font.text_width(f, placeholder)
+                font.draw_text(rc, f, box_x + (box_w - pw) / 2, text_y,
+                    placeholder, color)
             else
                 if s->label.len > 0 then
                     let mut limit = (int32) s->label.len
