@@ -71,25 +71,30 @@ module menu =
 
     // Options submenu — wolf-fc mods. Grow this list as new toggles /
     // sliders land; matched by `render_options_list` and by main.fc's
-    // options-nav handler.
+    // options-nav handler. The RESET row is always the last entry —
+    // bumps stay simple by keeping it at `options_len - 1`.
     //   0 No Dogs       (toggle)
     //   1 Shadow Depth  (0..100% slider, Left/Right adjusts)
-    let options_len = 2
+    //   2 Reset         (action — restores every row to its default)
+    let options_len = 3
 
     let option_kind_toggle = 0
     let option_kind_slider = 1
+    let option_kind_action = 2
 
-    // Per-row metadata: kind (toggle / slider) + label.
+    // Per-row metadata: kind (toggle / slider / action) + label.
     private let option_label = (i: int32) ->
         match i with
         | 0 -> "NO DOGS"
         | 1 -> "SHADOW DEPTH"
+        | 2 -> "RESET TO DEFAULTS"
         | _ -> ""
 
     let option_kind = (i: int32) ->
         match i with
         | 0 -> option_kind_toggle
         | 1 -> option_kind_slider
+        | 2 -> option_kind_action
         | _ -> option_kind_toggle
 
     private let diff_label = (i: int32) ->

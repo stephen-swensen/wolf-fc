@@ -74,7 +74,14 @@ module config =
             music_on = true,
             sfx_on = true,
             no_dogs = false,
-            shadow_depth = 55
+            // 0% disables distance fading entirely (floor=1.0) — the
+            // OG-faithful default. The original game has no distance
+            // shading at all; walls/sprites render at full brightness
+            // regardless of depth, and the only "shading" is the
+            // perpendicular-wall side tint (raycaster.render_walls
+            // does that one separately). Our distance-fade slider is
+            // an opt-in mod for players who want the look.
+            shadow_depth = 0
         }
 
     // Snapshot the live preference state into a `prefs` value for

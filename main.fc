@@ -349,8 +349,10 @@ struct game =
     // build (changing it mid-level doesn't despawn live dogs).
     no_dogs: bool
     // Shadow Depth (0..100). Controls how dark walls / sprites get
-    // at long distance — 0 disables shading, 100 lets things go to
-    // full black, 55 ≈ original Wolf3D feel. Read every frame by the
+    // at long distance — 0 disables distance fading entirely (the
+    // OG-faithful default; the original has no distance shading,
+    // only a side tint on perpendicular walls), 100 lets things go
+    // to full black at the far end. Read every frame by the
     // raycaster + billboards via `raycaster.shadow_floor_from_depth`.
     shadow_depth: int32
     // --test CLI flag: suppresses UX-only flourishes that would otherwise
@@ -2172,23 +2174,32 @@ let main = (args: str[]) ->
                             g->menu_sel = 1     // back to SOUND row
                     else if g->menu_level == menu.nav.options then
                         // Wolf-fc mods. Up/down navigates rows; Enter
-                        // toggles boolean rows; Left/Right adjusts
-                        // slider rows by ±5%. Every commit persists
-                        // the full prefs struct via config.snapshot —
-                        // never partial — so other unrelated toggles
-                        // round-trip cleanly.
+                        // toggles boolean rows or runs the action row;
+                        // Left/Right adjusts slider rows by ±5%.
+                        // Every commit persists the full prefs struct
+                        // via config.snapshot — never partial — so
+                        // other unrelated toggles round-trip cleanly.
+                        let kind = menu.option_kind(g->menu_sel)
                         if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + menu.options_len - 1) % menu.options_len
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % menu.options_len
-                        else if is_confirm
-                            && menu.option_kind(g->menu_sel) == menu.option_kind_toggle then
+                        else if is_confirm && kind == menu.option_kind_toggle then
                             // Toggle row 0 = No Dogs.
                             if g->menu_sel == 0 then
                                 g->no_dogs = !g->no_dogs
                             config.save(config.snapshot(w))
+                        else if is_confirm && kind == menu.option_kind_action then
+                            // Action row = RESET. Wipe every Options
+                            // field back to its default — sound
+                            // toggles are deliberately untouched
+                            // (different submenu, different scope).
+                            let d = config.defaults()
+                            g->no_dogs = d.no_dogs
+                            g->shadow_depth = d.shadow_depth
+                            config.save(config.snapshot(w))
                         else if (k == sdl2.key_left || k == sdl2.key_right)
-                            && menu.option_kind(g->menu_sel) == menu.option_kind_slider then
+                            && kind == menu.option_kind_slider then
                             // Slider row 1 = Shadow Depth (±5%, clamped).
                             let delta = if k == sdl2.key_left then -5 else 5
                             if g->menu_sel == 1 then

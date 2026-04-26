@@ -781,7 +781,7 @@ section "config / preferences"
 assert_contains "config:defaults-music-on"        "prefs"   "music=1"
 assert_contains "config:defaults-sfx-on"          "prefs"   "sfx=1"
 assert_contains "config:defaults-no-dogs-off"     "prefs"   "no_dogs=0"
-assert_contains "config:defaults-shadow-default"  "prefs"   "shadow_depth=55"
+assert_contains "config:defaults-shadow-default"  "prefs"   "shadow_depth=0"
 # Config file pre-seeded by the harness: the binary should pick it up and
 # the first `prefs` dump should reflect it.
 mkdir -p "$WOLF_FC_TEST_HOME"

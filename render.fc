@@ -36,17 +36,18 @@ module raycaster =
 
     // Compute shade factor from perpendicular distance. `floor` is
     // the minimum brightness as distance grows large — clamped at
-    // [0.0, 1.0]. floor=1.0 disables distance shading entirely
-    // (no shadows); floor=0.0 lets things go fully black at the
-    // far end. The original game's behaviour falls out at floor≈0.45.
+    // [0.0, 1.0]. floor=1.0 disables distance fading entirely (the
+    // OG-faithful default; the original has no distance shading);
+    // floor=0.0 lets things go fully black at the far end.
     let dist_shade = (dist: float64, floor: float64) ->
         let s = 1.0 - dist / 24.0
         if s < floor then floor else if s > 1.0 then 1.0 else s
 
     // Convert a Shadow Depth percentage (0..100) to the minimum-
     // brightness floor passed to `dist_shade`. 0% → floor 1.0 (no
-    // shading), 100% → floor 0.0 (full black at distance), default
-    // 55% → floor 0.45 (matches the original).
+    // distance fade — the OG-faithful default since the original
+    // doesn't darken with distance), 100% → floor 0.0 (full black
+    // at the far end).
     let shadow_floor_from_depth = (depth_pct: int32) ->
         let mut p = depth_pct
         if p < 0 then p = 0
