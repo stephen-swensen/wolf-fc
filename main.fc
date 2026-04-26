@@ -2135,30 +2135,36 @@ let main = (args: str[]) ->
                     sdl2.set_logical_size(ren, screen_w, actual_h)
                     if is_alt_enter then continue
                 // Per-phase dispatch for everything else.
-                // Deliberate-feeling ack keys (Enter / Space / Ctrl) —
-                // matches the IN_Ack restriction below so modifier-only
+                // Deliberate-feeling ack keys (Enter / Space / Ctrl / Esc)
+                // — matches the IN_Ack restriction below so modifier-only
                 // / function-key bumps don't skip past intro screens.
+                // Esc is included so a player can mash "get me out of
+                // here" on every screen consistently.
                 let is_ack_key_intro = k == sdl2.key_return
                     || k == sdl2.key_space
                     || k == sdl2.key_lctrl
+                    || k == sdl2.key_escape
                 match g->phase with
                 | pg13 ->
-                    // Advance to the title screen on Enter / Space / Ctrl.
-                    // update_phase_transitions also auto-advances after a
-                    // few seconds.
+                    // Advance to the title screen on an ack key. update_
+                    // phase_transitions also auto-advances after a few
+                    // seconds.
                     if is_ack_key_intro then
                         g->phase = game_phase.title
                         g->phase_timer = 0.0
                 | endart ->
-                    // Per-page navigation:
-                    //   Left / Up / PageUp                  → previous page
-                    //   Esc                                 → skip remaining
-                    //   Right / Down / PageDown / Enter /
-                    //     Space / Ctrl                      → next page;
-                    //                                          past last →
-                    //                                          advance_next_episode
-                    // Other keys (modifiers, letters, etc.) are no-ops so a
-                    // stray Shift bump doesn't skip a page.
+                    // Per-page navigation, faithful to the original
+                    // ShowArticle loop:
+                    //   Left / Up / PageUp           → previous page
+                    //   Right / Down / PageDown      → next page
+                    //   Enter / Space / Ctrl         → next page
+                    //   Esc                          → exit the article
+                    //                                  (the bottom-info
+                    //                                  window pic literally
+                    //                                  shows "ESC EXITS")
+                    // Past the last page, advancing routes to the next
+                    // episode. Other keys (modifiers, letters, etc.) are
+                    // no-ops so a stray bump doesn't skip a page.
                     if !is_key_repeat then
                         if k == sdl2.key_left || k == sdl2.key_up
                                 || k == sdl2.key_pageup then
@@ -2167,13 +2173,15 @@ let main = (args: str[]) ->
                             advance_next_episode(w, vs)
                         else if k == sdl2.key_right || k == sdl2.key_down
                                 || k == sdl2.key_pagedown
-                                || is_ack_key_intro then
+                                || k == sdl2.key_return
+                                || k == sdl2.key_space
+                                || k == sdl2.key_lctrl then
                             if endart_screen.next_page(g) then
                                 advance_next_episode(w, vs)
                 | title ->
-                    // Advance to the main menu on Enter / Space / Ctrl.
-                    // Default selection = NEW GAME (RESUME is locked from
-                    // the title screen).
+                    // Advance to the main menu on an ack key. Default
+                    // selection = NEW GAME (RESUME is locked from the
+                    // title screen).
                     if is_ack_key_intro then
                         g->phase = game_phase.main_menu
                         g->menu_level = menu.nav.main
@@ -2495,7 +2503,8 @@ let main = (args: str[]) ->
                             if k == sdl2.key_s then overlay.take_screenshot(w, vs, pal)
                             if k == sdl2.key_d then save.debug_dump_state(w)
                             // IN_Ack: a deliberate-feeling keypress (Enter,
-                            // Space, or Ctrl — the OG fire key) during an
+                            // Space, Ctrl — the OG fire key, or Esc as a
+                            // "get me out of here" key) during an
                             // acknowledge screen (intermission / episode-end
                             // / final victory / game-over) counts as
                             // "acknowledge and advance". The OG accepted
@@ -2508,6 +2517,7 @@ let main = (args: str[]) ->
                             let is_ack_key = k == sdl2.key_return
                                 || k == sdl2.key_space
                                 || k == sdl2.key_lctrl
+                                || k == sdl2.key_escape
                             if is_ack_key && (g->phase == game_phase.intermission
                                || g->phase == game_phase.episode_end
                                || g->phase == game_phase.victory
