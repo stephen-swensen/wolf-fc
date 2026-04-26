@@ -482,11 +482,13 @@ assert_contains "deathcam:hans-does-not-enter-death-cam" \
     "setlevel:8 killenemy:0 wait:30 phase" \
     "phase=playing"
 # After the full cutscene (pre_fade + fade_out + taunt + fade_in +
-# pre_replay + replay_anim + replay_hold ≈ 12s) we hand off to the
-# regular intermission tally screen.
-assert_contains "deathcam:auto-advances-to-intermission" \
+# pre_replay + replay_anim + replay_hold ≈ 12s) we hand off straight
+# to the episode-end Victory screen — the OG GameLoop's `ex_victorious`
+# case skips `LevelCompleted()` for boss kills, so death-cam → episode_end
+# without an intermission stop.
+assert_contains "deathcam:auto-advances-to-episode-end" \
     "setlevel:18 killenemy:0 wait:500 phase" \
-    "phase=intermission"
+    "phase=episode_end"
 # The death scream fires a second time when the replay animation starts
 # (matches the original: re-entering the die-cascade hits A_DeathScream
 # again). At wait:320 we're just past the pre_replay beat so Schabbs's
@@ -496,10 +498,10 @@ assert_contains "deathcam:death-scream-replays-on-replay-anim" \
     "sound=24"
 # The `advance` test command dismisses the death-cam early, same way a
 # space press would end the taunt card and (after the rest of the
-# cutscene) land on the intermission screen.
-assert_contains "deathcam:advance-skips-to-intermission" \
+# cutscene) land on the episode-end Victory screen.
+assert_contains "deathcam:advance-skips-to-episode-end" \
     "setlevel:18 killenemy:0 advance phase" \
-    "phase=intermission"
+    "phase=episode_end"
 # Hans still drops a gold key — walking onto his tile after the kill
 # picks it up. Preserves the gold-key + EXITTILE flow on E1M9.
 assert_contains "deathcam:hans-still-drops-gold-key" \

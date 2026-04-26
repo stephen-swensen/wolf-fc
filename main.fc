@@ -910,12 +910,17 @@ let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
         else
             g->phase = game_phase.game_over
             g->phase_timer = 0.0
-    // Death-cam cutscene has finished its replay hold; hand off to the
-    // intermission tally screen, which will itself advance into
-    // episode_end on space (since all death-cam boss maps are level 8
-    // within their episode).
+    // Death-cam cutscene has finished its replay hold; hand off
+    // straight to the episode-end Victory screen — the OG GameLoop's
+    // `ex_victorious` case skips `LevelCompleted()` (the per-level
+    // tally), so the boss kill jumps directly from cutscene to
+    // Victory(). Mirror the bj_victory finalisation: award the
+    // level-completion bonus and record the boss level into the
+    // per-episode totals so it shows up in the averages.
     if g->phase == game_phase.death_cam && g->dc_sub == death_cam.sub.done then
-        intermission.enter(g, w->ac)
+        add_score(g, intermission.compute_level_bonus(g), w->ac)
+        record_level_for_episode(g)
+        episode_end.enter(g)
     // PG-13 splash auto-advances to the title after a short hold so a
     // walked-away player doesn't come back to a stuck splash. Any keypress
     // also advances (handled in the main loop, not here).
@@ -1318,11 +1323,13 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             // need to pad with wait:200.
             episode_end.enter(g)
         else if g->phase == game_phase.death_cam then
-            // Death-cam collapses to the intermission tally screen, same
-            // as a natural death_cam.sub.done → intermission.enter transition.
-            // Tests still need to `advance` once more to reach
-            // episode_end on boss maps.
-            intermission.enter(g, w->ac)
+            // Death-cam collapses straight to the episode-end screen,
+            // mirroring the natural death_cam.sub.done transition (which
+            // skips intermission for boss kills, matching the OG
+            // GameLoop's `ex_victorious` case).
+            add_score(g, intermission.compute_level_bonus(g), w->ac)
+            record_level_for_episode(g)
+            episode_end.enter(g)
         else if g->phase == game_phase.episode_end then
             // Test-mode advance from episode_end → endart, matching the
             // interactive ack flow. Use `endartnext` / `endart_state` to
