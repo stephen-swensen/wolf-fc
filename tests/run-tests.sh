@@ -135,6 +135,10 @@ assert_regex() {
 section() { printf "\n\033[1m%s\033[0m\n" "$1"; }
 
 section "spawn"
+# `--test` mode initialises difficulty to gd_hard so all three tile tiers
+# spawn — gives the fullest possible enemy roster for index-based asserts.
+# (Interactive launches default to gd_medium; see the difficulty section
+# below.)
 assert_contains "spawn:enemy-count"           "enemies" "total=38"
 assert_contains "spawn:kind-breakdown"        "enemies" "guard=33 officer=0 ss=0 dog=5 mutant=0"
 assert_contains "spawn:one-pre-killed-corpse" "enemies" "dead=1"
@@ -365,8 +369,11 @@ assert_contains "counters:treasure-cross-pickup" \
     "treasures=1/22"
 
 section "difficulty"
-# Default (gd_hard=3) spawns all three tile tiers. E1M1 has 37 live enemies.
-assert_contains "difficulty:default-hard-spawns-all" "enemies" "total=38"
+# Test mode launches at gd_hard (3) for full-roster regression coverage,
+# even though interactive launches default to gd_medium to match the
+# OG difficulty-picker default. E1M1 has 38 live enemies + 1 pre-dead
+# corpse at gd_hard.
+assert_contains "difficulty:test-mode-defaults-hard" "enemies" "total=38"
 # Lowering to gd_baby=0 filters out +36 and +72 tier tiles, leaving only
 # base-tier tiles + the pre-dead corpse.
 assert_contains "difficulty:baby-filters-higher-tiers" \

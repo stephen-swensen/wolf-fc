@@ -369,8 +369,10 @@ struct game =
 
     // Difficulty: 0=Daddy, 1=Don't Hurt Me, 2=Bring 'em On, 3=Death Incarnate.
     // Controls which tile blocks spawn enemies (base/+36/+72 per
-    // ScanInfoPlane). Default `difficulty.hard` (2) matches the previous
-    // single-tier behaviour; setdifficulty test command can dial it down.
+    // ScanInfoPlane). Initialised to `difficulty.medium` to match the
+    // OG difficulty-picker default (`NewItems.curpos = 2` in wl_menu.cpp).
+    // The picker remembers the last pick within a session via
+    // `menu_sel = g->difficulty`; `setdifficulty` dials it externally.
     difficulty: int32
 
     // No-dogs mod toggle. Set from the Options menu (persisted in
@@ -1900,7 +1902,14 @@ let main = (args: str[]) ->
         inter_breathe_timer = 0.0,
         inter_pause_timer = 0.0,
         inter_end_sound_delay = 0.0,
-        difficulty = difficulty.hard,
+        // Initial difficulty: gd_medium for interactive launches (matches
+        // the OG difficulty-picker default — `NewItems.curpos = 2` /
+        // "Bring 'Em On!" — so the first menu visit pre-selects the
+        // right row); gd_hard for `--test` mode so the existing
+        // regression suite keeps spawning the full enemy roster (medium
+        // filters out +72-tier tiles, which would invalidate hundreds
+        // of enemy-index assertions).
+        difficulty = if test_mode then difficulty.hard else difficulty.medium,
         // CLI flag takes precedence over the persisted config — `--no-dogs`
         // is always "force on", absence falls back to whatever the user
         // last toggled in the Options menu.
