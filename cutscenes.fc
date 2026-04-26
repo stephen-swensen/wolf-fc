@@ -1329,14 +1329,14 @@ module game_over =
 
 
 module title_screen =
-    // Title screen — full-screen TITLEPIC with a "PRESS ANY KEY"
-    // blink at bottom.
+    // Title screen — full-screen TITLEPIC, no overlay text. The OG
+    // shows just the title pic with no prompt; any key (or the demo
+    // timeout) advances to the menu. The blinking "PRESS ANY KEY"
+    // we used to draw here was a holdover from the signon screen
+    // we no longer ship.
     let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                   f: const font.info*, time: float64) ->
         pics.blit_title_bg(rc)
-        let blink_on = ((int32) (time * 1.6667)) % 2 == 0
-        if blink_on then
-            font.draw_centered(rc, f, game_h - 22, "PRESS ANY KEY", 0xFFFFFF00u32)
 
 // ============================================================
 // PG-13 splash — short intro pic before the title sequence
