@@ -213,7 +213,7 @@ module save =
     // Write the running world state to a save-slot file. Overwrites
     // any existing slot. Metadata label is auto-generated from the
     // current level + time.
-    let to_slot = (w: world*, slot: int32) ->
+    let to_slot = (w: world*, slot: int32, label: const str) ->
         paths.ensure_save_dir()
         match slot_path(slot) with
         | none ->
@@ -229,11 +229,16 @@ module save =
             | some(f) ->
                 defer io.close(f)
                 io.write("WLFC %d{version}\n", f)
-                // Auto-generated label — encodes episode/level for the
-                // menu.
-                let ep = g->level_num / episode.levels_per + 1
-                let lvl = g->level_num % episode.levels_per + 1
-                io.write("label E%d{ep}M%d{lvl}\n", f)
+                // User-supplied slot label (the inline save-name entry
+                // in the menu). Falls back to the auto-generated
+                // "E<ep>M<lvl>" form when the caller passes an empty
+                // string (e.g. test commands that bypass name entry).
+                if label.len > 0 then
+                    io.write("label %s{label}\n", f)
+                else
+                    let ep = g->level_num / episode.levels_per + 1
+                    let lvl = g->level_num % episode.levels_per + 1
+                    io.write("label E%d{ep}M%d{lvl}\n", f)
                 io.write(
                     "game %d{g->level_num} %d{g->difficulty} %d{g->lives} %d{g->score} %d{g->health} %d{g->ammo} %d{g->weapon} %d{g->best_weapon} %d{if g->has_gold_key then 1 else 0} %d{if g->has_silver_key then 1 else 0} %d{if g->went_secret then 1 else 0}\n", f)
                 io.write(

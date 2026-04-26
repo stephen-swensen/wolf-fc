@@ -70,29 +70,40 @@ module sdl2 from "SDL2/SDL.h" =
     extern SDLK_g as key_g: int32
     extern SDLK_h as key_h: int32
     extern SDLK_i as key_i: int32
+    extern SDLK_j as key_j: int32
     extern SDLK_k as key_k: int32
     extern SDLK_l as key_l: int32
     extern SDLK_n as key_n: int32
+    extern SDLK_o as key_o: int32
     extern SDLK_p as key_p: int32
     extern SDLK_q as key_q: int32
     extern SDLK_c as key_c: int32
+    extern SDLK_r as key_r: int32
     extern SDLK_t as key_t: int32
+    extern SDLK_u as key_u: int32
     extern SDLK_w as key_w: int32
     extern SDLK_F11 as key_f11: int32
     extern SDLK_s as key_s: int32
     extern SDLK_m as key_m: int32
     extern SDLK_y as key_y: int32
     extern SDLK_v as key_v: int32
+    extern SDLK_BACKSPACE as key_backspace: int32
     extern SDLK_PAGEUP as key_pageup: int32
     extern SDLK_PAGEDOWN as key_pagedown: int32
     extern SDLK_LSHIFT as key_lshift: int32
     extern SDLK_TAB as key_tab: int32
     extern SDLK_LALT as key_lalt: int32
     extern SDLK_LCTRL as key_lctrl: int32
+    extern SDLK_0 as key_0: int32
     extern SDLK_1 as key_1: int32
     extern SDLK_2 as key_2: int32
     extern SDLK_3 as key_3: int32
     extern SDLK_4 as key_4: int32
+    extern SDLK_5 as key_5: int32
+    extern SDLK_6 as key_6: int32
+    extern SDLK_7 as key_7: int32
+    extern SDLK_8 as key_8: int32
+    extern SDLK_9 as key_9: int32
 
     // --- Lifecycle ---
     extern SDL_Init as init: (uint32) -> int32

@@ -357,6 +357,13 @@ struct game =
     menu_sel: int32
     menu_level: int32
 
+    // Save-slot inline name entry. While true, the savelist menu is
+    // showing a typing caret on the selected slot; main-loop keydowns
+    // mutate `save_menu_ctx.edit_buf` instead of moving the cursor.
+    // Enter commits + writes the slot, Esc cancels back to the slot
+    // list. Mirrors the original's `US_LineInput` flow.
+    save_edit_active: bool
+
     // Music on/off — togglable from the main menu "SOUND" entry.
     // Interactive loop inspects this when filling audio.
     music_on: bool
@@ -491,6 +498,11 @@ struct save_menu_ctx =
     slots: save.slot_info[]    // length = save.num_slots
     label_scratch: uint8[]     // 32-byte reusable buffer for slot-label substrings
     hex_scratch: uint8[]       // 1-byte buffer for per-nibble save-file writes
+    // In-progress slot name during inline save edit. NUL-terminated;
+    // `edit_len` holds the byte length without the terminator. Capacity
+    // is 32 (matches the original's MaxString in US_LineInput).
+    edit_buf: uint8[]
+    edit_len: int32
 
 // Everything the running game needs in one handle. Functions that only need
 // one sub-context (e.g. `raycaster.render_walls` only touches level + render_ctx) keep
@@ -595,7 +607,9 @@ let build_save_menu_ctx = () ->
     let sm = alloc(save_menu_ctx {
         slots = alloc(save.slot_info[save.num_slots] {})!,
         label_scratch = alloc(uint8[32] {})!,
-        hex_scratch = alloc(uint8[1] {})!
+        hex_scratch = alloc(uint8[1] {})!,
+        edit_buf = alloc(uint8[32] {})!,
+        edit_len = 0
     })!
     sm
 
@@ -1311,7 +1325,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         | some(n) ->
             if n < 0 || n >= save.num_slots then bad("slot 0..%d{save.num_slots - 1}")
             else
-                save.to_slot(w, n)
+                // Test-mode save uses the auto-generated label (empty
+                // string triggers the "E<ep>M<lvl>" fallback).
+                save.to_slot(w, n, "")
                 io.write("saved slot %d{n}\n", stdout)
                 void()
         | none -> bad("integer slot")
@@ -1768,7 +1784,7 @@ let main = (args: str[]) ->
         difficulty = difficulty.hard,
         no_dogs = arg_no_dogs,
         test_mode = test_mode,
-        menu_sel = 0, menu_level = menu.nav.main,
+        menu_sel = 0, menu_level = menu.nav.main, save_edit_active = false,
         music_on = true, want_quit = false,
         has_active_game = false,
         msg_buf = alloc(uint8[256] {})!,
@@ -2118,15 +2134,69 @@ let main = (args: str[]) ->
                             g->menu_level = menu.nav.main
                             g->menu_sel = 1     // back to SOUND row
                     else if g->menu_level == menu.nav.savelist then
-                        if k == sdl2.key_up then
+                        // Inline save-name entry: while editing, every
+                        // keydown mutates `sm->edit_buf` instead of
+                        // navigating slots. Mirrors the original's
+                        // `US_LineInput` flow on each save row.
+                        if g->save_edit_active then
+                            if k == sdl2.key_return then
+                                // Commit — write the slot using the
+                                // typed name (defaulting to "EMPTY"
+                                // if the user cleared the buffer
+                                // entirely).
+                                let n = w->sm->edit_len
+                                let label = if n > 0 then
+                                    (const str) w->sm->edit_buf[0..(int64) n]
+                                else "EMPTY"
+                                save.to_slot(w, g->menu_sel, label)
+                                save.refresh_slots(w->sm)
+                                g->save_edit_active = false
+                                g->menu_level = menu.nav.main
+                                g->menu_sel = 3
+                            else if k == sdl2.key_escape then
+                                // Cancel: clear edit buffer, stay on
+                                // slot list.
+                                g->save_edit_active = false
+                                w->sm->edit_len = 0
+                                w->sm->edit_buf[0i64] = 0u8
+                            else if k == sdl2.key_backspace then
+                                if w->sm->edit_len > 0 then
+                                    w->sm->edit_len = w->sm->edit_len - 1
+                                    w->sm->edit_buf[(int64) w->sm->edit_len] = 0u8
+                            else
+                                // Letter / digit / space → append.
+                                // Capacity is 32 (MaxString); reserve
+                                // 1 for the null terminator.
+                                let cap = (int32) w->sm->edit_buf.len - 1
+                                if w->sm->edit_len < cap then
+                                    let mut ch = 0u8
+                                    if k >= sdl2.key_a && k <= sdl2.key_z then
+                                        ch = (uint8) (k - 32)   // uppercase
+                                    else if k >= sdl2.key_0 && k <= sdl2.key_9 then
+                                        ch = (uint8) k
+                                    else if k == sdl2.key_space then
+                                        ch = 32u8
+                                    if ch != 0u8 then
+                                        w->sm->edit_buf[(int64) w->sm->edit_len] = ch
+                                        w->sm->edit_len = w->sm->edit_len + 1
+                                        w->sm->edit_buf[(int64) w->sm->edit_len] = 0u8
+                        else if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + save.num_slots - 1) % save.num_slots
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % save.num_slots
                         else if is_confirm then
-                            save.to_slot(w, g->menu_sel)
-                            save.refresh_slots(w->sm)
-                            g->menu_level = menu.nav.main
-                            g->menu_sel = 3     // back to SAVE GAME row
+                            // Enter edit mode, prefilled with the
+                            // existing slot label (so re-saving over
+                            // a slot doesn't force the user to retype).
+                            let s = &w->sm->slots[g->menu_sel]
+                            let mut n = if s->empty then 0
+                                else (int32) s->label.len
+                            if n > 31 then n = 31
+                            for i in 0..n
+                                w->sm->edit_buf[(int64) i] = s->label[(int64) i]
+                            w->sm->edit_buf[(int64) n] = 0u8
+                            w->sm->edit_len = n
+                            g->save_edit_active = true
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
                             g->menu_sel = 3
