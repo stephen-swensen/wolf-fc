@@ -2141,6 +2141,22 @@ let main = (args: str[]) ->
                     // transitions also auto-advances after a few seconds.
                     g->phase = game_phase.title
                     g->phase_timer = 0.0
+                | endart ->
+                    // Per-page navigation (no IN_Ack catch-all):
+                    //   Left / Up / PageUp     → previous page
+                    //   Esc                    → skip remaining pages
+                    //   Anything else (Enter / Space / Right / Down /
+                    //   PageDown / letters)    → next page; past last
+                    //                            → advance_next_episode
+                    if !is_key_repeat then
+                        if k == sdl2.key_left || k == sdl2.key_up
+                                || k == sdl2.key_pageup then
+                            endart_screen.prev_page(g)
+                        else if k == sdl2.key_escape then
+                            advance_next_episode(w, vs)
+                        else
+                            if endart_screen.next_page(g) then
+                                advance_next_episode(w, vs)
                 | title ->
                     // Any key advances to the main menu. Default selection
                     // = NEW GAME (RESUME is locked from the title screen).
@@ -2470,7 +2486,6 @@ let main = (args: str[]) ->
                             // key_ack_handled so a held key only fires once.
                             if g->phase == game_phase.intermission
                                || g->phase == game_phase.episode_end
-                               || g->phase == game_phase.endart
                                || g->phase == game_phase.victory
                                || g->phase == game_phase.game_over then
                                 g->key_ack = true
@@ -2534,12 +2549,10 @@ let main = (args: str[]) ->
             g->key_ack_handled = true
             let ep = g->level_num / episode.levels_per
             endart_screen.enter(g, w->vg, ep)
-        // Endart pages → next page; past the last → next episode.
-        if g->phase == game_phase.endart && g->phase_timer > 0.0
-           && g->key_ack && !g->key_ack_handled then
-            g->key_ack_handled = true
-            if endart_screen.next_page(g) then
-                advance_next_episode(w, vs)
+        // Endart paging is handled directly in the keydown event below
+        // (Left/Up/PageUp = back, Esc = skip to next episode, anything
+        // else = forward) — not via the IN_Ack latch since the IN_Ack
+        // pattern can't distinguish key direction.
         // Final victory → return to main menu.
         if g->phase == game_phase.victory && g->phase_timer > 0.0
            && g->key_ack && !g->key_ack_handled then

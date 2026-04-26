@@ -1052,6 +1052,14 @@ module endart_screen =
             g->phase_timer = 0.0
             false
 
+    // Step back one page; clamps at page 0. No exit-the-article
+    // semantics — that's the caller's job (Esc routes through
+    // advance_next_episode, this is just for Up/Left/PageUp paging).
+    let prev_page = (g: game*) ->
+        if g->endart_page > 0 then
+            g->endart_page = g->endart_page - 1
+            g->phase_timer = 0.0
+
     // Word-handling state during render. Kept locally; one set of
     // per-row margins per render call (^G can shrink them on rows the
     // graphic occupies).
