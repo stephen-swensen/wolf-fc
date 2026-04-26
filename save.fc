@@ -43,6 +43,84 @@ module paths =
             true
 
 
+// ============================================================
+// User preferences — sound toggles + future settings, persisted at
+// `~/.wolf-fc/config` so they survive across launches. Distinct from
+// `module save` (per-game-state slot files) since prefs aren't tied
+// to any one playthrough. Format mirrors the save files: line-oriented
+// text, one token per line.
+// ============================================================
+
+module config =
+    import io from std::
+    import text from std::
+
+    private let version = 1
+
+    struct prefs =
+        music_on: bool
+        sfx_on: bool
+
+    let defaults = () ->
+        prefs { music_on = true, sfx_on = true }
+
+    private let config_path = () ->
+        match paths.wolf_data_dir() with
+        | none -> default(str?)
+        | some(dir) ->
+            defer free(dir)
+            some(alloc("%s{dir}/config")!)
+
+    // Read the config file. Missing / unreadable / malformed file
+    // returns the defaults — no failure mode, since "no preferences
+    // saved yet" is the expected state on a first launch.
+    let load = () ->
+        let mut p = defaults()
+        match config_path() with
+        | none -> p
+        | some(path) ->
+            defer free(path)
+            match io.read_all(path) with
+            | none -> p
+            | some(contents) ->
+                defer free(contents)
+                let lines = text.split(contents, "\n")
+                defer free(lines)
+                let mut i = 0
+                loop
+                    if i >= (int32) lines.len then break
+                    let line = lines[(int64) i]
+                    i = i + 1
+                    if line.len == 0 then continue
+                    if text.starts_with(line, "music ") then
+                        match text.parse_int32(line[6..line.len]) with
+                        | some(v) -> p.music_on = v != 0
+                        | none -> void()
+                    else if text.starts_with(line, "sfx ") then
+                        match text.parse_int32(line[4..line.len]) with
+                        | some(v) -> p.sfx_on = v != 0
+                        | none -> void()
+                p
+
+    // Write the current prefs to disk. Fire-and-forget — failures
+    // (HOME unset, permissions, disk full) are silent because losing
+    // a preference toggle isn't worth interrupting the player for.
+    let save = (p: prefs) ->
+        paths.ensure_save_dir()   // also ensures the wolf-fc data dir
+        match config_path() with
+        | none -> void()
+        | some(path) ->
+            defer free(path)
+            match io.open(path, "w") with
+            | none -> void()
+            | some(f) ->
+                defer io.close(f)
+                io.write("WLFC_CONFIG %d{version}\n", f)
+                io.write("music %d{if p.music_on then 1 else 0}\n", f)
+                io.write("sfx %d{if p.sfx_on then 1 else 0}\n", f)
+                void()
+
+
 module save =
     import io from std::
     import sys from std::

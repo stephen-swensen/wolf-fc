@@ -1432,6 +1432,13 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         let chunk = font.music_chunk_for_phase(g->phase, g->level_num)
         io.write("music chunk=%d{chunk} (audiot offset=%d{chunk - 261})\n", stdout)
         void()
+    else if arg == "prefs" then
+        // Dump the current persistent preferences (loaded from
+        // `$WOLF_FC_HOME/config` at startup, defaults when missing).
+        let m = if g->music_on then 1 else 0
+        let s = if w->ac->sfx_on then 1 else 0
+        io.write("prefs music=%d{m} sfx=%d{s}\n", stdout)
+        void()
     else if arg == "digi_slots" then
         // Dump the digi-mixer slot table. Verifies wolf4sdl-style dedup:
         // retriggers of a sound already playing should reuse the same
@@ -1733,6 +1740,11 @@ let main = (args: str[]) ->
     let mut lv_data = maps.load("data/MAPHEAD.WL6", "data/GAMEMAPS.WL6", 0)
     io.write("  map %d{lv_data->width}x%d{lv_data->height}\n", stdout)
 
+    // Persistent user preferences (sound toggles for now; key bindings
+    // and screen settings later). Read from `~/.wolf-fc/config`; missing
+    // file falls back to defaults — see save.fc::config.
+    let cfg = config.load()
+
     // Assemble the `world` — the handle that groups game state, level data,
     // renderer, and audio. Orchestrators take `world*`; narrower functions
     // still take just the sub-contexts they need.
@@ -1785,7 +1797,7 @@ let main = (args: str[]) ->
         no_dogs = arg_no_dogs,
         test_mode = test_mode,
         menu_sel = 0, menu_level = menu.nav.main, save_edit_active = false,
-        music_on = true, want_quit = false,
+        music_on = cfg.music_on, want_quit = false,
         has_active_game = false,
         msg_buf = alloc(uint8[256] {})!,
         msg_len = 0, msg_timer = 0.0,
@@ -1808,7 +1820,7 @@ let main = (args: str[]) ->
             ad = ad,
             sfx = adlib.init((float64) sfx.sample_rate),
             digi = digi.init(vs),
-            sfx_on = true
+            sfx_on = cfg.sfx_on
         })!,
         sm = build_save_menu_ctx(),
         vg = vg,
@@ -1944,7 +1956,10 @@ let main = (args: str[]) ->
     // queued to SDL (2048 int16 = 4096 bytes).
     let mix_buf = alloc(int32[2048] {})!
     let out_buf = alloc(int16[2048] {})!
-    let mut music_on = ms.is_some
+    // Honour the persisted music preference: even if the IMF player
+    // loaded successfully, start the mixer with music silenced when
+    // the user has toggled music off in a previous session.
+    let mut music_on = ms.is_some && g->music_on
 
     // Fresh screenshot directory each session — user copies any they want to keep.
     overlay.clear_screenshots()
@@ -2120,7 +2135,9 @@ let main = (args: str[]) ->
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % menu.sound_len
                         else if is_confirm then
-                            // Toggle the row's setting in place.
+                            // Toggle the row's setting in place, then
+                            // persist both toggles to ~/.wolf-fc/config
+                            // so the choice survives across launches.
                             //   row 0 = SOUND EFFECTS → ac->sfx_on
                             //   row 1 = MUSIC         → g->music_on
                             if g->menu_sel == 0 then
@@ -2130,6 +2147,10 @@ let main = (args: str[]) ->
                                 music_on = g->music_on
                                 if !music_on && audio_dev > 0u32 then
                                     sdl2.clear_audio(audio_dev)
+                            config.save(config.prefs {
+                                music_on = g->music_on,
+                                sfx_on = w->ac->sfx_on
+                            })
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
                             g->menu_sel = 1     // back to SOUND row

@@ -775,6 +775,24 @@ assert_contains "save:rng-state-round-trips" \
     "goto:30,62 turnr:180 setammo:50 fire wait:15 save:4 load:4 fire wait:15 fire state" \
     "score=100"
 
+section "config / preferences"
+# Default prefs (no config file): both toggles ON. WOLF_FC_HOME is per-test
+# fresh, so on a clean run no config has been written.
+assert_contains "config:defaults-music-on"   "prefs"   "music=1"
+assert_contains "config:defaults-sfx-on"     "prefs"   "sfx=1"
+# Config file pre-seeded by the harness: the binary should pick it up and
+# the first `prefs` dump should reflect it.
+mkdir -p "$WOLF_FC_TEST_HOME"
+printf 'WLFC_CONFIG 1\nmusic 0\nsfx 0\n' > "$WOLF_FC_TEST_HOME/config"
+assert_contains "config:loads-music-off"     "prefs"   "music=0"
+assert_contains "config:loads-sfx-off"       "prefs"   "sfx=0"
+# Mixed prefs round-trip cleanly.
+printf 'WLFC_CONFIG 1\nmusic 1\nsfx 0\n' > "$WOLF_FC_TEST_HOME/config"
+assert_contains "config:mixed-music-on"      "prefs"   "music=1"
+assert_contains "config:mixed-sfx-off"       "prefs"   "sfx=0"
+# Reset config so subsequent runs of this script start clean.
+rm -f "$WOLF_FC_TEST_HOME/config"
+
 # ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
