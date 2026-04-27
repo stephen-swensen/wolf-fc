@@ -239,7 +239,18 @@ Wolf-fc depends only on the FC compiler and stdlib (`../fc-lang/`). Every other 
 
 The audio pipeline each frame: zero buffer → `imf.fill` (music) → `adlib.fill` (AdLib SFX) → `digi.fill` (8-bit PCM) → SDL audio queue (back-pressured via `SDL_GetQueuedAudioSize` to keep latency ≤ ~50 ms).
 
-SDL2's role in wolf-fc is deliberately minimal — it's a host abstraction, not a rendering framework. Each frame, the engine draws into a `uint32[]` ARGB framebuffer entirely in FC, then uploads it as a single 320×200 streaming texture via `SDL_UpdateTexture` + `SDL_RenderCopy` + `SDL_RenderPresent`; `SDL_RenderSetLogicalSize(640, 480)` handles 4:3 letterboxing and the scale-quality hint is pinned to `nearest` for crisp upscaling. The 2D renderer is never asked to draw geometry — no `SDL_RenderFillRect`, no per-sprite textures, no shaders. Audio is equally bare: `SDL_QueueAudio` receives raw S16 PCM that our own mixer produced (no `SDL_AudioCallback`, no `SDL_mixer`). Input is keyboard-only, driven by `SDL_PollEvent` against `SDL_KEYDOWN`/`SDL_KEYUP`. No `SDL_image`, `SDL_ttf`, `SDL_mixer`, or `SDL_net` — just core `SDL2`, linked dynamically.
+SDL2's role in wolf-fc is deliberately minimal — it's a host abstraction, not a rendering framework. Each frame, the engine draws into a `uint32[]` ARGB framebuffer entirely in FC, then uploads it as a single streaming texture via `SDL_UpdateTexture` + `SDL_RenderCopy` + `SDL_RenderPresent`; the scale-quality hint is pinned to `nearest` for crisp upscaling. The 2D renderer is never asked to draw geometry — no `SDL_RenderFillRect`, no per-sprite textures, no shaders. Audio is equally bare: `SDL_QueueAudio` receives raw S16 PCM that our own mixer produced (no `SDL_AudioCallback`, no `SDL_mixer`). Input is keyboard-only, driven by `SDL_PollEvent` against `SDL_KEYDOWN`/`SDL_KEYUP`. No `SDL_image`, `SDL_ttf`, `SDL_mixer`, or `SDL_net` — just core `SDL2`, linked dynamically.
+
+### Hor+ widescreen
+
+The framebuffer width is dynamic and the horizontal FOV scales with it (Hor+: same vertical FOV, more peripheral world; wall verticals stay perspective-correct). UI elements (HUD, menus, fonts) stay in a 320-wide region centred inside the wider framebuffer. The mode is selected from **Main Menu → CHANGE VIEW**:
+
+- **Auto** queries the SDL display, computes `fb_w = round(320 × display_aspect / (4/3))`, and clamps to `[320, 640]` (even values only). Any aspect ratio works — ultrawide, vertical, exotic — not just the named presets below.
+- **Original 4:3** pins `fb_w = 320` (the original game).
+- **Widescreen 16:10** pins `fb_w = 384`.
+- **Widescreen 16:9** pins `fb_w = 428`.
+
+The choice persists in `~/.wolf-fc/config` and applies on the fly without a restart.
 
 ## License
 

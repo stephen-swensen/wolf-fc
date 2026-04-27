@@ -13,11 +13,6 @@ next-up candidates; everything below is nice-to-have polish or a survey pass.
   flow + a config file to persist the bindings. Pairs with `MOVEGUN2SND`
   rebind-confirm sites (already wired to the SOUND submenu commit beep
   but the original also fires it from each keybind row).
-- [ ] **CHANGE VIEW (screen-size) submenu.** Skipped on purpose — wolf-fc
-  is locked to 4:3 letterboxed at 320×200 → 2× → `SDL_RenderSetLogicalSize
-  (640, 480)`, and there's no framerate gain to be had from shrinking the
-  3D viewport. Listed for posterity; don't implement unless the rendering
-  pipeline changes.
 
 ### VGAGRAPH art not yet surfaced
 
@@ -128,6 +123,89 @@ data despite their suggestive names — retired from this list.
   and queue new items here as they're found.
 
 ## Current State (2026-04-25)
+
+### Hor+ widescreen + Change View submenu (2026-04-25, part 2)
+Replaced the locked 4:3 pipeline with a runtime-detected Hor+ widescreen
+path. The 3D viewport now expands horizontally to match the display
+aspect (same vertical FOV, more peripheral world); UI elements stay in a
+320-wide region centered inside the wider framebuffer.
+- **Framebuffer width is dynamic.** New `render_ctx.fb_w` / `fb_h` /
+  `screen_w` / `ui_offset_x` fields replace the file-scope `game_w` /
+  `screen_w` constants in the render path. `game_w` stays as the
+  reference 320 so UI layout math (HUD, menus, font centring, save
+  slots) keeps reading from a stable origin; everything offsets by
+  `rc->ui_offset_x = (fb_w - 320) / 2`. The 2× upscaler, framebuffer
+  alloc, and `zbuf` all scale to `fb_w`. Test mode forces `fb_w = 320`
+  so the regression suite stays bit-stable.
+- **FOV widens with the framebuffer.** New `game.plane_factor` replaces
+  the `fov_factor` constant in the player / hitscan / spawn paths. At
+  startup it's `0.66 * fb_w / 320` — 0.66 at 4:3 (OG), 0.792 at 16:10,
+  0.88 at 16:9. Proportional widening keeps wall verticals
+  perspective-correct. Death-cam camera teleport also uses
+  `g->plane_factor` (was hardcoded 0.66 — would zoom 4× when the user
+  switched back to 4:3 mid-session).
+- **CHANGE VIEW main-menu submenu** (slot 3). Four rows: AUTO / ORIGINAL
+  4:3 / WIDESCREEN 16:10 / WIDESCREEN 16:9. Selection persists in
+  `~/.wolf-fc/config` as `view_mode 0..3`. Active mode is marked with
+  an asterisk to the right of the label (left of the gun cursor would
+  collide). Applies dynamically via `apply_view_mode`: frees and
+  reallocs `fb` / `dbuf` / `zbuf` / `title_bg`, recreates the SDL
+  texture at the new size, and rescales the live `plane_x` / `plane_y`
+  vector so the player's heading is preserved across the resize.
+- **OPTIONS main-menu submenu** (slot 2). NO DOGS toggle (mirrors
+  `--no-dogs` CLI), SHADOW DEPTH slider (0=off, 1..5 cosmetic depth
+  bands for distance shading; 0 is OG-faithful, ≥1 is an opt-in
+  improvement), and a RESET row that restores all four toggles
+  (Music, SFX, No Dogs, Shadow Depth) plus the View Mode selection
+  to defaults. All persist through `config.snapshot` /
+  `config.load`.
+- **Per-episode ending text** (`game_phase.endart`) sits between
+  episode_end and the main-menu return. Loads VGAGRAPH chunks
+  143..148 (`vg_t_endart1..6`) and parses the OG article-markup
+  syntax: `^P` page break, `^E` end-of-article, `^Cnn` color, `^Bx,y,w,h`
+  fill, `^Lyyy,xxx` cursor jump, `^>` tab, `^Gy,x,p` graphic with
+  margin reflow, `^Tx,y,p,t` timed pic (treated as `^G`), `^;` comment
+  line. Word-wraps text inside the four-piece help-window border
+  (`h_topwindow` / `h_leftwindow` / `h_rightwindow` /
+  `h_bottominfo` — the top and bottom strips are stretched
+  horizontally to span the wider viewport). Page nav: any forward key
+  → next page (or exit-to-menu on the last page); Left / Up / PageUp →
+  back; Esc → exit-to-menu (the OG-faithful "skip rest"). Music
+  continues from episode_end (URAHERO_MUS) without a swap.
+- **Title pic letterbox** is solid black (was an early "stretch with
+  fizzle bands" experiment). The pic centers in the wider FB without
+  distortion; menus draw on top inside the bevel-framed window.
+- **Boss-floor TAB+E** routes through `episode_end.enter` directly
+  instead of `bj_victory.enter`. The bj_victory cutscene needs the
+  level's path-arrow tiles to walk BJ along; on TAB+E we don't have
+  a fresh arrows scan and the dir defaults to `dir.nodir`, which
+  used to stall the cutscene. The skip is debug-only and matches
+  the test-mode `advance` shortcut.
+- **All cutscene renderers centred** to the wider FB by adding
+  `rc->ui_offset_x` to their pic/font draw coords (intermission,
+  episode_end, death_cam taunt, game_over, bj_victory, endart,
+  pg13). HUD side panels fill `VIEWCOLOR` (palette 0x7f) outside
+  the 320-wide HUD pic — was bright red (0x29 BORDCOLOR) before.
+- **Inline save-name editor.** Save-slot rows on the SAVE GAME menu
+  enter a name-edit mode on Enter (cursor blinks, text typing edits
+  the slot label). Commit on Enter writes the slot with the typed
+  name; Esc cancels back to the slot list without overwriting. Slot
+  edit state (`save_menu_ctx.edit_buf` / `edit_len`) is scratch on
+  the menu context.
+- **Hidden floor-jump on episode picker.** Pressing 1..9 starts the
+  selected episode at floor 1..9; 0 jumps to the bonus floor (level
+  9 of the episode). Plays the same SHOOTSND as Enter so the press
+  is acknowledged audibly. Debug helper for CLI parity with
+  `--level=N`.
+- **Removed final-victory screen.** OG WL6 has no all-six-cleared
+  cutscene; episode 6 ends on its own endart text and returns to the
+  main menu. `game_phase.victory` and `victory_screen` module
+  removed; the `victory` test-phase alias points at `main_menu`.
+- **27 new regression tests** (137 → 164). Coverage: pg13 splash,
+  config round-trip (music/sfx/no-dogs/shadow/view-mode persistence),
+  endart per-page markup parsing, save-name editor, options-menu
+  toggles, view-mode label rendering, plane-factor scaling at all
+  four modes, post-resize plane-vector preservation.
 
 ### Intro / menu / episode-select sweep (2026-04-25)
 Reworked the pre-game flow against the original Wolf3D layout. Constraints
