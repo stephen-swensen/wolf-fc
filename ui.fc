@@ -334,6 +334,48 @@ module pics =
                 buf[(int64) (off_y + py) * (int64) fb_w + (int64) (off_x + px)] = pal[(int32) pix]
         buf
 
+    // Pre-render the god-mode BJ face: decode FACE1A (full-health,
+    // eyes dead-ahead, eyebrows level), palette-apply, then recolor
+    // every blue iris pixel gold. Done once at startup so the HUD
+    // blit during god mode is a plain memcpy. Returns a heap slice
+    // the caller must hold for the process lifetime.
+    let build_god_face_cache = (vg: const vgagraph.vgagraph_file*, pal: const uint32[]) ->
+        let chunk = id.face_base
+        let pic = vgagraph.load_pic(vg, chunk)
+        defer free(pic)
+        let w = vgagraph.pic_width(vg, chunk)
+        let h = vgagraph.pic_height(vg, chunk)
+        let n = if w > 0 && h > 0 then w * h else 0
+        let buf = alloc(uint32[n] {})!
+        if pic.len == 0 || n == 0 then return buf
+        let gold = 0xFFFFD700u32
+        for i in 0..n
+            let pix = pal[(int32) pic[(int64) i]]
+            let r  = (pix >> 16) & 0xFFu32
+            let gc = (pix >> 8)  & 0xFFu32
+            let b  =  pix        & 0xFFu32
+            buf[(int64) i] = if b > 100u32 && r < 50u32 && gc < 50u32 then gold else pix
+        buf
+
+    // Blit the pre-built god-mode face (see build_god_face_cache)
+    // into the framebuffer. Mirrors the inner copy in `draw` but
+    // skips the chunk-id lookup and pic_cache check — `god_face` is
+    // populated unconditionally at startup.
+    let blit_god_face = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                         dst_x: int32, dst_y: int32) ->
+        let buf = rc->god_face
+        if buf.len == 0 then return
+        let w = vgagraph.pic_width(vg, id.face_base)
+        let h = vgagraph.pic_height(vg, id.face_base)
+        if w <= 0 || h <= 0 then return
+        for y in 0..h
+            let dy = dst_y + y
+            if dy < 0 || dy >= rc->fb_h then continue
+            for x in 0..w
+                let dx = dst_x + x
+                if dx < 0 || dx >= rc->fb_w then continue
+                rc->fb[(int64) dy * (int64) rc->fb_w + (int64) dx] = buf[(int64) y * (int64) w + (int64) x]
+
     // Draw a pic with horizontal stretch (nearest-neighbor) to a
     // target width; vertical scale is 1:1. Used for widescreen
     // bordering art (article window, etc.) where the pic is
@@ -759,41 +801,24 @@ module hud =
         // was a Schabbs needle projectile). got_gatling_timer
         // overrides everything while active, matching the original's
         // DrawFace check against SD_SoundPlaying(GETGATLINGSND).
-        // God mode locks the face to FACE1A (full-health, eyes
-        // dead-ahead, eyebrows level) — the symmetric variant; the
-        // B/C variants have one brow raised. The gold-eye recolor
-        // below turns this into the god-mode tell.
-        let dead_face = if g->last_hit_needle then pics.id.mutant_bj
-            else pics.id.face_dead
-        let face = if g->god_mode && g->health > 0 then pics.id.face_base + 0
-            else if g->got_gatling_timer > 0.0 then pics.id.got_gatling
-            else if g->health <= 0 then dead_face
-            else match g->phase with
-            | dying     -> dead_face
-            | _            -> face_chunk_for(g->health, g->face_frame)
-        pics.draw(rc, vg, pal, face, ox + 136, bar_top + 4)
-        // God-mode "Doom-eye" overlay: scan the 24x32 face cell for
-        // the blue iris pixels and stamp them gold. The predicate
-        // (blue dominant, very dark red+green) hits BJ's irises
-        // without any palette-index lookups, and the search box is
-        // confined to the face cell so no other HUD blue is at risk.
+        // God mode blits the pre-built FACE1A-with-gold-eyes pic
+        // (rc->god_face) — the symmetric eyes-forward variant with
+        // its blue irises pre-recolored, baked once at startup so
+        // there's no per-frame scan.
         if g->god_mode && g->health > 0 then
-            let gold = 0xFFFFD700u32
-            let face_x = ox + 136
-            let face_y = bar_top + 4
-            for fy in 0..32
-                let dy = face_y + fy
-                if dy < 0 || dy >= rc->fb_h then continue
-                for fx in 0..24
-                    let dx = face_x + fx
-                    if dx < 0 || dx >= rc->fb_w then continue
-                    let idx = (int64) dy * (int64) rc->fb_w + (int64) dx
-                    let pix = rc->fb[idx]
-                    let r  = (pix >> 16) & 0xFFu32
-                    let gc = (pix >> 8)  & 0xFFu32
-                    let b  =  pix        & 0xFFu32
-                    if b > 100u32 && r < 50u32 && gc < 50u32 then
-                        rc->fb[idx] = gold
+            pics.blit_god_face(rc, vg, ox + 136, bar_top + 4)
+        else
+            let dead_face =
+                if g->last_hit_needle then pics.id.mutant_bj
+                else pics.id.face_dead
+            let face =
+                if g->got_gatling_timer > 0.0 then pics.id.got_gatling
+                else if g->health <= 0 then dead_face
+                else
+                    match g->phase with
+                    | dying -> dead_face
+                    | _ -> face_chunk_for(g->health, g->face_frame)
+            pics.draw(rc, vg, pal, face, ox + 136, bar_top + 4)
         // Weapon icon on the right.
         let weapon_chunk = match g->weapon with
         | 1 -> pics.id.pistol

@@ -544,6 +544,11 @@ struct render_ctx =
     // per-bit tree-walk) and re-palettizes 64,000 pixels, which dropped the
     // frame rate enough to underrun the audio queue and kill the music.
     title_bg: uint32[]
+    // Pre-rendered god-mode BJ face: FACE1A palette-applied with the
+    // blue iris pixels recolored gold. Built once at startup; the HUD
+    // blits it as a plain memcpy while god mode is on, so the recolor
+    // doesn't run per frame. 24×32 ARGB.
+    god_face: uint32[]
     // Lazy cache of VGAGRAPH pic chunks as pre-palettized ARGB buffers.
     // Indexed by chunk id; `.len == 0` means not yet cached. Populated on
     // first draw via `pics.draw` — turns every subsequent draw of the
@@ -679,6 +684,7 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
         billboards = alloc(billboard[tilemap.max_sprites + enemies.max_enemies + projectiles.max_projectiles] {})!,
         num_billboards = 0,
         title_bg = pics.build_title_bg_cache(vg, pal, fb_w, fb_h),
+        god_face = pics.build_god_face_cache(vg, pal),
         pic_cache = alloc(uint32[][vg->num_chunks] {})!,
         screenshot_slot = 0
     })!
