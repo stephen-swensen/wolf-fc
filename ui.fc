@@ -329,12 +329,52 @@ module pics =
                 buf[(int64) py * (int64) fb_w + (int64) px] = pal[(int32) pix]
         buf
 
-    // After drawing a 320-relative pic at (x, y), tile its leftmost
-    // and rightmost columns out to the framebuffer edges so the
-    // banner reads as a continuous strip in widescreen — natural
-    // extension instead of an obvious cut-off. No-op in 4:3 (the pic
-    // already sits flush). Reads ARGB from the just-written fb so it
-    // doesn't have to know the pic's pixel format.
+    // Draw a pic with horizontal stretch (nearest-neighbor) to a
+    // target width; vertical scale is 1:1. Used for widescreen
+    // bordering art (article window, etc.) where the pic is
+    // tolerant of being scaled across the wider framebuffer. Reads
+    // pixels via the pic_cache (lazily populated by `pics.draw`),
+    // so a chunk that hasn't been drawn yet gets decoded here on
+    // first use.
+    let draw_stretched_h = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                             pal: const uint32[], chunk: int32,
+                             dst_x: int32, dst_y: int32, dst_w: int32) ->
+        if chunk < 0 || chunk >= (int32) rc->pic_cache.len then return
+        if rc->pic_cache[chunk].len == 0 then
+            // Force a decode by drawing once off-screen.
+            let pic = vgagraph.load_pic(vg, chunk)
+            defer free(pic)
+            if pic.len == 0 then return
+            let w = vgagraph.pic_width(vg, chunk)
+            let h = vgagraph.pic_height(vg, chunk)
+            if w <= 0 || h <= 0 then return
+            let buf = alloc(uint32[w * h] {})!
+            for i in 0..(w * h)
+                buf[(int64) i] = pal[(int32) pic[(int64) i]]
+            rc->pic_cache[chunk] = buf
+        let buf = rc->pic_cache[chunk]
+        let src_w = vgagraph.pic_width(vg, chunk)
+        let src_h = vgagraph.pic_height(vg, chunk)
+        if src_w <= 0 || src_h <= 0 || dst_w <= 0 then return
+        for y in 0..src_h
+            let dy = dst_y + y
+            if dy < 0 || dy >= rc->fb_h then continue
+            let src_row = (int64) y * (int64) src_w
+            let dst_row = (int64) dy * (int64) rc->fb_w
+            for x in 0..dst_w
+                let sx = (int64) x * (int64) src_w / (int64) dst_w
+                let dx = dst_x + x
+                if dx < 0 || dx >= rc->fb_w then continue
+                rc->fb[dst_row + (int64) dx] = buf[src_row + sx]
+
+    // After drawing a 320-relative pic at (x, y), tile its LEFTMOST
+    // column out to both framebuffer edges so the banner reads as a
+    // continuous strip in widescreen. Using the left column on both
+    // sides matches the banner's clean boundary — the rightmost
+    // column on the OG headers carries a drop-shadow that tiles
+    // poorly. No-op in 4:3 (the pic already sits flush). Reads ARGB
+    // from the just-written fb so it doesn't have to know the pic's
+    // pixel format.
     let extend_pic_horizontally = (rc: render_ctx*,
                                     vg: const vgagraph.vgagraph_file*,
                                     pic_x: int32, pic_y: int32, chunk: int32) ->
@@ -343,13 +383,11 @@ module pics =
         if pw <= 0 || ph <= 0 then return
         let stride = (int64) rc->fb_w
         let left_x = if pic_x >= 0 then pic_x else 0
-        let right_x = pic_x + pw - 1
         for r in 0..ph
             let dy = pic_y + r
             if dy < 0 || dy >= rc->fb_h then continue
             let row = (int64) dy * stride
             let left_px = rc->fb[row + (int64) left_x]
-            let right_px = rc->fb[row + (int64) right_x]
             let mut x = 0
             loop
                 if x >= pic_x then break
@@ -358,7 +396,7 @@ module pics =
             x = pic_x + pw
             loop
                 if x >= rc->fb_w then break
-                rc->fb[row + (int64) x] = right_px
+                rc->fb[row + (int64) x] = left_px
                 x = x + 1
 
     // Blit the cached title backdrop into the framebuffer.

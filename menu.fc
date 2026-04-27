@@ -435,12 +435,14 @@ module menu =
             if is_sel then
                 draw_cursor(rc, vg, pal, x_cursor, row_y - 2, time)
             let color = row_color(pal, is_sel, false)
-            font.draw_text(rc, f, x_label, row_y, config.view_mode_label(i), color)
+            let label = config.view_mode_label(i)
+            font.draw_text(rc, f, x_label, row_y, label, color)
             // Mark the active mode (the one currently in effect) with
-            // an asterisk so the player can tell apart "Auto"
-            // (selected) from "Auto, currently 384" (in effect).
+            // a trailing asterisk — placed right of the label so the
+            // gun-cursor on the selected row doesn't overlap it.
             if i == g->view_mode then
-                font.draw_text(rc, f, x_label - 12, row_y, "*", pal[pal_readh])
+                let lw = font.text_width(f, label)
+                font.draw_text(rc, f, x_label + lw + 4, row_y, "*", pal[pal_readh])
         // Footer notes the in-effect resolution + the restart caveat.
         let info_y = cv_y + cv_h + 4
         font.draw_centered(rc, f, info_y,
