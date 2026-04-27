@@ -295,11 +295,14 @@ module death_cam =
         // Face the corpse (opposite of the outward direction).
         g->dir_x = 0.0 - ux
         g->dir_y = 0.0 - uy
-        // Camera plane is dir rotated 90° CW with FOV ≈ 2 *
-        // atan(0.66). Matches the setup used everywhere else
-        // pos / dir are reassigned.
-        g->plane_x = 0.0 - g->dir_y * 0.66
-        g->plane_y = g->dir_x * 0.66
+        // Camera plane = dir rotated 90° CW, scaled by `plane_factor`
+        // (the per-game FOV magnitude — 0.66 in 4:3, ~0.79 at 16:10,
+        // ~0.88 at 16:9). Matches the setup used everywhere else
+        // pos/dir are reassigned; reading from `g->plane_factor`
+        // keeps the death-cam FOV identical to gameplay regardless
+        // of view mode.
+        g->plane_x = 0.0 - g->dir_y * g->plane_factor
+        g->plane_y = g->dir_x * g->plane_factor
 
     // Per-tick update for death_cam. Drives sub-phase transitions
     // and feeds the fizzle-fade reveal when one is active. Dying-
