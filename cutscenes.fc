@@ -410,7 +410,11 @@ module death_cam =
         let s = g->dc_sub
         if s == sub.taunt then
             overlay.dissolve_stipple(rc, backdrop_color, 1.0)
-            intermission.write_lpic_text(rc, vg, pal, 0, 7 * 8, "LET'S SEE THAT AGAIN!")
+            // The taunt text measures exactly 320 px wide in the
+            // LEVELEND big-font, so in OG 4:3 it sat flush at x=0;
+            // in widescreen we recentre it inside the wider fb.
+            intermission.write_lpic_text(rc, vg, pal, rc->ui_offset_x, 7 * 8,
+                "LET'S SEE THAT AGAIN!")
         else
             raycaster.render_walls(w->lv, rc, g, vs, pal)
             billboards.build(w->lv, rc, g, vs->sprite_start)
