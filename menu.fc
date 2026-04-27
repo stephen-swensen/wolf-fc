@@ -443,12 +443,11 @@ module menu =
             if i == g->view_mode then
                 let lw = font.text_width(f, label)
                 font.draw_text(rc, f, x_label + lw + 4, row_y, "*", pal[pal_readh])
-        // Footer notes the in-effect resolution + the restart caveat.
+        // Footer notes the in-effect resolution. Changes apply
+        // immediately on Enter — no restart needed.
         let info_y = cv_y + cv_h + 4
         font.draw_centered(rc, f, info_y,
             "ACTIVE: %d{rc->fb_w} X %d{rc->fb_h}", pal[pal_text])
-        font.draw_centered(rc, f, info_y + 10,
-            "RESTART REQUIRED FOR CHANGES TO TAKE EFFECT", pal[pal_help])
         draw_help(rc, pal, f, "ARROWS  ENTER selects  ESC")
 
     // ============================================================

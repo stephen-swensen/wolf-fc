@@ -684,6 +684,67 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
     })!
     rc
 
+// Resolve a view-mode preference into a concrete framebuffer width.
+// Auto (0) queries the display; Original / 16:10 / 16:9 use fixed
+// values from `config.view_mode_to_fb_w`. Always clamps to [320, 640]
+// and rounds up to even (so the 2× upscale buffer stays a multiple
+// of 2). Test-mode callers should bypass this and just use 320 — SDL
+// isn't initialised in that path.
+let compute_fb_w_for_view_mode = (view_mode: int32) ->
+    let forced = config.view_mode_to_fb_w(view_mode)
+    if forced > 0 then forced
+    else
+        let mut db = sdl2.rect { x = 0, y = 0, w = 0, h = 0 }
+        sdl2.get_display_bounds(0, &db)
+        if db.w <= 0 || db.h <= 0 then 320
+        else
+            let display_aspect = (float64) db.w / (float64) db.h
+            let scale = display_aspect / (4.0 / 3.0)
+            let mut x = (int32) (320.0 * scale)
+            if x < 320 then x = 320
+            if x > 640 then x = 640
+            if x % 2 != 0 then x = x + 1
+            x
+
+// Apply a view-mode change on the fly. Resizes the framebuffer /
+// upscale / z-buffer / title-bg cache, rescales the player's camera-
+// plane vector to the new FOV magnitude, and updates `g->view_mode`.
+// Returns true if the framebuffer width actually changed (caller is
+// expected to re-create the SDL texture and re-set the renderer's
+// logical size). The pic_cache is left intact — pic-pixel buffers
+// are independent of fb_w (pics blit at native size).
+let apply_view_mode = (w: world*, vg: const vgagraph.vgagraph_file*,
+                       pal: const uint32[], view_mode: int32) ->
+    let new_fb_w = compute_fb_w_for_view_mode(view_mode)
+    let new_plane_factor = fov_factor * (float64) new_fb_w / 320.0
+    let g = w->g
+    let rc = w->rc
+    let changed = new_fb_w != rc->fb_w
+    if changed then
+        // Free the old size-dependent buffers + cache, then alloc
+        // fresh ones at the new dimensions.
+        free(rc->fb)
+        free(rc->dbuf)
+        free(rc->zbuf)
+        free(rc->title_bg)
+        rc->fb_w = new_fb_w
+        rc->screen_w = new_fb_w * 2
+        rc->ui_offset_x = (new_fb_w - 320) / 2
+        rc->fb = alloc(uint32[new_fb_w * rc->fb_h] {})!
+        rc->dbuf = alloc(uint32[(new_fb_w * 2) * (rc->fb_h * 2)] {})!
+        rc->zbuf = alloc(float64[new_fb_w] {})!
+        rc->title_bg = pics.build_title_bg_cache(vg, pal, new_fb_w, rc->fb_h)
+        // Rescale the player's camera plane to the new FOV magnitude
+        // while preserving direction. Plane is always perpendicular
+        // to dir with magnitude == plane_factor; multiplying by the
+        // ratio keeps that invariant after the change.
+        let scale = new_plane_factor / g->plane_factor
+        g->plane_x = g->plane_x * scale
+        g->plane_y = g->plane_y * scale
+        g->plane_factor = new_plane_factor
+    g->view_mode = view_mode
+    changed
+
 // Allocate the save/load menu cache + scratch buffers. One instance per
 // process (only one save/load menu can be open at a time).
 let build_save_menu_ctx = () ->
@@ -1901,36 +1962,9 @@ let main = (args: str[]) ->
     let mut plane_factor = fov_factor
     if !test_mode then
         sdl2.init(sdl2.init_video)
-        let forced_w = config.view_mode_to_fb_w(cfg.view_mode)
-        if forced_w > 0 then
-            fb_w = forced_w
-            plane_factor = fov_factor * (float64) fb_w / 320.0
-            io.write("View mode %s{config.view_mode_label(cfg.view_mode)} → fb %d{fb_w}x200\n", stdout)
-            void()
-        else
-            // Auto: query the display and derive Hor+ width.
-            let mut db = sdl2.rect { x = 0, y = 0, w = 0, h = 0 }
-            sdl2.get_display_bounds(0, &db)
-            if db.w > 0 && db.h > 0 then
-                // The OG renders 320×200 to a 4:3 display with a 1.2 VGA
-                // pixel aspect → the camera's horizontal FOV is fixed by
-                // 320 columns at that aspect. For Hor+ we keep the same
-                // vertical FOV (game_h stays 200) and widen the column
-                // count proportionally to the display's aspect:
-                //     fb_w = 320 * (display_aspect / 4:3)
-                // 16:10 → 384, 16:9 → 428, 21:9 → 533.
-                let display_aspect = (float64) db.w / (float64) db.h
-                let scale = display_aspect / (4.0 / 3.0)
-                let mut w = (int32) (320.0 * scale)
-                // Round up to an even number so the 2x scale buffer width
-                // stays a multiple of 2; clamp to a reasonable max so an
-                // ultrawide monitor doesn't blow up the FB alloc.
-                if w < 320 then w = 320
-                if w > 640 then w = 640
-                if w % 2 != 0 then w = w + 1
-                fb_w = w
-                plane_factor = fov_factor * (float64) fb_w / 320.0
-                io.write("Display %d{db.w}x%d{db.h} → fb %d{fb_w}x200 (Hor+ widescreen, auto)\n", stdout)
+        fb_w = compute_fb_w_for_view_mode(cfg.view_mode)
+        plane_factor = fov_factor * (float64) fb_w / 320.0
+        io.write("View mode %s{config.view_mode_label(cfg.view_mode)} → fb %d{fb_w}x200\n", stdout)
 
     // Assemble the `world` — the handle that groups game state, level data,
     // renderer, and audio. Orchestrators take `world*`; narrower functions
@@ -2123,9 +2157,10 @@ let main = (args: str[]) ->
     // applies the VGA 1.2 pixel aspect (game_h * 1.2 * 2 = 480) so a
     // 4:3 fb (320 wide) renders at 640×480 and a 16:10 fb (384 wide)
     // renders at 768×480.
-    let runtime_screen_w = w->rc->screen_w
-    let runtime_screen_h = w->rc->fb_h * 2
-    let runtime_actual_h = (w->rc->fb_h * 12 / 10) * 2   // VGA pixel-aspect-corrected (1.2)
+    // Mutable so the Change View menu can resize on the fly.
+    let mut runtime_screen_w = w->rc->screen_w
+    let mut runtime_screen_h = w->rc->fb_h * 2
+    let mut runtime_actual_h = (w->rc->fb_h * 12 / 10) * 2   // VGA pixel-aspect-corrected (1.2)
     let flags = sdl2.window_shown | sdl2.window_resizable | sdl2.window_allow_highdpi
     let win = sdl2.create_window(c"Wolf-FC",
         sdl2.pos_centered, sdl2.pos_centered, runtime_screen_w, runtime_actual_h, flags)
@@ -2145,7 +2180,7 @@ let main = (args: str[]) ->
     sdl2.set_hint(c"SDL_RENDER_SCALE_QUALITY", c"nearest")
 
     // Streaming texture at 2× framebuffer dims.
-    let tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
+    let mut tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
         sdl2.tex_streaming, runtime_screen_w, runtime_screen_h)
 
     // Set up audio device and start music. Output is stereo (2 channels
@@ -2455,18 +2490,28 @@ let main = (args: str[]) ->
                             g->menu_sel = 1     // back to SOUND row
                     else if g->menu_level == menu.nav.changeview then
                         // View-mode picker: arrow up/down navigates the
-                        // four modes; Enter commits the choice to the
-                        // config file. The change only takes effect on
-                        // next launch — switching the active fb_w
-                        // would require reallocating the framebuffer,
-                        // texture, etc., which is much more invasive.
+                        // four modes; Enter commits + applies the choice
+                        // on the fly. apply_view_mode resizes the
+                        // framebuffer / upscale / z-buffer / title-bg
+                        // cache and rescales the player's plane vector;
+                        // we follow up by recreating the SDL texture +
+                        // updating the renderer's logical size so the
+                        // new fb dimensions actually reach the display.
                         if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + menu.changeview_len - 1) % menu.changeview_len
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % menu.changeview_len
                         else if is_confirm then
-                            g->view_mode = g->menu_sel
+                            let resized = apply_view_mode(w, w->vg, pal, g->menu_sel)
                             config.save(config.snapshot(w))
+                            if resized then
+                                sdl2.destroy_texture(tex)
+                                runtime_screen_w = w->rc->screen_w
+                                runtime_screen_h = w->rc->fb_h * 2
+                                runtime_actual_h = (w->rc->fb_h * 12 / 10) * 2
+                                tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
+                                    sdl2.tex_streaming, runtime_screen_w, runtime_screen_h)
+                                sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
                             g->menu_sel = 3     // back to CHANGE VIEW row
