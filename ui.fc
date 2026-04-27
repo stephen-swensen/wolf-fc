@@ -759,14 +759,41 @@ module hud =
         // was a Schabbs needle projectile). got_gatling_timer
         // overrides everything while active, matching the original's
         // DrawFace check against SD_SoundPlaying(GETGATLINGSND).
+        // God mode locks the face to FACE1A (full-health, eyes
+        // dead-ahead, eyebrows level) — the symmetric variant; the
+        // B/C variants have one brow raised. The gold-eye recolor
+        // below turns this into the god-mode tell.
         let dead_face = if g->last_hit_needle then pics.id.mutant_bj
             else pics.id.face_dead
-        let face = if g->got_gatling_timer > 0.0 then pics.id.got_gatling
+        let face = if g->god_mode && g->health > 0 then pics.id.face_base + 0
+            else if g->got_gatling_timer > 0.0 then pics.id.got_gatling
             else if g->health <= 0 then dead_face
             else match g->phase with
             | dying     -> dead_face
             | _            -> face_chunk_for(g->health, g->face_frame)
         pics.draw(rc, vg, pal, face, ox + 136, bar_top + 4)
+        // God-mode "Doom-eye" overlay: scan the 24x32 face cell for
+        // the blue iris pixels and stamp them gold. The predicate
+        // (blue dominant, very dark red+green) hits BJ's irises
+        // without any palette-index lookups, and the search box is
+        // confined to the face cell so no other HUD blue is at risk.
+        if g->god_mode && g->health > 0 then
+            let gold = 0xFFFFD700u32
+            let face_x = ox + 136
+            let face_y = bar_top + 4
+            for fy in 0..32
+                let dy = face_y + fy
+                if dy < 0 || dy >= rc->fb_h then continue
+                for fx in 0..24
+                    let dx = face_x + fx
+                    if dx < 0 || dx >= rc->fb_w then continue
+                    let idx = (int64) dy * (int64) rc->fb_w + (int64) dx
+                    let pix = rc->fb[idx]
+                    let r  = (pix >> 16) & 0xFFu32
+                    let gc = (pix >> 8)  & 0xFFu32
+                    let b  =  pix        & 0xFFu32
+                    if b > 100u32 && r < 50u32 && gc < 50u32 then
+                        rc->fb[idx] = gold
         // Weapon icon on the right.
         let weapon_chunk = match g->weapon with
         | 1 -> pics.id.pistol
@@ -781,26 +808,9 @@ module hud =
             pics.draw(rc, vg, pal, pics.id.gold_key, ox + 240, bar_top + 4)
         if g->has_silver_key then
             pics.draw(rc, vg, pal, pics.id.silver_key, ox + 240, bar_top + 20)
-        // Cheat indicators: a single vertical stripe inside the HUD
-        // edge (relative to the centred status-bar). Gold on the left
-        // = god mode (MLI / IDDQD). Silver on the right = IDKFA.
-        // Painted last so they overlay the status-bar graphic + all
-        // stamped cells.
-        let y0 = bar_top + 1
-        let y1 = rc->fb_h - 2
-        if g->god_mode then
-            let gold = 0xFFFFD700u32
-            let x = ox + 1
-            for y in y0..(y1 + 1)
-                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = gold
-        if g->idkfa_mode then
-            let silver = 0xFFC0C0C0u32
-            // Right edge of the centred 320 status bar, not the
-            // framebuffer right edge — keeps the indicator pinned to
-            // the HUD strip in widescreen.
-            let x = ox + 320 - 2
-            for y in y0..(y1 + 1)
-                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = silver
+        // No cheat-edge stripe: god mode shows itself through BJ's
+        // gold eyes (above) and IDKFA is self-evident from the full
+        // ammo / chain-gun / both-keys cells.
 
     // Copy a const str into g->msg_buf and arm the message timer.
     // The buffer caps at 63 chars (1 spare); longer messages are
