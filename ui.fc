@@ -306,27 +306,32 @@ module pics =
                 rc->fb[row + bar_x + bx] = col
 
     // One-time decode of TITLEPIC into an `fb_w × fb_h` ARGB buffer.
-    // Stretched horizontally to fill the framebuffer width — matches
-    // the Steam Wolf3D approach for widescreen displays (the title
-    // art is one of the few places that's tolerant of a small aspect
-    // distortion, since there's no precise geometry the player reads
-    // off; in 4:3 mode dst_w == src_w so no scale happens). Returns a
-    // heap slice the caller must hold for the process lifetime.
+    // Letterboxed at native size (320×200) and centred; side panels
+    // in widescreen are plain black. Returns a heap slice the caller
+    // must hold for the process lifetime.
     let build_title_bg_cache = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                                 fb_w: int32, fb_h: int32) ->
         let buf = alloc(uint32[fb_w * fb_h] {})!
+        // Black side panels (in 4:3 the pic covers everything anyway).
+        for i in 0..(fb_w * fb_h)
+            buf[(int64) i] = 0xFF000000u32
         let pic = vgagraph.load_pic(vg, id.title)
         defer free(pic)
         if pic.len == 0 then return buf
         let w = vgagraph.pic_width(vg, id.title)
         let h = vgagraph.pic_height(vg, id.title)
         if w <= 0 || h <= 0 then return buf
-        for py in 0..fb_h
-            let sy = (int64) py * (int64) h / (int64) fb_h
-            for px in 0..fb_w
-                let sx = (int64) px * (int64) w / (int64) fb_w
+        // Letterbox geometry: pic at native size, centred.
+        let dst_w = if w < fb_w then w else fb_w
+        let dst_h = if h < fb_h then h else fb_h
+        let off_x = (fb_w - dst_w) / 2
+        let off_y = (fb_h - dst_h) / 2
+        for py in 0..dst_h
+            let sy = (int64) py * (int64) h / (int64) dst_h
+            for px in 0..dst_w
+                let sx = (int64) px * (int64) w / (int64) dst_w
                 let pix = pic[sy * (int64) w + sx]
-                buf[(int64) py * (int64) fb_w + (int64) px] = pal[(int32) pix]
+                buf[(int64) (off_y + py) * (int64) fb_w + (int64) (off_x + px)] = pal[(int32) pix]
         buf
 
     // Draw a pic with horizontal stretch (nearest-neighbor) to a
