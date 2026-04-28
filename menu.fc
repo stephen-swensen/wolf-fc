@@ -257,9 +257,20 @@ module menu =
             let is_locked = main_is_locked(i, g->has_active_game)
             if is_sel then
                 draw_cursor(rc, vg, pal, ox + menu_x, row_y - 2, time)
+            // Row 7 only gets the OG's read-this-style colors
+            // (READCOLOR / READHCOLOR — orange / yellow) while it
+            // reads "Back to Game" — i.e. when there's a game to
+            // resume. The "Back to Demo" variant uses regular row
+            // colors since it's a passive return-to-title nav, not
+            // a "you have unfinished business" jump.
+            let is_resume_game = i == 7 && g->has_active_game
+            let color = if is_locked then pal[pal_deactive]
+                else if is_resume_game && is_sel then pal[pal_readh]
+                else if is_resume_game then pal[pal_read]
+                else if is_sel then pal[pal_highlight]
+                else pal[pal_text]
             font.draw_text(rc, f, ox + menu_x + menu_indent, row_y,
-                main_label(i, g->has_active_game),
-                row_color(pal, is_sel, is_locked))
+                main_label(i, g->has_active_game), color)
         draw_help_pic(rc, vg, pal)
 
     // ============================================================
