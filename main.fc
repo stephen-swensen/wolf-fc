@@ -2625,7 +2625,7 @@ let main = (args: str[]) ->
                                 if !menu.main_is_locked(s, g->has_active_game) then break
                             g->menu_sel = s
                         else if is_confirm then
-                            // Layout: NEW / SOUND / OPTIONS / VIEW / LOAD / SAVE / BACK / QUIT
+                            // Layout: NEW / SOUND / OPTIONS / LOAD / SAVE / VIEW / SCORES / BACK / QUIT
                             match g->menu_sel with
                             | 0 ->
                                 // NEW GAME → episode picker
@@ -2640,20 +2640,20 @@ let main = (args: str[]) ->
                                 g->menu_level = menu.nav.options
                                 g->menu_sel = 0
                             | 3 ->
-                                // CHANGE VIEW → view-mode picker
-                                g->menu_level = menu.nav.changeview
-                                g->menu_sel = g->view_mode
-                            | 4 ->
                                 // LOAD GAME → load slot menu
                                 save.refresh_slots(w->sm)
                                 g->menu_level = menu.nav.loadlist
                                 g->menu_sel = 0
-                            | 5 ->
+                            | 4 ->
                                 // SAVE GAME (locked without an active game)
                                 if g->has_active_game then
                                     save.refresh_slots(w->sm)
                                     g->menu_level = menu.nav.savelist
                                     g->menu_sel = 0
+                            | 5 ->
+                                // CHANGE VIEW → view-mode picker
+                                g->menu_level = menu.nav.changeview
+                                g->menu_sel = g->view_mode
                             | 6 ->
                                 // VIEW SCORES → high-scores screen.
                                 // hs_source=from_menu so the dismiss
@@ -2767,7 +2767,7 @@ let main = (args: str[]) ->
                                 sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
-                            g->menu_sel = 3     // back to CHANGE VIEW row
+                            g->menu_sel = 5     // back to CHANGE VIEW row
                     else if g->menu_level == menu.nav.options then
                         // Wolf-fc mods. Up/down navigates rows; Enter
                         // toggles boolean rows or runs the action row;
@@ -2826,7 +2826,7 @@ let main = (args: str[]) ->
                                 save.refresh_slots(w->sm)
                                 g->save_edit_active = false
                                 g->menu_level = menu.nav.main
-                                g->menu_sel = 5     // back to SAVE GAME row
+                                g->menu_sel = 4     // back to SAVE GAME row
                             else if k == sdl2.key_escape then
                                 // Cancel: clear edit buffer, stay on
                                 // slot list.
@@ -2870,7 +2870,7 @@ let main = (args: str[]) ->
                             g->save_edit_active = true
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
-                            g->menu_sel = 5     // back to SAVE GAME row
+                            g->menu_sel = 4     // back to SAVE GAME row
                     else if g->menu_level == menu.nav.loadlist then
                         if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + save.num_slots - 1) % save.num_slots
@@ -2882,7 +2882,7 @@ let main = (args: str[]) ->
                                     g->has_active_game = true
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
-                            g->menu_sel = 4     // back to LOAD GAME
+                            g->menu_sel = 3     // back to LOAD GAME
                 | high_scores ->
                     // Direct dispatch (not via the IN_Ack latch) so the
                     // typing keys during edit don't double as ack

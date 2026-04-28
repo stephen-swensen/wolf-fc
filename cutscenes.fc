@@ -1527,18 +1527,19 @@ module high_scores_screen =
             else if e->name_len > 0 then
                 let nm = highscore.name_str(e)
                 font.draw_text(rc, f, name_x, row_y, nm, text_color)
-            // Level "E?/L?" right-aligned at the right edge of the
-            // C_LEVEL header pic so the value sits directly beneath
-            // the header. The OG used `(22*8) - w` minus a fixed 6
-            // px backoff, which drifts visibly left of the pic in
-            // our variable-width font. Anchoring on pic_right
-            // self-corrects whatever pic dimensions the rip uses.
+            // Level "E?/L?" left-aligned with the visible "L" of
+            // "LEVEL" in the header. The C_LEVEL pic is 32 wide but
+            // its painted glyphs sit inside 2 px of leading
+            // background, so the leftmost ink lands at pic_x + 2 —
+            // we offset the value's left edge to match. The OG's
+            // right-aligned `(22*8) - w` formula relied on fixed-
+            // width digit pics; in our variable-width font the
+            // value drifts visibly under the header either way, so
+            // we anchor under the leading "L" instead.
             // Episode is 0-indexed in the entry; display 1-indexed.
             let lvl_label = "E%d{e->episode + 1}/L%d{e->completed}"
-            let lw = font.text_width(f, lvl_label)
-            let level_right = ox + 20 * 8 + vgagraph.pic_width(vg, pics.id.c_level)
-            font.draw_text(rc, f, level_right - lw, row_y,
-                lvl_label, text_color)
+            let level_x = ox + 20 * 8 + 2
+            font.draw_text(rc, f, level_x, row_y, lvl_label, text_color)
             // Score right-aligned at column 34*8 - 8 = 264. Mirrors
             // the OG `(34*8) - 8 - w` formula and lands ~8 px past
             // the C_SCORE header's right edge — the SCORE pic has
