@@ -1427,6 +1427,25 @@ module high_scores_screen =
         hs->edit_len = hs->edit_len - 1
         hs->edit_buf[(int64) hs->edit_len] = 0u8
 
+    // Leave the high-scores screen. Persists any pending name edit
+    // first, then routes back to the source's natural exit target —
+    // title screen for the death / endart paths (matches the OG's
+    // DemoLoop cycle), main menu for the View Scores entry. The
+    // active-game flag clears on the title path so a subsequent menu
+    // visit doesn't offer BACK TO GAME for a finished run.
+    let dismiss = (g: game*, hs: highscore_ctx*) ->
+        if hs->pending_save then
+            highscore.save(hs->scores)
+            hs->pending_save = false
+        if g->hs_source == from_menu then
+            g->phase = game_phase.main_menu
+            g->menu_level = menu.nav.main
+            g->menu_sel = 6     // VIEW SCORES row
+        else
+            g->phase = game_phase.title
+            g->phase_timer = 0.0
+            g->has_active_game = false
+
     // Enter the high-scores screen. If `score` qualifies (positive
     // index returned by `highscore.qualifies`), insert at that row
     // and arm the inline name editor; otherwise the screen is purely

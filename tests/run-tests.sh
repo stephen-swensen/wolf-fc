@@ -1001,6 +1001,14 @@ rm -f "$WOLF_FC_TEST_HOME/highscores"
 assert_contains "hs:persists-across-launches" \
     "hs_state" \
     "score[0] 75000 L8 E5 WOLF FC"
+# `hs_name` can write any printable-ASCII byte the OG would have
+# accepted via US_LineInput's `isprint(c)` filter (lowercase, mixed
+# case, punctuation). The interactive keydown path also goes through
+# `keysym_to_ascii`, which maps SDL keysym + shift modifier to the
+# same byte set; this test covers the storage layer directly.
+hs_assert "hs:name-mixed-case-survives-commit" \
+    "hs_qualify:50000,5,2 hs_name:Hello! advance hs_state" \
+    "score[0] 50000 L5 E3 Hello!"
 # Cleanup so subsequent test files start clean.
 rm -f "$WOLF_FC_TEST_HOME/highscores"
 
