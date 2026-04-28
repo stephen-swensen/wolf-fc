@@ -754,7 +754,7 @@ module enemies =
 
         // Player damage path — one place so every damage source routes
         // through the same SFX + death-transition handling. dmg ≤0 is
-        // a no-op; damage while already dying / gameover / intermission
+        // a no-op; damage while already dying / intermission / cutscene
         // is silently dropped so scripted paths can keep ticking
         // without retriggering the death transition.
         //

@@ -74,13 +74,12 @@ module episode =
 // ============================================================
 
 // High-level game phase. Drives tick() (most systems freeze outside playing)
-// and the main loop's input handling (intermission / game-over consume space to
-// advance; playing dispatches keys into the normal game code).
+// and the main loop's input handling (intermission / high_scores consume space
+// to advance; playing dispatches keys into the normal game code).
 //
 //   playing       — normal gameplay
 //   dying         — collapse animation + red screen tint after HP=0
 //   intermission  — stats screen between levels (press space to continue)
-//   game_over     — lives exhausted (press space to restart from level 0)
 union game_phase =
     | pg13          // PG-13 parental-advisory splash shown once at startup;
                     // any key (or a short auto-timer) advances to title.
@@ -93,7 +92,6 @@ union game_phase =
     | playing
     | dying
     | intermission
-    | game_over
     | bj_victory    // BJ runs forward + jumps + yells after the player
                     // steps on a boss-map EXITTILE (ports the original's
                     // VictoryTile → SpawnBJVictory → ex_victorious path).
@@ -112,6 +110,13 @@ union game_phase =
                     // menu (matches the OG, where Victory()'s embedded
                     // ShowArticle ends GameLoop and pops to the control
                     // panel — no auto-advance to the next episode).
+    | high_scores   // top-7 score table; shown after death (replaces the
+                    // OG's CheckHighScore call from `ex_died`), after
+                    // the per-episode endart article (`ex_victorious`),
+                    // and from the View Scores main-menu entry. If the
+                    // ending game qualified, the new row enters an
+                    // inline name-edit mode (mirrors US_LineInput);
+                    // otherwise any ack key dismisses → title screen.
 
 // Menu navigation state. `menu_level` picks which list to show:
 //   main        (NEW GAME / SOUND / LOAD GAME / SAVE GAME / RESUME / QUIT)
@@ -201,6 +206,17 @@ struct game =
     health: int32
     ammo: int32
     score: int32
+    // Score at the start of the current level. Captured at level
+    // transition (in `advance_next_level`, after the just-completed
+    // level's intermission bonus has been added) and consumed by
+    // `restart_current_level` to rewind on death-with-lives-left.
+    // Mirrors the original game's `gamestate.oldscore` — every
+    // failed run of a level forfeits the points earned within that
+    // run. The high-scores screen still uses the un-rewound `score`
+    // at time of final death (we never reach restart_current_level
+    // on the lethal life), matching the original's CheckHighScore
+    // call from the `ex_died` lives==-1 branch.
+    oldscore: int32
     lives: int32
     level_num: int32
     has_gold_key: bool
@@ -287,6 +303,12 @@ struct game =
     endart_page_offsets: int32[]
     endart_total_pages: int32
     endart_page: int32         // 0-indexed; final page index = total_pages - 1
+
+    // High-scores entry source. Latched in `high_scores_screen.enter`
+    // so the dismissal handler knows whether to route back to the
+    // title (post-death / post-victory) or the main menu (View Scores
+    // entry). Values are `high_scores_screen.from_*` constants.
+    hs_source: int32
 
     // Death-cam cutscene state — active only during death_cam.
     // Sub-phases: 0 = hold on final death frame, 1 = dissolve to black,
@@ -593,6 +615,25 @@ struct save_menu_ctx =
     edit_buf: uint8[]
     edit_len: int32
 
+// High-scores screen state — process-wide, persists across games.
+// `scores` is the 7-row table loaded once at startup (or seeded with
+// id Software's defaults on first launch) and rewritten whenever a
+// new score qualifies. Edit fields drive the inline name-entry that
+// activates on a qualifying finish. `edit_index` is -1 outside the
+// editing flow; while editing it points at the row in `scores` that
+// was just inserted (and `edit_buf` / `edit_len` mirror the typed
+// name until the player presses Enter to commit).
+struct highscore_ctx =
+    scores: highscore.entry[]
+    edit_index: int32
+    edit_active: bool
+    edit_buf: uint8[]
+    edit_len: int32
+    // True the frame the player exits the high-scores screen after a
+    // qualifying-and-named entry, so the post-screen routing (back to
+    // title) can persist the table once. Cleared on next entry.
+    pending_save: bool
+
 // Everything the running game needs in one handle. Functions that only need
 // one sub-context (e.g. `raycaster.render_walls` only touches level + render_ctx) keep
 // their narrow signatures so their dependencies are visible in their types;
@@ -608,6 +649,7 @@ struct world =
     rc: render_ctx*     // renderer scratch buffers
     ac: audio_ctx*      // sound pipeline
     sm: save_menu_ctx*  // save/load menu cache + scratch
+    hs: highscore_ctx*  // top-7 high-score table + name-entry scratch
     vg: const vgagraph.vgagraph_file*  // VGAGRAPH: fonts, status bar, BJ face,
                                  // title screen, menu graphics.
     font: font.info*             // small menu/UI font (chunk 1)
@@ -773,6 +815,24 @@ let build_save_menu_ctx = () ->
     })!
     sm
 
+// Allocate the high-score context: the 7-row table seeded with id
+// Software's defaults (then overlaid from `~/.wolf-fc/highscores` if
+// present) plus the inline name-entry buffer. Single instance per
+// process — the screen / death flow / menu all reach for it via
+// `world.hs`.
+let build_highscore_ctx = () ->
+    let scores = alloc(highscore.entry[highscore.max_scores] {})!
+    highscore.reset_to_defaults(scores)
+    highscore.load(scores)
+    alloc(highscore_ctx {
+        scores       = scores,
+        edit_index   = -1,
+        edit_active  = false,
+        edit_buf     = alloc(uint8[highscore.max_name_len + 1] {})!,
+        edit_len     = 0,
+        pending_save = false
+    })!
+
 // Allocate a level from the decoded wolf3d map data. Builds tilemap,
 // spawns static sprites, and marks push-wall tiles. Caller must call
 // free_level when the level is no longer needed.
@@ -904,6 +964,17 @@ let reset_episode_totals = (g: game*) ->
 
 let advance_next_level = (w: world*, vs: const vswap.vswap_file*) ->
     let g = w->g
+    // Capture the score-at-start-of-the-next-level for the OG-style
+    // death-rewind. By the time we get here the just-completed
+    // level's intermission bonus has already landed in `score`
+    // (intermission.enter / bj_victory.enter / death_cam advance
+    // all call `add_score(g, compute_level_bonus(g), ...)`), so
+    // `oldscore = score` snapshots "score at the moment you walked
+    // into the next level". A subsequent death on the new level
+    // will rewind here in `restart_current_level`. Mirrors the
+    // original game's `gamestate.oldscore = gamestate.score` set
+    // in the ex_completed branch.
+    g->oldscore = g->score
     g->level_num = episode.next_level_num(g->level_num, g->went_secret)
     g->went_secret = false
     // Wolf3D clears keys between levels.
@@ -936,10 +1007,15 @@ let return_to_menu_post_episode = (g: game*) ->
     g->has_silver_key = false
 
 // Restart the current level (death with lives remaining). Resets player
-// health / ammo / weapon; preserves score; decrements lives at the caller
-// to keep the pre/post-death accounting legible.
+// health / ammo / weapon, rewinds score to the start-of-this-level value
+// (`oldscore`); decrements lives at the caller to keep the pre/post-death
+// accounting legible. Score rewind matches the original game: every
+// failed run forfeits the points earned within that run. The lethal
+// life is handled by the caller routing to `high_scores_screen.enter`
+// instead of here, so the high-scores entry sees the un-rewound score.
 let restart_current_level = (w: world*, vs: const vswap.vswap_file*) ->
     let g = w->g
+    g->score = g->oldscore
     // Re-arm episode recording so re-finishing the level still
     // contributes to the running totals.
     g->ep_recorded_current = false
@@ -956,26 +1032,9 @@ let restart_current_level = (w: world*, vs: const vswap.vswap_file*) ->
     g->respawn_fade_timer = player.respawn_fade_time
     pics.trigger_get_psyched(g)
 
-// Full game reset after game-over. level_num → 0; player state back to
-// fresh-start (3 lives, score 0, full HP, pistol 8 ammo).
-let restart_full_game = (w: world*, vs: const vswap.vswap_file*) ->
-    let g = w->g
-    g->level_num = 0
-    reset_episode_totals(g)
-    reload_level_data(w, vs)
-    spawn.find_player_start(w->lv_data, g)
-    reset_level_counters(g, w->lv)
-    player.reset_for_new_game(g)
-    areas.update_player_area(w->lv, g)
-    areas.connect(w->lv, g->area_number)
-    g->phase = game_phase.playing
-    g->phase_timer = 0.0
-    player.clear_input_keys(g)
-    pics.trigger_get_psyched(g)
-
 // Start a new game at the current level_num (set by the episode picker).
-// Identical to restart_full_game except it doesn't reset level_num to 0 —
-// used to start a selected episode.
+// Resets player state (3 lives, score 0, full HP, pistol 8 ammo) +
+// rebuilds the level + clears per-episode running totals.
 let start_new_game_here = (w: world*, vs: const vswap.vswap_file*) ->
     let g = w->g
     reset_episode_totals(g)
@@ -983,6 +1042,10 @@ let start_new_game_here = (w: world*, vs: const vswap.vswap_file*) ->
     spawn.find_player_start(w->lv_data, g)
     reset_level_counters(g, w->lv)
     player.reset_for_new_game(g)
+    // reset_for_new_game zeros `score`; mirror that into `oldscore`
+    // so the death-rewind has a sane baseline (rewinds to 0, not
+    // whatever score the previous game ended on).
+    g->oldscore = 0
     // Consume the BOSS FIGHT latch: teleport to the boss if the map has one.
     // Done after spawn.find_player_start + reset_level_counters so the teleport
     // overrides the map's default spawn while the level state is otherwise
@@ -1005,9 +1068,10 @@ let start_new_game_here = (w: world*, vs: const vswap.vswap_file*) ->
 //
 // Order matters:
 //   1. Elevator flag    -> enter intermission (freezes gameplay)
-//   2. Death timer up   -> restart level or game-over
-// `on_intermission_space` and `on_gameover_space` are triggered by the
-// caller (they need input access), not by this function.
+//   2. Death timer up   -> restart level (lives left) or high-scores
+//                          screen (lives exhausted)
+// Intermission / high-scores ack keys are handled by the caller (they
+// need input access), not by this function.
 let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
     let g = w->g
     let mut level_changed = false
@@ -1029,8 +1093,16 @@ let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
             restart_current_level(w, vs)
             level_changed = true
         else
-            g->phase = game_phase.game_over
-            g->phase_timer = 0.0
+            // Out of lives: route through the high-scores screen,
+            // matching the OG's `case ex_died: ... CheckHighScore;
+            // return;` flow. The screen handles the score insertion +
+            // optional name entry; on dismiss it routes back to the
+            // title (see the high_scores keydown handler in the main
+            // loop). The level is intentionally NOT reloaded — the
+            // next NEW GAME / LOAD GAME will rebuild as needed.
+            high_scores_screen.enter(g, w->hs, high_scores_screen.from_death,
+                g->score, g->level_num + 1, g->level_num / episode.levels_per)
+            g->has_active_game = false
     // Death-cam cutscene has finished its replay hold; hand off
     // straight to the episode-end Victory screen — the OG GameLoop's
     // `ex_victorious` case skips `LevelCompleted()` (the per-level
@@ -1159,14 +1231,14 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
     | intermission ->
         intermission.render(w->rc, w->vg, pal, w->g)
         return
-    | game_over ->
-        game_over.render(w->rc, w->g)
-        return
     | episode_end ->
         episode_end.render(w->rc, w->vg, pal, w->font, w->g)
         return
     | endart ->
         endart_screen.render(w->rc, w->vg, pal, w->font, w->g)
+        return
+    | high_scores ->
+        high_scores_screen.render(w->rc, w->vg, pal, w->font, w->hs, w->g->phase_timer)
         return
     | death_cam ->
         death_cam.render(w, vs, pal, w->vg)
@@ -1364,11 +1436,11 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         | playing      -> "playing"
         | dying        -> "dying"
         | intermission -> "intermission"
-        | game_over    -> "gameover"
         | bj_victory   -> "bj_victory"
         | death_cam    -> "death_cam"
         | episode_end  -> "episode_end"
         | endart       -> "endart"
+        | high_scores  -> "high_scores"
         let par = if g->level_num < 60 then intermission.par_times[g->level_num] else 0
         io.write("phase=%s{phase_s} difficulty=%d{g->difficulty}\n", stdout)
         io.write("kills=%d{g->kills}/%d{g->total_kills} secrets=%d{g->secrets}/%d{g->total_secrets} treasures=%d{g->treasures}/%d{g->total_treasures}\n", stdout)
@@ -1464,11 +1536,33 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             let ep = g->level_num / episode.levels_per
             endart_screen.enter(g, w->vg, ep)
         else if g->phase == game_phase.endart then
-            // Test-mode advance from endart → main menu, matching the
-            // interactive Esc / past-last-page flow.
-            return_to_menu_post_episode(g)
-        else if g->phase == game_phase.game_over then
-            restart_full_game(w, w->ac->vs)
+            // Test-mode advance from endart → high-scores screen,
+            // matching the interactive Esc / past-last-page flow
+            // (which routes through CheckHighScore in the OG's
+            // Victory() before returning to the menu).
+            let ep = g->level_num / episode.levels_per
+            high_scores_screen.enter(g, w->hs, high_scores_screen.from_endart,
+                g->score, g->level_num + 1, ep)
+        else if g->phase == game_phase.high_scores then
+            // Test-mode advance from high-scores → its source's
+            // dismissal target. Death / endart flows return to the
+            // title screen (matching the OG's DemoLoop cycle); the
+            // View Scores menu entry returns to the main menu.
+            // Commits any pending name buffer first so a script that
+            // types into hs_name + advance behaves the same as the
+            // interactive Enter-then-Ack sequence.
+            if w->hs->edit_active then
+                high_scores_screen.commit_name(w->hs)
+            if w->hs->pending_save then
+                highscore.save(w->hs->scores)
+                w->hs->pending_save = false
+            if g->hs_source == high_scores_screen.from_menu then
+                g->phase = game_phase.main_menu
+                g->menu_level = menu.nav.main
+                g->menu_sel = 6     // VIEW SCORES row
+            else
+                g->phase = game_phase.title
+                g->phase_timer = 0.0
     else if text.starts_with(arg, "setdifficulty:") then
         // Set difficulty + fully rebuild the current level so spawn filtering
         // reflects it. Useful for testing tier gating (base/+36/+72 tiles).
@@ -1496,6 +1590,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             if n < 0 || n >= 60 then bad("level 0..59")
             else
                 g->level_num = n
+                g->oldscore = g->score   // pin start-of-level for death rewind
                 reload_level_data(w, w->ac->vs)
                 spawn.find_player_start(w->lv_data, g)
                 reset_level_counters(g, w->lv)
@@ -1512,6 +1607,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             if n < 0 || n >= episode.count then bad("episode 0..5")
             else
                 g->level_num = n * episode.levels_per
+                g->oldscore = g->score   // pin start-of-level for death rewind
                 reload_level_data(w, w->ac->vs)
                 spawn.find_player_start(w->lv_data, g)
                 reset_level_counters(g, w->lv)
@@ -1646,7 +1742,12 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             // `endartnext` to step pages or `advance` to skip.
             let ep = g->level_num / episode.levels_per
             endart_screen.enter(g, w->vg, ep)
-        else bad("pg13/title/menu/epmenu/diffmenu/soundmenu/optionsmenu/savemenu/loadmenu/playing/endart")
+        else if p == "viewscores" then
+            // High-scores screen reached via the View Scores main-
+            // menu entry. Pure display — no insertion, no edit.
+            high_scores_screen.enter(g, w->hs, high_scores_screen.from_menu,
+                -1, 0, 0)
+        else bad("pg13/title/menu/epmenu/diffmenu/soundmenu/optionsmenu/savemenu/loadmenu/playing/endart/viewscores")
     else if arg == "endartnext" then
         // Step one page in the endart article. Past the last page
         // this is a no-op — matches the interactive forward-past-last
@@ -1664,6 +1765,58 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // that want to verify the parser found N pages.
         io.write("endart page=%d{g->endart_page + 1} of %d{g->endart_total_pages}\n", stdout)
         void()
+    else if text.starts_with(arg, "hs_qualify:") then
+        // Drive the high-scores entry path with a synthetic
+        // (score, completed-level, episode) triple. Sets up the
+        // screen exactly the same way a real death would, so the
+        // editor + insert behaviour can be exercised without faking
+        // a 4-life death sequence.
+        // Syntax: hs_qualify:SCORE,LEVEL1IDX,EPISODE
+        let parts = text.split(arg[11..arg.len], ",")
+        if parts.len >= 3 then
+            let parse = (s: const str) ->
+                match text.parse_int32(s) with
+                | some(v) -> v
+                | none -> 0
+            let sc = parse(parts[0])
+            let lv = parse(parts[1])
+            let ep = parse(parts[2])
+            high_scores_screen.enter(g, w->hs, high_scores_screen.from_death, sc, lv, ep)
+        else bad("SCORE,LEVEL,EPISODE")
+        free(parts)
+    else if text.starts_with(arg, "hs_name:") then
+        // Type a literal name into the high-scores edit buffer (replaces
+        // any previously-typed bytes). Only meaningful while the screen
+        // is in edit mode — does nothing otherwise. Followed by `advance`
+        // to commit + dismiss.
+        if w->hs->edit_active then
+            let nm = arg[8..arg.len]
+            for k in 0..(int32) w->hs->edit_buf.len
+                w->hs->edit_buf[(int64) k] = 0u8
+            let mut n = (int32) nm.len
+            if n > highscore.max_name_len then n = highscore.max_name_len
+            for k in 0..n
+                w->hs->edit_buf[(int64) k] = nm[(int64) k]
+            w->hs->edit_len = n
+    else if arg == "hs_state" then
+        // Dump every row of the high-scores table + the current edit
+        // state. Useful for verifying default content + post-insert
+        // shifts.
+        let edit = if w->hs->edit_active then 1 else 0
+        io.write("hs edit=%d{edit} index=%d{w->hs->edit_index}", stdout)
+        if w->hs->edit_active then
+            let typed = (const str) w->hs->edit_buf[0..(int64) w->hs->edit_len]
+            io.write(" typed='", stdout)
+            if typed.len > 0 then io.write(typed, stdout)
+            io.write("'", stdout)
+        io.write("\n", stdout)
+        for i in 0..highscore.max_scores
+            let e = &w->hs->scores[i]
+            let nm = highscore.name_str(e)
+            io.write("score[%d{i}] %d{e->score} L%d{e->completed} E%d{e->episode + 1} ", stdout)
+            if nm.len > 0 then io.write(nm, stdout)
+            io.write("\n", stdout)
+        void()
     else if arg == "phase" then
         let phase_s = match g->phase with
         | pg13         -> "pg13"
@@ -1672,11 +1825,11 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         | playing      -> "playing"
         | dying        -> "dying"
         | intermission -> "intermission"
-        | game_over    -> "gameover"
         | bj_victory   -> "bj_victory"
         | death_cam    -> "death_cam"
         | episode_end  -> "episode_end"
         | endart       -> "endart"
+        | high_scores  -> "high_scores"
         io.write("phase=%s{phase_s} timer=%6.3f{g->phase_timer} lives=%d{g->lives}\n", stdout)
         void()
     else if arg == "music" then
@@ -2036,7 +2189,7 @@ let main = (args: str[]) ->
         idkfa_progress = 0, idkfa_mode = false,
         key_tab_held = false, noclip = false,
         wall_hit_cooldown = 0.0,
-        health = 100, ammo = 8, score = 0, lives = 3,
+        health = 100, ammo = 8, score = 0, oldscore = 0, lives = 3,
         level_num = 0,
         has_gold_key = false, has_silver_key = false,
         next_level = false, next_level_delay = 0.0,
@@ -2054,6 +2207,7 @@ let main = (args: str[]) ->
         endart_data = alloc(uint8[0] {})!,
         endart_page_offsets = alloc(int32[0] {})!,
         endart_total_pages = 0, endart_page = 0,
+        hs_source = 0,
         ep_kr_total = 0, ep_sr_total = 0, ep_tr_total = 0,
         ep_time_total = 0, ep_levels_played = 0,
         ep_recorded_current = false,
@@ -2114,6 +2268,7 @@ let main = (args: str[]) ->
             sfx_on = cfg.sfx_on
         })!,
         sm = build_save_menu_ctx(),
+        hs = build_highscore_ctx(),
         vg = vg,
         font = font.load(vg, pics.id.font_small)
     })!
@@ -2369,7 +2524,14 @@ let main = (args: str[]) ->
                                 || k == sdl2.key_pageup then
                             endart_screen.prev_page(g)
                         else if k == sdl2.key_escape then
-                            return_to_menu_post_episode(g)
+                            // Esc routes through CheckHighScore — the
+                            // OG's Victory() / GameLoop ex_victorious
+                            // calls CheckHighScore before returning to
+                            // the control panel.
+                            let ep = g->level_num / episode.levels_per
+                            high_scores_screen.enter(g, w->hs,
+                                high_scores_screen.from_endart,
+                                g->score, g->level_num + 1, ep)
                         else if k == sdl2.key_right || k == sdl2.key_down
                                 || k == sdl2.key_pagedown
                                 || k == sdl2.key_return
@@ -2460,10 +2622,17 @@ let main = (args: str[]) ->
                                     g->menu_level = menu.nav.savelist
                                     g->menu_sel = 0
                             | 6 ->
+                                // VIEW SCORES → high-scores screen.
+                                // hs_source=from_menu so the dismiss
+                                // routes back here instead of to the
+                                // title.
+                                high_scores_screen.enter(g, w->hs,
+                                    high_scores_screen.from_menu, -1, 0, 0)
+                            | 7 ->
                                 // BACK TO GAME — only reachable when active.
                                 if g->has_active_game then
                                     g->phase = game_phase.playing
-                            | 7 ->
+                            | 8 ->
                                 g->want_quit = true
                             | _ -> void()
                         else if k == sdl2.key_escape then
@@ -2684,9 +2853,57 @@ let main = (args: str[]) ->
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
                             g->menu_sel = 4     // back to LOAD GAME
+                | high_scores ->
+                    // Direct dispatch (not via the IN_Ack latch) so the
+                    // typing keys during edit don't double as ack
+                    // presses, and so Esc / Enter behave like the OG's
+                    // US_LineInput on the qualifying row.
+                    if !is_key_repeat then
+                        if w->hs->edit_active then
+                            if k == sdl2.key_return then
+                                // Commit the typed name. Stay on the
+                                // screen; the next ack key dismisses.
+                                high_scores_screen.commit_name(w->hs)
+                            else if k == sdl2.key_escape then
+                                // Same as Enter — the OG's US_LineInput
+                                // copies whatever was typed regardless
+                                // of which key dismissed the input.
+                                high_scores_screen.commit_name(w->hs)
+                            else if k == sdl2.key_backspace then
+                                high_scores_screen.edit_backspace(w->hs)
+                            else
+                                let mut ch = 0u8
+                                if k >= sdl2.key_a && k <= sdl2.key_z then
+                                    ch = (uint8) (k - 32)   // uppercase
+                                else if k >= sdl2.key_0 && k <= sdl2.key_9 then
+                                    ch = (uint8) k
+                                else if k == sdl2.key_space then
+                                    ch = 32u8
+                                if ch != 0u8 then
+                                    high_scores_screen.edit_append(w->hs, ch)
+                        else
+                            // Not editing — any deliberate ack key
+                            // dismisses the screen. Persist the table
+                            // first if a name was just committed.
+                            let is_ack = k == sdl2.key_return
+                                || k == sdl2.key_space
+                                || k == sdl2.key_lctrl
+                                || k == sdl2.key_escape
+                            if is_ack then
+                                if w->hs->pending_save then
+                                    highscore.save(w->hs->scores)
+                                    w->hs->pending_save = false
+                                if g->hs_source == high_scores_screen.from_menu then
+                                    g->phase = game_phase.main_menu
+                                    g->menu_level = menu.nav.main
+                                    g->menu_sel = 6     // VIEW SCORES row
+                                else
+                                    g->phase = game_phase.title
+                                    g->phase_timer = 0.0
+                                    g->has_active_game = false
                 | _ ->
-                    // playing, dying, intermission, game_over,
-                    // episode_end, victory. Escape from playing
+                    // playing, dying, intermission, episode_end,
+                    // bj_victory, death_cam. Escape from playing
                     // jumps to the main menu (which doubles as the pause UI
                     // — BACK TO GAME is the default selection so any-key-Esc-
                     // any-key resumes immediately). Other phases consume keys
@@ -2694,7 +2911,7 @@ let main = (args: str[]) ->
                     if k == sdl2.key_escape && g->phase == game_phase.playing then
                         g->phase = game_phase.main_menu
                         g->menu_level = menu.nav.main
-                        g->menu_sel = 6     // BACK TO GAME row
+                        g->menu_sel = 7     // BACK TO GAME row
                         // Clear held inputs so the player isn't sprinting
                         // when they un-pause. (Mirrors intermission.enter's
                         // input-clear convention.)
@@ -2781,8 +2998,7 @@ let main = (args: str[]) ->
                                 || k == sdl2.key_lctrl
                                 || k == sdl2.key_escape
                             if is_ack_key && (g->phase == game_phase.intermission
-                               || g->phase == game_phase.episode_end
-                               || g->phase == game_phase.game_over) then
+                               || g->phase == game_phase.episode_end) then
                                 g->key_ack = true
             if t == sdl2.keyup_event then
                 let k = event.key.keysym.sym
@@ -2819,7 +3035,7 @@ let main = (args: str[]) ->
         // Update
         tick(w, dt)
 
-        // Phase transitions (elevator→intermission, death→restart/gameover).
+        // Phase transitions (elevator→intermission, death→restart/high-scores).
         // Music chunk swap is handled below from a single source of truth
         // (font.music_chunk_for_phase); no per-call music_switch flag needed.
         update_phase_transitions(w, vs)
@@ -2848,12 +3064,9 @@ let main = (args: str[]) ->
         // Endart paging is handled directly in the keydown event below
         // (Left/Up/PageUp = back, Esc = exit-to-menu, forward keys =
         // next page) — not via the IN_Ack latch since the IN_Ack
-        // pattern can't distinguish key direction.
-        // Game-over: any key restarts from level 0 with a fresh game.
-        if g->phase == game_phase.game_over
-           && g->key_ack && !g->key_ack_handled then
-            g->key_ack_handled = true
-            restart_full_game(w, vs)
+        // pattern can't distinguish key direction. high_scores is
+        // also dispatched directly (the editing flow needs typing keys
+        // distinct from ack keys; see the high_scores arm above).
         // Sync the active music to whatever phase we're now in. Only swap
         // when the chunk actually changed, so we don't restart the IMF
         // player every frame. Don't call `sdl2.clear_audio` here — the

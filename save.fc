@@ -407,6 +407,10 @@ module save =
                     io.write("label E%d{ep}M%d{lvl}\n", f)
                 io.write(
                     "game %d{g->level_num} %d{g->difficulty} %d{g->lives} %d{g->score} %d{g->health} %d{g->ammo} %d{g->weapon} %d{g->best_weapon} %d{if g->has_gold_key then 1 else 0} %d{if g->has_silver_key then 1 else 0} %d{if g->went_secret then 1 else 0}\n", f)
+                // OG-style start-of-level score, used by death-rewind.
+                // Written on its own line so older saves (lacking it)
+                // load with `oldscore = score` defaulted in `from_slot`.
+                io.write("oldscore %d{g->oldscore}\n", f)
                 io.write(
                     "counters %d{g->kills} %d{g->total_kills} %d{g->secrets} %d{g->total_secrets} %d{g->treasures} %d{g->total_treasures}\n", f)
                 io.write("time %14.6f{g->level_time}\n", f)
@@ -524,6 +528,14 @@ module save =
                                 g->has_gold_key   = unwrap_int(toks[9]) != 0
                                 g->has_silver_key = unwrap_int(toks[10]) != 0
                                 g->went_secret  = unwrap_int(toks[11]) != 0
+                                // Default oldscore to score for back-
+                                // compat: older saves lack the
+                                // `oldscore` line, and we want a
+                                // post-load death to no-op the rewind
+                                // rather than wiping the player back
+                                // to 0. The explicit `oldscore` line
+                                // (if present) overwrites this below.
+                                g->oldscore = g->score
                                 // Reload the level for the saved
                                 // level_num. This rebuilds
                                 // lv->{tilemap,doors,pushwall,sprites,enemies}
@@ -531,6 +543,10 @@ module save =
                                 // with the saved state below.
                                 reload_level_data(w, vs)
                                 level_loaded = true
+                        else if text.starts_with(line, "oldscore ") then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 2 then g->oldscore = unwrap_int(toks[1])
                         else if text.starts_with(line, "counters ") then
                             let toks = split_ws(line)
                             defer free_split(toks)
@@ -768,11 +784,11 @@ module save =
         | playing      -> "playing"
         | dying        -> "dying"
         | intermission -> "intermission"
-        | game_over    -> "gameover"
         | bj_victory   -> "bj_victory"
         | death_cam    -> "death_cam"
         | episode_end  -> "episode_end"
         | endart       -> "endart"
+        | high_scores  -> "high_scores"
         io.write("\n=== DEBUG DUMP ===\n", stderr)
         io.write("phase=%s{phase_s} hp=%d{g->health} lives=%d{g->lives} level=%d{g->level_num}\n", stderr)
         io.write("pos=(%7.4f{g->pos_x}, %7.4f{g->pos_y}) dir=(%7.4f{g->dir_x}, %7.4f{g->dir_y})\n", stderr)
@@ -818,3 +834,219 @@ module save =
                     io.write("  enemy[%d{i}] pos=(%6.3f{e->x},%6.3f{e->y}) tile(%d{e->tile_x},%d{e->tile_y}) hp=%d{e->hp} d=%5.3f{d}\n", stderr)
         io.write("=== END ===\n\n", stderr)
         void()
+
+
+// ============================================================
+// High scores — persistent table of top-7 finishes. Read once at
+// startup, rewritten whenever a new score qualifies. Same text-line
+// format as the save / config files; the file lives at
+// `~/.wolf-fc/highscores`.
+//
+// Insertion + display rules ported from the original game's
+// CheckHighScore + DrawHighScores: a new (score, completed) is
+// strictly compared against each row top-down; the first row it
+// beats is the insert point, with everything from there shifting
+// down (the bottom entry is dropped). Score ties break on the
+// higher `completed` (level reached) — losing the tie-break still
+// counts as not qualifying.
+// ============================================================
+
+module highscore =
+    import io from std::
+    import text from std::
+
+    private let version = 1
+
+    // Original Wolf3D's MaxHighName is 57; we cap entry names at 28
+    // characters so the row text fits inside the 320-wide screen
+    // alongside the level + score columns. `entry.name`'s array
+    // capacity is one byte longer than this for the NUL terminator
+    // the writer relies on — kept as the literal `29` because FC
+    // requires struct array sizes to be literal constants.
+    let max_name_len = 28
+
+    // 7 rows top-to-bottom — same as the original.
+    let max_scores = 7
+
+    // One row of the high-score table. `name_len` tracks the active
+    // byte count inside the inline `name` buffer (so editing during
+    // input doesn't have to walk for a NUL).
+    struct entry =
+        name: uint8[29]        // = max_name_len + 1; literal required for FC struct fields
+        name_len: int32
+        score: int32
+        completed: int32       // 1..10 (the original stored mapon+1)
+        episode: int32         // 0..5
+
+    // Copy `src` (a const str) into the entry's inline name buffer,
+    // truncating to `max_name_len` bytes if needed and zero-filling
+    // the trailing slot for clean dumps.
+    private let copy_name = (e: entry*, src: const str) ->
+        let mut n = (int32) src.len
+        if n > max_name_len then n = max_name_len
+        for i in 0..n
+            e->name[i] = src[(int64) i]
+        for i in n..29
+            e->name[i] = 0u8
+        e->name_len = n
+
+    // Original id Software defaults — same names / scores / level the
+    // OG ships with, in the same top-to-bottom order. Used as the
+    // initial table on first launch and on the RESET-to-defaults
+    // helper.
+    let reset_to_defaults = (scores: entry[]) ->
+        copy_name(&scores[0], "id software-'92")
+        copy_name(&scores[1], "Adrian Carmack")
+        copy_name(&scores[2], "John Carmack")
+        copy_name(&scores[3], "Kevin Cloud")
+        copy_name(&scores[4], "Tom Hall")
+        copy_name(&scores[5], "John Romero")
+        copy_name(&scores[6], "Jay Wilbur")
+        for i in 0..max_scores
+            scores[i].score = 10000
+            scores[i].completed = 1
+            scores[i].episode = 0
+
+    // Read the entry's name as a const str, walking only `name_len`
+    // bytes. Result references the caller-owned buffer so it stays
+    // valid as long as `e` does.
+    let name_str = (e: const entry*) ->
+        (const str) e->name[0..(int64) e->name_len]
+
+    // Returns the insert index (0..max_scores-1) if (score, completed)
+    // qualifies; -1 otherwise. Mirrors the original's `score >` /
+    // `(== && completed >)` ordering — tie on score *and* level loses.
+    let qualifies = (scores: entry[], score: int32, completed: int32) ->
+        let mut idx = -1
+        let mut i = 0
+        loop
+            if i >= max_scores then break
+            let s = &scores[i]
+            if score > s->score then
+                idx = i
+                break
+            if score == s->score && completed > s->completed then
+                idx = i
+                break
+            i = i + 1
+        idx
+
+    // Insert (score, completed, episode, name) at index `n`, shifting
+    // everything below down one row (the bottom entry is dropped).
+    // Caller is expected to have called `qualifies` first; this
+    // function trusts `n` is in range. Name copies start blank so the
+    // caller can drive a rename via `set_name_at` while editing.
+    let insert_at = (scores: entry[], n: int32, score: int32,
+                     completed: int32, episode: int32) ->
+        if n < 0 || n >= max_scores then return
+        // Shift down from the bottom: entry[i] <- entry[i-1] for
+        // i = max_scores-1 down to n+1.
+        let mut i = max_scores - 1
+        loop
+            if i <= n then break
+            let src = &scores[i - 1]
+            let dst = &scores[i]
+            for k in 0..29
+                dst->name[k] = src->name[k]
+            dst->name_len = src->name_len
+            dst->score = src->score
+            dst->completed = src->completed
+            dst->episode = src->episode
+            i = i - 1
+        let dst = &scores[n]
+        for k in 0..29
+            dst->name[k] = 0u8
+        dst->name_len = 0
+        dst->score = score
+        dst->completed = completed
+        dst->episode = episode
+
+    // Replace the name at row `n`. Used by the name editor on commit
+    // so the buffer it was typing into lands in the table before we
+    // persist to disk.
+    let set_name_at = (scores: entry[], n: int32, name: const str) ->
+        if n < 0 || n >= max_scores then return
+        copy_name(&scores[n], name)
+
+    private let file_path = () ->
+        match paths.wolf_data_dir() with
+        | none -> default(str?)
+        | some(dir) ->
+            defer free(dir)
+            some(alloc("%s{dir}/highscores")!)
+
+    private let parse_int_or_zero = (s: const str) ->
+        match text.parse_int32(s) with
+        | some(v) -> v
+        | none    -> 0
+
+    // Read the high-scores file into `scores`. Missing / unreadable /
+    // malformed files leave the caller's defaults in place — we never
+    // wipe the table on a parse failure. Format is one line per row:
+    //   score <score> <completed> <episode> <name...>
+    // The name runs to end-of-line so spaces and apostrophes survive.
+    let load = (scores: entry[]) ->
+        match file_path() with
+        | none -> void()
+        | some(path) ->
+            defer free(path)
+            match io.read_all(path) with
+            | none -> void()
+            | some(contents) ->
+                defer free(contents)
+                let lines = text.split(contents, "\n")
+                defer free(lines)
+                let mut row = 0
+                let mut li = 0
+                loop
+                    if li >= (int32) lines.len then break
+                    if row >= max_scores then break
+                    let line = lines[(int64) li]
+                    li = li + 1
+                    if line.len == 0 then continue
+                    if !text.starts_with(line, "score ") then continue
+                    // Parse "score <int> <int> <int> <name...>". Walk
+                    // four whitespace-separated tokens; the rest of
+                    // the line (after the 5th token's leading space) is
+                    // the name. Failures default to 0 / empty. Inline
+                    // (instead of a closure) because FC closures can't
+                    // capture mutable bindings.
+                    let mut p = 6i64       // past "score "
+                    let mut nums = int32[3] {}
+                    for ti in 0..3
+                        let start = p
+                        loop
+                            if p >= line.len then break
+                            if line[p] == 0x20u8 then break
+                            p = p + 1
+                        nums[ti] = parse_int_or_zero(line[start..p])
+                        if p < line.len && line[p] == 0x20u8 then p = p + 1
+                    // Remainder of the line is the name (may be empty).
+                    let nm = if p <= line.len then line[p..line.len] else line[0..0]
+                    copy_name(&scores[row], nm)
+                    scores[row].score = nums[0]
+                    scores[row].completed = nums[1]
+                    scores[row].episode = nums[2]
+                    row = row + 1
+
+    // Persist the table. Fire-and-forget — we don't surface errors,
+    // matching the config writer's policy (a lost high-score write
+    // isn't worth interrupting the player for).
+    let save = (scores: entry[]) ->
+        paths.ensure_save_dir()
+        match file_path() with
+        | none -> void()
+        | some(path) ->
+            defer free(path)
+            match io.open(path, "w") with
+            | none -> void()
+            | some(f) ->
+                defer io.close(f)
+                io.write("WLFC_HISCORES %d{version}\n", f)
+                for i in 0..max_scores
+                    let e = &scores[i]
+                    let nm = name_str(e)
+                    io.write("score %d{e->score} %d{e->completed} %d{e->episode} ", f)
+                    if nm.len > 0 then io.write(nm, f)
+                    io.write("\n", f)
+                void()

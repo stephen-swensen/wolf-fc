@@ -42,17 +42,18 @@ module menu =
     private let pal_help       = 0x37   // bottom hint line
 
     // Main menu — original Wolf3D ordering with the unsupported rows
-    // (Control, Read This!, View Scores) removed and wolf-fc-specific
-    // Options + Change View rows added (mods + render geometry):
+    // (Control, Read This!) removed and wolf-fc-specific Options +
+    // Change View rows added (mods + render geometry):
     //   0 New Game
     //   1 Sound
     //   2 Options
     //   3 Change View
     //   4 Load Game
     //   5 Save Game      (locked when no active game)
-    //   6 Back to Game   (locked when no active game; "Resume Game" in OG)
-    //   7 Quit
-    let main_len = 8
+    //   6 View Scores
+    //   7 Back to Game   (locked when no active game; "Resume Game" in OG)
+    //   8 Quit
+    let main_len = 9
 
     private let main_label = (i: int32) ->
         match i with
@@ -62,12 +63,13 @@ module menu =
         | 3 -> "Change View"
         | 4 -> "Load Game"
         | 5 -> "Save Game"
-        | 6 -> "Back to Game"
-        | 7 -> "Quit"
+        | 6 -> "View Scores"
+        | 7 -> "Back to Game"
+        | 8 -> "Quit"
         | _ -> ""
 
     let main_is_locked = (i: int32, has_active_game: bool) ->
-        (i == 5 || i == 6) && !has_active_game
+        (i == 5 || i == 7) && !has_active_game
 
     // Sound submenu — two toggle rows. The OG's three driver dropdowns
     // (SOUND EFFECTS / DIGITIZED SOUND / MUSIC) collapse here because
@@ -247,12 +249,12 @@ module menu =
             let is_locked = main_is_locked(i, g->has_active_game)
             if is_sel then
                 draw_cursor(rc, vg, pal, ox + menu_x, row_y - 2, time)
-            // "Back to Game" (row 6) uses the OG's read-this-style
+            // "Back to Game" (row 7) uses the OG's read-this-style
             // colours (READCOLOR / READHCOLOR — orange / yellow) so it
             // visually pops as a different action class than the regular
             // navigation rows. Locked still wins (DEACTIVE) when no game
             // is active.
-            let is_back_to_game = i == 6
+            let is_back_to_game = i == 7
             let color = if is_locked then pal[pal_deactive]
                 else if is_back_to_game && is_sel then pal[pal_readh]
                 else if is_back_to_game then pal[pal_read]

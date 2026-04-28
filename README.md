@@ -161,7 +161,10 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `setlevel:N` | Load level N (0..59) and enter gp_playing |
 | `setepisode:N` | Jump to the start of episode N (0..5) — level=N*10 |
 | `setdifficulty:N` | Re-apply difficulty N (0..3) to the current level, re-running spawn filtering |
-| `setphase:X` | Force phase: `title` / `menu` / `epmenu` / `diffmenu` / `savemenu` / `loadmenu` / `playing` |
+| `setphase:X` | Force phase: `title` / `menu` / `epmenu` / `diffmenu` / `savemenu` / `loadmenu` / `playing` / `viewscores` (View Scores entry into the high-scores screen) |
+| `hs_qualify:S,L,E` | Drive the high-scores entry path with a synthetic `(score, level, episode)` triple — same as a real death routing through CheckHighScore. |
+| `hs_name:STR` | Type a name into the high-scores edit buffer (only meaningful while the screen is in edit mode). Followed by `advance` to commit. |
+| `hs_state` | Dump every row of the high-scores table + the current edit state. |
 | `music` | Print the AUDIOT chunk that should be playing for the current phase (no audio device required) |
 | `endepisode` | Set `next_level` on current level (quick path to intermission/episode-end screens) |
 | `advance` | Simulate the ack-key press on intermission / episode-end / victory / game-over (intermission accepts any key in interactive mode) |

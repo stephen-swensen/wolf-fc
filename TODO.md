@@ -30,11 +30,19 @@ lump and would naturally land together.
 - [ ] **`vg_credits` (89) — credits screen.** Main-menu entry (CREDITS) that
   draws the full-screen pic and waits for any key. Needs a new menu slot and
   a tiny phase.
-- [ ] **`vg_highscores` (90) — high-scores screen + high-score system.**
-  Bigger: persist a 10-row high-score table (`~/.wolf-fc/highscores`), render
-  the HIGHSCORESPIC header plus `vg_c_level` / `vg_c_name` / `vg_c_score`
-  columns with 3-letter name entry after a game finishes. Shown from the
-  main menu and at the end of each episode.
+- [x] **`vg_highscores` (90) — high-scores screen + high-score system.**
+  New `game_phase.high_scores` runs the OG `DrawHighScores` layout:
+  HIGHSCORESPIC banner over a black title stripe, `c_name`/`c_level`/
+  `c_score` column headers, 7 rows of name + "E?/L?" + score on a
+  BORDCOLOR backdrop. Persisted at `~/.wolf-fc/highscores` (text
+  format), seeded with the OG defaults (`id software-'92` etc.) on
+  first launch. Insert / qualify / tie-break logic ports
+  `CheckHighScore`: strictly-better score qualifies, tie on score
+  needs higher `completed` to bump. The qualifying row enters an
+  inline name editor (A-Z / 0-9 / Space; Enter or Esc commit).
+  Reachable from three sites — death (replaces the old game-over
+  placeholder), endart article exit (matches Victory()'s embedded
+  CheckHighScore), and the new VIEW SCORES main-menu entry.
 - [ ] **`vg_mutant_bj` (132) — mutant-BJ transformation cut-scene.** Brief
   full-screen overlay during E2's Schabbs finale when the injection hits
   (wolf4sdl ties it to the same flow that ends with ENDART text).
@@ -57,11 +65,12 @@ lump and would naturally land together.
   episode cards (`c_episode1..6`), the load/save header pics
   (`c_loadgame`/`c_savegame`), and the SOUND submenu's section headers
   (`c_fx_title`/`c_music_title`). Submenus the port doesn't support
-  (Control / Customize / Change View / Read This! / View Scores) are
-  hidden rather than greyed; the per-row selected / not-selected
-  backdrops (`c_selected`/`c_notselected`) aren't used since the framed
-  box plus cursor reads cleanly without them. Codes / High Scores are
-  separate TODOs (`vg_credits`, `vg_highscores`).
+  (Control / Customize / Read This!) are hidden rather than greyed;
+  the per-row selected / not-selected backdrops
+  (`c_selected`/`c_notselected`) aren't used since the framed box plus
+  cursor reads cleanly without them. CHANGE VIEW + VIEW SCORES are
+  wired as their own submenus; Codes (`vg_credits`) is the remaining
+  art TODO.
 - [ ] **`vg_order` (136) / `vg_error` (137).** Shareware order screen
   (probably skip or redirect to a short credits note — wolf-fc isn't
   shareware) and a generic error screen we could route fatal data-load
@@ -110,9 +119,11 @@ data despite their suggestive names — retired from this list.
   `pg13` and `main_menu` keep WONDERIN. Demo / attract loop is the
   remaining unwired site, but that depends on a demo recorder which
   isn't planned.
-- [ ] **`music_roster` (23) — high-scores roll.** Played at two sites
-  (`wl_inter.cpp:1145`, `wl_menu.cpp:852`) when the high-scores screen
-  is shown. Pairs with the high-scores TODO.
+- [x] **`music_roster` (23) — high-scores roll.** Wired via
+  `font.music_chunk_for_phase`'s `high_scores` arm; the OG plays
+  ROSTER_MUS at both CheckHighScore (post-death / post-victory) and
+  CP_ViewScores (View Scores menu entry), all of which share the
+  single `game_phase.high_scores` in wolf-fc.
 
 ### Fidelity
 - [ ] **Next survey pass.** The 2026-04-23 survey against `GunAttack`,
@@ -183,7 +194,7 @@ aspect (same vertical FOV, more peripheral world); UI elements stay in a
   the test-mode `advance` shortcut.
 - **All cutscene renderers centred** to the wider FB by adding
   `rc->ui_offset_x` to their pic/font draw coords (intermission,
-  episode_end, death_cam taunt, game_over, bj_victory, endart,
+  episode_end, death_cam taunt, bj_victory, endart, high_scores,
   pg13). HUD side panels fill `VIEWCOLOR` (palette 0x7f) outside
   the 320-wide HUD pic — was bright red (0x29 BORDCOLOR) before.
 - **Inline save-name editor.** Save-slot rows on the SAVE GAME menu

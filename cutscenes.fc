@@ -5,7 +5,8 @@
 //   title_screen     — shown before the first menu; any key → main menu
 //   endart_screen    — per-episode story-text pages between episode_end
 //                      and the next-episode advance (chunks 143..148)
-//   game_over        — death collapse post-animation screen
+//   high_scores_screen — top-7 score table (post-death, post-victory, View
+//                      Scores menu entry); name editor on a qualifying row
 //   intermission     — per-level tally screen (time / kill / secret /
 //                      treasure counters)
 //   episode_end      — per-episode victory (after boss level 8)
@@ -1315,39 +1316,6 @@ module endart_screen =
 // main menu, regardless of which episode was just completed.)
 
 
-module game_over =
-    // Game-over screen: black background, big "GAME OVER", score, prompt.
-    // Every line uses `overlay.draw_centered_text`, which centres on
-    // `rc->fb_w` — so the text re-centres on its own when the frame-
-    // buffer goes wide.
-    let render = (rc: render_ctx*, g: game*) ->
-        for i in 0..(rc->fb_w * rc->fb_h)
-            rc->fb[i] = 0xFF000000u32
-        let red = 0xFFD00000u32
-        let white = 0xFFFFFFFFu32
-        overlay.draw_centered_text(rc, 40, "GAME", red, 3)
-        overlay.draw_centered_text(rc, 70, "OVER", red, 3)
-        // FINAL SCORE row is two pieces — the label and the number —
-        // that need to read as one centred line. Measure them, lay
-        // out together so the gap between them stays fixed regardless
-        // of fb_w.
-        let label_chars = 11      // "FINAL SCORE"
-        let label_w = label_chars * 4   // 3px glyph + 1px gap, scale=1
-        let mut digits = if g->score == 0 then 1 else 0
-        let mut n = g->score
-        loop
-            if n == 0 then break
-            n = n / 10
-            digits = digits + 1
-        let num_w = digits * 4
-        let gap = 16
-        let total_w = label_w + gap + num_w
-        let x0 = (rc->fb_w - total_w) / 2
-        hud.draw_text(rc, x0, 120, "FINAL SCORE", white, 1)
-        hud.draw_number(rc, x0 + label_w + gap + num_w - 4, 120, g->score, white, 1)
-        overlay.draw_centered_text(rc, 140, "PRESS ANY KEY", white, 1)
-
-
 module title_screen =
     // Title screen — full-screen TITLEPIC, no overlay text. The OG
     // shows just the title pic with no prompt; any key (or the demo
@@ -1387,3 +1355,179 @@ module pg13_screen =
         // in widescreen, with the side panels filled in the same cyan
         // body colour as the pic — visually seamless.
         pics.draw(rc, vg, pal, pics.id.pg13, rc->ui_offset_x + pic_x, pic_y)
+
+
+// ============================================================
+// High-scores screen — top-7 table, optional inline name entry
+// ============================================================
+//
+// Triggered from three sites:
+//   1. Death with no lives left (the OG's `ex_died` → CheckHighScore)
+//   2. Endart article exit (the OG's `ex_victorious` → CheckHighScore
+//      embedded in Victory())
+//   3. View Scores main-menu entry (the OG's CP_ViewScores)
+//
+// Layout mirrors the original's DrawHighScores: BORDCOLOR backdrop +
+// black title stripe at y=10, HIGHSCORESPIC banner at (48, 0),
+// C_NAME / C_LEVEL / C_SCORE column headers at y=68, and 7 rows
+// (16 px apart) at y=76+ for the data. Names are left-aligned at
+// x=32; level "E?/L?" sits right-edged around x=170; scores are
+// right-aligned at x=264. ROSTER_MUS plays underneath (the OG's
+// CheckHighScore + CP_ViewScores both call StartCPMusic(ROSTER_MUS)).
+//
+// When the just-ended game qualifies, the new row enters an inline
+// edit: a typing caret blinks at the end of the name buffer, the
+// player types A..Z / 0..9 / Space, Backspace deletes, Enter commits.
+// Esc on a non-editing screen routes back to wherever it came from
+// (title after death, main menu when shown via the menu); Esc during
+// editing commits the current buffer (matching how the OG's
+// US_LineInput on a high-score row treats Escape as "skip but keep").
+module high_scores_screen =
+    // Source the screen was entered from — drives where Esc / ack
+    // routes after the player dismisses the table.
+    let from_death  = 0     // dying transition (out of lives)
+    let from_menu   = 1     // View Scores main-menu entry
+    let from_endart = 2     // post-victory endart article exit
+
+    // Latched on enter so the dismissal handler can pick the right
+    // exit. Stored on `game` rather than `highscore_ctx` because it's
+    // gameplay-flow state, not screen-buffer state.
+    private let set_source = (g: game*, src: int32) ->
+        g->hs_source = src
+
+    // Commit the typed name to the qualifying row, mark the table as
+    // pending-save, and exit edit mode. Called on Enter (and on Esc
+    // — matching US_LineInput's "name stays even on cancel" path).
+    let commit_name = (hs: highscore_ctx*) ->
+        if hs->edit_index < 0 then return
+        let nm = (const str) hs->edit_buf[0..(int64) hs->edit_len]
+        highscore.set_name_at(hs->scores, hs->edit_index, nm)
+        hs->edit_active = false
+        hs->pending_save = true
+
+    // Clear the edit buffer (zero bytes + len=0). Called on enter
+    // before any keystrokes land.
+    private let clear_edit_buf = (hs: highscore_ctx*) ->
+        for i in 0..(int32) hs->edit_buf.len
+            hs->edit_buf[(int64) i] = 0u8
+        hs->edit_len = 0
+
+    // Append a single byte to the edit buffer if there's room.
+    let edit_append = (hs: highscore_ctx*, ch: uint8) ->
+        let cap = (int32) hs->edit_buf.len - 1
+        if hs->edit_len >= cap then return
+        if hs->edit_len >= highscore.max_name_len then return
+        hs->edit_buf[(int64) hs->edit_len] = ch
+        hs->edit_len = hs->edit_len + 1
+        hs->edit_buf[(int64) hs->edit_len] = 0u8
+
+    // Pop the trailing byte (Backspace).
+    let edit_backspace = (hs: highscore_ctx*) ->
+        if hs->edit_len <= 0 then return
+        hs->edit_len = hs->edit_len - 1
+        hs->edit_buf[(int64) hs->edit_len] = 0u8
+
+    // Enter the high-scores screen. If `score` qualifies (positive
+    // index returned by `highscore.qualifies`), insert at that row
+    // and arm the inline name editor; otherwise the screen is purely
+    // informational. `completed` is the level the player finished
+    // (1-indexed — `level_num + 1` to match the OG's `mapon + 1`).
+    let enter = (g: game*, hs: highscore_ctx*, source: int32,
+                 score: int32, completed: int32, episode: int32) ->
+        g->phase = game_phase.high_scores
+        g->phase_timer = 0.0
+        set_source(g, source)
+        // Reset ack latches so the entering keypress (e.g. the death-
+        // collapse advance) doesn't auto-dismiss the screen on the
+        // very same frame.
+        g->key_ack = false
+        g->key_ack_handled = true
+        clear_edit_buf(hs)
+        hs->edit_index = -1
+        hs->edit_active = false
+        hs->pending_save = false
+        let n = highscore.qualifies(hs->scores, score, completed)
+        if n >= 0 then
+            highscore.insert_at(hs->scores, n, score, completed, episode)
+            hs->edit_index = n
+            hs->edit_active = true
+            // Persist the inserted-but-unnamed row up front so a hard
+            // crash mid-typing doesn't lose the score itself. The
+            // commit on Enter rewrites the file with the named row.
+            highscore.save(hs->scores)
+
+    // Cursor blink at ~3.5 Hz, matching the save-name caret cadence.
+    private let cursor_on = (time: float64) ->
+        ((int32) (time * 3.5)) % 2 == 0
+
+    // Draw the screen. Right-aligned helpers walk strings backward
+    // through the font's per-char width table — matches the OG's
+    // USL_MeasureString + PrintX = (col*8) - w pattern.
+    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                  pal: const uint32[], f: const font.info*,
+                  hs: highscore_ctx*, time: float64) ->
+        let ox = rc->ui_offset_x
+        // BORDCOLOR full-screen fill (matches the menu backdrop) +
+        // black stripe + HIGHSCORESPIC banner. Stripe drawn manually
+        // so we don't have to reach into menu-private helpers.
+        let bg = pal[0x29]
+        for i in 0..(rc->fb_w * rc->fb_h)
+            rc->fb[i] = bg
+        let stripe_y = 10
+        for y in stripe_y..(stripe_y + 24)
+            let row = (int64) y * (int64) rc->fb_w
+            for x in 0..rc->fb_w
+                rc->fb[row + (int64) x] = 0xFF000000u32
+        let accent_y = stripe_y + 22
+        let accent = pal[0x2c]
+        let accent_row = (int64) accent_y * (int64) rc->fb_w
+        for x in 0..rc->fb_w
+            rc->fb[accent_row + (int64) x] = accent
+        // HIGHSCORESPIC at OG (48, 0). Some WL6 rips ship a smaller
+        // pic — `pics.draw` clips silently if so.
+        pics.draw(rc, vg, pal, pics.id.highscores, ox + 48, 0)
+        // Column headers — C_NAME / C_LEVEL / C_SCORE pics at y=68.
+        pics.draw(rc, vg, pal, pics.id.c_name,  ox + 4 * 8,  68)
+        pics.draw(rc, vg, pal, pics.id.c_level, ox + 20 * 8, 68)
+        pics.draw(rc, vg, pal, pics.id.c_score, ox + 28 * 8, 68)
+        // Row data. White text (palette 15) on the BORDCOLOR
+        // background, matching the OG's SETFONTCOLOR(15, BORDCOLOR).
+        let text_color = pal[15]
+        for i in 0..highscore.max_scores
+            let row_y = 76 + 16 * i
+            let e = &hs->scores[i]
+            // Name — left-aligned at column 4*8 = 32. Show the typed
+            // buffer instead while editing this row.
+            let name_x = ox + 4 * 8
+            if hs->edit_active && hs->edit_index == i then
+                let typed = (const str) hs->edit_buf[0..(int64) hs->edit_len]
+                font.draw_text(rc, f, name_x, row_y, typed, text_color)
+                if cursor_on(time) then
+                    let tw = font.text_width(f, typed)
+                    font.draw_text(rc, f, name_x + tw, row_y, "_", text_color)
+            else if e->name_len > 0 then
+                let nm = highscore.name_str(e)
+                font.draw_text(rc, f, name_x, row_y, nm, text_color)
+            // Level "E?/L?" right-aligned at the right edge of the
+            // C_LEVEL header pic so the value sits directly beneath
+            // the header. The OG used `(22*8) - w` minus a fixed 6
+            // px backoff, which drifts visibly left of the pic in
+            // our variable-width font. Anchoring on pic_right
+            // self-corrects whatever pic dimensions the rip uses.
+            // Episode is 0-indexed in the entry; display 1-indexed.
+            let lvl_label = "E%d{e->episode + 1}/L%d{e->completed}"
+            let lw = font.text_width(f, lvl_label)
+            let level_right = ox + 20 * 8 + vgagraph.pic_width(vg, pics.id.c_level)
+            font.draw_text(rc, f, level_right - lw, row_y,
+                lvl_label, text_color)
+            // Score right-aligned at column 34*8 - 8 = 264. Mirrors
+            // the OG `(34*8) - 8 - w` formula and lands ~8 px past
+            // the C_SCORE header's right edge — the SCORE pic has
+            // a touch of trailing padding in its 32 px box, so the
+            // visible "SCORE" text ends a hair before pic_right and
+            // the value still reads as right-aligned under it.
+            let score_label = "%d{e->score}"
+            let sw = font.text_width(f, score_label)
+            let score_right = ox + 34 * 8 - 8
+            font.draw_text(rc, f, score_right - sw, row_y,
+                score_label, text_color)

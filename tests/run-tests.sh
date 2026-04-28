@@ -309,15 +309,36 @@ assert_contains "death:kill-enters-dying" "kill phase" "phase=dying"
 assert_contains "death:restart-on-death-with-lives" \
     "kill wait:80 phase" \
     "phase=playing timer= 0.000 lives=2"
-# Deaths spend lives; 4 deaths (3→2→1→0→gameover) land on the game-over screen.
-assert_contains "death:game-over-after-lives-exhausted" \
+# Deaths spend lives; 4 deaths (3→2→1→0→high_scores) route through the
+# CheckHighScore screen. Originally we landed on a placeholder "GAME OVER"
+# phase here; matching the OG, ex_died now routes through high-scores.
+assert_contains "death:high-scores-after-lives-exhausted" \
     "kill wait:80 kill wait:80 kill wait:80 kill wait:80 phase" \
-    "phase=gameover"
-# `advance` test command simulates the space-press that dismisses game-over.
-# Fresh game restored: 3 lives, score 0, level 0, back to player start.
-assert_contains "death:advance-from-game-over-resets" \
-    "kill wait:80 kill wait:80 kill wait:80 kill wait:80 advance state" \
-    "score=0 lives=3 level=0"
+    "phase=high_scores"
+# `advance` from high-scores returns to the title screen (the OG's
+# DemoLoop cycle would loop back to the title pic next; we collapse that
+# to a direct return). Lives stay at 0 — there's no auto-restart, the
+# player picks NEW GAME from the menu to play again.
+assert_contains "death:advance-from-high-scores-returns-to-title" \
+    "kill wait:80 kill wait:80 kill wait:80 kill wait:80 advance phase" \
+    "phase=title"
+# OG-style score rewind: dying with lives left rewinds the score to its
+# value at the start of the current level (`oldscore`). Mirrors the
+# original game's `gamestate.score = gamestate.oldscore` at the top of
+# the GameLoop restart loop. Killing one guard (+100) and then dying
+# should leave the next life at score=0.
+assert_contains "death:score-rewinds-to-oldscore-on-restart" \
+    "killenemy:0 wait:80 state kill wait:80 state" \
+    "score=0 lives=2"
+# But the lethal life never runs `restart_current_level` — the high-
+# scores screen sees the un-rewound score from the moment of death,
+# matching the OG's `CheckHighScore(gamestate.score, ...)` call from
+# the lives==-1 branch (which skips the score=oldscore line entirely).
+# Earn 100 in the final life, die-for-good, verify score sticks at 100.
+rm -f "$WOLF_FC_TEST_HOME/highscores"
+assert_contains "death:final-life-score-survives-into-high-scores" \
+    "kill wait:80 kill wait:80 kill wait:80 killenemy:0 wait:80 kill wait:80 state" \
+    "score=100"
 # Death-cam swing — the dying-phase camera rotates the player's heading
 # toward the killer's latched (x, y), as in the original. Player spawns
 # at (29.5, 57.5) facing east (1, 0); a killer due south rotates dir to
@@ -709,12 +730,16 @@ assert_contains "episode:bj-victory-auto-advances" \
 assert_contains "episode:episode-end-advance-enters-endart" \
     "setlevel:8 endepisode wait:2 advance advance phase" \
     "phase=endart"
-# Advancing past the article returns to the main menu — the OG
-# GameLoop returns from ex_victorious back to the control panel,
-# with no auto-advance to the next episode.
-assert_contains "episode:endart-advance-returns-to-menu" \
+# Advancing past the article enters the high-scores screen (matches
+# the OG's Victory() → CheckHighScore call). One more advance returns
+# to the main menu — the OG GameLoop returns from ex_victorious back
+# to the control panel, with no auto-advance to the next episode.
+assert_contains "episode:endart-advance-enters-high-scores" \
     "setlevel:8 endepisode wait:2 advance advance advance phase" \
-    "phase=menu"
+    "phase=high_scores"
+assert_contains "episode:high-scores-advance-returns-to-title" \
+    "setlevel:8 endepisode wait:2 advance advance advance advance phase" \
+    "phase=title"
 # Level 9 (secret) advance routes back to elevator_back_to[ep]. For
 # ep=0 that's level 1 (E1M2).
 assert_contains "episode:secret-level-routes-back" \
@@ -726,9 +751,9 @@ assert_contains "episode:secret-level-routes-back" \
 assert_contains "episode:last-episode-end-enters-endart" \
     "setlevel:58 endepisode wait:2 advance advance phase" \
     "phase=endart"
-assert_contains "episode:last-episode-endart-returns-to-menu" \
+assert_contains "episode:last-episode-endart-enters-high-scores" \
     "setlevel:58 endepisode wait:2 advance advance advance phase" \
-    "phase=menu"
+    "phase=high_scores"
 
 section "endart (per-episode story pages)"
 # Each WL6 ENDART chunk has multiple pages. The parser's `count_pages`
@@ -859,6 +884,13 @@ assert_contains "save:listsaves-occupied" \
 assert_contains "save:rng-state-round-trips" \
     "goto:30,62 turnr:180 setammo:50 fire wait:15 save:4 load:4 fire wait:15 fire state" \
     "score=100"
+# `oldscore` (the OG-style start-of-level rewind anchor) round-trips
+# through the save file. Killing one guard bumps score to 100 mid-life
+# while oldscore stays at 0 (the score on level entry); after save +
+# load, dying should rewind to that loaded oldscore=0.
+assert_contains "save:oldscore-rewinds-after-load" \
+    "killenemy:0 wait:80 save:5 load:5 kill wait:80 state" \
+    "score=0 lives=2"
 
 section "config / preferences"
 # Default prefs (no config file): toggles ON, no_dogs OFF, shadow_depth 55.
@@ -897,6 +929,80 @@ rm -f "$WOLF_FC_TEST_HOME/config"
 assert_contains "cli:setphase-optionsmenu" \
     "setphase:optionsmenu phase" \
     "phase=menu"
+
+section "high scores"
+# Wrap assertions so each test starts from a clean defaults table —
+# `hs_qualify` persists to disk during the in-process flow, so without
+# this every successive assertion would inherit the previous one's
+# inserted row(s) when the next process loads the file at startup.
+hs_assert() {
+    rm -f "$WOLF_FC_TEST_HOME/highscores"
+    assert_contains "$@"
+}
+# A clean run loads id Software's defaults — same names + 10000 score
+# the original game shipped with.
+hs_assert "hs:defaults-id-software-row0" "hs_state" \
+    "score[0] 10000 L1 E1 id software-'92"
+hs_assert "hs:defaults-jay-wilbur-row6"  "hs_state" \
+    "score[6] 10000 L1 E1 Jay Wilbur"
+# A score that doesn't beat 10000 doesn't qualify, leaves the table
+# untouched, and stays out of edit mode.
+hs_assert "hs:non-qualifying-stays-out-of-edit" \
+    "hs_qualify:5000,3,2 hs_state" \
+    "hs edit=0 index=-1"
+hs_assert "hs:non-qualifying-leaves-defaults" \
+    "hs_qualify:5000,3,2 hs_state" \
+    "score[0] 10000 L1 E1 id software-'92"
+# Beating the top score inserts at row 0, shifts everyone down,
+# kicks Jay Wilbur off the bottom, and arms the inline name editor.
+hs_assert "hs:beat-top-inserts-at-row-0" \
+    "hs_qualify:50000,5,2 hs_state" \
+    "score[0] 50000 L5 E3"
+hs_assert "hs:beat-top-shifts-defaults-down" \
+    "hs_qualify:50000,5,2 hs_state" \
+    "score[1] 10000 L1 E1 id software-'92"
+hs_assert "hs:beat-top-arms-editor" \
+    "hs_qualify:50000,5,2 hs_state" \
+    "hs edit=1 index=0"
+# Tie on score with higher completed level qualifies (matches the OG
+# CheckHighScore tie-break).
+hs_assert "hs:tie-score-higher-level-qualifies" \
+    "hs_qualify:10000,2,3 hs_state" \
+    "hs edit=1 index=0"
+# Tie on both score AND completed loses (the OG's `>` comparison).
+hs_assert "hs:tie-score-and-level-loses" \
+    "hs_qualify:10000,1,3 hs_state" \
+    "hs edit=0 index=-1"
+# Typed name is held in the edit buffer until commit; advance commits
+# it and routes back to the title.
+hs_assert "hs:type-name-shows-in-buffer" \
+    "hs_qualify:50000,5,2 hs_name:STEPHEN hs_state" \
+    "typed='STEPHEN'"
+hs_assert "hs:advance-commits-name" \
+    "hs_qualify:50000,5,2 hs_name:STEPHEN advance hs_state" \
+    "score[0] 50000 L5 E3 STEPHEN"
+hs_assert "hs:advance-after-death-source-routes-to-title" \
+    "hs_qualify:50000,5,2 hs_name:STEPHEN advance phase" \
+    "phase=title"
+# View Scores main-menu entry: enter via setphase:viewscores, advance
+# routes back to the menu (NOT the title — the source latch picks the
+# right destination).
+hs_assert "hs:menu-source-stays-in-menu" \
+    "setphase:viewscores phase advance phase" \
+    "phase=menu"
+# High-scores phase plays ROSTER_MUS — chunk 261 + 23 = 284.
+hs_assert "hs:music-roster-mus" \
+    "setphase:viewscores music" \
+    "music chunk=284"
+# Persistence: a committed name + advance writes the file; a fresh
+# launch reads it back so the new top entry survives the restart.
+rm -f "$WOLF_FC_TEST_HOME/highscores"
+"$BIN" --test "hs_qualify:75000,8,4" "hs_name:WOLF FC" advance >/dev/null 2>&1
+assert_contains "hs:persists-across-launches" \
+    "hs_state" \
+    "score[0] 75000 L8 E5 WOLF FC"
+# Cleanup so subsequent test files start clean.
+rm -f "$WOLF_FC_TEST_HOME/highscores"
 
 # ----------------------------------------------------------------------
 # Summary

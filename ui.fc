@@ -39,7 +39,7 @@ module music =
     let nazi_rap = 20    // NAZI_RAP_MUS  (per level — E3 tracks)
     let zerohour = 21    // ZEROHOUR_MUS  (per level — E3 tracks)
     let twelfth  = 22    // TWELFTH_MUS   (per level — E3 tracks)
-    let roster   = 23    // ROSTER_MUS    (unused — high-score roll)
+    let roster   = 23    // ROSTER_MUS    (phase: high_scores — table screen)
     let urahero  = 24    // URAHERO_MUS   (phase: per-episode victory)
     let vicmarch = 25    // VICMARCH_MUS  (unused — wolf-fc has no all-six-
                          //                episodes-cleared screen; OG WL6
@@ -120,9 +120,9 @@ module pics =
         let c_episode6     = 35   // (unused) ep-6 card: "CONFRONTATION"
         let c_code         = 36   // (unused) "ENTER CODE" (cheat entry)
         let c_timecode     = 37   // (unused) "TIME CODE" (cheat entry)
-        let c_level        = 38   // (unused) "LEVEL" high-scores column
-        let c_name         = 39   // (unused) "NAME" high-scores column
-        let c_score        = 40   // (unused) "SCORE" high-scores column
+        let c_level        = 38   // "LEVEL" high-scores column header
+        let c_name         = 39   // "NAME" high-scores column header
+        let c_score        = 40   // "SCORE" high-scores column header
         let c_joy1         = 41   // (unused) joystick option A
         let c_joy2         = 42   // (unused) joystick option B
 
@@ -144,7 +144,7 @@ module pics =
         let title      = 87       // title screen (TITLEPIC)
         let pg13       = 88       // parental-advisory splash (gp_pg13 phase)
         let credits    = 89       // (unused) credits screen
-        let highscores = 90       // (unused) high-scores screen header
+        let highscores = 90       // high-scores screen header banner
 
         // --- LATCHPICS_LUMP (chunks 91..134). HUD, pickup pop-ups,
         // pause / level-load overlays. Anything blitted on top of
@@ -559,7 +559,7 @@ module font =
     // music plays unbroken. The main menu switches to MENUSONG
     // (WONDERIN). Intermission uses ENDLEVEL. Per-episode and final
     // victory screens get URAHERO and VICMARCH. All other phases
-    // (playing, dying, game_over) use the per-level song table.
+    // (playing, dying) use the per-level song table.
     let music_chunk_for_phase = (phase: game_phase, level_num: int32) ->
         let mus = match phase with
         | pg13 | title         -> music.nazi_nor      // INTROSONG
@@ -572,6 +572,7 @@ module font =
         | death_cam            -> if level_num >= 0 && level_num < 60 then music.songs[level_num] else 0
         | episode_end          -> music.urahero
         | endart               -> music.urahero    // continues from episode_end
+        | high_scores          -> music.roster     // OG's CheckHighScore + CP_ViewScores both StartCPMusic(ROSTER_MUS)
         | _ -> if level_num >= 0 && level_num < 60 then music.songs[level_num] else 0
         261 + mus
 
