@@ -2662,17 +2662,31 @@ let main = (args: str[]) ->
                                 high_scores_screen.enter(g, w->hs,
                                     high_scores_screen.from_menu, -1, 0, 0)
                             | 7 ->
-                                // BACK TO GAME — only reachable when active.
+                                // BACK TO GAME / DEMO — label + target
+                                // track has_active_game. With a running
+                                // game this resumes gameplay; without
+                                // one it bounces to the title screen
+                                // (the OG's BACK TO DEMO returns to
+                                // DemoLoop, which lands on the title pic).
                                 if g->has_active_game then
                                     g->phase = game_phase.playing
+                                else
+                                    g->phase = game_phase.title
+                                    g->phase_timer = 0.0
                             | 8 ->
                                 g->want_quit = true
                             | _ -> void()
                         else if k == sdl2.key_escape then
-                            // Esc on the main menu = back to game if one
-                            // is active; otherwise no-op.
+                            // Esc on the main menu = same as picking
+                            // BACK TO GAME / DEMO: resume gameplay if a
+                            // game is running, otherwise bounce to the
+                            // title screen (matching the OG's back-to-
+                            // demo behaviour).
                             if g->has_active_game then
                                 g->phase = game_phase.playing
+                            else
+                                g->phase = game_phase.title
+                                g->phase_timer = 0.0
                     else if g->menu_level == menu.nav.episode then
                         // Hidden floor-jump shortcut: pressing 1..9 on the
                         // episode picker drops the player straight onto

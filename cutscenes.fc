@@ -1487,21 +1487,13 @@ module high_scores_screen =
                   hs: highscore_ctx*, time: float64) ->
         let ox = rc->ui_offset_x
         // BORDCOLOR full-screen fill (matches the menu backdrop) +
-        // black stripe + HIGHSCORESPIC banner. Stripe drawn manually
-        // so we don't have to reach into menu-private helpers.
+        // black stripe + HIGHSCORESPIC banner. Same shared helper the
+        // menu screens use, so all title pics sit on a consistent
+        // full-width black strip.
         let bg = pal[0x29]
         for i in 0..(rc->fb_w * rc->fb_h)
             rc->fb[i] = bg
-        let stripe_y = 10
-        for y in stripe_y..(stripe_y + 24)
-            let row = (int64) y * (int64) rc->fb_w
-            for x in 0..rc->fb_w
-                rc->fb[row + (int64) x] = 0xFF000000u32
-        let accent_y = stripe_y + 22
-        let accent = pal[0x2c]
-        let accent_row = (int64) accent_y * (int64) rc->fb_w
-        for x in 0..rc->fb_w
-            rc->fb[accent_row + (int64) x] = accent
+        menu.draw_stripes(rc, pal, 10)
         // HIGHSCORESPIC at OG (48, 0). Some WL6 rips ship a smaller
         // pic — `pics.draw` clips silently if so.
         pics.draw(rc, vg, pal, pics.id.highscores, ox + 48, 0)

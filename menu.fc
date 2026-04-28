@@ -48,14 +48,20 @@ module menu =
     //   1 Sound
     //   2 Options
     //   3 Load Game
-    //   4 Save Game      (locked when no active game)
+    //   4 Save Game           (locked when no active game)
     //   5 Change View
     //   6 View Scores
-    //   7 Back to Game   (locked when no active game; "Resume Game" in OG)
+    //   7 Back to Game/Demo   (label swaps based on active-game state)
     //   8 Quit
     let main_len = 9
 
-    private let main_label = (i: int32) ->
+    // Row 7's label tracks `has_active_game`, mirroring the OG's
+    // `BACK TO DEMO/GAME` entry: with a running game it resumes
+    // gameplay ("Back to Game"); without one it bounces back to the
+    // title screen ("Back to Demo" — we don't ship an attract-mode
+    // demo, but the OG's DemoLoop landed on the title pic between
+    // demo plays anyway, so the title is the correct destination).
+    let main_label = (i: int32, has_active_game: bool) ->
         match i with
         | 0 -> "New Game"
         | 1 -> "Sound"
@@ -64,12 +70,15 @@ module menu =
         | 4 -> "Save Game"
         | 5 -> "Change View"
         | 6 -> "View Scores"
-        | 7 -> "Back to Game"
+        | 7 -> if has_active_game then "Back to Game" else "Back to Demo"
         | 8 -> "Quit"
         | _ -> ""
 
+    // Only SAVE GAME locks without a running game; row 7 is always
+    // selectable since both labels (Back to Game / Back to Demo) have
+    // a sensible target.
     let main_is_locked = (i: int32, has_active_game: bool) ->
-        (i == 4 || i == 7) && !has_active_game
+        i == 4 && !has_active_game
 
     // Sound submenu — two toggle rows. The OG's three driver dropdowns
     // (SOUND EFFECTS / DIGITIZED SOUND / MUSIC) collapse here because
@@ -174,15 +183,15 @@ module menu =
         fill_rect(rc, x, y + h - 1, x + w, y + h, c_bot)
         fill_rect(rc, x + w - 1, y, x + w, y + h, c_bot)
 
-    // OG `DrawStripes`: a 320-wide, 24-tall black bar at the top of
-    // the screen with an accent line at y+22, used as the title-bar
-    // stripe across every menu screen. Positions the 320-wide bar at
-    // the centred OG-layout origin so widescreen side panels stay
-    // BORDCOLOR.
-    private let draw_stripes = (rc: render_ctx*, pal: const uint32[], y: int32) ->
-        let ox = rc->ui_offset_x
-        fill_rect(rc, ox, y, ox + 320, y + 24, pal[0x00])
-        fill_rect(rc, ox, y + 22, ox + 320, y + 23, pal[pal_stripe])
+    // OG `DrawStripes`: a 24-tall black bar at the top of the screen
+    // with an accent line at y+22, used as the title-bar stripe
+    // across every menu / cutscene screen. We draw it full framebuffer
+    // width (rather than the OG's 320) so the centered title pic sits
+    // on a continuous strip even in widescreen — same approach the
+    // high-scores screen uses. Public so high_scores_screen can share.
+    let draw_stripes = (rc: render_ctx*, pal: const uint32[], y: int32) ->
+        fill_rect(rc, 0, y, rc->fb_w, y + 24, pal[0x00])
+        fill_rect(rc, 0, y + 22, rc->fb_w, y + 23, pal[pal_stripe])
 
     // Background common to every menu screen: full-screen BORDCOLOR
     // fill (spans the entire framebuffer including widescreen side
@@ -231,15 +240,14 @@ module menu =
                                     pal: const uint32[], f: const font.info*,
                                     g: game*, time: float64) ->
         let ox = rc->ui_offset_x
-        // Stripe + header pic at the top (the OG main menu reuses
-        // C_OPTIONSPIC since the main menu and "options" are the same
-        // screen in the original).
+        // Full-width stripe + native-size header pic centered on top
+        // (the OG main menu reuses C_OPTIONSPIC since the main menu
+        // and "options" are the same screen in the original). The
+        // stripe extends across the whole framebuffer so the pic
+        // sits on a continuous strip in widescreen instead of
+        // appearing on a 320-wide island.
         draw_stripes(rc, pal, 10)
         pics.draw(rc, vg, pal, pics.id.c_options, ox + 84, 0)
-        // Extend the banner's leftmost / rightmost columns out to
-        // the framebuffer edges so the OPTIONS strip looks continuous
-        // in widescreen instead of cut off.
-        pics.extend_pic_horizontally(rc, vg, ox + 84, 0, pics.id.c_options)
         // DrawWindow at (menu_x - 8, menu_y - 3) sized for our 6 rows.
         let win_h = main_len * row_h + 6
         draw_window(rc, pal, ox + menu_x - 8, menu_y - 3, menu_w, win_h)
@@ -249,19 +257,9 @@ module menu =
             let is_locked = main_is_locked(i, g->has_active_game)
             if is_sel then
                 draw_cursor(rc, vg, pal, ox + menu_x, row_y - 2, time)
-            // "Back to Game" (row 7) uses the OG's read-this-style
-            // colours (READCOLOR / READHCOLOR — orange / yellow) so it
-            // visually pops as a different action class than the regular
-            // navigation rows. Locked still wins (DEACTIVE) when no game
-            // is active.
-            let is_back_to_game = i == 7
-            let color = if is_locked then pal[pal_deactive]
-                else if is_back_to_game && is_sel then pal[pal_readh]
-                else if is_back_to_game then pal[pal_read]
-                else if is_sel then pal[pal_highlight]
-                else pal[pal_text]
             font.draw_text(rc, f, ox + menu_x + menu_indent, row_y,
-                main_label(i), color)
+                main_label(i, g->has_active_game),
+                row_color(pal, is_sel, is_locked))
         draw_help_pic(rc, vg, pal)
 
     // ============================================================
@@ -500,13 +498,13 @@ module menu =
                        sel: int32, load_mode: bool, time: float64) ->
         let ox = rc->ui_offset_x
         let lsm_x_off = ox + lsm_x   // ui-offset-aware base x
-        // Stripe + header pic at top of screen (the OG draws stripes
-        // first, then VWB_DrawPic(60, 0, C_LOADGAMEPIC/C_SAVEGAMEPIC) —
-        // pic is 216x48, partially covering the stripe).
+        // Full-width stripe + native-size header pic centered on top
+        // (OG: VWB_DrawPic(60, 0, C_LOADGAMEPIC/C_SAVEGAMEPIC), 216x48
+        // pic over the 320-wide stripe). The stripe goes the whole
+        // framebuffer width so the pic doesn't sit on a 320 island in
+        // widescreen.
         draw_stripes(rc, pal, 10)
         pics.draw(rc, vg, pal, header_pic, ox + 60, 0)
-        // Same border extension as the main-menu OPTIONS banner.
-        pics.extend_pic_horizontally(rc, vg, ox + 60, 0, header_pic)
         // Menu window for the slot list.
         let win_h = save.num_slots * lsm_row_h + 10
         draw_window(rc, pal, lsm_x_off - 10, lsm_y - 5, lsm_w, win_h)
