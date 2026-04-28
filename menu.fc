@@ -42,28 +42,28 @@ module menu =
     private let pal_help       = 0x37   // bottom hint line
 
     // Main menu — original Wolf3D ordering with the unsupported rows
-    // (CONTROL, READ THIS!, VIEW SCORES) removed and wolf-fc-specific
-    // OPTIONS + CHANGE VIEW rows added (mods + render geometry):
-    //   0 NEW GAME
-    //   1 SOUND
-    //   2 OPTIONS
-    //   3 CHANGE VIEW
-    //   4 LOAD GAME
-    //   5 SAVE GAME      (locked when no active game)
-    //   6 BACK TO GAME   (locked when no active game; "RESUME GAME" in OG)
-    //   7 QUIT
+    // (Control, Read This!, View Scores) removed and wolf-fc-specific
+    // Options + Change View rows added (mods + render geometry):
+    //   0 New Game
+    //   1 Sound
+    //   2 Options
+    //   3 Change View
+    //   4 Load Game
+    //   5 Save Game      (locked when no active game)
+    //   6 Back to Game   (locked when no active game; "Resume Game" in OG)
+    //   7 Quit
     let main_len = 8
 
     private let main_label = (i: int32) ->
         match i with
-        | 0 -> "NEW GAME"
-        | 1 -> "SOUND"
-        | 2 -> "OPTIONS"
-        | 3 -> "CHANGE VIEW"
-        | 4 -> "LOAD GAME"
-        | 5 -> "SAVE GAME"
-        | 6 -> "BACK TO GAME"
-        | 7 -> "QUIT"
+        | 0 -> "New Game"
+        | 1 -> "Sound"
+        | 2 -> "Options"
+        | 3 -> "Change View"
+        | 4 -> "Load Game"
+        | 5 -> "Save Game"
+        | 6 -> "Back to Game"
+        | 7 -> "Quit"
         | _ -> ""
 
     let main_is_locked = (i: int32, has_active_game: bool) ->
@@ -91,9 +91,9 @@ module menu =
     // Per-row metadata: kind (toggle / slider / action) + label.
     private let option_label = (i: int32) ->
         match i with
-        | 0 -> "NO DOGS"
-        | 1 -> "SHADOW DEPTH"
-        | 2 -> "RESET TO DEFAULTS"
+        | 0 -> "No Dogs"
+        | 1 -> "Shadow Depth"
+        | 2 -> "Reset to Defaults"
         | _ -> ""
 
     let option_kind = (i: int32) ->
@@ -105,10 +105,10 @@ module menu =
 
     private let diff_label = (i: int32) ->
         match i with
-        | 0 -> "CAN I PLAY, DADDY?"
-        | 1 -> "DON'T HURT ME."
-        | 2 -> "BRING 'EM ON!"
-        | 3 -> "I AM DEATH INCARNATE!"
+        | 0 -> "Can I play, Daddy?"
+        | 1 -> "Don't hurt me."
+        | 2 -> "Bring 'em on!"
+        | 3 -> "I am Death incarnate!"
         | _ -> ""
 
     private let diff_card = (i: int32) ->
@@ -121,12 +121,12 @@ module menu =
 
     private let episode_label = (i: int32) ->
         match i with
-        | 0 -> "ESCAPE FROM WOLFENSTEIN"
-        | 1 -> "OPERATION EISENFAUST"
-        | 2 -> "DIE, FUHRER, DIE!"
-        | 3 -> "A DARK SECRET"
-        | 4 -> "TRAIL OF THE MADMAN"
-        | 5 -> "CONFRONTATION"
+        | 0 -> "Escape from Wolfenstein"
+        | 1 -> "Operation: Eisenfaust"
+        | 2 -> "Die, Fuhrer, Die!"
+        | 3 -> "A Dark Secret"
+        | 4 -> "Trail of the Madman"
+        | 5 -> "Confrontation"
         | _ -> ""
 
     private let episode_card = (i: int32) ->
@@ -200,11 +200,13 @@ module menu =
                                pal: const uint32[], x: int32, y: int32, time: float64) ->
         pics.draw(rc, vg, pal, cursor_chunk(time), x, y)
 
-    // Bottom-of-screen help line. Centred via font.draw_centered which
-    // uses rc->fb_w, so the text stays screen-centred in widescreen.
-    private let draw_help = (rc: render_ctx*, pal: const uint32[],
-                             f: const font.info*, text: const str) ->
-        font.draw_centered(rc, f, rc->fb_h - 12, text, pal[pal_help])
+    // Bottom-of-screen help art. The original draws C_MOUSELBACKPIC
+    // at (112, 184) on every menu screen — a small graphic showing
+    // the mouse / keyboard hint banner. We re-anchor with ui_offset_x
+    // so it stays centred over the 320-wide UI grid in widescreen.
+    private let draw_help_pic = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                                 pal: const uint32[]) ->
+        pics.draw(rc, vg, pal, pics.id.c_mouselback, rc->ui_offset_x + 112, 184)
 
     // Pick a row's text colour given selected / locked flags. Mirrors
     // the OG's `color_norml` / `color_hlite` arrays.
@@ -245,7 +247,7 @@ module menu =
             let is_locked = main_is_locked(i, g->has_active_game)
             if is_sel then
                 draw_cursor(rc, vg, pal, ox + menu_x, row_y - 2, time)
-            // BACK TO GAME (row 5) uses the OG's "read this!"-style
+            // "Back to Game" (row 6) uses the OG's read-this-style
             // colours (READCOLOR / READHCOLOR — orange / yellow) so it
             // visually pops as a different action class than the regular
             // navigation rows. Locked still wins (DEACTIVE) when no game
@@ -258,7 +260,7 @@ module menu =
                 else pal[pal_text]
             font.draw_text(rc, f, ox + menu_x + menu_indent, row_y,
                 main_label(i), color)
-        draw_help(rc, pal, f, "ARROWS  ENTER  ESC")
+        draw_help_pic(rc, vg, pal)
 
     // ============================================================
     // Episode picker — NE_X / NE_Y / NE_W from wl_menu.h
@@ -279,7 +281,7 @@ module menu =
         // Header text inside the frame at the top (OG places it at
         // PrintY=2 with WindowX/WindowY zeroed — effectively centered
         // above the box; we tuck it just inside the frame's top edge).
-        font.draw_centered(rc, f, ne_y - 14, "WHICH EPISODE TO PLAY?",
+        font.draw_centered(rc, f, ne_y - 14, "Which episode to play?",
             pal[pal_readh])
         let row_step = 26
         let x_cursor = ne_x + 4
@@ -293,10 +295,10 @@ module menu =
             pics.draw(rc, vg, pal, episode_card(i), x_card, row_y)
             let color = row_color(pal, is_sel, false)
             font.draw_text(rc, f, x_label, row_y + 2,
-                "EPISODE %d{i + 1}", color)
+                "Episode %d{i + 1}", color)
             font.draw_text(rc, f, x_label, row_y + 12,
                 episode_label(i), color)
-        draw_help(rc, pal, f, "ARROWS  ENTER  ESC")
+        draw_help_pic(rc, vg, pal)
 
     // ============================================================
     // Difficulty picker — NM_X / NM_Y from wl_menu.h
@@ -316,7 +318,7 @@ module menu =
         let nm_h = 4 * row_h + 15
         // Header above the frame.
         font.draw_text(rc, f, nm_x + 20, nm_y - 32,
-            "HOW TOUGH ARE YOU?", pal[pal_readh])
+            "How tough are you?", pal[pal_readh])
         draw_window(rc, pal, nm_x - 5, nm_y - 10, nm_w, nm_h)
         // The selected face card on the right edge of the window.
         pics.draw(rc, vg, pal, diff_card(g->menu_sel), nm_x + 185, nm_y + 7)
@@ -330,7 +332,7 @@ module menu =
                 draw_cursor(rc, vg, pal, x_cursor, row_y - 2, time)
             font.draw_text(rc, f, x_label, row_y, diff_label(i),
                 row_color(pal, is_sel, false))
-        draw_help(rc, pal, f, "ARROWS  ENTER  ESC")
+        draw_help_pic(rc, vg, pal)
 
     // ============================================================
     // Sound submenu — SM_X from wl_menu.h
@@ -339,7 +341,7 @@ module menu =
     private let render_sound_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                       pal: const uint32[], f: const font.info*,
                                       g: game*, ac: audio_ctx*, time: float64) ->
-        font.draw_centered(rc, f, 38, "SOUND", pal[pal_readh])
+        font.draw_centered(rc, f, 38, "Sound", pal[pal_readh])
         // A single window (the OG stacks three driver-dropdown windows
         // here; we only have on/off so one box is enough). SM_X=48,
         // SM_W=250 in the OG.
@@ -365,12 +367,12 @@ module menu =
             if is_sel then
                 draw_cursor(rc, vg, pal, x_cursor, row_y, time)
             pics.draw(rc, vg, pal, label_pic(i), x_label, row_y)
-            let value = if is_on(i) then "ON" else "OFF"
+            let value = if is_on(i) then "On" else "Off"
             let color = row_color(pal, is_sel, false)
             let vw = font.text_width(f, value)
             font.draw_text(rc, f, sm_x + sm_w - 16 - vw,
                 row_y + 4, value, color)
-        draw_help(rc, pal, f, "ARROWS  ENTER toggles  ESC")
+        draw_help_pic(rc, vg, pal)
 
     // ============================================================
     // Options submenu — wolf-fc mods (No Dogs, Shadow Depth, ...)
@@ -379,7 +381,7 @@ module menu =
     private let render_options_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                         pal: const uint32[], f: const font.info*,
                                         g: game*, time: float64) ->
-        font.draw_centered(rc, f, 38, "OPTIONS", pal[pal_readh])
+        font.draw_centered(rc, f, 38, "Options", pal[pal_readh])
         // Generously sized box (the row count grows over time as more
         // mods land — the current 2-row setup leaves headroom).
         let op_x = rc->ui_offset_x + 40
@@ -403,12 +405,12 @@ module menu =
             // Each row prints its own value because the match arms
             // would mix str / const str otherwise.
             if i == 0 then
-                let v = if g->no_dogs then "ON" else "OFF"
+                let v = if g->no_dogs then "On" else "Off"
                 font.draw_text(rc, f, x_value, row_y, v, color)
             else if i == 1 then
                 font.draw_text(rc, f, x_value, row_y,
                     "%d{g->shadow_depth}%", color)
-        draw_help(rc, pal, f, "ARROWS  ENTER toggles  ESC")
+        draw_help_pic(rc, vg, pal)
 
     // ============================================================
     // Change View — view-mode picker (Auto / Original / 16:10 / 16:9)
@@ -419,7 +421,7 @@ module menu =
     private let render_changeview_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                            pal: const uint32[], f: const font.info*,
                                            g: game*, time: float64) ->
-        font.draw_centered(rc, f, 22, "CHANGE VIEW", pal[pal_readh])
+        font.draw_centered(rc, f, 22, "Change View", pal[pal_readh])
         let cv_x = rc->ui_offset_x + 36
         let cv_y = 50
         let cv_w = 248
@@ -447,8 +449,8 @@ module menu =
         // immediately on Enter — no restart needed.
         let info_y = cv_y + cv_h + 4
         font.draw_centered(rc, f, info_y,
-            "ACTIVE: %d{rc->fb_w} X %d{rc->fb_h}", pal[pal_text])
-        draw_help(rc, pal, f, "ARROWS  ENTER selects  ESC")
+            "Active: %d{rc->fb_w} x %d{rc->fb_h}", pal[pal_text])
+        draw_help_pic(rc, vg, pal)
         // 1px blue outline on the inside of the framebuffer
         // perimeter so the user can verify the active mode isn't
         // clipped by the window / display.
@@ -466,6 +468,13 @@ module menu =
     private let lsm_y      = 55
     private let lsm_w      = 175
     private let lsm_indent = 24
+    // OG used 6 slots @ row_h=13 (window ≈ 88 tall, plenty of room
+    // above the y=184 mouselback pic). We bumped to 10 slots, which
+    // would push the window to 140 tall and overlap the pic — so
+    // shave 1 px off each row (and match the inset box) to claw back
+    // the 10 px we need.
+    private let lsm_row_h  = 12
+    private let lsm_box_h  = 10
 
     // Read the currently-being-edited save name buffer as a const str
     // that ends at the first 0 byte (or runs to capacity).
@@ -497,23 +506,22 @@ module menu =
         // Same border extension as the main-menu OPTIONS banner.
         pics.extend_pic_horizontally(rc, vg, ox + 60, 0, header_pic)
         // Menu window for the slot list.
-        let win_h = save.num_slots * row_h + 10
+        let win_h = save.num_slots * lsm_row_h + 10
         draw_window(rc, pal, lsm_x_off - 10, lsm_y - 5, lsm_w, win_h)
         let editing = is_editing_save(g)
         let cursor_blink = ((int32) (time * 3.5)) % 2 == 0
         for i in 0..save.num_slots
             let s = &sm->slots[i]
-            let row_y = lsm_y + i * row_h
+            let row_y = lsm_y + i * lsm_row_h
             let is_sel = sel == i
             let is_locked = load_mode && s->empty
-            // Per-slot outlined inset (DrawOutline) — 11 tall, in the
-            // row's colour. Selected row uses HIGHLIGHT, others use
-            // TEXTCOLOR / DEACTIVE.
+            // Per-slot outlined inset (DrawOutline). Selected row uses
+            // HIGHLIGHT, others use TEXTCOLOR / DEACTIVE.
             let color = row_color(pal, is_sel, is_locked)
             let box_x = lsm_x_off + lsm_indent
             let box_y = row_y
             let box_w = lsm_w - lsm_indent - 15
-            let box_h = 11
+            let box_h = lsm_box_h
             fill_rect(rc, box_x, box_y, box_x + box_w, box_y + 1, color)
             fill_rect(rc, box_x, box_y + box_h, box_x + box_w, box_y + box_h + 1, color)
             fill_rect(rc, box_x, box_y, box_x + 1, box_y + box_h, color)
@@ -552,10 +560,7 @@ module menu =
                     let lvl = s->level_num % episode.levels_per + 1
                     font.draw_text(rc, f, text_x, text_y,
                         "E%d{ep}M%d{lvl}", color)
-        if editing then
-            draw_help(rc, pal, f, "TYPE NAME  ENTER saves  ESC cancels")
-        else
-            draw_help(rc, pal, f, "ARROWS  ENTER  ESC")
+        draw_help_pic(rc, vg, pal)
 
     let render_main = (rc: render_ctx*, sm: save_menu_ctx*,
                        vg: const vgagraph.vgagraph_file*, pal: const uint32[],

@@ -84,10 +84,10 @@ module config =
 
     let view_mode_label = (m: int32) ->
         match m with
-        | 1 -> "ORIGINAL (4:3)"
-        | 2 -> "WIDESCREEN (16:10)"
-        | 3 -> "WIDESCREEN (16:9)"
-        | _ -> "AUTO"
+        | 1 -> "Original (4:3)"
+        | 2 -> "Widescreen (16:10)"
+        | 3 -> "Widescreen (16:9)"
+        | _ -> "Auto"
 
     // Map an explicit view-mode choice to its framebuffer width. Auto
     // returns 0 — the caller is expected to fall back to display
