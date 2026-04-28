@@ -449,6 +449,14 @@ module menu =
         font.draw_centered(rc, f, info_y,
             "ACTIVE: %d{rc->fb_w} X %d{rc->fb_h}", pal[pal_text])
         draw_help(rc, pal, f, "ARROWS  ENTER selects  ESC")
+        // 1px blue outline on the inside of the framebuffer
+        // perimeter so the user can verify the active mode isn't
+        // clipped by the window / display.
+        let blue = 0xFF0000FFu32
+        fill_rect(rc, 0, 0, rc->fb_w, 1, blue)
+        fill_rect(rc, 0, rc->fb_h - 1, rc->fb_w, rc->fb_h, blue)
+        fill_rect(rc, 0, 0, 1, rc->fb_h, blue)
+        fill_rect(rc, rc->fb_w - 1, 0, rc->fb_w, rc->fb_h, blue)
 
     // ============================================================
     // Save / Load slot list — LSM_X / LSM_Y / LSM_W from wl_menu.h
