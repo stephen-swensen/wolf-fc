@@ -566,6 +566,7 @@ Working:
 - [x] Game-over screen when lives exhausted (press space to restart).
 - [x] Level-restart on death with lives remaining.
 - [x] Kill / secret / treasure counters (built at level load, increment in damage_enemy / try_push_wall / check_pickups).
+- [x] Death-cam swing: the dying-phase camera rotates the player's heading toward the killer's world position, as in the original. damage_player latches the attacker's (x, y) on the lethal hit; player.update_death_swing rotates dir/plane at 140 deg/s (shortest signed arc) until aligned, then idles for the rest of the dying hold. Projectile hits aim the swing at the projectile's position rather than the launcher, matching the original's behavior.
 
 ### Level progression
 - [x] Par-time tracking per level (par_times[] from wolf4sdl, seconds).

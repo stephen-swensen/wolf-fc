@@ -313,6 +313,16 @@ struct game =
     // MUTANTBJPIC over FACE8APIC on the dying-face slot (original's
     // DrawFace `LastAttacker->obclass == needleobj` branch).
     last_hit_needle: bool
+    // Death-cam swing target: the killer's world position at the moment
+    // the lethal hit landed. Mirrors the original's `killerobj` latch in
+    // TakeDamage — the `Died` routine swings the player to face this
+    // point at a fixed angular rate during the dying phase.
+    // `killer_active` is true between the lethal hit and the moment the
+    // swing finishes; cleared on respawn / new game and on the synthetic
+    // `kill` test command (no enemy to face).
+    killer_x: float64
+    killer_y: float64
+    killer_active: bool
     // Red stipple that uncovers back to the new scene after a death-restart.
     // Set to `player.respawn_fade_time` by restart_current_level; decays each tick.
     respawn_fade_timer: float64
@@ -1108,7 +1118,13 @@ let tick = (w: world*, dt: float64) ->
             hud.update_face(g, dt)
     | _ ->
         g->phase_timer = g->phase_timer + dt
-        if g->phase == game_phase.intermission then
+        if g->phase == game_phase.dying then
+            // Swing the heading toward whoever just killed us, like
+            // the original's death rotation. No-op once aligned (or
+            // when no killer was latched, e.g. the synthetic `kill`
+            // test command).
+            player.update_death_swing(g, dt)
+        else if g->phase == game_phase.intermission then
             intermission.tick(g, w->ac, dt)
         else if g->phase == game_phase.bj_victory then
             bj_victory.tick(w->lv, g, w->ac, dt)
@@ -1549,11 +1565,38 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // Instant-kill the player (skips the pain sound, goes straight to
         // dying). Mostly used by the regression suite to exercise the
         // death → restart → game-over flow without waiting for the enemy
-        // AI to roll a lethal hit.
+        // AI to roll a lethal hit. Leaves killer_active false, so the
+        // dying-phase camera swing is a no-op.
         g->health = 0
         g->phase = game_phase.dying
         g->phase_timer = 0.0
+        g->killer_active = false
         sfx.trigger(sfx.id.death_1, w->ac)
+    else if text.starts_with(arg, "killby:") then
+        // Like `kill`, but latches a killer position so the dying-phase
+        // camera swing has a target to rotate toward. Args are world
+        // coordinates: "killby:32.5,57.5".
+        let body = arg[7..arg.len]
+        let mut comma = -1i64
+        for i in 0..body.len
+            if body[i] == 0x2C then    // ','
+                comma = i
+                break
+        if comma <= 0 || comma >= body.len - 1 then bad("X,Y world coords")
+        else
+            match text.parse_float64(body[0..comma]) with
+            | some(kx) ->
+                match text.parse_float64(body[comma+1..body.len]) with
+                | some(ky) ->
+                    g->health = 0
+                    g->phase = game_phase.dying
+                    g->phase_timer = 0.0
+                    g->killer_x = kx
+                    g->killer_y = ky
+                    g->killer_active = true
+                    sfx.trigger(sfx.id.death_1, w->ac)
+                | none -> bad("X,Y world coords")
+            | none -> bad("X,Y world coords")
     else if text.starts_with(arg, "killenemy:") then
         // Instant-kill enemy by index (matches enemylist's [N] order).
         // Routes through enemies.ai.damage_enemy with an HP-clearing damage value so
@@ -2015,7 +2058,9 @@ let main = (args: str[]) ->
         ep_time_total = 0, ep_levels_played = 0,
         ep_recorded_current = false,
         phase = game_phase.pg13, phase_timer = 0.0,
-        damage_flash_timer = 0.0, respawn_fade_timer = 0.0,
+        damage_flash_timer = 0.0,
+        killer_x = 0.0, killer_y = 0.0, killer_active = false,
+        respawn_fade_timer = 0.0,
         get_psyched_timer = 0.0, got_gatling_timer = 0.0,
         kills = 0, total_kills = 0,
         secrets = 0, total_secrets = 0,
@@ -2676,7 +2721,12 @@ let main = (args: str[]) ->
                             if k == sdl2.key_i then player.cheats.apply_tab_i(g, w->ac)
                             if k == sdl2.key_n then player.cheats.apply_tab_n(g)
                             if k == sdl2.key_e then player.cheats.apply_tab_e(g)
-                            if k == sdl2.key_h then enemies.ai.damage_player(g, w->ac, 16, enemies.damage_source.bullet)
+                            if k == sdl2.key_h then
+                                // Synthetic damage — no in-world attacker, so feed
+                                // the player's own position. update_death_swing
+                                // sees a zero-length vector and clears killer_active
+                                // immediately (no rotation).
+                                enemies.ai.damage_player(g, w->ac, 16, enemies.damage_source.bullet, g->pos_x, g->pos_y)
                         else
                             if k == sdl2.key_up then g->key_up = true
                             if k == sdl2.key_down then g->key_down = true

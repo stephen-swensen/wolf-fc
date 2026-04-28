@@ -153,6 +153,8 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `enemies` | Print totals per enemy kind and per state |
 | `enemylist` | Print each enemy: index, tile, kind, state, direction, hp, area number |
 | `killenemy:N` | Overkill enemy at index N via `damage_enemy` (drops, score, kill counter all fire as if shot) |
+| `kill` | Instant-kill the player; transitions straight to the dying phase. Leaves `killer_active` false, so the death-cam swing is a no-op. |
+| `killby:X,Y` | Like `kill`, but latches `(X, Y)` as the killer's world position so the dying-phase camera swing has a target to rotate toward. |
 | `arrows` | Print every plane-1 ICONARROWS path-marker tile (`x,y` and dir 0..7) |
 | `exittiles` | Print every plane-1 EXITTILE marker (`x,y`) on the current map — boss-map exits that fire the BJ-victory cutscene when stepped on |
 | `pickups` | Print every live pickup sprite on the current map (`[idx] (tx,ty) kind=<name>`), filtering out static decorations. Enemy drops show up after the corpse lands. |

@@ -757,7 +757,18 @@ module enemies =
         // a no-op; damage while already dying / gameover / intermission
         // is silently dropped so scripted paths can keep ticking
         // without retriggering the death transition.
-        let damage_player = (g: game*, ac: audio_ctx*, dmg_in: int32, src: damage_source) ->
+        //
+        // `kx`, `ky` are the attacker's world position at the moment
+        // the hit lands — captured (alongside the latch on the
+        // game struct) only when this hit is lethal, so the dying-
+        // phase camera swings the heading toward who killed you.
+        // Matches the original's death rotation; for projectile
+        // hits we pass the projectile's own (x, y), as in the
+        // original where the projectile object itself is what the
+        // death-rotation reads, so the swing aims at the impact
+        // point rather than the launcher.
+        let damage_player = (g: game*, ac: audio_ctx*, dmg_in: int32, src: damage_source,
+                             kx: float64, ky: float64) ->
             if dmg_in <= 0 then return
             match g->phase with
             | playing -> void()
@@ -791,6 +802,11 @@ module enemies =
                 g->health = 0
                 g->phase = game_phase.dying
                 g->phase_timer = 0.0
+                // Latch the swing target — see comment block above
+                // damage_player's signature.
+                g->killer_x = kx
+                g->killer_y = ky
+                g->killer_active = true
                 // Death scream on lethal damage; regular pain otherwise.
                 sfx.trigger(sfx.id.death_1, ac)
             else
@@ -1062,7 +1078,7 @@ module enemies =
                 let dmg = if dist_adj < 2 then roll / 4
                           else if dist_adj < 4 then roll / 8
                           else roll / 16
-                damage_player(g, ac, dmg, damage_source.bullet)
+                damage_player(g, ac, dmg, damage_source.bullet, e->x, e->y)
 
         // Per-frame AI step for one enemy. Dispatches on state;
         // advances animation and moves continuously. Called from
@@ -1156,7 +1172,7 @@ module enemies =
                         // per-bite feel of the original's tics*2
                         // damage: a handful of HP per approach, not
                         // a steady drain.
-                        damage_player(g, ac, rnd_byte(g) >> 4, damage_source.ghost)
+                        damage_player(g, ac, rnd_byte(g) >> 4, damage_source.ghost, e->x, e->y)
                         e->touch_cooldown = 0.25
                     advance_move(lv, g, ac, self_idx, chase_speed, dt, true)
                     advance_walk_anim(e)
@@ -1441,7 +1457,7 @@ module projectiles =
                     | rocket -> enemies.damage_source.rocket
                     | fire   -> enemies.damage_source.flame
                     | boom   -> enemies.damage_source.rocket   // unreachable — boom doesn't damage the player
-                    enemies.ai.damage_player(g, ac, damage_of(p->kind, g), src)
+                    enemies.ai.damage_player(g, ac, damage_of(p->kind, g), src, p->x, p->y)
                     p->alive = false
 
     let update_all = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
@@ -1487,7 +1503,7 @@ module projectiles =
             // Matches T_Bite in the original: US_RndT() >> 4 → 0-15
             // (can graze for 0).
             let dmg = enemies.rnd_byte(g) >> 4
-            enemies.ai.damage_player(g, ac, dmg, enemies.damage_source.bite)
+            enemies.ai.damage_player(g, ac, dmg, enemies.damage_source.bite, e->x, e->y)
 
 
 // ============================================================

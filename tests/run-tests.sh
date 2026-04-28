@@ -318,6 +318,34 @@ assert_contains "death:game-over-after-lives-exhausted" \
 assert_contains "death:advance-from-game-over-resets" \
     "kill wait:80 kill wait:80 kill wait:80 kill wait:80 advance state" \
     "score=0 lives=3 level=0"
+# Death-cam swing — the dying-phase camera rotates the player's heading
+# toward the killer's latched (x, y), as in the original. Player spawns
+# at (29.5, 57.5) facing east (1, 0); a killer due south rotates dir to
+# (0, 1). 50 ticks at 1/35 dt is ~1.43s — past the 1.286s a 90° turn
+# takes at 140 deg/s, so the rotation has fully landed.
+assert_contains "death:swing-faces-killer-south" \
+    "killby:29.5,67.5 wait:50 state" \
+    "dir=(  0.0000,   1.0000)"
+# 180° swing: killer due west. Worst-case rotation (1.286s ≈ 45 ticks).
+assert_contains "death:swing-faces-killer-west" \
+    "killby:19.5,57.5 wait:50 state" \
+    "dir=( -1.0000,   0.0000)"
+# A small offset shouldn't snap the camera — partial rotation after a
+# few ticks proves it animates rather than jumping. Killer to the SE
+# ~26.6° below east; after 5 ticks at 4 deg/tick = 20°, dir is partway
+# (cos(-20°), sin(20°)) is wrong sign convention — for our y-down,
+# rotating dir from (1,0) toward (cos(26.6°), sin(26.6°)) of ~5/(5√5)
+# means dir_y goes positive small. We just assert dir_y > 0 by checking
+# the printed value starts with " 0.3" (≈ sin(20°) = 0.342).
+assert_regex "death:swing-animates-progressively" \
+    "killby:39.5,62.5 wait:5 state" \
+    'dir=\(  0\.93[0-9]+,   0\.34[0-9]+\)'
+# `kill` (no killer position) leaves killer_active false, so the
+# heading stays unchanged from before the kill — the synthetic test
+# command intentionally skips the swing.
+assert_contains "death:plain-kill-leaves-heading-alone" \
+    "kill wait:50 state" \
+    "dir=(  1.0000,   0.0000)"
 
 section "intermission / level progression"
 # Stepping onto the elevator + space transitions to intermission phase, but

@@ -66,6 +66,14 @@ module player =
     // purely visual.
     let damage_flash_time = 0.25
 
+    // Death-cam swing rate (radians/second). The original game's
+    // 70 Hz tick advances the player's heading by 2 of 360 angle
+    // units per tic toward the killer, i.e. 140 deg/s ≈ 2.443 rad/s.
+    // With death_fade_time = 1.4 s this completes the worst case
+    // (180°) in ~1.286 s, well before the red stipple fully
+    // covers the viewport.
+    let death_swing_rate = 140.0 * 3.14159265358979 / 180.0
+
     // Reset per-life player state for a death restart. Score, lives
     // (already decremented), and weapon inventory are preserved;
     // health / ammo / weapon reset to pistol with starter ammo —
@@ -86,6 +94,7 @@ module player =
         g->made_noise = false
         g->damage_flash_timer = 0.0
         g->last_hit_needle = false
+        g->killer_active = false
         g->respawn_fade_timer = 0.0
         g->wall_hit_cooldown = 0.0
         // IDKFA latch persists across deaths — re-grant the full kit so
@@ -221,6 +230,44 @@ module player =
         let op = g->plane_x
         g->plane_x = op * c + g->plane_y * s
         g->plane_y = op * (0.0 - s) + g->plane_y * c
+
+    // Death-cam swing — rotate the player's heading toward the
+    // killer's position at a fixed angular rate during the dying
+    // phase, as in the original. Take the shortest signed arc,
+    // step by `death_swing_rate * dt` per frame, stop on
+    // alignment. damage_player latched the killer's (x, y) at the
+    // moment of the lethal hit, so the target stays fixed across
+    // the whole rotation even though the killer (still alive)
+    // might be drifting. Cleared once aligned so we don't keep
+    // recomputing a zero-step rotation for the rest of the dying
+    // hold.
+    //
+    // Sign note: rotate_camera applies the matrix [[c, s], [-s, c]]
+    // — i.e. it rotates `dir` by `-angle` in the cross-positive
+    // sense. With α = atan2(cross, dot) being the signed arc from
+    // dir → target, we pass `-step` to drive `dir` toward target.
+    let update_death_swing = (g: game*, dt: float64) ->
+        if !g->killer_active then return
+        let tdx = g->killer_x - g->pos_x
+        let tdy = g->killer_y - g->pos_y
+        let len2 = tdx * tdx + tdy * tdy
+        if len2 < 1e-6 then
+            g->killer_active = false
+            return
+        let inv_len = 1.0 / math.sqrt(len2)
+        let txn = tdx * inv_len
+        let tyn = tdy * inv_len
+        let dot   = g->dir_x * txn + g->dir_y * tyn
+        let cross = g->dir_x * tyn - g->dir_y * txn
+        let alpha = math.atan2(cross, dot)
+        let max_step = death_swing_rate * dt
+        let abs_a = if alpha < 0.0 then 0.0 - alpha else alpha
+        if abs_a <= max_step then
+            rotate_camera(g, 0.0 - alpha)
+            g->killer_active = false
+        else
+            let step = if alpha > 0.0 then max_step else 0.0 - max_step
+            rotate_camera(g, 0.0 - step)
 
     // ============================================================
     // Cheats — triggered only by player input
