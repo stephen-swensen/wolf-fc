@@ -49,10 +49,14 @@ lump and would naturally land together.
   Music is already running at this point — `font.music_chunk_for_phase`
   routes the splash to WONDERIN_MUS, same as the menu, so the pre-title
   sequence has continuous audio.
-- [ ] **`vg_credits` (89) — credits screen.** New CREDITS main-menu
-  entry that draws the full-screen pic and waits for any key. Needs
-  a new menu slot and a tiny phase. (OG shows the pic only inside
-  the attract-mode demo loop, which wolf-fc doesn't have.)
+- [x] **`vg_credits` (89) — credits screen.** Surfaced via the title
+  attract cycle: TITLE → CREDITS → HIGHSCORES → loop, holds matching
+  the OG (`wl_main.cpp:1590-1610`: 15 / 10 / 10 s) with a 0.5 s
+  black fade between sub-phases. The OG also plays a recorded demo
+  at the tail of every cycle; wolf-fc skips that (no recorder) and
+  loops straight back to TITLEPIC. Any key at any sub-phase still
+  drops into the main menu; phase_timer resets on phase change so
+  re-entry restarts from TITLEPIC.
 - [x] **`vg_highscores` (90) — high-scores screen + high-score system.**
   New `game_phase.high_scores` runs the OG `DrawHighScores` layout:
   HIGHSCORESPIC banner over a black title stripe, `c_name`/`c_level`/
@@ -94,8 +98,7 @@ lump and would naturally land together.
   the per-row selected / not-selected backdrops
   (`c_selected`/`c_notselected`) aren't used since the framed box plus
   cursor reads cleanly without them. CHANGE VIEW + VIEW SCORES are
-  wired as their own submenus; Codes (`vg_credits`) is the remaining
-  art TODO.
+  wired as their own submenus.
 - [ ] **`vg_order` (136) / `vg_error` (137).** Shareware order screen
   (probably skip or redirect to a short credits note — wolf-fc isn't
   shareware) and a generic error screen we could route fatal data-load

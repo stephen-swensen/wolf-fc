@@ -143,7 +143,7 @@ module pics =
         let statusbar  = 86       // 320x40 in-game status bar
         let title      = 87       // title screen (TITLEPIC)
         let pg13       = 88       // parental-advisory splash (gp_pg13 phase)
-        let credits    = 89       // (unused) credits screen
+        let credits    = 89       // CREDITSPIC — shown in the title attract cycle
         let highscores = 90       // high-scores screen header banner
 
         // --- LATCHPICS_LUMP (chunks 91..134). HUD, pickup pop-ups,

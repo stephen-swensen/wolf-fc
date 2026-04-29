@@ -1296,14 +1296,48 @@ module endart_screen =
 
 
 module title_screen =
-    // Title screen — full-screen TITLEPIC, no overlay text. The OG
-    // shows just the title pic with no prompt; any key (or the demo
-    // timeout) advances to the menu. The blinking "PRESS ANY KEY"
-    // we used to draw here was a holdover from the signon screen
-    // we no longer ship.
+    // Attract cycle: TITLE → CREDITS → HIGHSCORES → loop, with a brief
+    // black fade between each phase. Hold times match the original
+    // (`wl_main.cpp:1590-1610`, `TickBase=70Hz`): TITLEPIC for 15 s,
+    // CREDITSPIC for 10 s, high-scores for 10 s. The OG also plays a
+    // demo at the tail of every cycle; wolf-fc skips the demo (no
+    // recorder) and loops straight back to TITLEPIC. Any key at any
+    // sub-phase drops into the main menu (handled in main.fc); on
+    // re-entry the cycle restarts from TITLEPIC because phase_timer
+    // resets on phase change.
+    let title_hold      = 15.0
+    let credits_hold    = 10.0
+    let highscores_hold = 10.0
+    let fade_time       = 0.5
+    let cycle_total     = title_hold + credits_hold + highscores_hold
+
+    // Local-time fade-in at the start of a sub-phase + fade-out at
+    // the end. Black tint, sequential (not cross-fade) — same shape
+    // as the OG's `VW_FadeOut(); ...; VW_FadeIn()` pattern.
+    private let apply_fade = (rc: render_ctx*, local_t: float64, hold: float64) ->
+        let alpha =
+            if local_t < fade_time then 1.0 - local_t / fade_time
+            else if local_t > hold - fade_time then (local_t - (hold - fade_time)) / fade_time
+            else 0.0
+        if alpha > 0.0 then
+            overlay.viewport_tint_full(rc, 0x00000000u32, alpha)
+
     let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
-                  f: const font.info*, time: float64) ->
-        pics.blit_title_bg(rc)
+                  f: const font.info*, hs: highscore_ctx*, time: float64) ->
+        if time < title_hold then
+            pics.blit_title_bg(rc)
+            apply_fade(rc, time, title_hold)
+        else if time < title_hold + credits_hold then
+            // Black fill behind CREDITSPIC so widescreen letterboxes
+            // cleanly. `pics.draw` clips silently if the fb is wider
+            // than the 320x200 pic.
+            for i in 0..(rc->fb_w * rc->fb_h)
+                rc->fb[(int64) i] = 0xFF000000u32
+            pics.draw(rc, vg, pal, pics.id.credits, rc->ui_offset_x, 0)
+            apply_fade(rc, time - title_hold, credits_hold)
+        else
+            high_scores_screen.render(rc, vg, pal, f, hs, time)
+            apply_fade(rc, time - title_hold - credits_hold, highscores_hold)
 
 // ============================================================
 // PG-13 splash — short intro pic before the title sequence

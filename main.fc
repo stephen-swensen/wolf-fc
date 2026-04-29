@@ -1353,6 +1353,9 @@ let tick = (w: world*, dt: float64) ->
             hud.update_face(g, dt)
     | _ ->
         g->phase_timer = g->phase_timer + dt
+        if g->phase == game_phase.title
+                && g->phase_timer >= title_screen.cycle_total then
+            g->phase_timer = g->phase_timer - title_screen.cycle_total
         if g->phase == game_phase.dying then
             // Swing the heading toward whoever just killed us, like
             // the original's death rotation. No-op once aligned (or
@@ -1386,7 +1389,7 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
         pg13_screen.render(w->rc, w->vg, pal)
         return
     | title ->
-        title_screen.render(w->rc, w->vg, pal, w->font, w->g->phase_timer)
+        title_screen.render(w->rc, w->vg, pal, w->font, w->hs, w->g->phase_timer)
         return
     | main_menu ->
         menu.render_main(w->rc, w->sm, w->vg, pal, w->font, w->g, w->ac)

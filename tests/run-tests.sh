@@ -443,6 +443,15 @@ assert_contains "vgagraph:face-pic-dims"        "vginfo:109"        "width=24 he
 section "phases"
 assert_contains "phase:title-on-fresh-interactive" "setphase:title phase" "phase=title"
 assert_contains "phase:menu-nav-state"             "setphase:menu phase"   "phase=menu"
+# Title attract cycle: TITLE → CREDITS → HIGHSCORES → loop. Timer must
+# wrap at cycle_total (35s ≈ 1225 ticks) so the cycle runs forever.
+# wait:1400 = 40s, expect timer ≈ 5s into the second cycle.
+assert_contains "title:attract-cycle-stays-in-title" \
+    "setphase:title wait:1400 phase" \
+    "phase=title"
+assert_regex "title:attract-cycle-timer-wraps" \
+    "setphase:title wait:1400 phase" \
+    "timer= +[0-9]\\.[0-9]+ "
 
 section "bosses / ghosts"
 # E1M9 is level 8 (0-indexed). It has Hans Grösse at tile (34, 14).
