@@ -228,10 +228,18 @@ module opl2 =
         recompute_op_ksl(c, ch * 2 + 1, c->ch_block[ch], c->ch_fnum[ch])
 
     let write = (c: chip*, reg: int32, val: int32) ->
-        let base = reg & 240
+        // Operator-indexed register groups (0x20/0x40/0x60/0x80/0xE0) span
+        // 32 slots each (offsets 0..0x15 for 18 operators with gaps), so
+        // they need a 3-bit upper mask. Channel-indexed groups (0xA0/0xB0/
+        // 0xC0) span 16 slots each (one per channel), so they use a 4-bit
+        // upper mask. Mixing these up silently drops every write whose
+        // operator offset is ≥ 16 — i.e. all of channels 6, 7, 8 — which
+        // leaves their carriers stuck at the init default TL=63 (silent).
+        let op_base = reg & 224
+        let ch_base = reg & 240
         let off = reg & 31
         // 0x20–0x35: AM/VIB/EGT/KSR/MULT
-        if base == 32 then
+        if op_base == 32 then
             let idx = op_idx(off)
             if idx >= 0 then
                 c->op_mult[idx] = val & 15
@@ -244,7 +252,7 @@ module opl2 =
                 let ks = key_scale(c->ch_block[ch], c->ch_fnum[ch])
                 recompute_op_rates(c, idx, ks)
         // 0x40–0x55: KSL / TL
-        if base == 64 then
+        if op_base == 64 then
             let idx = op_idx(off)
             if idx >= 0 then
                 c->op_tl[idx]  = val & 63
@@ -252,7 +260,7 @@ module opl2 =
                 let ch = idx / 2
                 recompute_op_ksl(c, idx, c->ch_block[ch], c->ch_fnum[ch])
         // 0x60–0x75: Attack / Decay
-        if base == 96 then
+        if op_base == 96 then
             let idx = op_idx(off)
             if idx >= 0 then
                 c->op_ar[idx] = (val >> 4) & 15
@@ -261,7 +269,7 @@ module opl2 =
                 let ks = key_scale(c->ch_block[ch], c->ch_fnum[ch])
                 recompute_op_rates(c, idx, ks)
         // 0x80–0x95: Sustain Level / Release
-        if base == 128 then
+        if op_base == 128 then
             let idx = op_idx(off)
             if idx >= 0 then
                 c->op_sl[idx] = (val >> 4) & 15
@@ -270,16 +278,16 @@ module opl2 =
                 let ks = key_scale(c->ch_block[ch], c->ch_fnum[ch])
                 recompute_op_rates(c, idx, ks)
         // 0xE0–0xF5: Waveform select
-        if base == 224 then
+        if op_base == 224 then
             let idx = op_idx(off)
             if idx >= 0 then c->op_wf[idx] = val & 3
         let ci = reg & 15
         // 0xA0–0xA8: fnum low byte
-        if base == 160 && ci < 9 then
+        if ch_base == 160 && ci < 9 then
             c->ch_fnum[ci] = (c->ch_fnum[ci] & 768) | (val & 255)
             refresh_channel_ops(c, ci)
         // 0xB0–0xB8: fnum high 2 bits, block, key-on
-        if base == 176 && ci < 9 then
+        if ch_base == 176 && ci < 9 then
             c->ch_fnum[ci] = (c->ch_fnum[ci] & 255) | ((val & 3) << 8)
             c->ch_block[ci] = (val >> 2) & 7
             refresh_channel_ops(c, ci)
@@ -303,7 +311,7 @@ module opl2 =
                     c->op_stage[ci * 2 + 1] = stg_release
             c->ch_key[ci] = new_key
         // 0xC0–0xC8: Feedback / Connection
-        if base == 192 && ci < 9 then
+        if ch_base == 192 && ci < 9 then
             c->ch_fb[ci] = (val >> 1) & 7
             c->ch_add[ci] = (val & 1) != 0
         // 0xBD: LFO depths + rhythm mode. We handle DAM (bit 7) and DVB
