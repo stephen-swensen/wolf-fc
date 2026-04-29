@@ -2,9 +2,7 @@
 
 ## Open work
 
-One open item: the Read This! help screen. Everything else has been
-shipped or explicitly retired (see retirement notes inside each section
-below).
+None.
 
 ### Gameplay
 ### UI / Menus
@@ -53,6 +51,15 @@ Retired 2026-04-28:
   of `US_RndT` (an accepted divergence per the 2026-04-17 fidelity
   audit), so the OG demos would desync within seconds. A homegrown
   recorder is feasible but not planned.
+- `vg_t_helpart` (138) + `h_*` (3..9) — Read This! help screen. Dead
+  data in the GOODTIMES build wolf-fc targets. The original DOS source
+  wraps both the menu entry AND the `CP_ReadThis` function itself in
+  `#ifndef GOODTIMES` (`WL_MENU.C:603-617, 85-95`); GT Interactive
+  dropped the feature in the 1.4 v1.4 GT/ID/Activision re-release that
+  became the Steam/GOG version. Wolf4sdl defaults to `GOODTIMES` for
+  the same reason. The chunks remain in our WL6 VGAGRAPH but the
+  GOODTIMES executable never references them — same situation as the
+  retired SELECTWPNSND / HEARTBEATSND audio chunks.
 
 - [x] **`vg_pg13` (chunk 88) — PG-13 parental-advisory splash.** New
   `game_phase.pg13` runs first at startup; any key advances to the title
@@ -89,16 +96,6 @@ Retired 2026-04-28:
   ^; comments) and word-wraps the text inside the four-piece help-window
   border (h_topwindow / h_leftwindow / h_rightwindow / h_bottominfo).
   Music continues with URAHERO_MUS across episode_end → endart → next.
-- [ ] **"Read This!" help screen (`vg_t_helpart` 138 + `h_*` 3..9).**
-  Original Help main-menu entry loads `T_HELPART` (chunk 138) and runs
-  it through `ShowArticle` — structurally identical to the per-episode
-  ENDART flow (`wl_text.cpp:HelpScreens` mirrors `EndText`). The
-  `H_BJPIC` / `H_CASTLEPIC` / `H_BLAZEPIC` chunks (3..9) aren't
-  separate help pages; they're inline graphics the article pulls in
-  via `^Gy,x,p` markup, plus the four-piece window frame. Should
-  largely fall out of reusing `endart_screen`'s parser with a
-  different chunk source. Needs a new menu row + a phase that points
-  the parser at `T_HELPART` instead of `T_ENDART1+ep`.
 - [x] **Menu art lump (10..42) — replace text menus with original graphics.**
   `menu.fc` now blits the OG cursor (`c_cursor1`/`2`, blinking at 3.5 Hz),
   the difficulty face cards (`c_baby`/`c_easy`/`c_normal`/`c_hard`), the
