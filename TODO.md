@@ -2,11 +2,21 @@
 
 ## Open work
 
-Remaining items, in rough priority order. Items closer to the top are the
-next-up candidates; everything below is nice-to-have polish or a survey pass.
+One open item: the Read This! help screen. Everything else has been
+shipped or explicitly retired (see retirement notes inside each section
+below).
 
 ### Gameplay
 ### UI / Menus
+
+Configurable input was retired 2026-04-28: wolf-fc keeps the hard-coded
+WASD / arrows / Ctrl-fire / Space-use scheme. The OG's CONTROL +
+CUSTOMIZE CONTROLS submenus and the `vg_c_control` / `vg_c_customize`
+art lumps stay unused — `menu.fc` already hides those rows rather than
+greying them. The `SHOOTDOORSND` chunk (the OG keybind-confirm beep)
+is retired with this decision; if you ever wire keybind editing as a
+deliberate enhancement, that sound lands with it.
+
 - [x] **Quit Y/N confirmation prompt.** Triggered from the main-menu
   QUIT row (the only exit path today). Lands on a new `menu.nav.quit`
   sub-page which renders the underlying main menu plus a centred
@@ -27,21 +37,22 @@ next-up candidates; everything below is nice-to-have polish or a survey pass.
   lifted out of `endart_screen` (formerly private) along the way —
   the quit modal didn't end up using it, but it's a natural home for
   the helper now that there's a `pics` module.
-- [ ] **Configurable input.** Keybind editor under a CONTROL submenu, plus
-  the original's CUSTOMIZE CONTROLS layout (4-column grid: Mouse / Joy /
-  Keyboard buttons / Keyboard movement, per `CustomControls` in the
-  original). The art lumps (`vg_c_control` / `vg_c_customize`) are in
-  place; what's missing is the actual rebind capture flow + a config
-  file to persist the bindings. Lands the `SHOOTDOORSND` site too — in
-  the original it's the per-row keybind-confirm beep (4 sites inside
-  `EnterCtrlData`), despite the misleading name.
-
 ### VGAGRAPH art not yet surfaced
 
 Constants for every chunk exist in main.fc under the `vg_*` prefix (with
 `(unused)` tags on unwired ones). Items here are ordered roughly by visibility
 of the gap and implementation size. Many are grouped because they share a
 lump and would naturally land together.
+
+Retired 2026-04-28:
+- `vg_order` (136) — shareware order screen; wolf-fc isn't shareware.
+- `vg_error` (137) — generic error pic; current `stderr + exit` on fatal
+  data-load failures is fine, no need to surface a pic.
+- `vg_t_demo0..3` (139..142) — binary demo recordings in the OG format.
+  Bit-identical replay is impossible because wolf-fc uses PCG32 instead
+  of `US_RndT` (an accepted divergence per the 2026-04-17 fidelity
+  audit), so the OG demos would desync within seconds. A homegrown
+  recorder is feasible but not planned.
 
 - [x] **`vg_pg13` (chunk 88) — PG-13 parental-advisory splash.** New
   `game_phase.pg13` runs first at startup; any key advances to the title
@@ -99,14 +110,6 @@ lump and would naturally land together.
   (`c_selected`/`c_notselected`) aren't used since the framed box plus
   cursor reads cleanly without them. CHANGE VIEW + VIEW SCORES are
   wired as their own submenus.
-- [ ] **`vg_order` (136) / `vg_error` (137).** Shareware order screen
-  (probably skip or redirect to a short credits note — wolf-fc isn't
-  shareware) and a generic error screen we could route fatal data-load
-  failures through.
-- [ ] **`vg_t_demo0`..`vg_t_demo3` (139..142) — demo-playback art.** Only
-  meaningful if we add a demo / attract-mode recorder & player; likely the
-  lowest-priority item in this section.
-
 ### Sound effects not yet triggered
 
 Wolf3D enum IDs (0..86 per `audiowl6.h`) that the original triggered but
@@ -130,11 +133,12 @@ enhancement, add it back and flag it as a divergence.
   hit (`combat.fc`). AdLib-only — PLAYERDEATHSND has no entry in
   the WL6 `wolfdigimap[]`. Replaces the previous `death_1` (guard
   scream) trigger that BJ was sharing.
-- [x] **`SHOOTDOORSND` (28) — keybind-rebind confirm.** Tracked
-  inline under the configurable-input TODO above; despite the
-  name, the OG plays it only at four sites inside `EnterCtrlData`
-  (`wl_menu.cpp:2280, 2310, 2342, 2373`), so it lands with that
-  work, not as a standalone item.
+- [x] **`SHOOTDOORSND` (28) — keybind-rebind confirm.** Retired
+  with the configurable-input decision (see UI / Menus section
+  header). Despite the name, the OG plays it only at four sites
+  inside `EnterCtrlData` (`wl_menu.cpp:2280, 2310, 2342, 2373`)
+  in the keybind menu — wolf-fc has no keybind menu, so the chunk
+  stays unused.
 
 ### Music tracks not yet surfaced
 
@@ -155,12 +159,12 @@ data despite their suggestive names — retired from this list.
   single `game_phase.high_scores` in wolf-fc.
 
 ### Fidelity
-- [ ] **Next survey pass.** The 2026-04-23 survey against `GunAttack`,
-  `TakeDamage`, pickup handling, `UpdateFace`, and the pacman-ghost chase
-  path closed eight divergences (see 2026-04-23 notes below). Future
-  passes should spot-check other subsystems — door interaction rules,
-  projectile spawn angles, pushwall speed, or audio mixing semantics —
-  and queue new items here as they're found.
+
+Survey passes happen ad-hoc, not on a schedule. The 2026-04-23 sweep
+against `GunAttack` / `TakeDamage` / pickup handling / `UpdateFace` /
+pacman-ghost chase closed eight divergences (see 2026-04-23 notes
+below). When something feels off in play, audit the relevant subsystem
+against id's source / wolf4sdl, log a finding here, and fix.
 
 ## Current State (2026-04-25)
 
