@@ -105,7 +105,7 @@ module menu =
     // Per-row metadata: kind (toggle / slider / action) + label.
     private let option_label = (i: int32) ->
         match i with
-        | 0 -> "No Dogs"
+        | 0 -> "No Dogs (Thanks Mom)"
         | 1 -> "Shadow Depth"
         | 2 -> "Reset to Defaults"
         | _ -> ""

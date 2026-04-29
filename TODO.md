@@ -28,11 +28,13 @@ next-up candidates; everything below is nice-to-have polish or a survey pass.
   the quit modal didn't end up using it, but it's a natural home for
   the helper now that there's a `pics` module.
 - [ ] **Configurable input.** Keybind editor under a CONTROL submenu, plus
-  the original's CUSTOMIZE CONTROLS layout. The art lump (`vg_c_control` /
-  `vg_c_customize`) is in place; what's missing is the actual rebind
-  flow + a config file to persist the bindings. Pairs with `MOVEGUN2SND`
-  rebind-confirm sites (already wired to the SOUND submenu commit beep
-  but the original also fires it from each keybind row).
+  the original's CUSTOMIZE CONTROLS layout (4-column grid: Mouse / Joy /
+  Keyboard buttons / Keyboard movement, per `CustomControls` in the
+  original). The art lumps (`vg_c_control` / `vg_c_customize`) are in
+  place; what's missing is the actual rebind capture flow + a config
+  file to persist the bindings. Lands the `SHOOTDOORSND` site too — in
+  the original it's the per-row keybind-confirm beep (4 sites inside
+  `EnterCtrlData`), despite the misleading name.
 
 ### VGAGRAPH art not yet surfaced
 
@@ -47,9 +49,10 @@ lump and would naturally land together.
   Music is already running at this point — `font.music_chunk_for_phase`
   routes the splash to WONDERIN_MUS, same as the menu, so the pre-title
   sequence has continuous audio.
-- [ ] **`vg_credits` (89) — credits screen.** Main-menu entry (CREDITS) that
-  draws the full-screen pic and waits for any key. Needs a new menu slot and
-  a tiny phase.
+- [ ] **`vg_credits` (89) — credits screen.** New CREDITS main-menu
+  entry that draws the full-screen pic and waits for any key. Needs
+  a new menu slot and a tiny phase. (OG shows the pic only inside
+  the attract-mode demo loop, which wolf-fc doesn't have.)
 - [x] **`vg_highscores` (90) — high-scores screen + high-score system.**
   New `game_phase.high_scores` runs the OG `DrawHighScores` layout:
   HIGHSCORESPIC banner over a black title stripe, `c_name`/`c_level`/
@@ -63,9 +66,6 @@ lump and would naturally land together.
   Reachable from three sites — death (replaces the old game-over
   placeholder), endart article exit (matches Victory()'s embedded
   CheckHighScore), and the new VIEW SCORES main-menu entry.
-- [ ] **`vg_mutant_bj` (132) — mutant-BJ transformation cut-scene.** Brief
-  full-screen overlay during E2's Schabbs finale when the injection hits
-  (wolf4sdl ties it to the same flow that ends with ENDART text).
 - [x] **`vg_t_endart1`..`vg_t_endart6` (143..148) — per-episode ending text
   pages.** New `game_phase.endart` sits between `episode_end` and the
   next-episode advance. The article-markup parser handles the OG syntax
@@ -74,11 +74,16 @@ lump and would naturally land together.
   ^; comments) and word-wraps the text inside the four-piece help-window
   border (h_topwindow / h_leftwindow / h_rightwindow / h_bottominfo).
   Music continues with URAHERO_MUS across episode_end → endart → next.
-- [ ] **"Read This!" help screen (3..9 + 138).** Original Help menu option
-  pages through a layered backdrop (`vg_h_castle` + `vg_h_blaze` + `vg_h_bj`
-  inside the `vg_h_*window` frame, or the alternate `vg_t_helpart`) showing
-  controls / items / enemies. Needs a new menu entry, a pageable text/image
-  renderer, and static strings from id_in's help tables.
+- [ ] **"Read This!" help screen (`vg_t_helpart` 138 + `h_*` 3..9).**
+  Original Help main-menu entry loads `T_HELPART` (chunk 138) and runs
+  it through `ShowArticle` — structurally identical to the per-episode
+  ENDART flow (`wl_text.cpp:HelpScreens` mirrors `EndText`). The
+  `H_BJPIC` / `H_CASTLEPIC` / `H_BLAZEPIC` chunks (3..9) aren't
+  separate help pages; they're inline graphics the article pulls in
+  via `^Gy,x,p` markup, plus the four-piece window frame. Should
+  largely fall out of reusing `endart_screen`'s parser with a
+  different chunk source. Needs a new menu row + a phase that points
+  the parser at `T_HELPART` instead of `T_ENDART1+ep`.
 - [x] **Menu art lump (10..42) — replace text menus with original graphics.**
   `menu.fc` now blits the OG cursor (`c_cursor1`/`2`, blinking at 3.5 Hz),
   the difficulty face cards (`c_baby`/`c_easy`/`c_normal`/`c_hard`), the
@@ -113,19 +118,20 @@ data — never called from any original-game source path. They've been
 retired from this list; if you ever want to wire one as a deliberate
 enhancement, add it back and flag it as a divergence.
 
-- [x] **`MOVEGUN2SND` (4) — menu commit beep.** Wired as
+- [x] **`MOVEGUN2SND` (4) — SOUND-submenu commit beep.** Wired as
   `sfx.id.move_gun2` (chunk 4, AdLib only). Plays on Enter inside the
   SOUND submenu when the player toggles a row. Other menus drilling
-  into a submenu still fire SHOOTSND. The original game also plays
-  this at the end of the keybind-rebind flow — that site will land
-  with the configurable-input TODO above.
-- [ ] **`PLAYERDEATHSND` (9) — BJ death scream.** Original plays this on
-  the killing blow in `PlayerDied` (`wl_game.cpp:1237`); wolf-fc
-  currently runs the damage-flash + collapse animation silently.
-- [ ] **`SHOOTDOORSND` (28) — keybind-menu confirm.** Despite the name,
-  this is *not* "weapon hits a door" in the original — it's the confirm
-  beep played at four sites in the keybind-config menu. Pairs with the
-  configurable-input TODO.
+  into a submenu still fire SHOOTSND.
+- [x] **`PLAYERDEATHSND` (9) — BJ death scream.** Wired as
+  `sfx.id.player_death`, fired from `damage_player` on the lethal
+  hit (`combat.fc`). AdLib-only — PLAYERDEATHSND has no entry in
+  the WL6 `wolfdigimap[]`. Replaces the previous `death_1` (guard
+  scream) trigger that BJ was sharing.
+- [x] **`SHOOTDOORSND` (28) — keybind-rebind confirm.** Tracked
+  inline under the configurable-input TODO above; despite the
+  name, the OG plays it only at four sites inside `EnterCtrlData`
+  (`wl_menu.cpp:2280, 2310, 2342, 2373`), so it lands with that
+  work, not as a standalone item.
 
 ### Music tracks not yet surfaced
 

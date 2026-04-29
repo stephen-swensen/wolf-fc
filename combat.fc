@@ -808,7 +808,7 @@ module enemies =
                 g->killer_y = ky
                 g->killer_active = true
                 // Death scream on lethal damage; regular pain otherwise.
-                sfx.trigger(sfx.id.death_1, ac)
+                sfx.trigger(sfx.id.player_death, ac)
             else
                 sfx.trigger(sfx.id.pain, ac)
 
