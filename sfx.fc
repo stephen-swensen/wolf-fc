@@ -300,6 +300,103 @@ module sfx =
          9    // player_death (PLAYERDEATHSND — BJ death scream)
     }
 
+    // Per-sound priority — mirrors the original's SoundCommon.priority
+    // field. The AdLib driver skips a trigger when its priority is
+    // strictly less than the currently-playing sound's; equal-or-higher
+    // preempts. Two-tier scheme suffices for our needs:
+    //   0 = ambient feedback (wall bumps, "do nothing"); these never
+    //       drown out a deliberate event.
+    //   1 = everything else (pickups, doors, weapons, alerts, deaths).
+    // Same-priority preempt means rapid pickups (cross→cross,
+    // cross→chalice) restart audibly. The DONOTHING hold-rhythm is
+    // handled at the call site (see player.fc Cmd_Use), not here.
+    private let priority = int32[76] {
+        1,  // open_door
+        1,  // close_door
+        1,  // atk_pistol
+        1,  // atk_knife
+        1,  // atk_mg
+        1,  // atk_gat
+        1,  // get_key
+        1,  // get_ammo
+        1,  // bonus1
+        1,  // pain
+        1,  // push_wall
+        1,  // get_mg
+        1,  // get_gat
+        0,  // hit_wall      — ambient: don't override pickups/actions
+        0,  // no_action     — ambient: held-space "do-do-do"
+        1,  // no_way
+        1,  // bonus2
+        1,  // bonus3
+        1,  // bonus4
+        1,  // bonus1up
+        1,  // health1
+        1,  // health2
+        1,  // halt
+        1,  // schutzad
+        1,  // dog_bark
+        1,  // nazi_fire
+        1,  // ss_fire
+        1,  // dog_attack
+        1,  // dog_death
+        1,  // death_1
+        1,  // death_2
+        1,  // death_3
+        1,  // hit_enemy
+        1,  // death_4
+        1,  // death_5
+        1,  // death_6
+        1,  // death_7
+        1,  // death_8
+        1,  // death_9
+        1,  // spion
+        1,  // nein_sovass
+        1,  // leben
+        1,  // ahhhg
+        1,  // gutentag
+        1,  // mutti
+        1,  // kein
+        1,  // mein
+        1,  // eine
+        1,  // donner
+        1,  // erlauben
+        1,  // rose
+        1,  // schabbsha
+        1,  // meingott
+        1,  // tot_hund
+        1,  // hitlerha
+        1,  // die
+        1,  // scheist
+        1,  // eva
+        1,  // level_done
+        1,  // end_bonus1
+        1,  // end_bonus2
+        1,  // percent100
+        1,  // no_bonus
+        1,  // boss_fire
+        1,  // schabbs_throw
+        1,  // flamethrower
+        1,  // missile_fire
+        1,  // mech_step
+        1,  // yeah
+        1,  // move_gun1
+        1,  // shoot
+        1,  // esc_pressed
+        1,  // missile_hit
+        1,  // slurpie
+        1,  // move_gun2
+        1   // player_death
+    }
+
+    // Returns true if the AdLib SFX chip is currently playing a chunk.
+    // Used by the DONOTHING hold-rhythm gate in Cmd_Use: holding space
+    // against a wall fires DONOTHING on the press edge, then re-fires
+    // each time the previous chunk finishes — naturally paced "do-do-
+    // do" without restarting the OPL2 envelope mid-attack.
+    let adlib_busy = (ac: audio_ctx*) ->
+        ac->sfx->active
+
     // Play a sound by sfx.id.*. Prefers the digitized version (richer
     // audio, matches the original Sound Blaster mode) and falls back to
     // the AdLib version loaded from AUDIOT on demand. `pan` is [-1, +1];
@@ -326,7 +423,8 @@ module sfx =
                     let off = (int64) audio.chunk_offset(ac->ad, chunk)
                     let len = audio.chunk_length(ac->ad, chunk)
                     if len >= 23 then
-                        adlib.play(ac->sfx, adlib.parse(ac->ad->raw, off))
+                        adlib.play(ac->sfx, adlib.parse(ac->ad->raw, off),
+                                   priority[sound_id])
 
     private let trigger_panned = (sound_id: int32, ac: audio_ctx*, pan: float64) ->
         trigger_panned_gain(sound_id, ac, pan, 1.0)

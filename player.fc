@@ -476,8 +476,7 @@ module player =
             sfx.trigger(sfx.id.hit_wall, ac)
             g->wall_hit_cooldown = 0.4   // ~400 ms before we'll re-announce
 
-        // Use-action dispatch — mirrors the original's Cmd_Use
-        // (wl_agent.cpp).
+        // Use-action dispatch — mirrors the original's Cmd_Use.
         //   • Push-wall runs every frame while space is held;
         //     pushwall.try_push is idempotent (early-returns if one
         //     is already sliding or the tile isn't a push-wall
@@ -485,17 +484,15 @@ module player =
         //     along a row of walls to find secrets" — the hallmark
         //     Wolf3D use-key ergonomic.
         //   • Elevator and door are edge-triggered on the press
-        //     itself, exactly like the original's
-        //     `!buttonheld[bt_use]` gate. NOWAYSND (locked door)
-        //     rides along inside the edge branch so it can't stutter.
-        //   • DONOTHINGSND fires every frame when nothing else did,
-        //     matching the original's else-branch. The AdLib driver
-        //     dedups same-chunk retriggers (see adlib.play in
-        //     sound.fc), so the "do-do-do" hold-at-wall rhythm comes
-        //     back at the chunk's natural ~300 ms length instead of
-        //     the frame rate — a cold OPL2 reset every frame would
-        //     otherwise cut the envelope short and degrade into
-        //     clicks over a few seconds.
+        //     itself, exactly like the original's `!buttonheld[bt_use]`
+        //     gate. NOWAYSND (locked door) rides along inside the
+        //     edge branch so it can't stutter.
+        //   • DONOTHINGSND fires on the press edge AND each time the
+        //     previous chunk has finished, giving the natural "do-do-
+        //     do" rhythm when space is held against a wall — paced by
+        //     the chunk's ~300 ms length, not the frame rate. The
+        //     priority field on the sound (sfx.fc) keeps it from
+        //     trampling pickups or other deliberate events.
         if g->key_space then
             let edge = !g->key_space_handled
             g->key_space_handled = true
@@ -542,7 +539,7 @@ module player =
                     | door_locked  ->
                         sfx.trigger(sfx.id.no_way, ac)
                         did_anything = true
-            if !did_anything then
+            if !did_anything && (edge || !sfx.adlib_busy(ac)) then
                 sfx.trigger(sfx.id.no_action, ac)
         // Refresh g->area_number from whatever tile the player is now
         // standing on. The original's Thrust does this every frame;
