@@ -23,6 +23,9 @@ module menu =
         let sound      = 5
         let options    = 6
         let changeview = 7
+        // Quit-confirm modal: a sub-page rather than a separate phase
+        // since it draws over the menu chrome and only intercepts Y/N.
+        let quit       = 8
 
     // Original Wolf3D palette indices for menu chrome (from
     // `wl_menu.h`). We resolve them through `pal[]` at draw time so
@@ -573,6 +576,36 @@ module menu =
                         "E%d{ep}M%d{lvl}", color)
         draw_help_pic(rc, vg, pal)
 
+    // Quit Y/N confirmation modal. Renders the main menu underneath
+    // (so the menu chrome stays visible) and overlays a small
+    // centered bevelled box with the rolled tagline and a
+    // "PRESS Y TO QUIT, N TO STAY" hint. Mirrors the original game's
+    // `Confirm` popup which used the same `DrawWindow` two-tone
+    // bevel as the menu panels themselves rather than the article-
+    // window border. The randomness is rolled at the QUIT row's
+    // confirm site (main.fc) and stashed on `g->quit_prompt_idx` so
+    // the prompt stays stable while the modal is up.
+    private let render_quit_modal = (rc: render_ctx*,
+                                      vg: const vgagraph.vgagraph_file*,
+                                      pal: const uint32[],
+                                      f: const font.info*, g: game*,
+                                      ac: audio_ctx*) ->
+        // Paint the main menu first so its chrome reads through
+        // around the popup.
+        render_main_list(rc, vg, pal, f, g, g->phase_timer)
+        // Centered popup. Width covers the longest expected prompt
+        // (~36 chars); height fits two text rows + padding.
+        let box_w = 240
+        let box_h = 56
+        let box_x = (rc->fb_w - box_w) / 2
+        let box_y = (game_h - box_h) / 2
+        draw_window(rc, pal, box_x, box_y, box_w, box_h)
+        let prompt = quit_prompts.at(g->quit_prompts_override, g->quit_prompt_idx)
+        let hint = "PRESS Y TO QUIT, N TO STAY"
+        let color = pal[pal_text]
+        font.draw_centered(rc, f, box_y + 14, prompt, color)
+        font.draw_centered(rc, f, box_y + 32, hint,   color)
+
     let render_main = (rc: render_ctx*, sm: save_menu_ctx*,
                        vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                        f: const font.info*, g: game*, ac: audio_ctx*) ->
@@ -594,3 +627,5 @@ module menu =
             render_slot(rc, vg, pal, f, g, sm, pics.id.c_savegame, g->menu_sel, false, time)
         else if g->menu_level == nav.loadlist then
             render_slot(rc, vg, pal, f, g, sm, pics.id.c_loadgame, g->menu_sel, true, time)
+        else if g->menu_level == nav.quit then
+            render_quit_modal(rc, vg, pal, f, g, ac)

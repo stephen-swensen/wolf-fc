@@ -414,6 +414,19 @@ module pics =
                 if dx < 0 || dx >= rc->fb_w then continue
                 rc->fb[dst_row + (int64) dx] = buf[src_row + sx]
 
+    // Four-piece help-window border, stretched to fill the
+    // framebuffer in widescreen. Top + bottom strips scale to fb_w;
+    // the 8-wide side rails ride the framebuffer edges. The bottom
+    // strip has "[<-] PAGE  ESC EXITS" baked in, so this widget is
+    // only appropriate for paged-article screens (today: endart).
+    let draw_help_window = (rc: render_ctx*,
+                             vg: const vgagraph.vgagraph_file*,
+                             pal: const uint32[]) ->
+        draw_stretched_h(rc, vg, pal, id.h_topwindow,    0,             0,   rc->fb_w)
+        draw         (rc, vg, pal, id.h_leftwindow,                 0,   8)
+        draw         (rc, vg, pal, id.h_rightwindow,    rc->fb_w - 8,    8)
+        draw_stretched_h(rc, vg, pal, id.h_bottominfo,   8,           176,   rc->fb_w - 16)
+
     // After drawing a 320-relative pic at (x, y), tile its LEFTMOST
     // column out to both framebuffer edges so the banner reads as a
     // continuous strip in widescreen. Using the left column on both

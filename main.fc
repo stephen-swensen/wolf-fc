@@ -69,6 +69,116 @@ module episode =
         else if lvl == 9 then ep * levels_per + back_to[ep]
         else ep * levels_per + lvl + 1
 
+// Quit-confirmation prompt pool. Mirrors the original game's "are you
+// sure?" modal that picked a tongue-in-cheek prompt at random. We invent
+// our own pool (no copyleft hygiene risk from the OG strings) in a
+// playful-wholesome key. Each entry is a single-line tagline; the modal
+// renders it centred above a fixed "PRESS Y TO QUIT, N TO STAY" hint.
+//
+// The pool can be overridden by writing one prompt per line to
+// `~/.wolf-fc/quit-prompts`. Blank lines are ignored. A missing file or
+// a file with no non-blank lines falls back to the built-in pool.
+module quit_prompts =
+    import io from std::
+    import text from std::
+
+    let builtin_count = 30
+
+    let builtin_at = (i: int32) ->
+        match i with
+        // "FOR X AND Y..." style — leans on the OG cliffhanger cadence.
+        | 0  -> "FOR GUTS AND GLORY..."
+        | 1  -> "FOR DUTY AND DONUTS..."
+        | 2  -> "FOR FRESH AIR AND FERNS..."
+        | 3  -> "FOR TEA AND TRANQUILITY..."
+        | 4  -> "FOR DISHES AND DESTINY..."
+        | 5  -> "FOR HEARTH AND HOMEWORK..."
+        | 6  -> "FOR SUNSHINE AND SUCCESS..."
+        | 7  -> "FOR LAUNDRY AND LIBERTY..."
+        | 8  -> "FOR NAPS AND NOBLE PURSUITS..."
+        | 9  -> "FOR THE LOVE OF DAYLIGHT..."
+        | 10 -> "FOR FRIENDS AND FRESH BREAD..."
+        | 11 -> "FOR PETS AND POSTERITY..."
+        | 12 -> "FOR PIZZA AND PEACE OF MIND..."
+        | 13 -> "FOR HOBBIES AND HUMAN DECENCY..."
+        // Spelled-out alternatives — name the better thing waiting.
+        | 14 -> "GO HUG SOMEONE YOU LOVE."
+        | 15 -> "DINNER WON'T COOK ITSELF."
+        | 16 -> "BED IS CALLING."
+        | 17 -> "TIME FOR A WALK OUTSIDE."
+        | 18 -> "THERE IS A SUNSET WAITING."
+        | 19 -> "PUT ON SOME REAL PANTS."
+        | 20 -> "DRINK A GLASS OF WATER."
+        | 21 -> "STRETCH BEFORE YOU GO."
+        | 22 -> "GO READ A REAL BOOK."
+        | 23 -> "WATER YOUR PLANTS."
+        | 24 -> "BIRDS ARE CHIRPING OUTSIDE."
+        | 25 -> "THE COFFEE IS GETTING COLD."
+        | 26 -> "GO LEARN AN INSTRUMENT."
+        | 27 -> "TOUCH SOME GRASS."
+        | 28 -> "GO BAKE SOMETHING NICE."
+        | _  -> "THE LAUNDRY HAS BEEN WAITING."
+
+    // Heap-copy a str slice into an owned uint8 buffer. Returned slice
+    // is freeable on its own (no shared backing), so the override array
+    // can be torn down line-by-line in `free_override`.
+    private let dup_str = (s: const str) ->
+        let n = s.len
+        let buf = alloc(uint8[n] {})!
+        for i in 0..n
+            buf[i] = s[i]
+        (str) buf
+
+    // Read newline-delimited override pool. Lines are trimmed; blanks
+    // dropped. Returns an empty slice if the file is missing, unreadable,
+    // or contains zero non-blank lines — caller falls back to built-ins.
+    let load_override = () ->
+        match paths.wolf_data_dir() with
+        | none -> alloc(str[0] {})!
+        | some(dir) ->
+            defer free(dir)
+            let path = alloc("%s{dir}/quit-prompts")!
+            defer free(path)
+            match io.read_all(path) with
+            | none -> alloc(str[0] {})!
+            | some(contents) ->
+                defer free(contents)
+                let lines = text.split(contents, "\n")
+                defer free(lines)
+                // First pass: count non-blank trimmed lines.
+                let mut n = 0i64
+                for i in 0..lines.len
+                    if text.trim(lines[i]).len > 0i64 then
+                        n = n + 1i64
+                if n == 0i64 then alloc(str[0] {})!
+                else
+                    let out = alloc(str[n] {})!
+                    let mut k = 0i64
+                    for i in 0..lines.len
+                        let t = text.trim(lines[i])
+                        if t.len > 0i64 then
+                            out[k] = dup_str(t)
+                            k = k + 1i64
+                    out
+
+    // Free the heap-allocated override pool (line buffers + outer slice).
+    let free_override = (pool: str[]) ->
+        for i in 0..pool.len
+            free(pool[i])
+        free(pool)
+
+    // Pick the i-th prompt out of either the override pool (when non-
+    // empty) or the built-in pool. Caller is responsible for choosing
+    // a valid index.
+    let at = (override_pool: const str[], i: int32) ->
+        if override_pool.len > 0i64 then
+            (const str) override_pool[(int64) i % override_pool.len]
+        else builtin_at(i)
+
+    let count = (override_pool: const str[]) ->
+        if override_pool.len > 0i64 then (int32) override_pool.len
+        else builtin_count
+
 // ============================================================
 // Game state
 // ============================================================
@@ -466,6 +576,14 @@ struct game =
     // User requested quit (main menu's QUIT entry). Main loop reads this
     // and breaks out of the game loop.
     want_quit: bool
+
+    // Quit-confirm modal state. `quit_prompt_idx` is rolled when the
+    // QUIT row is selected and stays stable while the modal is up so a
+    // user toggling between Y/N (well, just looking) sees the same
+    // prompt. `quit_prompts_override` is loaded once at startup from
+    // ~/.wolf-fc/quit-prompts; an empty slice means "use built-ins".
+    quit_prompt_idx: int32
+    quit_prompts_override: str[]
 
     // True once the player has started a game at least once. Controls the
     // main-menu behaviour: when true, Esc from the main menu resumes play;
@@ -1767,6 +1885,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             g->phase = game_phase.main_menu
             g->menu_level = menu.nav.loadlist
             save.refresh_slots(w->sm)
+        else if p == "quitprompt" then
+            g->phase = game_phase.main_menu
+            g->menu_level = menu.nav.quit
+            g->quit_prompt_idx = 0     // deterministic for screenshots
         else if p == "playing" then g->phase = game_phase.playing
         else if p == "endart" then
             // Enter the per-episode ending article for whichever
@@ -2276,6 +2398,8 @@ let main = (args: str[]) ->
         test_mode = test_mode,
         menu_sel = 0, menu_level = menu.nav.main, save_edit_active = false,
         music_on = cfg.music_on, want_quit = false,
+        quit_prompt_idx = 0,
+        quit_prompts_override = quit_prompts.load_override(),
         has_active_game = false,
         msg_buf = alloc(uint8[256] {})!,
         msg_len = 0, msg_timer = 0.0,
@@ -2674,7 +2798,17 @@ let main = (args: str[]) ->
                                     g->phase = game_phase.title
                                     g->phase_timer = 0.0
                             | 8 ->
-                                g->want_quit = true
+                                // QUIT → enter the Y/N confirm modal.
+                                // Roll the prompt index now so the
+                                // displayed tagline stays stable while
+                                // the modal is up. RNG channel reuse:
+                                // rng_face is non-gameplay and not part
+                                // of the test-mode bit-stability contract
+                                // (test mode never reaches the menu).
+                                let n = quit_prompts.count(g->quit_prompts_override)
+                                let r = random.pcg_random.next_bounded_uint32(&g->rng_face, (uint32) n)
+                                g->quit_prompt_idx = (int32) r
+                                g->menu_level = menu.nav.quit
                             | _ -> void()
                         else if k == sdl2.key_escape then
                             // Esc on the main menu = same as picking
@@ -2897,6 +3031,23 @@ let main = (args: str[]) ->
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
                             g->menu_sel = 3     // back to LOAD GAME
+                    else if g->menu_level == menu.nav.quit then
+                        // Quit-confirm modal. Y commits; N / Esc cancels
+                        // back to the main menu. Enter / Space are
+                        // intentionally not synonyms for Y — matches the
+                        // original game's strict-Y behaviour.
+                        if k == sdl2.key_y then
+                            sfx.trigger(sfx.id.shoot, w->ac)
+                            g->want_quit = true
+                        else if k == sdl2.key_n || k == sdl2.key_escape then
+                            // Esc already played esc_pressed via the
+                            // shared dispatch above; trigger it
+                            // explicitly for the N case so the cancel
+                            // sound is consistent across both keys.
+                            if k == sdl2.key_n then
+                                sfx.trigger(sfx.id.esc_pressed, w->ac)
+                            g->menu_level = menu.nav.main
+                            g->menu_sel = 8     // back to QUIT row
                 | high_scores ->
                     // Direct dispatch (not via the IN_Ack latch) so the
                     // typing keys during edit don't double as ack
@@ -3145,4 +3296,5 @@ let main = (args: str[]) ->
     sdl2.destroy_renderer(ren)
     sdl2.destroy_window(win)
     sdl2.quit()
+    quit_prompts.free_override(g->quit_prompts_override)
     0

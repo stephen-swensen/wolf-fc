@@ -1114,27 +1114,6 @@ module endart_screen =
             cx = cx + font.draw_char(rc, f, cx, st->py, ch, color)
         st->px = cx
 
-    // Draw the rectangular four-piece help-window border, stretched
-    // to fill the framebuffer in widescreen. The horizontal pieces
-    // (h_topwindow, h_bottominfo) scale to fb_w; the vertical edges
-    // (h_leftwindow, h_rightwindow) keep their native 8 px width and
-    // ride the framebuffer edges. Stretching the bottom-info pic
-    // slightly distorts the baked-in "[<-] PAGE  ESC EXITS" prompt,
-    // but the alternative — a 320-wide centred strip — looks
-    // cropped. The OG never had this concern because it always ran
-    // 320 wide.
-    private let draw_window_border = (rc: render_ctx*,
-                                       vg: const vgagraph.vgagraph_file*,
-                                       pal: const uint32[]) ->
-        // h_topwindow is 320×8 in the WL6 lump; stretch to fb_w.
-        pics.draw_stretched_h(rc, vg, pal, pics.id.h_topwindow,    0,             0,   rc->fb_w)
-        // Side rails: 8-wide edges glued to the framebuffer corners.
-        pics.draw         (rc, vg, pal, pics.id.h_leftwindow,                0,   8)
-        pics.draw         (rc, vg, pal, pics.id.h_rightwindow,    rc->fb_w - 8,   8)
-        // h_bottominfo is 304×24 (OG); stretch to span between the
-        // side rails (fb_w - 2*8).
-        pics.draw_stretched_h(rc, vg, pal, pics.id.h_bottominfo,   8,           176,   rc->fb_w - 16)
-
     // Print the "pg N of M" footer the original adds at the bottom of
     // each page (READHCOLOR, fontnumber 0). Scales the OG x=213
     // position proportionally to fb_w so the page number stays inside
@@ -1152,7 +1131,7 @@ module endart_screen =
         let bg = pal[backcolor]
         for i in 0..(rc->fb_w * game_h)
             rc->fb[i] = bg
-        draw_window_border(rc, vg, pal)
+        pics.draw_help_window(rc, vg, pal)
         if g->endart_total_pages == 0 || g->endart_data.len == 0 then return
         let mut page = g->endart_page
         if page >= g->endart_total_pages then page = g->endart_total_pages - 1

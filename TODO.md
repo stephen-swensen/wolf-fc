@@ -7,17 +7,26 @@ next-up candidates; everything below is nice-to-have polish or a survey pass.
 
 ### Gameplay
 ### UI / Menus
-- [ ] **Quit Y/N confirmation prompt.** Original game's "are you sure?"
-  modal that picked from a pool of tongue-in-cheek "for work and worry
-  press Y..." style prompts. Don't copy the original strings (copyleft
-  hygiene); invent our own pool in the same wholesome-responsibility-
-  scolding spirit. Override pool: optional newline-delimited
-  `~/.wolf-fc/quit-prompts` file, one prompt per line, wins outright
-  when present. Modal renders inside the existing `h_*window` border
-  (already wired for endart). Triggered from the main-menu QUIT entry
-  only — there's no other exit path today (Esc on title goes to main
-  menu, not to quit), so scope stays narrow. Y commits, N / Esc
-  cancels back to the menu.
+- [x] **Quit Y/N confirmation prompt.** Triggered from the main-menu
+  QUIT row (the only exit path today). Lands on a new `menu.nav.quit`
+  sub-page which renders the underlying main menu plus a centred
+  `draw_window` bevelled popup — closer to the original's `Confirm`
+  helper than the article-window border the TODO originally proposed
+  (`h_bottominfo` has "[<-] PAGE  ESC EXITS" baked in). Tagline rolled
+  via `g->rng_face` (non-gameplay, not bit-stable in test mode — and
+  test mode never reaches the menu anyway), stashed on `g->quit_prompt_idx`
+  so it stays stable while the modal is up. Built-in pool of 14
+  invented "for X and Y..." style prompts in `module quit_prompts`
+  (no OG strings, copyleft-hygiene). Override pool:
+  `~/.wolf-fc/quit-prompts`, one prompt per line; blank/whitespace-only
+  lines and a missing/empty file all fall back to the built-in pool.
+  Y commits + plays SHOOTSND; N / Esc cancel + play ESCPRESSEDSND
+  (Enter / Space deliberately not synonyms for Y, matching the OG's
+  strict-Y behaviour). `setphase:quitprompt` test command added for
+  screenshot coverage. The four-piece `pics.draw_help_window` was
+  lifted out of `endart_screen` (formerly private) along the way —
+  the quit modal didn't end up using it, but it's a natural home for
+  the helper now that there's a `pics` module.
 - [ ] **Configurable input.** Keybind editor under a CONTROL submenu, plus
   the original's CUSTOMIZE CONTROLS layout. The art lump (`vg_c_control` /
   `vg_c_customize`) is in place; what's missing is the actual rebind
