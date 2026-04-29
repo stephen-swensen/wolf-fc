@@ -466,9 +466,14 @@ module opl2 =
                 let cout = wave_sample(c, c->op_phase[ci], c->op_wf[ci], c_total_db)
                 out = out + mout + cout
             else
-                // FM: modulator's output is added to carrier phase (wraps
-                // via floor). mvol=1 ≈ ±1 wavelength of FM shift at peak.
-                let cout = wave_sample(c, c->op_phase[ci] + mout, c->op_wf[ci], c_total_db)
+                // FM: modulator's output is added to carrier phase. The
+                // YM3812 / Nuked-OPL3 reference applies a ×2 scale here
+                // (op output range ±2048 fed into a 10-bit / 1024-per-cycle
+                // phase index = ±2 wavelengths max FM). Without the ×2,
+                // FM depth is half — mod sidebands are too quiet, so FM
+                // voices that should sound "brassy" (rich harmonic stack)
+                // collapse toward a near-pure carrier sine.
+                let cout = wave_sample(c, c->op_phase[ci] + mout * 2.0, c->op_wf[ci], c_total_db)
                 out = out + cout
         if out > 1.0 then out = 1.0
         if out < -1.0 then out = -1.0
