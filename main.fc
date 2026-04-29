@@ -71,9 +71,14 @@ module episode =
 
 // Quit-confirmation prompt pool. Mirrors the original game's "are you
 // sure?" modal that picked a tongue-in-cheek prompt at random. We invent
-// our own pool (no copyleft hygiene risk from the OG strings) in a
-// playful-wholesome key. Each entry is a single-line tagline; the modal
-// renders it centred above a fixed "PRESS Y TO QUIT, N TO STAY" hint.
+// our own pool (no copyleft hygiene risk from the OG strings).
+//
+// Tone: playful taunt. The implicit deal is "quitting trades real action
+// for mundane life" — so each cliffhanger ("FOR X AND Y...") names a
+// paired-mundane thing the player would be trading down to, and the
+// spelled-out ones describe a small domestic alternative. A handful of
+// WW2-flavoured pairings (paperwork, drills, furlough) lean into the
+// game's setting; the rest are general retiree-coded coziness.
 //
 // The pool can be overridden by writing one prompt per line to
 // `~/.wolf-fc/quit-prompts`. Blank lines are ignored. A missing file or
@@ -82,42 +87,40 @@ module quit_prompts =
     import io from std::
     import text from std::
 
-    let builtin_count = 30
+    let builtin_count = 27
 
     let builtin_at = (i: int32) ->
         match i with
-        // "FOR X AND Y..." style — leans on the OG cliffhanger cadence.
-        | 0  -> "FOR GUTS AND GLORY..."
-        | 1  -> "FOR DUTY AND DONUTS..."
-        | 2  -> "FOR FRESH AIR AND FERNS..."
-        | 3  -> "FOR TEA AND TRANQUILITY..."
-        | 4  -> "FOR DISHES AND DESTINY..."
-        | 5  -> "FOR HEARTH AND HOMEWORK..."
-        | 6  -> "FOR SUNSHINE AND SUCCESS..."
-        | 7  -> "FOR LAUNDRY AND LIBERTY..."
-        | 8  -> "FOR NAPS AND NOBLE PURSUITS..."
-        | 9  -> "FOR THE LOVE OF DAYLIGHT..."
-        | 10 -> "FOR FRIENDS AND FRESH BREAD..."
-        | 11 -> "FOR PETS AND POSTERITY..."
-        | 12 -> "FOR PIZZA AND PEACE OF MIND..."
-        | 13 -> "FOR HOBBIES AND HUMAN DECENCY..."
-        // Spelled-out alternatives — name the better thing waiting.
-        | 14 -> "GO HUG SOMEONE YOU LOVE."
-        | 15 -> "DINNER WON'T COOK ITSELF."
-        | 16 -> "BED IS CALLING."
-        | 17 -> "TIME FOR A WALK OUTSIDE."
-        | 18 -> "THERE IS A SUNSET WAITING."
-        | 19 -> "PUT ON SOME REAL PANTS."
-        | 20 -> "DRINK A GLASS OF WATER."
-        | 21 -> "STRETCH BEFORE YOU GO."
-        | 22 -> "GO READ A REAL BOOK."
-        | 23 -> "WATER YOUR PLANTS."
-        | 24 -> "BIRDS ARE CHIRPING OUTSIDE."
-        | 25 -> "THE COFFEE IS GETTING COLD."
-        | 26 -> "GO LEARN AN INSTRUMENT."
-        | 27 -> "TOUCH SOME GRASS."
-        | 28 -> "GO BAKE SOMETHING NICE."
-        | _  -> "THE LAUNDRY HAS BEEN WAITING."
+        // "For X and Y..." cliffhangers — the mundane life waiting on
+        // the other side of the QUIT key.
+        | 0  -> "For paperwork and protocol..."
+        | 1  -> "For desk duty and decaf..."
+        | 2  -> "For drill and drudgery..."
+        | 3  -> "For filing and furlough..."
+        | 4  -> "For memos and mothballs..."
+        | 5  -> "For laundry and leftovers..."
+        | 6  -> "For dishes and daytime TV..."
+        | 7  -> "For hot cocoa and housework..."
+        | 8  -> "For hearth and homework..."
+        | 9  -> "For tea and tranquility..."
+        | 10 -> "For fresh air and ferns..."
+        | 11 -> "For the love of daylight..."
+        | 12 -> "For pizza and peace of mind..."
+        | 13 -> "For friends and fresh bread..."
+        | 14 -> "For cats and contentment..."
+        | 15 -> "For porch swings and patience..."
+        | 16 -> "For dominoes and daydreams..."
+        | 17 -> "For slippers and sudoku..."
+        | 18 -> "For cardigans and crosswords..."
+        | 19 -> "For yarn and yawning..."
+        | 20 -> "For naps and needlepoint..."
+        // Spelled-out — small domestic observations, no imperatives.
+        | 21 -> "Dinner won't cook itself."
+        | 22 -> "Bed is calling."
+        | 23 -> "There is a sunset waiting."
+        | 24 -> "Birds are chirping outside."
+        | 25 -> "The coffee is getting cold."
+        | _  -> "The laundry has been waiting."
 
     // Heap-copy a str slice into an owned uint8 buffer. Returned slice
     // is freeable on its own (no shared backing), so the override array

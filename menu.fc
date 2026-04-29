@@ -577,34 +577,54 @@ module menu =
         draw_help_pic(rc, vg, pal)
 
     // Quit Y/N confirmation modal. Renders the main menu underneath
-    // (so the menu chrome stays visible) and overlays a small
-    // centered bevelled box with the rolled tagline and a
-    // "PRESS Y TO QUIT, N TO STAY" hint. Mirrors the original game's
-    // `Confirm` popup which used the same `DrawWindow` two-tone
-    // bevel as the menu panels themselves rather than the article-
-    // window border. The randomness is rolled at the QUIT row's
-    // confirm site (main.fc) and stashed on `g->quit_prompt_idx` so
-    // the prompt stays stable while the modal is up.
+    // (so the menu chrome stays visible) and overlays a centered
+    // popup matching the original game's `Confirm` look: a TEXTCOLOR
+    // (off-white) fill, a HIGHLIGHT (cyan) top+left edge with a black
+    // bottom+right edge, and black text on the inside. Distinct from
+    // the menu's own panels — those use the dark-olive BKGDCOLOR fill
+    // with the deactive/bord2 bevel — which is why we don't reuse
+    // `draw_window` here. The size hugs the text plus the original's
+    // 10 px padding; centred horizontally and vertically. The prompt
+    // index is rolled at the QUIT row's confirm site (main.fc) and
+    // stashed on `g->quit_prompt_idx` so the prompt stays stable
+    // while the modal is up.
     private let render_quit_modal = (rc: render_ctx*,
                                       vg: const vgagraph.vgagraph_file*,
                                       pal: const uint32[],
                                       f: const font.info*, g: game*,
                                       ac: audio_ctx*) ->
-        // Paint the main menu first so its chrome reads through
-        // around the popup.
         render_main_list(rc, vg, pal, f, g, g->phase_timer)
-        // Centered popup. Width covers the longest expected prompt
-        // (~36 chars); height fits two text rows + padding.
-        let box_w = 240
-        let box_h = 56
+        let prompt = quit_prompts.at(g->quit_prompts_override, g->quit_prompt_idx)
+        let hint = "Press Y to quit, N to stay"
+        let pad = 10
+        let line_h = f->height + 2
+        let pw = font.text_width(f, prompt)
+        let hw = font.text_width(f, hint)
+        let max_w = if pw > hw then pw else hw
+        let box_w = max_w + 2 * pad
+        let box_h = 2 * line_h + 2 * pad
         let box_x = (rc->fb_w - box_w) / 2
         let box_y = (game_h - box_h) / 2
-        draw_window(rc, pal, box_x, box_y, box_w, box_h)
-        let prompt = quit_prompts.at(g->quit_prompts_override, g->quit_prompt_idx)
-        let hint = "PRESS Y TO QUIT, N TO STAY"
-        let color = pal[pal_text]
-        font.draw_centered(rc, f, box_y + 14, prompt, color)
-        font.draw_centered(rc, f, box_y + 32, hint,   color)
+        // Fill (TEXTCOLOR) — the OG's `wcolor` on `Message`'s
+        // `DrawWindow(..., TEXTCOLOR)`. pal_text already maps to the
+        // same palette index 0x17.
+        fill_rect(rc, box_x, box_y, box_x + box_w, box_y + box_h, pal[pal_text])
+        // Outline. The OG draws a beveled outline first (DEACTIVE
+        // top-left, BORD2COLOR bottom-right) and then immediately
+        // overdraws it with `DrawOutline(..., 0, HIGHLIGHT)` —
+        // HIGHLIGHT (cyan) top+left, black bottom+right — so only
+        // the second pass is visible. We just draw the second pass.
+        let c_tl = pal[pal_highlight]
+        let c_br = pal[0]
+        fill_rect(rc, box_x, box_y, box_x + box_w, box_y + 1, c_tl)
+        fill_rect(rc, box_x, box_y, box_x + 1, box_y + box_h, c_tl)
+        fill_rect(rc, box_x, box_y + box_h - 1, box_x + box_w, box_y + box_h, c_br)
+        fill_rect(rc, box_x + box_w - 1, box_y, box_x + box_w, box_y + box_h, c_br)
+        // Black text on the off-white fill — the OG's
+        // `SETFONTCOLOR(0, TEXTCOLOR)`.
+        let text_color = pal[0]
+        font.draw_centered(rc, f, box_y + pad,             prompt, text_color)
+        font.draw_centered(rc, f, box_y + pad + line_h,    hint,   text_color)
 
     let render_main = (rc: render_ctx*, sm: save_menu_ctx*,
                        vg: const vgagraph.vgagraph_file*, pal: const uint32[],

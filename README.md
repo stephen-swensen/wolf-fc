@@ -259,7 +259,7 @@ The choice persists in `~/.wolf-fc/config` and applies on the fly without a rest
 
 ### Customising the quit prompt
 
-Selecting **QUIT** from the main menu opens an "are you sure?" modal with a randomly-rolled tagline (a nod to the original game's tongue-in-cheek confirm prompts). The built-in pool ships thirty wholesome / playful taglines. To use your own pool, drop a newline-delimited file at `~/.wolf-fc/quit-prompts` — one tagline per line; blank lines and surrounding whitespace are ignored. A missing file or a file with no non-blank lines falls back to the built-in pool.
+Selecting **QUIT** from the main menu opens an "are you sure?" modal with a randomly-rolled tagline (a nod to the original game's tongue-in-cheek confirm prompts). The built-in pool ships twenty-seven wholesome / playful taglines. To use your own pool, drop a newline-delimited file at `~/.wolf-fc/quit-prompts` — one tagline per line; blank lines and surrounding whitespace are ignored. A missing file or a file with no non-blank lines falls back to the built-in pool.
 
 ## License
 
