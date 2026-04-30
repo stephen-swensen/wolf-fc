@@ -219,9 +219,9 @@ module raycaster =
 
             let line_h = (int32) ((float64) view_h / perp_dist)
             let mut draw_start = view_h / 2 - line_h / 2
-            let mut draw_end = view_h / 2 + line_h / 2
+            let mut draw_end = draw_start + line_h
             if draw_start < 0 then draw_start = 0
-            if draw_end >= view_h then draw_end = view_h - 1
+            if draw_end > view_h then draw_end = view_h
 
             let mut tex_x = 0
             let door_wall = vs->sprite_start - 8
@@ -279,7 +279,7 @@ module raycaster =
             let step_v = 64.0 / (float64) line_h
             let mut tex_pos = (float64) (draw_start - view_h / 2 + line_h / 2) * step_v
 
-            for y in draw_start..(draw_end + 1)
+            for y in draw_start..draw_end
                 let mut tex_y = (int32) tex_pos
                 if tex_y < 0 then tex_y = 0
                 if tex_y > 63 then tex_y = 63

@@ -24,11 +24,13 @@ let actual_h = 480     // 4:3 corrected height (6 * screen_h / 5)
 let view_h = 160       // 3D viewport height in game coords (HUD takes bottom 40)
 let map_size = 64
 
-// `tan(33°)` — the OG horizontal FOV for the OG 320-wide framebuffer.
-// `game.plane_factor` is set at startup from this scaled by `fb_w / 320`
-// so a wider framebuffer gets a proportionally wider FOV (Hor+
+// `tan(36°)` — the OG horizontal half-FOV at the right edge of the 320-wide
+// framebuffer (derived from FOCALLENGTH=0x5700 + MINDIST=0x5800 and
+// VIEWGLOBAL=0x10000: edge tang = 160·0x10000 / 320 / 0xAF00 ≈ 0.7314, full
+// FOV ≈ 72°). `game.plane_factor` is set at startup from this scaled by
+// `fb_w / 320` so a wider framebuffer gets a proportionally wider FOV (Hor+
 // widescreen: same vertical FOV, more horizontal).
-let fov_factor = 0.66
+let fov_factor = 0.7269
 
 // Episode structure (6 episodes × 10 levels each). Within an episode,
 // levels 0..7 are the normal maps, level 8 is the boss / finale, level 9
