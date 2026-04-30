@@ -637,15 +637,53 @@ module overlay =
             for x in 0..rc->fb_w
                 rc->fb[dst_row + (int64) x] = rc->dbuf[src_row + (int64) x * 2]
 
-    // Save two PNGs side-by-side at `path` and `<base>-actual.png`:
-    //   - `path` is the legacy 320×200 image flattened from the live
-    //     dbuf so screenshots stay stable for tests + tooling that
-    //     expect logical-resolution pixels.
-    //   - `<base>-actual.png` is the raw 640×400 dbuf as actually
-    //     uploaded to the SDL texture — what the player really sees,
-    //     including the high-res 3D viewport rows that the legacy
-    //     downsample throws away.
-    // Both files carry the same Wolf-FC tEXt metadata.
+    // Compute a derived screenshot path. `path` ends in ".png" by
+    // convention — strip that, append `suffix`, then ".png" — so
+    // "/x/ss_007.png" + "-raw" → "/x/ss_007-raw.png".
+    private let derive_path = (path: const str, suffix: const str) ->
+        if text.ends_with(path, ".png") then
+            alloc("%s{path[0..(path.len - 4i64)]}%s{suffix}.png")!
+        else alloc("%s{path}%s{suffix}.png")!
+
+    // Display height for the aspect-corrected screenshot — matches
+    // runtime_actual_h: fb_h(=200) × 1.2 × 2 = 480.
+    let display_h = (rc: render_ctx*) ->
+        rc->fb_h * 12 / 10 * 2
+
+    // Stretch dbuf vertically from 2*fb_h rows to display_h rows using
+    // nearest-neighbor sampling — same kernel SDL uses with
+    // `SDL_HINT_RENDER_SCALE_QUALITY="nearest"` and a logical size of
+    // (screen_w × display_h). Result is the post-aspect-correction
+    // frame the player actually sees on screen (e.g. 640×480 in 4:3,
+    // 768×480 in 16:10, 852×480 in 16:9). Pixels are square in display
+    // space. Caller allocates `dst` of size screen_w × display_h(rc).
+    private let render_display_buffer = (rc: render_ctx*, dst: uint32[]) ->
+        let dst_h = display_h(rc)
+        let sw = (int64) rc->screen_w
+        let src_h = rc->fb_h * 2
+        for y in 0..dst_h
+            let src_y = (int64) y * (int64) src_h / (int64) dst_h
+            let src_row = src_y * sw
+            let dst_row = (int64) y * sw
+            for x in 0..rc->screen_w
+                dst[dst_row + (int64) x] = rc->dbuf[src_row + (int64) x]
+
+    // Save three PNGs at `<base>.png`, `<base>-raw.png`, and
+    // `<base>-display.png` to give the player + tooling all three
+    // perspectives on a frame:
+    //   - `<base>.png` — fb_w × game_h logical resolution, flattened
+    //     from dbuf for 3D phases. Stable across view modes (testers
+    //     and screenshot regressions can pixel-compare without aspect
+    //     math). What the game's *coordinate system* sees.
+    //   - `<base>-raw.png` — 2*fb_w × 2*fb_h, the raw dbuf as
+    //     uploaded to the SDL texture. Square pixels. Best for
+    //     pixel-precise inspection of the renderer (high-res
+    //     viewport rows are present here).
+    //   - `<base>-display.png` — 2*fb_w × actual_h (e.g. 640×480 in
+    //     4:3, 768×480 in 16:10), the aspect-corrected post-stretch
+    //     image. Pixels are square in display space — what the
+    //     player actually sees on the screen.
+    // All three carry the same Wolf-FC tEXt metadata.
     let save_png = (w: world*, path: const str) ->
         let g = w->g
         let phase_has_3d_view = match g->phase with
@@ -660,11 +698,16 @@ module overlay =
         let meta = alloc("level=%d{g->level_num + 1}\npos=(%7.3f{g->pos_x}, %7.3f{g->pos_y})\ndir=(%7.4f{g->dir_x}, %7.4f{g->dir_y})\nhealth=%d{g->health}\nammo=%d{g->ammo}\nscore=%d{g->score}\nlives=%d{g->lives}\nweapon=%d{g->weapon}\nkeys=gold:%d{gk},silver:%d{sk}")!
         defer free(meta)
         png.write(path, w->rc->fb, w->rc->fb_w, game_h, meta)
-        let actual_path = if text.ends_with(path, ".png") then
-            alloc("%s{path[0..(path.len - 4i64)]}-actual.png")!
-        else alloc("%s{path}-actual.png")!
-        defer free(actual_path)
-        png.write(actual_path, w->rc->dbuf, w->rc->screen_w, w->rc->fb_h * 2, meta)
+        let raw_path = derive_path(path, "-raw")
+        defer free(raw_path)
+        png.write(raw_path, w->rc->dbuf, w->rc->screen_w, w->rc->fb_h * 2, meta)
+        let disp_h = display_h(w->rc)
+        let disp = alloc(uint32[(int64) w->rc->screen_w * (int64) disp_h] {})!
+        defer free(disp)
+        render_display_buffer(w->rc, disp)
+        let disp_path = derive_path(path, "-display")
+        defer free(disp_path)
+        png.write(disp_path, disp, w->rc->screen_w, disp_h, meta)
 
     // Clear any screenshot files left over from a previous session
     // so each run starts numbering from 000. Users who want to keep
@@ -710,5 +753,5 @@ module overlay =
             let path = "%s{dir}/screenshots/ss_%03d{slot}.png"
             render_frame(w, vs, pal)
             save_png(w, path)
-            io.write("[screenshot] saved %s{path} (+ -actual.png)\n", stdout)
+            io.write("[screenshot] saved %s{path} (+ -raw.png, -display.png)\n", stdout)
             void()
