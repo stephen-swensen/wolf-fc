@@ -62,13 +62,16 @@ module raycaster =
         let floor_color = pal[0x19]
         // Shadow depth from the user's Options-menu setting.
         let shadow_floor = shadow_floor_from_depth(g->shadow_depth)
-        let half = view_h / 2
+        let half = view_render_h / 2
+        let sw = (int64) rc->screen_w
         for y in 0..half
-            for x in 0..rc->fb_w
-                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = ceil_color
-        for y in half..view_h
-            for x in 0..rc->fb_w
-                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = floor_color
+            let row = (int64) y * sw
+            for x in 0..rc->screen_w
+                rc->dbuf[row + (int64) x] = ceil_color
+        for y in half..view_render_h
+            let row = (int64) y * sw
+            for x in 0..rc->screen_w
+                rc->dbuf[row + (int64) x] = floor_color
 
         // Reset z-buffer.
         for i in 0..rc->fb_w
@@ -217,11 +220,11 @@ module raycaster =
             if perp_dist <= 0.001 then continue
             rc->zbuf[(int64) col] = perp_dist
 
-            let line_h = (int32) ((float64) view_h / perp_dist)
-            let mut draw_start = view_h / 2 - line_h / 2
+            let line_h = (int32) ((float64) view_render_h / perp_dist)
+            let mut draw_start = view_render_h / 2 - line_h / 2
             let mut draw_end = draw_start + line_h
             if draw_start < 0 then draw_start = 0
-            if draw_end > view_h then draw_end = view_h
+            if draw_end > view_render_h then draw_end = view_render_h
 
             let mut tex_x = 0
             let door_wall = vs->sprite_start - 8
@@ -277,7 +280,8 @@ module raycaster =
             if tex_page < 0 || tex_page > max_page then tex_page = 0
 
             let step_v = 64.0 / (float64) line_h
-            let mut tex_pos = (float64) (draw_start - view_h / 2 + line_h / 2) * step_v
+            let mut tex_pos = (float64) (draw_start - view_render_h / 2 + line_h / 2) * step_v
+            let dcol = (int64) col * 2
 
             for y in draw_start..draw_end
                 let mut tex_y = (int32) tex_pos
@@ -288,7 +292,10 @@ module raycaster =
                 let pix = vswap.wall_pixel(vs, tex_page, tex_x, tex_y)
                 let mut shade = dist_shade(perp_dist, shadow_floor)
                 if side == 1 then shade = shade * 0.75
-                rc->fb[(int64) y * (int64) rc->fb_w + (int64) col] = shade_color(pal[(int32) pix], shade)
+                let color = shade_color(pal[(int32) pix], shade)
+                let dest = (int64) y * sw + dcol
+                rc->dbuf[dest] = color
+                rc->dbuf[dest + 1] = color
 
 
 // ============================================================
@@ -381,7 +388,9 @@ module billboards =
         if sprite_col < hdr.left_pix || sprite_col > hdr.right_pix then return
         let base = hdr.base
         let data_off = (int64) hdr.col_offsets[sprite_col]
-        let upper = view_h / 2 - sprite_h / 2
+        let upper = view_render_h / 2 - sprite_h / 2
+        let sw = (int64) rc->screen_w
+        let dcol = (int64) screen_x * 2
         let mut off = base + data_off
         loop
             let endy_raw = (int32) bytes.u16(vs->raw, off)
@@ -398,10 +407,12 @@ module billboards =
                     let pix = vs->raw[base + newstart + (int64) row]
                     let color = raycaster.shade_color(pal[(int32) pix], shade)
                     let mut sy = if sy0 < 0 then 0 else sy0
-                    let ey = if sy1 > view_h then view_h else sy1
+                    let ey = if sy1 > view_render_h then view_render_h else sy1
                     loop
                         if sy >= ey then break
-                        rc->fb[(int64) sy * (int64) rc->fb_w + (int64) screen_x] = color
+                        let dest = (int64) sy * sw + dcol
+                        rc->dbuf[dest] = color
+                        rc->dbuf[dest + 1] = color
                         sy = sy + 1
 
     // Render the sorted billboards (static sprites + enemies). Caller
@@ -421,15 +432,22 @@ module billboards =
             let ty = inv_det * (g->plane_x * sy - g->plane_y * sx)
             if ty <= 0.1 then continue
             let scr_x = (int32) ((float64) (rc->fb_w / 2) * (1.0 + tx / ty))
-            let spr_h = (int32) ((float64) view_h / ty)
-            if spr_h < 1 then continue
-            let half = spr_h / 2
-            let draw_x0 = scr_x - half
-            let draw_x1 = scr_x + half
+            // spr_w is in fb-col units (logical 320-wide); spr_h is in
+            // dbuf-row units (view_render_h). The on-screen aspect ratio
+            // matches the OG: at ty=1 a sprite is view_h fb-cols wide
+            // and view_render_h dbuf-rows tall, which after 2x horizontal
+            // expansion + 4:3 vertical stretch displays the same as the
+            // OG's 160x160 sprite in a 320x160 viewport.
+            let spr_w = (int32) ((float64) view_h / ty)
+            let spr_h = (int32) ((float64) view_render_h / ty)
+            if spr_w < 1 || spr_h < 1 then continue
+            let half_w = spr_w / 2
+            let draw_x0 = scr_x - half_w
+            let draw_x1 = scr_x + half_w
             for stripe in draw_x0..draw_x1
                 if stripe >= 0 && stripe < rc->fb_w then
                     if ty < rc->zbuf[stripe] then
-                        let tex_col = (stripe - draw_x0) * 64 / spr_h
+                        let tex_col = (stripe - draw_x0) * 64 / spr_w
                         let spr_shade = raycaster.dist_shade(ty, shadow_floor)
                         draw_sprite_col(rc, vs, pal, bb.shape_page,
                             tex_col, stripe, spr_h, spr_shade)
@@ -456,13 +474,15 @@ module overlay =
         let tr = (float64) ((tint >> 16) & 0xFFu32) * a
         let tg = (float64) ((tint >> 8) & 0xFFu32) * a
         let tb = (float64) (tint & 0xFFu32) * a
-        for y in 0..view_h
-            for x in 0..rc->fb_w
-                let c = rc->fb[(int64) y * (int64) rc->fb_w + (int64) x]
+        let sw = (int64) rc->screen_w
+        for y in 0..view_render_h
+            let row = (int64) y * sw
+            for x in 0..rc->screen_w
+                let c = rc->dbuf[row + (int64) x]
                 let r = (float64) ((c >> 16) & 0xFFu32) * inv + tr
                 let g = (float64) ((c >> 8) & 0xFFu32) * inv + tg
                 let b = (float64) (c & 0xFFu32) * inv + tb
-                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] =
+                rc->dbuf[row + (int64) x] =
                     0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
 
     // Variant of viewport_tint that covers the whole framebuffer
@@ -494,13 +514,15 @@ module overlay =
         let p = if progress >= 1.0 then 1.0 else progress
         let threshold = (uint32) (p * 65536.0)
         let color = 0xFF000000u32 | (tint & 0x00FFFFFFu32)
-        for y in 0..view_h
-            for x in 0..rc->fb_w
+        let sw = (int64) rc->screen_w
+        for y in 0..view_render_h
+            let row = (int64) y * sw
+            for x in 0..rc->screen_w
                 let mut h = (uint32) x * 0x9E3779B1u32 + (uint32) y * 0xC2B2AE35u32
                 h = (h ^ (h >> 13u32)) * 0x85EBCA6Bu32
                 h = (h ^ (h >> 16u32)) & 0xFFFFu32
                 if h < threshold then
-                    rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = color
+                    rc->dbuf[row + (int64) x] = color
 
     // Draw a centered string in the 3D viewport using the 3x5 bitmap
     // font, scaled up to `scale` px per bit. Used by the intermission
@@ -526,16 +548,123 @@ module overlay =
                 rc->dbuf[(dy + 1) * sw + dx] = c
                 rc->dbuf[(dy + 1) * sw + dx + 1] = c
 
-    // Save the current fb as a PNG at `path` with game-state
-    // metadata embedded as a tEXt chunk (one field per line,
-    // grep-able).
+    // 3D-phase pipeline helpers. The viewport region of dbuf (rows
+    // 0..view_render_h) is filled at high vertical resolution by
+    // raycaster.render_walls + billboards.render + render_weapon and
+    // viewport-only effects (viewport_tint / dissolve_stipple). The HUD
+    // and any low-res viewport overlays (banner messages, GET PSYCHED!
+    // pic) still draw into fb at the existing 320x200 layout. These
+    // helpers stitch the two together.
+
+    // Pre-frame: clear fb's top region to a transparent sentinel
+    // (alpha == 0). Composite_top_to_dbuf only blits non-sentinel
+    // pixels, so untouched cells let the high-res raycaster content
+    // show through. Every UI write to fb uses opaque ARGB (alpha=0xFF).
+    let clear_view_sentinel = (rc: render_ctx*) ->
+        let total = (int64) view_h * (int64) rc->fb_w
+        for i in 0..total
+            rc->fb[i] = 0u32
+
+    // Composite fb's top region (rows 0..view_h, alpha != 0) onto
+    // dbuf's viewport region (rows 0..view_render_h) at 2x2 nearest
+    // neighbor. Sentinel pixels (alpha == 0) are skipped so the
+    // high-res raycaster content stays visible underneath.
+    let composite_view_overlay = (rc: render_ctx*) ->
+        let sw = (int64) rc->screen_w
+        let fbw = (int64) rc->fb_w
+        for y in 0..view_h
+            let dy = (int64) y * 2
+            let src = (int64) y * fbw
+            for x in 0..rc->fb_w
+                let c = rc->fb[src + (int64) x]
+                if (c & 0xFF000000u32) != 0u32 then
+                    let dx = (int64) x * 2
+                    rc->dbuf[dy * sw + dx] = c
+                    rc->dbuf[dy * sw + dx + 1] = c
+                    rc->dbuf[(dy + 1) * sw + dx] = c
+                    rc->dbuf[(dy + 1) * sw + dx + 1] = c
+
+    // 2x2 nearest-neighbor blit of fb's HUD region (rows view_h..fb_h)
+    // → dbuf's HUD region (rows view_render_h..2*fb_h).
+    let composite_hud = (rc: render_ctx*) ->
+        let sw = (int64) rc->screen_w
+        let fbw = (int64) rc->fb_w
+        for y in view_h..rc->fb_h
+            let dy = (int64) y * 2
+            let src = (int64) y * fbw
+            for x in 0..rc->fb_w
+                let c = rc->fb[src + (int64) x]
+                let dx = (int64) x * 2
+                rc->dbuf[dy * sw + dx] = c
+                rc->dbuf[dy * sw + dx + 1] = c
+                rc->dbuf[(dy + 1) * sw + dx] = c
+                rc->dbuf[(dy + 1) * sw + dx + 1] = c
+
+    // Tint the entire dbuf (full final frame, viewport + HUD) toward
+    // `tint` at `alpha`. Used after compositing for fades that must
+    // cover everything as one unit (e.g. the elevator next-level
+    // fade-out).
+    let dbuf_tint_full = (rc: render_ctx*, tint: uint32, alpha: float64) ->
+        if alpha <= 0.0 then return
+        let a = if alpha >= 1.0 then 1.0 else alpha
+        let inv = 1.0 - a
+        let tr = (float64) ((tint >> 16) & 0xFFu32) * a
+        let tg = (float64) ((tint >> 8) & 0xFFu32) * a
+        let tb = (float64) (tint & 0xFFu32) * a
+        let sw = (int64) rc->screen_w
+        let total_h = rc->fb_h * 2
+        for y in 0..total_h
+            let row = (int64) y * sw
+            for x in 0..rc->screen_w
+                let c = rc->dbuf[row + (int64) x]
+                let r = (float64) ((c >> 16) & 0xFFu32) * inv + tr
+                let g = (float64) ((c >> 8) & 0xFFu32) * inv + tg
+                let b = (float64) (c & 0xFFu32) * inv + tb
+                rc->dbuf[row + (int64) x] =
+                    0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
+
+    // Downsample dbuf's viewport region (rows 0..view_render_h) back
+    // into fb's top region (rows 0..view_h) at 2:1 in both axes. Used
+    // before save_png so screenshots stay 320x200 with the live
+    // high-res viewport content visible. Samples the (0,0) corner of
+    // each 2x2 block (cheap, matches the 2x upscale's pixel layout).
+    let flatten_view_to_fb = (rc: render_ctx*) ->
+        let sw = (int64) rc->screen_w
+        let fbw = (int64) rc->fb_w
+        for y in 0..view_h
+            let src_row = (int64) y * 2 * sw
+            let dst_row = (int64) y * fbw
+            for x in 0..rc->fb_w
+                rc->fb[dst_row + (int64) x] = rc->dbuf[src_row + (int64) x * 2]
+
+    // Save two PNGs side-by-side at `path` and `<base>-actual.png`:
+    //   - `path` is the legacy 320×200 image flattened from the live
+    //     dbuf so screenshots stay stable for tests + tooling that
+    //     expect logical-resolution pixels.
+    //   - `<base>-actual.png` is the raw 640×400 dbuf as actually
+    //     uploaded to the SDL texture — what the player really sees,
+    //     including the high-res 3D viewport rows that the legacy
+    //     downsample throws away.
+    // Both files carry the same Wolf-FC tEXt metadata.
     let save_png = (w: world*, path: const str) ->
         let g = w->g
+        let phase_has_3d_view = match g->phase with
+            | playing -> true
+            | dying -> true
+            | bj_victory -> true
+            | death_cam -> true
+            | _ -> false
+        if phase_has_3d_view then flatten_view_to_fb(w->rc)
         let gk = if g->has_gold_key then 1 else 0
         let sk = if g->has_silver_key then 1 else 0
         let meta = alloc("level=%d{g->level_num + 1}\npos=(%7.3f{g->pos_x}, %7.3f{g->pos_y})\ndir=(%7.4f{g->dir_x}, %7.4f{g->dir_y})\nhealth=%d{g->health}\nammo=%d{g->ammo}\nscore=%d{g->score}\nlives=%d{g->lives}\nweapon=%d{g->weapon}\nkeys=gold:%d{gk},silver:%d{sk}")!
         defer free(meta)
         png.write(path, w->rc->fb, w->rc->fb_w, game_h, meta)
+        let actual_path = if text.ends_with(path, ".png") then
+            alloc("%s{path[0..(path.len - 4i64)]}-actual.png")!
+        else alloc("%s{path}-actual.png")!
+        defer free(actual_path)
+        png.write(actual_path, w->rc->dbuf, w->rc->screen_w, w->rc->fb_h * 2, meta)
 
     // Clear any screenshot files left over from a previous session
     // so each run starts numbering from 000. Users who want to keep
@@ -581,5 +710,5 @@ module overlay =
             let path = "%s{dir}/screenshots/ss_%03d{slot}.png"
             render_frame(w, vs, pal)
             save_png(w, path)
-            io.write("[screenshot] saved %s{path}\n", stdout)
+            io.write("[screenshot] saved %s{path} (+ -actual.png)\n", stdout)
             void()

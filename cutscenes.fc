@@ -397,9 +397,9 @@ module death_cam =
         if (tics & 32) != 0 then return
         let page = vs->sprite_start + sprite_offset
         let dw = view_h
-        let dh = view_h
+        let dh = view_render_h
         let dx = (rc->fb_w - dw) / 2
-        let dy = view_h - dh
+        let dy = view_render_h - dh
         player.draw_hud_sprite(rc, vs, pal, page, dx, dy, dw, dh)
 
     // Render one frame of the death_cam cutscene. Normal viewport
@@ -428,7 +428,10 @@ module death_cam =
             else
                 player.render_weapon(rc, vs, pal, g)
             if s == sub.fade_to_black then
-                overlay.viewport_tint_full(rc, 0x00000000u32, g->dc_fade)
+                // Viewport-only fade — HUD redraws fresh in render_frame
+                // after death_cam.render returns, so HUD doesn't need to
+                // be tinted here.
+                overlay.viewport_tint(rc, 0x00000000u32, g->dc_fade)
             else
                 overlay.dissolve_stipple(rc, backdrop_color, g->dc_fade)
 

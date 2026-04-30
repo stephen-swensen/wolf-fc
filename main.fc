@@ -22,6 +22,12 @@ let screen_w = 640     // display resolution (2x scale)
 let screen_h = 400
 let actual_h = 480     // 4:3 corrected height (6 * screen_h / 5)
 let view_h = 160       // 3D viewport height in game coords (HUD takes bottom 40)
+// Internal vertical resolution for the 3D viewport (raycaster + billboards
+// + weapon + view-only overlays). Set to 2× view_h so each output dbuf row
+// in the viewport region maps 1:1 to a raycaster row. Higher view_render_h
+// halves `step_v = 64 / line_h` per integer line_h step → halves texture-row
+// aliasing while walking forward into walls.
+let view_render_h = 320
 let map_size = 64
 
 // `tan(36°)` — the OG horizontal half-FOV at the right edge of the 320-wide
@@ -1389,30 +1395,49 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
     match w->g->phase with
     | pg13 ->
         pg13_screen.render(w->rc, w->vg, pal)
+        overlay.upscale_2x(w->rc)
         return
     | title ->
         title_screen.render(w->rc, w->vg, pal, w->font, w->hs, w->g->phase_timer)
+        overlay.upscale_2x(w->rc)
         return
     | main_menu ->
         menu.render_main(w->rc, w->sm, w->vg, pal, w->font, w->g, w->ac)
+        overlay.upscale_2x(w->rc)
         return
     | intermission ->
         intermission.render(w->rc, w->vg, pal, w->g)
+        overlay.upscale_2x(w->rc)
         return
     | episode_end ->
         episode_end.render(w->rc, w->vg, pal, w->font, w->g)
+        overlay.upscale_2x(w->rc)
         return
     | endart ->
         endart_screen.render(w->rc, w->vg, pal, w->font, w->g)
+        overlay.upscale_2x(w->rc)
         return
     | high_scores ->
         high_scores_screen.render(w->rc, w->vg, pal, w->font, w->hs, w->g->phase_timer)
+        overlay.upscale_2x(w->rc)
         return
     | death_cam ->
+        // Pre-clear fb's top region: low-res viewport overlays (banner
+        // text, etc.) draw into fb at alpha=0xFF; the composite step
+        // skips alpha=0 sentinel pixels so the high-res raycaster
+        // content shows through everywhere else.
+        overlay.clear_view_sentinel(w->rc)
         death_cam.render(w, vs, pal, w->vg)
         hud.render(w->rc, w->vg, pal, w->g)
+        overlay.composite_view_overlay(w->rc)
+        overlay.composite_hud(w->rc)
         return
     | _ -> void()
+    // 3D phases (playing / dying / bj_victory): raycaster and viewport
+    // effects render at high vertical resolution directly into dbuf;
+    // HUD and low-res viewport overlays go to fb and are composited
+    // afterward.
+    overlay.clear_view_sentinel(w->rc)
     raycaster.render_walls(w->lv, w->rc, w->g, vs, pal)
     billboards.build(w->lv, w->rc, w->g, vs->sprite_start)
     billboards.render(w->rc, w->g, vs, pal)
@@ -1451,15 +1476,18 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
     if w->g->get_psyched_timer > 0.0 then
         pics.render_get_psyched_overlay(w->rc, w->vg, pal,
             w->g->get_psyched_timer, pics.get_psyched_time)
+    overlay.composite_view_overlay(w->rc)
+    overlay.composite_hud(w->rc)
     // Pre-intermission fade-to-black: while `next_level` is latched and
     // gameplay is frozen, darken the entire frame linearly as next_level_delay
     // ticks down. Gives the player immediate visual feedback that the
     // elevator/boss activation registered, rather than a silent 1s hitch
-    // followed by a sudden jump to the tally screen.
+    // followed by a sudden jump to the tally screen. Applied AFTER
+    // composite so both viewport and HUD fade as one unit.
     if w->g->next_level && player.elevator_wait_time > 0.0 then
         let frac = 1.0 - w->g->next_level_delay / player.elevator_wait_time
         let alpha = if frac < 0.0 then 0.0 else if frac > 1.0 then 1.0 else frac
-        overlay.viewport_tint_full(w->rc, 0x000000u32, alpha)
+        overlay.dbuf_tint_full(w->rc, 0x000000u32, alpha)
 
 
 // ============================================================
@@ -3290,9 +3318,10 @@ let main = (args: str[]) ->
             sdl2.queue_audio(audio_dev, (any*) out_buf.ptr, 4096u32)
             void()
 
-        // Upload framebuffer to texture and display.
-        // Upscale 320x200 → 640x400, upload, and present.
-        overlay.upscale_2x(w->rc)
+        // Upload framebuffer to texture and display. render_frame
+        // produces a fully-composited 640x400 dbuf for every phase
+        // (3D phases skip the fb intermediate for the viewport region;
+        // non-3D phases call upscale_2x internally).
         sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
         sdl2.clear(ren)
         sdl2.render_copy(ren, tex, (any*) 0, (any*) 0)
