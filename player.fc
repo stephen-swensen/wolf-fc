@@ -667,15 +667,11 @@ module player =
         let frame = g->weapon_frame
         let sprite_idx = weapon_sprite_base[g->weapon] + frame
         let page = vs->sprite_start + sprite_idx
-        // Weapon bob during movement (subtle vertical offset).
-        let bob = if g->key_up || g->key_down then
-            (int32) (math.sin(g->pos_x * 8.0 + g->pos_y * 8.0) * 2.0)
-        else 0
         // Scale the 64x64 source to fill the viewport height,
         // centered. Source transparency covers the upper rows so
         // only the bottom portion of the weapon is actually drawn.
         let dw = view_h
         let dh = view_h
         let dx = (rc->fb_w - dw) / 2
-        let dy = view_h - dh + bob
+        let dy = view_h - dh
         draw_hud_sprite(rc, vs, pal, page, dx, dy, dw, dh)
