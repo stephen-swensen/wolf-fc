@@ -93,10 +93,11 @@ module menu =
     // sliders land; matched by `render_options_list` and by main.fc's
     // options-nav handler. The RESET row is always the last entry —
     // bumps stay simple by keeping it at `options_len - 1`.
-    //   0 No Dogs       (toggle)
-    //   1 Shadow Depth  (0..100% slider, Left/Right adjusts)
-    //   2 Reset         (action — restores every row to its default)
-    let options_len = 3
+    //   0 No Dogs        (toggle)
+    //   1 Shadow Depth   (0..100% slider, Left/Right adjusts)
+    //   2 Upscale Filter (toggle: Nearest / Scale2x)
+    //   3 Reset          (action — restores every row to its default)
+    let options_len = 4
 
     let option_kind_toggle = 0
     let option_kind_slider = 1
@@ -107,14 +108,16 @@ module menu =
         match i with
         | 0 -> "No Dogs (Thanks Mom)"
         | 1 -> "Shadow Depth"
-        | 2 -> "Reset to Defaults"
+        | 2 -> "Upscale Filter"
+        | 3 -> "Reset to Defaults"
         | _ -> ""
 
     let option_kind = (i: int32) ->
         match i with
         | 0 -> option_kind_toggle
         | 1 -> option_kind_slider
-        | 2 -> option_kind_action
+        | 2 -> option_kind_toggle
+        | 3 -> option_kind_action
         | _ -> option_kind_toggle
 
     private let diff_label = (i: int32) ->
@@ -424,6 +427,9 @@ module menu =
             else if i == 1 then
                 font.draw_text(rc, f, x_value, row_y,
                     "%d{g->shadow_depth}%", color)
+            else if i == 2 then
+                font.draw_text(rc, f, x_value, row_y,
+                    config.upscale_mode_label(g->upscale_mode), color)
         draw_help_pic(rc, vg, pal)
 
     // ============================================================

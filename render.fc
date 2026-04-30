@@ -511,31 +511,151 @@ module overlay =
         let x = (rc->fb_w - tw) / 2
         hud.draw_text(rc, x, y, s, color, scale)
 
-    // Upscale fb (fb_w x fb_h) to dbuf (2*fb_w x 2*fb_h) with
-    // nearest-neighbor 2x. Stride uses rc->screen_w (= 2 * fb_w) so
+    // Per-channel ARGB blend with weights (9, 3, 3, 1) summing to 16.
+    // Used by the bilinear upscaler — each output pixel is the
+    // weighted average of the source pixel and the three nearest
+    // neighbours that surround its sub-pixel offset (one orthogonal
+    // pair plus the diagonal corner). Alpha is pinned to 0xFF.
+    private let blend_9331 = (p: uint32, n1: uint32, n2: uint32, corner: uint32) ->
+        let r = (((p >> 16u32) & 0xFFu32) * 9u32
+              +  ((n1 >> 16u32) & 0xFFu32) * 3u32
+              +  ((n2 >> 16u32) & 0xFFu32) * 3u32
+              +  ((corner >> 16u32) & 0xFFu32)) >> 4u32
+        let g = (((p >> 8u32) & 0xFFu32) * 9u32
+              +  ((n1 >> 8u32) & 0xFFu32) * 3u32
+              +  ((n2 >> 8u32) & 0xFFu32) * 3u32
+              +  ((corner >> 8u32) & 0xFFu32)) >> 4u32
+        let b = ((p & 0xFFu32) * 9u32
+              +  (n1 & 0xFFu32) * 3u32
+              +  (n2 & 0xFFu32) * 3u32
+              +  (corner & 0xFFu32)) >> 4u32
+        0xFF000000u32 | (r << 16u32) | (g << 8u32) | b
+
+    // Upscale fb (fb_w x fb_h) to dbuf (2*fb_w x 2*fb_h). The top
+    // `smooth_rows` source rows are processed by `mode`'s smoother
+    // (Scale2x — edge-preserving stair-step removal; or Bilinear —
+    // 4-neighbour weighted average per sub-pixel); the remaining rows
+    // use plain nearest-neighbor doubling. Caller passes
+    // `smooth_rows = view_h` to smooth the 3D viewport while leaving
+    // HUD / menu pixel art crisp, or `0` (or `mode = nearest`) for
+    // full nearest. Stride uses rc->screen_w (= 2 * fb_w) so
     // widescreen framebuffers blit correctly.
-    let upscale_2x = (rc: render_ctx*) ->
-        for y in 0..rc->fb_h
-            for x in 0..rc->fb_w
-                let c = rc->fb[(int64) y * (int64) rc->fb_w + (int64) x]
+    let upscale_2x = (rc: render_ctx*, mode: int32, smooth_rows: int32) ->
+        let fb_w = rc->fb_w
+        let fb_h = rc->fb_h
+        let sw = (int64) rc->screen_w
+        // Clamp into [0, fb_h] so a stale caller value can't run off
+        // the framebuffer; also force 0 when nearest so a bad config
+        // never picks a smooth band by accident.
+        let smooth = if mode == config.upscale_mode_nearest then 0
+            else if smooth_rows < 0 then 0
+            else if smooth_rows > fb_h then fb_h
+            else smooth_rows
+        // Smooth band: rows 0..smooth. Neighbours are clamped to the
+        // framebuffer (so the very top row reads itself for "above"),
+        // which keeps single-pixel artifacts at the boundary minimal.
+        if mode == config.upscale_mode_scale2x then
+            for y in 0..smooth
+                let y_above = if y == 0 then 0 else y - 1
+                let y_below = if y >= fb_h - 1 then fb_h - 1 else y + 1
+                for x in 0..fb_w
+                    let x_left  = if x == 0 then 0 else x - 1
+                    let x_right = if x >= fb_w - 1 then fb_w - 1 else x + 1
+                    let p = rc->fb[(int64) y       * (int64) fb_w + (int64) x]
+                    let na = rc->fb[(int64) y_above * (int64) fb_w + (int64) x]
+                    let nb = rc->fb[(int64) y       * (int64) fb_w + (int64) x_right]
+                    let nc = rc->fb[(int64) y       * (int64) fb_w + (int64) x_left]
+                    let nd = rc->fb[(int64) y_below * (int64) fb_w + (int64) x]
+                    let e0 = if nc == na && nc != nd && na != nb then na else p
+                    let e1 = if na == nb && na != nc && nb != nd then nb else p
+                    let e2 = if nd == nc && nd != nb && nc != na then nc else p
+                    let e3 = if nb == nd && nb != na && nd != nc then nd else p
+                    let dx = (int64) x * 2
+                    let dy = (int64) y * 2
+                    rc->dbuf[dy       * sw + dx]     = e0
+                    rc->dbuf[dy       * sw + dx + 1] = e1
+                    rc->dbuf[(dy + 1) * sw + dx]     = e2
+                    rc->dbuf[(dy + 1) * sw + dx + 1] = e3
+        else if mode == config.upscale_mode_bilinear then
+            // Each output sub-pixel is at source coord (x±0.25, y±0.25)
+            // — three nearest source pixels plus the diagonal corner.
+            // Bilinear weights at (0.25, 0.25): 9/16 P, 3/16 each of
+            // the two orthogonal neighbours, 1/16 corner. Symmetric
+            // for the other three sub-pixels. Edges clamp.
+            for y in 0..smooth
+                let y_above = if y == 0 then 0 else y - 1
+                let y_below = if y >= fb_h - 1 then fb_h - 1 else y + 1
+                for x in 0..fb_w
+                    let x_left  = if x == 0 then 0 else x - 1
+                    let x_right = if x >= fb_w - 1 then fb_w - 1 else x + 1
+                    let p   = rc->fb[(int64) y       * (int64) fb_w + (int64) x]
+                    let na  = rc->fb[(int64) y_above * (int64) fb_w + (int64) x]
+                    let nb  = rc->fb[(int64) y       * (int64) fb_w + (int64) x_right]
+                    let nc  = rc->fb[(int64) y       * (int64) fb_w + (int64) x_left]
+                    let nd  = rc->fb[(int64) y_below * (int64) fb_w + (int64) x]
+                    let nac = rc->fb[(int64) y_above * (int64) fb_w + (int64) x_left]
+                    let nab = rc->fb[(int64) y_above * (int64) fb_w + (int64) x_right]
+                    let ndc = rc->fb[(int64) y_below * (int64) fb_w + (int64) x_left]
+                    let ndb = rc->fb[(int64) y_below * (int64) fb_w + (int64) x_right]
+                    let e0 = blend_9331(p, na, nc, nac)
+                    let e1 = blend_9331(p, na, nb, nab)
+                    let e2 = blend_9331(p, nd, nc, ndc)
+                    let e3 = blend_9331(p, nd, nb, ndb)
+                    let dx = (int64) x * 2
+                    let dy = (int64) y * 2
+                    rc->dbuf[dy       * sw + dx]     = e0
+                    rc->dbuf[dy       * sw + dx + 1] = e1
+                    rc->dbuf[(dy + 1) * sw + dx]     = e2
+                    rc->dbuf[(dy + 1) * sw + dx + 1] = e3
+        // Nearest band: rows smooth..fb_h.
+        for y in smooth..fb_h
+            for x in 0..fb_w
+                let c = rc->fb[(int64) y * (int64) fb_w + (int64) x]
                 let dx = (int64) x * 2
                 let dy = (int64) y * 2
-                let sw = (int64) rc->screen_w
-                rc->dbuf[dy * sw + dx] = c
-                rc->dbuf[dy * sw + dx + 1] = c
-                rc->dbuf[(dy + 1) * sw + dx] = c
+                rc->dbuf[dy       * sw + dx]     = c
+                rc->dbuf[dy       * sw + dx + 1] = c
+                rc->dbuf[(dy + 1) * sw + dx]     = c
                 rc->dbuf[(dy + 1) * sw + dx + 1] = c
 
-    // Save the current fb as a PNG at `path` with game-state
-    // metadata embedded as a tEXt chunk (one field per line,
-    // grep-able).
-    let save_png = (w: world*, path: const str) ->
-        let g = w->g
+    // Policy: how many top rows of the source framebuffer should run
+    // through the active smoother during the 2× upscale. Applies to
+    // every non-nearest mode (Scale2x, Bilinear, future). Both the
+    // per-frame upscale (in main's render loop) and the 's' screenshot
+    // capture route through here so on-disk PNGs match what's on
+    // screen.
+    let viewport_smooth_rows = (g: game*) ->
+        let on = g->upscale_mode != config.upscale_mode_nearest
+        let in_view_phase = g->phase == game_phase.playing
+            || g->phase == game_phase.dying
+        if on && in_view_phase then view_h else 0
+
+    // Build the tEXt-chunk metadata for a screenshot — same string
+    // shape for fb / dbuf captures so anything indexing the metadata
+    // sees the same fields regardless of source.
+    private let build_meta = (g: game*) ->
         let gk = if g->has_gold_key then 1 else 0
         let sk = if g->has_silver_key then 1 else 0
-        let meta = alloc("level=%d{g->level_num + 1}\npos=(%7.3f{g->pos_x}, %7.3f{g->pos_y})\ndir=(%7.4f{g->dir_x}, %7.4f{g->dir_y})\nhealth=%d{g->health}\nammo=%d{g->ammo}\nscore=%d{g->score}\nlives=%d{g->lives}\nweapon=%d{g->weapon}\nkeys=gold:%d{gk},silver:%d{sk}")!
+        alloc("level=%d{g->level_num + 1}\npos=(%7.3f{g->pos_x}, %7.3f{g->pos_y})\ndir=(%7.4f{g->dir_x}, %7.4f{g->dir_y})\nhealth=%d{g->health}\nammo=%d{g->ammo}\nscore=%d{g->score}\nlives=%d{g->lives}\nweapon=%d{g->weapon}\nkeys=gold:%d{gk},silver:%d{sk}")!
+
+    // Save the current fb (pre-upscale, fb_w × game_h) as a PNG with
+    // game-state metadata. Used by `--test ss:FILE` so regression
+    // diffs stay deterministic at 320 wide regardless of the runtime
+    // upscale mode.
+    let save_png = (w: world*, path: const str) ->
+        let meta = build_meta(w->g)
         defer free(meta)
         png.write(path, w->rc->fb, w->rc->fb_w, game_h, meta)
+
+    // Save the current dbuf (post-upscale, screen_w × fb_h*2) as a
+    // PNG. Used by interactive 's' so the captured image matches what
+    // the player actually sees on screen — including Scale2x smoothing
+    // when that mode is active. Caller must have already populated
+    // dbuf via `upscale_2x` for the current phase.
+    let save_png_upscaled = (w: world*, path: const str) ->
+        let meta = build_meta(w->g)
+        defer free(meta)
+        png.write(path, w->rc->dbuf, w->rc->screen_w, w->rc->fb_h * 2, meta)
 
     // Clear any screenshot files left over from a previous session
     // so each run starts numbering from 000. Users who want to keep
@@ -580,6 +700,7 @@ module overlay =
             w->rc->screenshot_slot = (w->rc->screenshot_slot + 1) % screenshot_max_slots
             let path = "%s{dir}/screenshots/ss_%03d{slot}.png"
             render_frame(w, vs, pal)
-            save_png(w, path)
+            upscale_2x(w->rc, w->g->upscale_mode, viewport_smooth_rows(w->g))
+            save_png_upscaled(w, path)
             io.write("[screenshot] saved %s{path}\n", stdout)
             void()

@@ -542,6 +542,12 @@ struct game =
     // updates the config file but only takes effect on next launch.
     view_mode: int32
 
+    // 2× upscale algorithm: 0=nearest (faithful, blocky), 1=Scale2x
+    // (edge-preserving smoothing of the 3D viewport rect; HUD / menus
+    // stay nearest). Persisted in ~/.wolf-fc/config; toggled live in
+    // the Options menu.
+    upscale_mode: int32
+
     // No-dogs mod toggle. Set from the Options menu (persisted in
     // ~/.wolf-fc/config) or from the --no-dogs CLI flag at launch.
     // Read by spawn.spawn_enemies; takes effect on the next level
@@ -2338,6 +2344,7 @@ let main = (args: str[]) ->
         plane_x = 0.0, plane_y = plane_factor,
         plane_factor = plane_factor,
         view_mode = cfg.view_mode,
+        upscale_mode = cfg.upscale_mode,
         key_up = false, key_down = false,
         key_left = false, key_right = false,
         key_shift = false, key_alt = false,
@@ -2634,6 +2641,13 @@ let main = (args: str[]) ->
                         sdl2.maximize_window(win)
                     sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
                     if is_alt_enter then continue
+                // Screenshot — always works (title / menu / playing /
+                // intermission / endart / etc.) so users can capture
+                // any phase. Writes the post-upscale dbuf so the file
+                // reflects the live Scale2x setting.
+                if k == sdl2.key_s && !is_key_repeat then
+                    overlay.take_screenshot(w, vs, pal)
+                    continue
                 // Per-phase dispatch for everything else.
                 // Deliberate-feeling ack keys (Enter / Space / Ctrl / Esc)
                 // — matches the IN_Ack restriction below so modifier-only
@@ -2935,9 +2949,12 @@ let main = (args: str[]) ->
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % menu.options_len
                         else if is_confirm && kind == menu.option_kind_toggle then
-                            // Toggle row 0 = No Dogs.
+                            // Toggle rows: 0 = No Dogs, 2 = Upscale Filter.
                             if g->menu_sel == 0 then
                                 g->no_dogs = !g->no_dogs
+                            else if g->menu_sel == 2 then
+                                // Cycle Nearest → Scale2x → Bilinear → Nearest.
+                                g->upscale_mode = (g->upscale_mode + 1) % 3
                             config.save(config.snapshot(w))
                         else if is_confirm && kind == menu.option_kind_action then
                             // Action row = RESET. Wipe every Options
@@ -2947,6 +2964,7 @@ let main = (args: str[]) ->
                             let d = config.defaults()
                             g->no_dogs = d.no_dogs
                             g->shadow_depth = d.shadow_depth
+                            g->upscale_mode = d.upscale_mode
                             config.save(config.snapshot(w))
                         else if (k == sdl2.key_left || k == sdl2.key_right)
                             && kind == menu.option_kind_slider then
@@ -3162,7 +3180,6 @@ let main = (args: str[]) ->
                             if g->phase == game_phase.playing then
                                 player.cheats.advance_iddqd(g, k)
                                 player.cheats.advance_idkfa(g, k)
-                            if k == sdl2.key_s then overlay.take_screenshot(w, vs, pal)
                             // Debug-state dump used to live on plain D — moved
                             // under the TAB chord so a stray D press during
                             // gameplay doesn't spam the console.
@@ -3289,8 +3306,11 @@ let main = (args: str[]) ->
             void()
 
         // Upload framebuffer to texture and display.
-        // Upscale 320x200 → 640x400, upload, and present.
-        overlay.upscale_2x(w->rc)
+        // Upscale fb → dbuf, upload, and present. Smooth-band height
+        // lives in `overlay.viewport_smooth_rows` — same policy used
+        // by the screenshot path so captured PNGs match what's on
+        // screen.
+        overlay.upscale_2x(w->rc, g->upscale_mode, overlay.viewport_smooth_rows(g))
         sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
         sdl2.clear(ren)
         sdl2.render_copy(ren, tex, (any*) 0, (any*) 0)

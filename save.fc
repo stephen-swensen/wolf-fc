@@ -74,6 +74,10 @@ module config =
         // Stored as int so the file is greppable; "auto" is encoded
         // as 0 — `view_mode_to_fb_w` reads the value back.
         view_mode: int32
+        // 2× upscale algorithm. 0=nearest (faithful, blocky), 1=Scale2x
+        // (edge-preserving smoothing applied to the 3D viewport rect
+        // only — HUD / menus stay nearest so pixel art doesn't smear).
+        upscale_mode: int32
 
     // View-mode constants. Match the integers serialised to the
     // config file; reorder only if you bump the version.
@@ -88,6 +92,17 @@ module config =
         | 2 -> "Widescreen (16:10)"
         | 3 -> "Widescreen (16:9)"
         | _ -> "Auto"
+
+    // Upscale-mode constants. Same ordering rule as view_mode.
+    let upscale_mode_nearest  = 0
+    let upscale_mode_scale2x  = 1
+    let upscale_mode_bilinear = 2
+
+    let upscale_mode_label = (m: int32) ->
+        match m with
+        | 1 -> "Scale2x"
+        | 2 -> "Bilinear"
+        | _ -> "Nearest"
 
     // Map an explicit view-mode choice to its framebuffer width. Auto
     // returns 0 — the caller is expected to fall back to display
@@ -114,7 +129,10 @@ module config =
             shadow_depth = 0,
             // Auto by default — detect display at startup so users on
             // any aspect get sensible widescreen out of the box.
-            view_mode = 0
+            view_mode = 0,
+            // Nearest by default — faithful to the original look.
+            // Players can opt into Scale2x via Options.
+            upscale_mode = 0
         }
 
     // Snapshot the live preference state into a `prefs` value for
@@ -128,7 +146,8 @@ module config =
             sfx_on = w->ac->sfx_on,
             no_dogs = w->g->no_dogs,
             shadow_depth = w->g->shadow_depth,
-            view_mode = w->g->view_mode
+            view_mode = w->g->view_mode,
+            upscale_mode = w->g->upscale_mode
         }
 
     private let config_path = () ->
@@ -185,6 +204,11 @@ module config =
                         | some(v) ->
                             p.view_mode = if v < 0 || v > 3 then 0 else v
                         | none -> void()
+                    else if text.starts_with(line, "upscale_mode ") then
+                        match text.parse_int32(line[13..line.len]) with
+                        | some(v) ->
+                            p.upscale_mode = if v < 0 || v > 2 then 0 else v
+                        | none -> void()
                 p
 
     // Write the current prefs to disk. Fire-and-forget — failures
@@ -206,6 +230,7 @@ module config =
                 io.write("no_dogs %d{if p.no_dogs then 1 else 0}\n", f)
                 io.write("shadow_depth %d{p.shadow_depth}\n", f)
                 io.write("view_mode %d{p.view_mode}\n", f)
+                io.write("upscale_mode %d{p.upscale_mode}\n", f)
                 void()
 
 
