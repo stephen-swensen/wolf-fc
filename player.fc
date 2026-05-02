@@ -441,8 +441,11 @@ module player =
     // ============================================================
 
     let update = (lv: level*, g: game*, dt: float64, ac: audio_ctx*) ->
-        let spd = move_speed * dt * (if g->key_shift then run_mult else 1.0)
-        let rot = turn_speed * dt * (if g->key_shift then run_mult else 1.0)
+        // BJ Speed slider — scales every player movement (forward /
+        // back / strafe / turn). 100 = OG-faithful.
+        let bj_mult = (float64) g->bj_speed_pct / 100.0
+        let spd = move_speed * dt * bj_mult * (if g->key_shift then run_mult else 1.0)
+        let rot = turn_speed * dt * bj_mult * (if g->key_shift then run_mult else 1.0)
 
         // thrustspeed-vs-RUNSPEED check (from the original's T_Shoot)
         // that picks the base-160 "player can dodge" hitchance. True

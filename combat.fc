@@ -715,7 +715,10 @@ module enemies =
         // and pauses at the current tile center until it's fully open
         // — matches the original's T_Chase OpenDoor.
         let advance_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, speed: float64, dt: float64, is_chase: bool) ->
-            let mut step = speed * dt
+            // Enemy Speed slider — scales every patrol + chase speed.
+            // Applied here (the single chokepoint for all enemy
+            // movement) so callers stay unaware. 100 = OG-faithful.
+            let mut step = speed * dt * (float64) g->enemy_speed_pct / 100.0
             loop
                 if step <= 1e-6 then break
                 let e = &lv->enemies[self_idx]
@@ -1158,7 +1161,11 @@ module enemies =
                     // T_DogChase's lunge gate: |dx|-move ≤ 1 && |dy|-move ≤ 1
                     // in tiles. `move` is the dog's distance-to-travel this
                     // frame, so the effective range is 1 + step on each axis.
-                    let step = dog_chase_speed * dt
+                    // Step here mirrors the per-frame distance advance_move
+                    // would compute, so the Enemy Speed slider scales the
+                    // lunge range too — otherwise a sped-up dog would walk
+                    // further per tick than its lunge gate believes.
+                    let step = dog_chase_speed * dt * (float64) g->enemy_speed_pct / 100.0
                     let adx = math.abs(g->pos_x - e->x)
                     let ady = math.abs(g->pos_y - e->y)
                     if adx <= 1.0 + step && ady <= 1.0 + step && check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then

@@ -196,10 +196,12 @@ aspect (same vertical FOV, more peripheral world); UI elements stay in a
 - **OPTIONS main-menu submenu** (slot 2). NO DOGS toggle (mirrors
   `--no-dogs` CLI), SHADOW DEPTH slider (0=off, 1..5 cosmetic depth
   bands for distance shading; 0 is OG-faithful, ≥1 is an opt-in
-  improvement), and a RESET row that restores all four toggles
-  (Music, SFX, No Dogs, Shadow Depth) plus the View Mode selection
-  to defaults. All persist through `config.snapshot` /
-  `config.load`.
+  improvement), BJ SPEED + ENEMY SPEED sliders (10..200% in ±10%
+  steps, scaling player and enemy movement respectively; 100% =
+  OG-faithful), and a RESET row that restores all six toggles
+  (No Dogs, Shadow Depth, BJ Speed, Enemy Speed — plus the SOUND
+  submenu's Music + SFX) and the Change View selection to defaults.
+  All persist through `config.snapshot` / `config.load`.
 - **Per-episode ending text** (`game_phase.endart`) sits between
   episode_end and the main-menu return. Loads VGAGRAPH chunks
   143..148 (`vg_t_endart1..6`) and parses the OG article-markup
@@ -243,7 +245,7 @@ aspect (same vertical FOV, more peripheral world); UI elements stay in a
   main menu. `game_phase.victory` and `victory_screen` module
   removed; the `victory` test-phase alias points at `main_menu`.
 - **27 new regression tests** (137 → 164). Coverage: pg13 splash,
-  config round-trip (music/sfx/no-dogs/shadow/view-mode persistence),
+  config round-trip (music/sfx/no-dogs/shadow/view-mode/bj-speed/enemy-speed persistence),
   endart per-page markup parsing, save-name editor, options-menu
   toggles, view-mode label rendering, plane-factor scaling at all
   four modes, post-resize plane-vector preservation.

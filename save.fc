@@ -74,6 +74,16 @@ module config =
         // Stored as int so the file is greppable; "auto" is encoded
         // as 0 — `view_mode_to_fb_w` reads the value back.
         view_mode: int32
+        // Movement-speed multipliers as percentages (10..200, default
+        // 100). bj_speed_pct scales the player; enemy_speed_pct scales
+        // every enemy. Default 100 keeps OG-faithful behaviour.
+        bj_speed_pct: int32
+        enemy_speed_pct: int32
+
+    // Slider bounds shared by load/clamp + the menu's left/right step.
+    let speed_pct_min  = 10
+    let speed_pct_max  = 200
+    let speed_pct_step = 10
 
     // View-mode constants. Match the integers serialised to the
     // config file; reorder only if you bump the version.
@@ -114,7 +124,9 @@ module config =
             shadow_depth = 0,
             // Auto by default — detect display at startup so users on
             // any aspect get sensible widescreen out of the box.
-            view_mode = 0
+            view_mode = 0,
+            bj_speed_pct = 100,
+            enemy_speed_pct = 100
         }
 
     // Snapshot the live preference state into a `prefs` value for
@@ -128,7 +140,9 @@ module config =
             sfx_on = w->ac->sfx_on,
             no_dogs = w->g->no_dogs,
             shadow_depth = w->g->shadow_depth,
-            view_mode = w->g->view_mode
+            view_mode = w->g->view_mode,
+            bj_speed_pct = w->g->bj_speed_pct,
+            enemy_speed_pct = w->g->enemy_speed_pct
         }
 
     private let config_path = () ->
@@ -185,6 +199,20 @@ module config =
                         | some(v) ->
                             p.view_mode = if v < 0 || v > 3 then 0 else v
                         | none -> void()
+                    else if text.starts_with(line, "bj_speed_pct ") then
+                        match text.parse_int32(line[13..line.len]) with
+                        | some(v) ->
+                            p.bj_speed_pct = if v < speed_pct_min then speed_pct_min
+                                else if v > speed_pct_max then speed_pct_max
+                                else v
+                        | none -> void()
+                    else if text.starts_with(line, "enemy_speed_pct ") then
+                        match text.parse_int32(line[16..line.len]) with
+                        | some(v) ->
+                            p.enemy_speed_pct = if v < speed_pct_min then speed_pct_min
+                                else if v > speed_pct_max then speed_pct_max
+                                else v
+                        | none -> void()
                 p
 
     // Write the current prefs to disk. Fire-and-forget — failures
@@ -206,6 +234,8 @@ module config =
                 io.write("no_dogs %d{if p.no_dogs then 1 else 0}\n", f)
                 io.write("shadow_depth %d{p.shadow_depth}\n", f)
                 io.write("view_mode %d{p.view_mode}\n", f)
+                io.write("bj_speed_pct %d{p.bj_speed_pct}\n", f)
+                io.write("enemy_speed_pct %d{p.enemy_speed_pct}\n", f)
                 void()
 
 

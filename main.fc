@@ -562,6 +562,14 @@ struct game =
     // to full black at the far end. Read every frame by the
     // raycaster + billboards via `raycaster.shadow_floor_from_depth`.
     shadow_depth: int32
+    // Movement-speed multipliers as percentages (10..200, default 100).
+    // bj_speed_pct scales every player speed (forward / back / strafe
+    // / turn); enemy_speed_pct scales every patrol + chase speed in
+    // combat.fc (and the dog lunge-range gate that uses speed × dt).
+    // Default 100 keeps OG-faithful behaviour. Persisted in
+    // ~/.wolf-fc/config alongside shadow_depth / view_mode.
+    bj_speed_pct: int32
+    enemy_speed_pct: int32
     // --test CLI flag: suppresses UX-only flourishes that would otherwise
     // freeze gameplay by a fixed duration (GET PSYCHED overlay, pickup
     // overlay). Tests advance the world `dt = 1/35` per tick, so a 0.7s
@@ -2036,7 +2044,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         let m = if g->music_on then 1 else 0
         let s = if w->ac->sfx_on then 1 else 0
         let nd = if g->no_dogs then 1 else 0
-        io.write("prefs music=%d{m} sfx=%d{s} no_dogs=%d{nd} shadow_depth=%d{g->shadow_depth}\n", stdout)
+        io.write("prefs music=%d{m} sfx=%d{s} no_dogs=%d{nd} shadow_depth=%d{g->shadow_depth} bj_speed_pct=%d{g->bj_speed_pct} enemy_speed_pct=%d{g->enemy_speed_pct}\n", stdout)
         void()
     else if arg == "digi_slots" then
         // Dump the digi-mixer slot table. Verifies wolf4sdl-style dedup:
@@ -2431,6 +2439,8 @@ let main = (args: str[]) ->
         // last toggled in the Options menu.
         no_dogs = if arg_no_dogs then true else cfg.no_dogs,
         shadow_depth = cfg.shadow_depth,
+        bj_speed_pct = cfg.bj_speed_pct,
+        enemy_speed_pct = cfg.enemy_speed_pct,
         test_mode = test_mode,
         menu_sel = 0, menu_level = menu.nav.main, save_edit_active = false,
         music_on = cfg.music_on, want_quit = false,
@@ -2977,16 +2987,32 @@ let main = (args: str[]) ->
                             let d = config.defaults()
                             g->no_dogs = d.no_dogs
                             g->shadow_depth = d.shadow_depth
+                            g->bj_speed_pct = d.bj_speed_pct
+                            g->enemy_speed_pct = d.enemy_speed_pct
                             config.save(config.snapshot(w))
                         else if (k == sdl2.key_left || k == sdl2.key_right)
                             && kind == menu.option_kind_slider then
-                            // Slider row 1 = Shadow Depth (±5%, clamped).
-                            let delta = if k == sdl2.key_left then -5 else 5
+                            // Slider rows. Shadow Depth uses ±5% in 0..100;
+                            // the BJ / Enemy Speed sliders use ±10% in
+                            // 10..200 (constants live in `config`).
                             if g->menu_sel == 1 then
+                                let delta = if k == sdl2.key_left then -5 else 5
                                 let mut v = g->shadow_depth + delta
                                 if v < 0 then v = 0
                                 if v > 100 then v = 100
                                 g->shadow_depth = v
+                            else if g->menu_sel == 2 then
+                                let delta = if k == sdl2.key_left then 0 - config.speed_pct_step else config.speed_pct_step
+                                let mut v = g->bj_speed_pct + delta
+                                if v < config.speed_pct_min then v = config.speed_pct_min
+                                if v > config.speed_pct_max then v = config.speed_pct_max
+                                g->bj_speed_pct = v
+                            else if g->menu_sel == 3 then
+                                let delta = if k == sdl2.key_left then 0 - config.speed_pct_step else config.speed_pct_step
+                                let mut v = g->enemy_speed_pct + delta
+                                if v < config.speed_pct_min then v = config.speed_pct_min
+                                if v > config.speed_pct_max then v = config.speed_pct_max
+                                g->enemy_speed_pct = v
                             config.save(config.snapshot(w))
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
