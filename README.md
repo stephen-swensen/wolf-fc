@@ -10,7 +10,7 @@ This is disclosed up front because the project is also intended as a demonstrati
 
 ## Requirements
 
-- **FC compiler** — clone `fc-lang` alongside this repo (i.e. `../fc-lang/`)
+- **FC compiler (`fcc`)** — must be on your `PATH`. See [Installing the FC compiler](#installing-the-fc-compiler) below if `command -v fcc` doesn't already work.
 - **SDL2** development package
   - Debian/Ubuntu: `sudo apt install libsdl2-dev`
   - macOS: `brew install sdl2`
@@ -27,6 +27,24 @@ data/GAMEMAPS.WL6   Level tile data (compressed)
 data/AUDIOHED.WL6   Audio chunk offsets
 data/AUDIOT.WL6     Music and sound data
 ```
+
+### Installing the FC compiler
+
+If `command -v fcc` works in your shell already, skip this section. Otherwise, clone and install [fc-lang](https://github.com/stephen-swensen/fc-lang):
+
+```bash
+git clone https://github.com/stephen-swensen/fc-lang.git
+cd fc-lang
+make                                    # release build (-O2)
+sudo make install                       # installs to /usr/local by default
+
+# ... or for a user-local install (no sudo):
+# make install PREFIX=$HOME/.local      # then ensure $HOME/.local/bin is on PATH
+```
+
+This puts the `fcc` binary in `$PREFIX/bin/` and the FC stdlib in `$PREFIX/share/fcc/stdlib/`. `run.sh` resolves the stdlib path automatically by following `fcc`'s install prefix on `PATH`; override with `FCC_STDLIB=/path/to/stdlib` if you have a non-standard layout. Re-run `make install` from `fc-lang` after pulling compiler updates.
+
+See [`fc-lang/README.md`](https://github.com/stephen-swensen/fc-lang) (or `make help` in that repo) for full compiler-build options, including dev (`-O0`) builds and packaging-style installs (`PREFIX`, `DESTDIR`, `bindir`, `datadir`).
 
 ## Build and Run
 
@@ -224,7 +242,7 @@ The tests rely on the enemy RNG's fixed seed for reproducibility — scripted sc
 
 ## Architecture
 
-Wolf-fc depends only on the FC compiler and stdlib (`../fc-lang/`). Every other dependency — SDL2 bindings, the OPL2 emulator, the PNG writer — is vendored into this repo. All project modules are declared at the top level (no namespaces), so they're reachable from any file by qualified name without imports.
+Wolf-fc depends only on the installed FC compiler (`fcc`) and stdlib — see [Installing the FC compiler](#installing-the-fc-compiler). Every other dependency — SDL2 bindings, the OPL2 emulator, the PNG writer — is vendored into this repo. All project modules are declared at the top level (no namespaces), so they're reachable from any file by qualified name without imports.
 
 - **`main.fc`** — Game engine. DDA raycaster + sprite/weapon/HUD renderer, tick-driven game loop, input handling, player movement with collision radius, item pickups, animated doors, push-walls, weapons, level transitions, screenshot capture. Game state, level data, renderer scratch/caches, audio pipeline, and save-menu scratch are grouped into a `world` struct (`{g, lv, rc, ac, sm}`); orchestrators take `world*`, narrower functions take just the sub-contexts they touch. No file-scope mutable state — buffers, caches, counters, and launch-time config all live on one of these context structs.
 - **`data.fc`** — Wolf3D asset loading, 5 top-level modules:

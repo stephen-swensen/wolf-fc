@@ -1,9 +1,5 @@
-# Compiler binary
-fc
+# Stray Windows binaries from earlier in-tree builds (run.sh now writes to %TEMP%)
 *.exe
-
-# Wolf-fc-local cache of the FC compiler (built by run.sh with -O2)
-.fc-cache/
 
 # Object files
 *.o

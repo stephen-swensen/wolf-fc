@@ -6,17 +6,18 @@ Wolf-FC is a Wolfenstein 3D clone written in FC, intended as a demo of the FC la
 
 ## Sibling Repositories
 
-- **`../fc-lang/`** — The FC compiler and stdlib. **Read `../fc-lang/CLAUDE.md` for the full FC language reference** (syntax, type system, module system, C interop, naming conventions, etc.). Key paths:
-  - `../fc-lang/fc` — compiler binary
-  - `../fc-lang/stdlib/` — standard library (io, math, sys, text, random, data)
+- **`../fc-lang/`** — The FC compiler source and stdlib. **Read `../fc-lang/CLAUDE.md` for the full FC language reference** (syntax, type system, module system, C interop, naming conventions, etc.). Key paths:
   - `../fc-lang/spec/examples.fc` — runnable FC quick reference. **Read this file fully at the start of every session** for a firm grasp on the FC language.
+  - `../fc-lang/stdlib/` — stdlib source (io, math, sys, text, random, data). After `make install`, these copy to `$PREFIX/share/fcc/stdlib/`.
 
-  Wolf-fc depends only on the compiler and stdlib. The SDL2 and OPL2 bindings, originally copied from `fc-lang/demos/shared/`, are now vendored into this repo (`sdl2.fc`, `opl2.fc`) so wolf-fc can evolve them independently of the shared demo copies.
+  At runtime wolf-fc uses the **installed** `fcc` compiler — assume the binary is on `PATH` (installed once via `cd ../fc-lang && make && sudo make install`, or `make install PREFIX=$HOME/.local` for a user-local install). `run.sh` derives the stdlib path from `fcc`'s install prefix automatically; `FCC_STDLIB` overrides. Don't build the compiler from this repo — when the compiler source changes, `cd ../fc-lang && sudo make install` to refresh. The `../fc-lang/` checkout is no longer build-time required, but keep it around as a reference and to rebuild/reinstall.
+
+  The SDL2 and OPL2 bindings, originally copied from `fc-lang/demos/shared/`, are vendored into this repo (`sdl2.fc`, `opl2.fc`) so wolf-fc can evolve them independently of the shared demo copies.
 - **`../wolf4sdl/`** — C reference implementation of Wolf3D (SDL2 port). Consult for data format details and rendering correctness, but **don't copy code** (GPL). Key files listed in TODO.md.
 
 ## Build & Run
 
-- **`./run.sh`** — Compile FC → C → binary, then run. Requires `../fc-lang/` and `libsdl2-dev`.
+- **`./run.sh`** — Compile FC → C → binary, then run. Requires `fcc` on `PATH` (install once from `../fc-lang/` with `make && sudo make install`) and `libsdl2-dev`.
 - **`./run.sh --test <cmd> ...`** — Headless scripted-play mode (see below). No SDL window, no audio device. Use this for automated verification.
 - Press **`s`** in interactive mode to take a screenshot to `~/.wolf-fc/screenshots/ss_NNN.png`. See README.md.
 - Data files must be in `data/*.WL6` (not committed — users supply their own from a legitimate Wolf3D copy).

@@ -666,7 +666,7 @@ Cross-referenced against wolf4sdl. See the 2026-04-17 chat session for details.
 ## Reference
 
 - **wolf4sdl** at `../wolf4sdl/` — reference C implementation, consult for data format details and rendering correctness (but don't copy code to avoid GPL)
-- **fc-lang** at `../fc-lang/` — FC compiler and stdlib
+- **fc-lang** at `../fc-lang/` — FC compiler source and stdlib (installed system-wide as `fcc` via `make install`; see README.md)
 - Key wolf4sdl files:
   - `wl_draw.cpp` — raycaster (AsmRefresh, HitVertWall/Door, ScaleShape, DrawScaleds)
   - `wl_act1.cpp` — doors (MoveDoors, OpenDoor), PushWall
