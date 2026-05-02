@@ -2,7 +2,21 @@
 
 ## Open work
 
-None.
+### Distribution
+
+- **Windows-proper redistributable build.** Today the only Windows
+  path is "install MSYS2 UCRT64, build/install from inside it" — a
+  double-clicked `wolf-fc.exe` from Explorer fails because (a) the
+  binary dynamically links MSYS2's `libSDL2-2.0.dll` + runtime DLLs
+  that aren't on Windows's PATH, and (b) the baked install data path
+  is relative to MSYS2's POSIX root. Minimum viable redistributable:
+  bundle `SDL2.dll` + `libgcc_s_seh-1.dll` / `libwinpthread-1.dll` /
+  etc. next to the exe, switch the data-dir lookup from compile-time
+  bake-in to relocatable (`GetModuleFileNameW` on Windows,
+  `/proc/self/exe` on Linux) + a `<exe-dir>/data` fallback, then ship
+  a portable zip. A proper Inno Setup / NSIS installer with a Start
+  Menu entry + uninstaller comes after that. README's "Windows: MSYS2
+  is required" subsection spells out the situation today.
 
 ### Gameplay
 ### UI / Menus
@@ -164,6 +178,22 @@ below). When something feels off in play, audit the relevant subsystem
 against id's source / wolf4sdl, log a finding here, and fix.
 
 ## Current State (2026-04-25)
+
+### Build system migrated to GNU Makefile (2026-05-02)
+Mirrors `fc-lang`'s Makefile shape: `make` (default `-O2` build), `make
+dev` (clean rebuild at `-O0`), `make clean`, `make install` /
+`make uninstall` with `PREFIX` / `DESTDIR` / `OPT` / `CC` overrides, and
+`make check` (depends on the binary in the dep graph, so it always runs
+against an up-to-date build — no manual cache-busting). Build artifacts
+land in `./build/` (gitignored). `run.sh` shrank to a 5-line wrapper
+around `make -s && exec ./build/wolf-fc`. WL6 data files now live in any
+of three locations (env override > `./data/` > compile-time install
+location at `$(PREFIX)/share/wolf-fc/data/`); the chosen path is baked
+into the binary at build time via a generated `build/install_path.fc`,
+and `make install` ships `./data/*.WL6` along with the binary when
+present. `tests/run-tests.sh` lost its `/tmp/wolf-fc-bin` cache and now
+shells out to `make -s` so stale-binary scenarios are handled by Make's
+dep graph.
 
 ### Hor+ widescreen + Change View submenu (2026-04-25, part 2)
 Replaced the locked 4:3 pipeline with a runtime-detected Hor+ widescreen

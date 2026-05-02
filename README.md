@@ -16,17 +16,40 @@ This is disclosed up front because the project is also intended as a demonstrati
   - macOS: `brew install sdl2`
   - MSYS2: `pacman -S mingw-w64-ucrt-x86_64-SDL2`
 - **C compiler** — gcc or clang with C11 support
-- **Wolfenstein 3D data files** — place `.WL6` files in the `data/` directory from a legitimate copy of Wolfenstein 3D (e.g. the Steam version)
+- **Wolfenstein 3D data files** — `.WL6` files from a legitimate copy of Wolfenstein 3D (e.g. the Steam version). See [Required data files](#required-data-files) for the list and the supported layouts.
+
+### Windows: MSYS2 is required
+
+Wolf-FC on Windows currently runs only inside an [MSYS2](https://www.msys2.org/) UCRT64 shell — there is no vanilla-Windows install path yet. Practically that means:
+
+- You build, install, and launch the game from inside an MSYS2 UCRT64 terminal (the `wolf-fc.exe` binary `make install` produces lives at `/usr/local/bin/wolf-fc.exe` under MSYS2's tree, e.g. `C:\msys64\usr\local\bin\wolf-fc.exe`).
+- A double-clicked `wolf-fc.exe` from Windows Explorer (or a desktop shortcut) **will not work** because the binary dynamically links against MSYS2's `libSDL2-2.0.dll` plus a few mingw runtime DLLs, and an Explorer-launched process doesn't inherit MSYS2's `PATH`.
+- The compile-time install data path (`$(PREFIX)/share/wolf-fc/data/`) is also baked relative to MSYS2's filesystem root, so even with the DLLs sorted the binary would only find data files when run with MSYS2 mounted at the same location.
+
+A proper redistributable Windows build (bundled SDL2 + runtime DLLs, exe-relative data lookup, optional installer / shortcut) is out of scope for now. If you want to play wolf-fc on Windows today, install MSYS2 UCRT64 and follow the Linux/Unix-style instructions below from inside that shell.
 
 ### Required data files
 
+The eight `.WL6` files Wolf-FC needs:
+
 ```
-data/VSWAP.WL6      Wall textures, sprites, and digitized sounds
-data/MAPHEAD.WL6    Level header / offsets
-data/GAMEMAPS.WL6   Level tile data (compressed)
-data/AUDIOHED.WL6   Audio chunk offsets
-data/AUDIOT.WL6     Music and sound data
+VSWAP.WL6      Wall textures, sprites, and digitized sounds
+MAPHEAD.WL6    Level header / offsets
+GAMEMAPS.WL6   Level tile data (compressed)
+AUDIOHED.WL6   Audio chunk offsets
+AUDIOT.WL6     Music and sound data
+VGADICT.WL6    VGAGRAPH Huffman dictionary
+VGAHEAD.WL6    VGAGRAPH chunk offsets
+VGAGRAPH.WL6   UI graphics + fonts + endart text
 ```
+
+Wolf-FC searches for these files in three locations, in priority order:
+
+1. **`$WOLF_FC_DATA_DIR`** (env override). Highest priority — useful for ad-hoc runs and CI: `WOLF_FC_DATA_DIR=/path/to/wl6 wolf-fc`. On MSYS2/Windows, use a Windows-style mixed path (e.g. `C:/msys64/home/me/wl6`) since the binary's `fopen()` is a Windows C-runtime call that doesn't translate POSIX mounts. `cygpath -m /your/path` prints the right form.
+2. **`./data/`** (relative to the current working directory). The dev workflow: drop the files in the project's `data/` directory and `./run.sh` / `make` / `./build/wolf-fc` find them.
+3. **`$(PREFIX)/share/wolf-fc/data/`** (compile-time install location). The fallback baked into the binary at build time. `make install` will copy `./data/*.WL6` here automatically when present; otherwise put them there manually after install.
+
+The startup banner prints `Data dir: <path>` so you can see which layout the running binary picked.
 
 ### Installing the FC compiler
 
@@ -42,17 +65,33 @@ sudo make install                       # installs to /usr/local by default
 # make install PREFIX=$HOME/.local      # then ensure $HOME/.local/bin is on PATH
 ```
 
-This puts the `fcc` binary in `$PREFIX/bin/` and the FC stdlib in `$PREFIX/share/fcc/stdlib/`. `run.sh` resolves the stdlib path automatically by following `fcc`'s install prefix on `PATH`; override with `FCC_STDLIB=/path/to/stdlib` if you have a non-standard layout. Re-run `make install` from `fc-lang` after pulling compiler updates.
+This puts the `fcc` binary in `$PREFIX/bin/` and the FC stdlib in `$PREFIX/share/fcc/stdlib/`. Wolf-FC's `Makefile` resolves the stdlib path automatically by following `fcc`'s install prefix on `PATH`; override with `FCC_STDLIB=/path/to/stdlib` if you have a non-standard layout. Re-run `make install` from `fc-lang` after pulling compiler updates.
 
 See [`fc-lang/README.md`](https://github.com/stephen-swensen/fc-lang) (or `make help` in that repo) for full compiler-build options, including dev (`-O0`) builds and packaging-style installs (`PREFIX`, `DESTDIR`, `bindir`, `datadir`).
 
 ## Build and Run
 
+The project uses a GNU Makefile (the same convention as `fc-lang`):
+
 ```bash
-./run.sh
+make                    # build the binary at ./build/wolf-fc
+./build/wolf-fc         # run the game
+make check              # build (if needed) and run the regression suite
+make dev                # clean rebuild at -O0 with debug symbols
+make help               # list every target and variable
 ```
 
-This compiles the FC source to C, then to a native binary, and runs it. The game expects to find its data files relative to the working directory (`data/*.WL6`).
+`./run.sh` is a thin convenience wrapper that runs `make -s` and then execs the binary, so `./run.sh --level=8` still works exactly as before.
+
+### Installing system-wide
+
+```bash
+sudo make install                   # default PREFIX=/usr/local
+make install PREFIX=$HOME/.local    # user-local (no sudo)
+make uninstall                      # remove the binary + share/wolf-fc/ tree
+```
+
+`make install` copies the binary to `$(PREFIX)/bin/wolf-fc`. If `./data/*.WL6` is present at install time, it's also copied to `$(PREFIX)/share/wolf-fc/data/` — that's the location the installed binary falls back to when run from a directory without `./data/`.
 
 ### Options
 

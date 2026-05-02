@@ -577,6 +577,12 @@ struct game =
     // that crosses a level boundary.
     test_mode: bool
 
+    // Resolved WL6 data directory (heap str). Resolved once in `main`
+    // by `data_path.resolve()` — search order is $WOLF_FC_DATA_DIR,
+    // then ./data, then the compile-time install location. Used by
+    // every WL6 file load (initial + level transitions).
+    data_dir: str
+
     // Menu selection state.
     menu_sel: int32
     menu_level: int32
@@ -1103,7 +1109,11 @@ let reload_level_data = (w: world*, vs: const vswap.vswap_file*) ->
     free(w->lv_data->walls)
     free(w->lv_data->objects)
     free(w->lv_data)
-    w->lv_data = maps.load("data/MAPHEAD.WL6", "data/GAMEMAPS.WL6", w->g->level_num)
+    let p_maphead = data_path.wl6(w->g->data_dir, "MAPHEAD.WL6")
+    defer free(p_maphead)
+    let p_gamemaps = data_path.wl6(w->g->data_dir, "GAMEMAPS.WL6")
+    defer free(p_gamemaps)
+    w->lv_data = maps.load(p_maphead, p_gamemaps, w->g->level_num)
     w->lv = build_level(w->lv_data, vs->sprite_start, w->g->difficulty, w->g->no_dogs)
 
 // Clear held gameplay-input flags. Called on ack-screen exits (intermission /
@@ -2327,24 +2337,46 @@ let main = (args: str[]) ->
     // when the game struct is initialised below.
     let rng_seed = if test_mode then 0u64 else (uint64) sys.time()
 
+    // Resolve the WL6 data directory before loading anything: env override,
+    // then ./data, then the compile-time install location. The resulting
+    // heap str is owned by the game struct (set below) and freed at exit.
+    let data_dir = data_path.resolve()
+    io.write("Data dir: %s{data_dir}\n", stdout)
+
     // Load game data (no SDL needed)
     io.write("Loading palette...\n", stdout)
     let pal = palette.init()
 
     io.write("Loading VSWAP.WL6...\n", stdout)
-    let vs = vswap.load("data/VSWAP.WL6")
+    let p_vswap = data_path.wl6(data_dir, "VSWAP.WL6")
+    defer free(p_vswap)
+    let vs = vswap.load(p_vswap)
     io.write("  chunks=%d{vs->num_chunks}, sprites@%d{vs->sprite_start}, sounds@%d{vs->sound_start}\n", stdout)
 
     io.write("Loading audio...\n", stdout)
-    let ad = audio.load("data/AUDIOHED.WL6", "data/AUDIOT.WL6")
+    let p_audhed = data_path.wl6(data_dir, "AUDIOHED.WL6")
+    defer free(p_audhed)
+    let p_audt = data_path.wl6(data_dir, "AUDIOT.WL6")
+    defer free(p_audt)
+    let ad = audio.load(p_audhed, p_audt)
     io.write("  audio chunks=%d{ad->num_chunks}\n", stdout)
 
     io.write("Loading VGAGRAPH...\n", stdout)
-    let vg = vgagraph.load("data/VGADICT.WL6", "data/VGAHEAD.WL6", "data/VGAGRAPH.WL6")
+    let p_vgadict = data_path.wl6(data_dir, "VGADICT.WL6")
+    defer free(p_vgadict)
+    let p_vgahead = data_path.wl6(data_dir, "VGAHEAD.WL6")
+    defer free(p_vgahead)
+    let p_vgagraph = data_path.wl6(data_dir, "VGAGRAPH.WL6")
+    defer free(p_vgagraph)
+    let vg = vgagraph.load(p_vgadict, p_vgahead, p_vgagraph)
     io.write("  vga chunks=%d{vg->num_chunks}, pics=%d{vg->num_pics}\n", stdout)
 
     io.write("Loading level 0...\n", stdout)
-    let mut lv_data = maps.load("data/MAPHEAD.WL6", "data/GAMEMAPS.WL6", 0)
+    let p_maphead0 = data_path.wl6(data_dir, "MAPHEAD.WL6")
+    defer free(p_maphead0)
+    let p_gamemaps0 = data_path.wl6(data_dir, "GAMEMAPS.WL6")
+    defer free(p_gamemaps0)
+    let mut lv_data = maps.load(p_maphead0, p_gamemaps0, 0)
     io.write("  map %d{lv_data->width}x%d{lv_data->height}\n", stdout)
 
     // Persistent user preferences (sound toggles for now; key bindings
@@ -2441,6 +2473,7 @@ let main = (args: str[]) ->
         shadow_depth = cfg.shadow_depth,
         bj_speed_pct = cfg.bj_speed_pct,
         enemy_speed_pct = cfg.enemy_speed_pct,
+        data_dir = data_dir,
         test_mode = test_mode,
         menu_sel = 0, menu_level = menu.nav.main, save_edit_active = false,
         music_on = cfg.music_on, want_quit = false,

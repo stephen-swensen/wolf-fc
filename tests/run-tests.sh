@@ -36,11 +36,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-BIN="/tmp/wolf-fc-bin"
-if [[ ! -x "$BIN" ]]; then
-    echo "building wolf-fc..."
-    ./run.sh --test state >/dev/null 2>&1 || { echo "build failed" >&2; exit 2; }
-fi
+# Always run `make -s` so the test binary is up-to-date with the current
+# source tree. Make's dep graph means this is a no-op when nothing has
+# changed, so there's no separate cache to bust on stale-binary scenarios.
+WOLF_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+BIN="$WOLF_DIR/build/wolf-fc"
+(cd "$WOLF_DIR" && make -s) || { echo "build failed" >&2; exit 2; }
 
 # Isolate the test's save / screenshot directory so the suite can't stomp on
 # the real user's saves. The binary honours WOLF_FC_HOME as an override for

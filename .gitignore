@@ -1,3 +1,6 @@
+# Make build output (binary, generated wolf-fc.c, generated install_path.fc)
+/build/
+
 # Stray Windows binaries from earlier in-tree builds (run.sh now writes to %TEMP%)
 *.exe
 

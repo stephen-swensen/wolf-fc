@@ -1,6 +1,38 @@
 // Wolf-FC data loading — palette, VSWAP pages, map decompression.
 
 // ============================================================
+// WL6 data-directory resolution
+// ============================================================
+
+module data_path =
+    import sys from std::
+    import io from std::
+
+    // Resolve the data directory once at startup. Search order:
+    //   1. $WOLF_FC_DATA_DIR (env override — highest priority for ad-hoc runs / CI)
+    //   2. ./data            (dev workflow / running from project dir)
+    //   3. install_path.data_dir (compile-time install location, baked
+    //                             into build/install_path.fc by the Makefile)
+    // Returns a heap str the caller stores on `game.data_dir` and frees
+    // at exit. Probes for VSWAP.WL6 to decide whether ./data is the real
+    // data dir (a stray empty `data/` shouldn't shadow the install
+    // location); otherwise falls through to the install path even if it
+    // doesn't exist, so the loader's open() failure surfaces a sensible
+    // error message.
+    let resolve = () ->
+        match sys.env("WOLF_FC_DATA_DIR") with
+        | some(env_dir) -> alloc("%s{env_dir}")!
+        | none ->
+            let probe = alloc("data/VSWAP.WL6")!
+            defer free(probe)
+            if io.exists(probe) then alloc("data")!
+            else alloc("%s{install_path.data_dir}")!
+
+    // Build a "<dir>/<name>" path. Caller frees the result.
+    let wl6 = (data_dir: const str, name: const str) ->
+        alloc("%s{data_dir}/%s{name}")!
+
+// ============================================================
 // Little-endian binary readers
 // ============================================================
 
