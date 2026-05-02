@@ -127,9 +127,21 @@ module enemies =
 
     // Tunables — see ai.update_enemies for how each is used.
     let max_enemies = 150
-    private let chase_speed   = 1.5   // tiles/sec — walking chase for all humanoids
-    private let patrol_speed  = 0.9   // tiles/sec — patrol pace before player is spotted
-    private let dog_chase_speed     = 3.2   // tiles/sec — dogs roughly player-run speed
+    // Movement speeds (tiles/sec), matched to the original. The
+    // original stores actor speed as 16.16 fixed-point units per
+    // tic, so `tiles_per_sec = N * 70 / 65536`.
+    //   patrol      : SPDPATROL=512                → 0.5469
+    //   guard×3, mutant×3, all bosses×3 (1536)     → 1.6406
+    //   officer×5, real-hitler×5    (2560)         → 2.7344
+    //   ss×4                         (2048)        → 2.1875
+    //   dog (SPDDOG=1500)×2          (3000)        → 3.2043
+    //   ghost (SPDPATROL×2 = 1024)                 → 1.0938
+    private let patrol_speed         = 0.5469
+    private let guard_chase_speed    = 1.6406   // also mutants + bosses (Hans, Schabbs, Gretel, Giftmacher, Fat, Fake/Mecha Hitler)
+    private let officer_chase_speed  = 2.7344   // also real Hitler
+    private let ss_chase_speed       = 2.1875
+    private let dog_chase_speed      = 3.2043
+    private let ghost_chase_speed    = 1.0938
     let walk_frame_time     = 0.12  // seconds per W1/W2/W3/W4 cycle frame
     private let shoot_frame_time    = 0.20  // humanoid shoot-windup frame duration
     private let pain_time           = 0.143 // pain flinch duration (10 tics @ 70Hz)
@@ -209,12 +221,16 @@ module enemies =
         | hitler       -> 5000
         | blinky | pinky | clyde | inky -> 0
 
-    // Movement speed while chasing (tiles/sec). Dogs sprint; bosses and
-    // ghosts move at chase_speed.
+    // Movement speed while chasing (tiles/sec). Mirrors FirstSighting
+    // in the original: each kind multiplies its patrol speed by a
+    // per-kind factor (3 / 4 / 5 / 2) when it transitions into chase.
     private let chase_speed_for_kind = (k: enemy_kind) ->
         match k with
-        | dog -> dog_chase_speed
-        | _   -> chase_speed
+        | dog                          -> dog_chase_speed
+        | officer | hitler             -> officer_chase_speed
+        | ss                           -> ss_chase_speed
+        | blinky | pinky | clyde | inky -> ghost_chase_speed
+        | _                            -> guard_chase_speed
 
     // True iff the kind is a level-ending boss. Killing one ends the level.
     let kind_is_boss = (k: enemy_kind) ->
@@ -1174,7 +1190,7 @@ module enemies =
                         // a steady drain.
                         damage_player(g, ac, rnd_byte(g) >> 4, damage_source.ghost, e->x, e->y)
                         e->touch_cooldown = 0.25
-                    advance_move(lv, g, ac, self_idx, chase_speed, dt, true)
+                    advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e->kind), dt, true)
                     advance_walk_anim(e)
                 | _ ->
                     // Shoot roll: the original uses (tics<<4)/dist against

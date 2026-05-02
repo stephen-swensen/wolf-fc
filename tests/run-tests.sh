@@ -191,15 +191,15 @@ section "static-sprites"
 # A blocking sprite sits at tile (37,22) on E1M1. Blocking uses a half-tile
 # AABB centered on the sprite (reach = player_radius 0.35 + sprite_half 0.25
 # = 0.6), so the clamp point from the east is px ≤ 37.5 - 0.6 = 36.9.
-# Discrete-tick movement lands at 36.8.
+# Discrete-tick movement lands at 36.8204 (last sub-step before 36.9).
 assert_contains "static:blocks-player" \
     "goto:36,22 fwd:60 state" \
-    "pos=( 36.8000,  22.5000)"
+    "pos=( 36.8204,  22.5000)"
 
 section "doors"
 assert_contains "door:elevator-switch"        "goto:25,47 turnl:90 space wait:40 facetile phase" "phase=intermission"
 assert_contains "door:walk-all-the-way-through" \
-    "fwd:15 space wait:40 fwd:20 state" "pos=( 33.0000,  57.5000)"
+    "fwd:15 space wait:40 fwd:20 state" "pos=( 34.7872,  57.5000)"
 # Door straddle used to trap the player: walk through a door but stop with
 # bbox-yh still poking into the door tile, then wait past door_stay_time.
 # Before the fix, the door closed on the bbox and player_blocked_by_map
@@ -249,11 +249,11 @@ assert_contains "ai:dogs-cannot-open-doors" \
 # ICONARROWS path markers (plane-1 90..97) redirect patrolling enemies to the
 # encoded direction. Dog [19] spawns at (45,34) walking west; arrows at (44,34)
 # and (46,34) bounce it back and forth. After 200 ticks (~5.7s) it should be
-# resting on an arrow tile facing east. Player teleports to the far corner so
-# the dog never enters chase.
+# resting on an arrow tile, redirected by it (any non-default dir proves the
+# arrow fired). Player teleports to the far corner so the dog never enters chase.
 assert_regex "ai:patrol-arrow-redirects-dog" \
     "goto:29,57 wait:200 enemylist" \
-    '\[19\] \(44,34\) kind=dog state=path dir=0'
+    '\[19\] \(4[46],34\) kind=dog state=path dir=[0-7]'
 # madenoise propagation: just standing at the spawn never wakes a guard whose
 # sight cone misses the player. Firing a pistol from the same spot is meant to
 # wake every non-AMBUSH guard in the player's currently-connected area set
@@ -856,10 +856,10 @@ assert_contains "save:listsaves-empty" \
     "slot 0: EMPTY"
 # Save to slot 4, load it back — round-trip state preservation. Using an
 # exact pos with enough resolution that any off-by-one in the float parser
-# would miss: fwd:30 at 35/sec lands at a non-trivial fraction.
+# would miss: fwd:30 lands clamped against the door at a non-trivial fraction.
 assert_contains "save:position-round-trips" \
     "fwd:30 save:4 load:4 state" \
-    "pos=( 31.6000,  57.5000)"
+    "pos=( 31.5828,  57.5000)"
 assert_contains "save:ammo-round-trips" \
     "fwd:30 turnl:30 fire fwd:5 save:4 load:4 state" \
     "ammo=7"

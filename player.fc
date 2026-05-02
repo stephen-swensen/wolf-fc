@@ -13,21 +13,23 @@ module player =
     // tiles for the same reason.
     let radius = 0.35
 
-    // Movement speeds. `move_speed` is tiles/sec at walk; `run_mult`
-    // doubles it when shift is held. `back_mult`/`strafe_mult` are
-    // per-direction scalars on top of move_speed — we diverge from
-    // the original (which used 100/150 ≈ 0.67 for back and 1.0 for
-    // strafe) to make alt-strafe slightly quicker than forward
-    // (rewards its use in fights) while keeping back-pedalling usable.
-    private let move_speed  = 3.5
+    // Movement speeds, matched to the original game.
+    //   walk = BASEMOVE * MOVESCALE * 70 / TILEGLOBAL
+    //        = 35 * 150 * 70 / 65536 ≈ 5.6076 tiles/sec
+    //   run  = walk × (RUNMOVE/BASEMOVE) = walk × 2
+    //   back = walk × (BACKMOVESCALE/MOVESCALE) = walk × 100/150
+    //   strafe = walk (no scaling in the original)
+    private let move_speed  = 5.6076
     private let run_mult    = 2.0
-    private let back_mult   = 0.75
-    private let strafe_mult = 1.25
+    private let back_mult   = 0.6667
+    private let strafe_mult = 1.0
 
-    // Camera yaw rate (rad/sec at walk). Scaled by `run_mult` when
-    // shift is held — same factor as move_speed so turning "feels
-    // like" running-speed when sprinting.
-    private let turn_speed  = 2.5
+    // Camera yaw rate (rad/sec at walk), matched to the original.
+    //   BASETURN(35) * 70 tics/sec / ANGLESCALE(20) = 122.5°/sec
+    //   ≈ 2.13803 rad/sec
+    // Scaled by `run_mult` when shift is held — same factor as
+    // move_speed (RUNTURN/BASETURN = 70/35 = 2.0).
+    private let turn_speed  = 2.138
 
     // Static-decoration half-width (tiles). Blocking sprites
     // (barrels, lamps, tables, etc.) block the player as a half-tile
