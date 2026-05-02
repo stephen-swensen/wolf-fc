@@ -936,10 +936,10 @@ assert_contains "config:defaults-enemy-speed"     "prefs"   "enemy_speed_pct=100
 printf 'WLFC_CONFIG 1\nbj_speed_pct 150\nenemy_speed_pct 60\n' > "$WOLF_FC_TEST_HOME/config"
 assert_contains "config:loads-bj-speed-150"       "prefs"   "bj_speed_pct=150"
 assert_contains "config:loads-enemy-speed-60"     "prefs"   "enemy_speed_pct=60"
-# Out-of-range speed values clamp to 10..200.
+# Out-of-range speed values clamp to 20..200.
 printf 'WLFC_CONFIG 1\nbj_speed_pct 500\nenemy_speed_pct 1\n' > "$WOLF_FC_TEST_HOME/config"
 assert_contains "config:bj-speed-clamps-high"     "prefs"   "bj_speed_pct=200"
-assert_contains "config:enemy-speed-clamps-low"   "prefs"   "enemy_speed_pct=10"
+assert_contains "config:enemy-speed-clamps-low"   "prefs"   "enemy_speed_pct=20"
 # CLI --no-dogs forces the toggle on, even if the config has it off.
 printf 'WLFC_CONFIG 1\nno_dogs 0\n' > "$WOLF_FC_TEST_HOME/config"
 assert_contains "config:cli-no-dogs-overrides"    "--no-dogs prefs"  "no_dogs=1"

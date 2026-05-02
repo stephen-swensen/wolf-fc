@@ -74,16 +74,18 @@ module config =
         // Stored as int so the file is greppable; "auto" is encoded
         // as 0 — `view_mode_to_fb_w` reads the value back.
         view_mode: int32
-        // Movement-speed multipliers as percentages (10..200, default
+        // Movement-speed multipliers as percentages (20..200, default
         // 100). bj_speed_pct scales the player; enemy_speed_pct scales
-        // every enemy. Default 100 keeps OG-faithful behaviour.
+        // every enemy. Default 100 keeps OG-faithful behaviour. The
+        // 20% floor is deliberate — at 10% enemies were slow enough
+        // to fail interactions with auto-closing doors.
         bj_speed_pct: int32
         enemy_speed_pct: int32
 
     // Slider bounds shared by load/clamp + the menu's left/right step.
-    let speed_pct_min  = 10
+    let speed_pct_min  = 20
     let speed_pct_max  = 200
-    let speed_pct_step = 10
+    let speed_pct_step = 5
 
     // View-mode constants. Match the integers serialised to the
     // config file; reorder only if you bump the version.

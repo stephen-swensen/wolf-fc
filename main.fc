@@ -562,7 +562,7 @@ struct game =
     // to full black at the far end. Read every frame by the
     // raycaster + billboards via `raycaster.shadow_floor_from_depth`.
     shadow_depth: int32
-    // Movement-speed multipliers as percentages (10..200, default 100).
+    // Movement-speed multipliers as percentages (20..200, default 100).
     // bj_speed_pct scales every player speed (forward / back / strafe
     // / turn); enemy_speed_pct scales every patrol + chase speed in
     // combat.fc (and the dog lunge-range gate that uses speed × dt).
@@ -2993,8 +2993,8 @@ let main = (args: str[]) ->
                         else if (k == sdl2.key_left || k == sdl2.key_right)
                             && kind == menu.option_kind_slider then
                             // Slider rows. Shadow Depth uses ±5% in 0..100;
-                            // the BJ / Enemy Speed sliders use ±10% in
-                            // 10..200 (constants live in `config`).
+                            // the BJ / Enemy Speed sliders use ±5% in
+                            // 20..200 (constants live in `config`).
                             if g->menu_sel == 1 then
                                 let delta = if k == sdl2.key_left then -5 else 5
                                 let mut v = g->shadow_depth + delta

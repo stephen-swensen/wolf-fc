@@ -95,8 +95,8 @@ module menu =
     // bumps stay simple by keeping it at `options_len - 1`.
     //   0 No Dogs       (toggle)
     //   1 Shadow Depth  (0..100% slider, ±5%, Left/Right adjusts)
-    //   2 BJ Speed      (10..200% slider, ±10%, Left/Right adjusts)
-    //   3 Enemy Speed   (10..200% slider, ±10%, Left/Right adjusts)
+    //   2 BJ Speed      (20..200% slider, ±5%, Left/Right adjusts)
+    //   3 Enemy Speed   (20..200% slider, ±5%, Left/Right adjusts)
     //   4 Reset         (action — restores every row to its default)
     let options_len = 5
 
