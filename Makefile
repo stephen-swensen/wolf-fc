@@ -30,6 +30,23 @@ ifneq ($(IS_WINDOWS),)
     EXTRA_LIBS  = -lmingw32 -lSDL2main
 endif
 
+# Per-OS build subdirectory. Lets a single source tree shared across two
+# operating systems (e.g. WSL Linux + MSYS2 on the same Windows box,
+# accessing the WSL filesystem via //wsl.localhost/...) hold both binaries
+# without one stomping the other's mtimes — without this, `make` on the
+# second OS sees an "up-to-date" binary built for the first OS and refuses
+# to rebuild, then `./run.sh` exec's it and dies with "Exec format error".
+ifneq ($(IS_WINDOWS),)
+    BUILD_OS := windows
+else ifeq ($(UNAME_S),Darwin)
+    BUILD_OS := macos
+else ifeq ($(UNAME_S),Linux)
+    BUILD_OS := linux
+else
+    BUILD_OS := $(UNAME_S)
+endif
+BUILD_DIR := build/$(BUILD_OS)
+
 # Where `make install` puts the WL6 data files (when ./data/ is present
 # at install time). Baked into the binary at build time via $(GEN_FC) so
 # the installed `wolf-fc` knows where to look without any wrapper script.
@@ -47,9 +64,9 @@ else
     BAKED_DATA_DIR := $(INSTALL_DATA_DIR)
 endif
 
-BIN    := build/wolf-fc$(EXE)
-GEN_C  := build/wolf-fc.c
-GEN_FC := build/install_path.fc
+BIN    := $(BUILD_DIR)/wolf-fc$(EXE)
+GEN_C  := $(BUILD_DIR)/wolf-fc.c
+GEN_FC := $(BUILD_DIR)/install_path.fc
 
 # Source list. Order doesn't matter to fcc, but keep main.fc last for
 # readability — it's the entry point.
@@ -68,14 +85,20 @@ else
 endif
 SRCS_STDLIB := $(addprefix $(STDLIB_DIR)/,io.fc text.fc sys.fc math.fc random.fc)
 
-.PHONY: all dev clean install uninstall check help
+.PHONY: all dev clean install uninstall check help print-bin
 
 all: $(BIN)
+
+# Echo the binary path. run.sh and tests/run-tests.sh use this so they
+# don't have to replicate the OS-detection logic — `make print-bin`
+# returns build/<os>/wolf-fc[.exe] for whichever OS Make was invoked on.
+print-bin:
+	@echo $(BIN)
 
 $(BIN): $(GEN_C)
 	$(CC) $(CFLAGS) -o $@ $< $(LIBS)
 
-$(GEN_C): $(SRCS_FC) $(GEN_FC) | build
+$(GEN_C): $(SRCS_FC) $(GEN_FC) | $(BUILD_DIR)
 	@command -v fcc >/dev/null 2>&1 || { \
 		echo "error: 'fcc' not found on PATH." >&2; \
 		echo "Install from ../fc-lang/ with 'make && sudo make install'" >&2; \
@@ -97,12 +120,12 @@ $(GEN_C): $(SRCS_FC) $(GEN_FC) | build
 .PHONY: FORCE
 FORCE:
 
-$(GEN_FC): FORCE | build
+$(GEN_FC): FORCE | $(BUILD_DIR)
 	@printf 'module install_path =\n    let data_dir = "%s"\n' \
 		"$(BAKED_DATA_DIR)" > $@.tmp
 	@if cmp -s $@.tmp $@ 2>/dev/null; then rm $@.tmp; else mv $@.tmp $@; fi
 
-build:
+$(BUILD_DIR):
 	@mkdir -p $@
 
 # `make dev` produces a no-optimisation debug build for fast iteration and
@@ -140,10 +163,11 @@ help:
 	@echo "Targets:"
 	@echo "  all (default) - build the binary at $(BIN)"
 	@echo "  dev           - clean rebuild at -O0 with debug symbols"
-	@echo "  clean         - remove build/"
+	@echo "  clean         - remove build/ (every OS subdirectory)"
 	@echo "  install       - install binary to \$$(PREFIX)/bin and (if present) data/*.WL6 to \$$(PREFIX)/share/wolf-fc/data/"
 	@echo "  uninstall     - remove the installed binary and data tree"
 	@echo "  check         - build the binary if needed, then run tests/run-tests.sh"
+	@echo "  print-bin     - echo the per-OS binary path (used by run.sh / run-tests.sh)"
 	@echo ""
 	@echo "Variables:"
 	@echo "  PREFIX        install root (default: /usr/local)"

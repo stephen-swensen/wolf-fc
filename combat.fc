@@ -148,6 +148,18 @@ module enemies =
     let die_frame_time      = 0.18  // per frame during death animation
     private let sight_range         = 16.0  // tiles — max LOS distance for sight check
 
+    // Enemy Speed slider as a unit-free multiplier. Scales every
+    // patrol + chase speed (in advance_move + the dog lunge gate)
+    // AND every facet of firing: the per-frame shoot-decision chance,
+    // and the shoot-anim frame duration (so each shot's wind-up plays
+    // faster). Reaction time / sight delay / walk anim cadence stay
+    // unscaled. Empirically the combined movement + firing scaling
+    // gives roughly linear damage-vs-speed (averaging ~2.5× at 200%
+    // across active scenarios) — the closest the slider gets to a
+    // pure difficulty knob without an AI rework.
+    private let enemy_speed_factor = (g: game*) ->
+        (float64) g->enemy_speed_pct / 100.0
+
     // Per-kind sprite-page offsets relative to VSWAP sprite_start. Derived
     // from the original's sprite enum (wl_def.h): SPR_GRD_S_1..
     // SPR_GRD_SHOOT3 block at 50, DOG block at 99 (no stand), SS at 138,
@@ -718,7 +730,7 @@ module enemies =
             // Enemy Speed slider — scales every patrol + chase speed.
             // Applied here (the single chokepoint for all enemy
             // movement) so callers stay unaware. 100 = OG-faithful.
-            let mut step = speed * dt * (float64) g->enemy_speed_pct / 100.0
+            let mut step = speed * dt * enemy_speed_factor(g)
             loop
                 if step <= 1e-6 then break
                 let e = &lv->enemies[self_idx]
@@ -1165,13 +1177,13 @@ module enemies =
                     // would compute, so the Enemy Speed slider scales the
                     // lunge range too — otherwise a sped-up dog would walk
                     // further per tick than its lunge gate believes.
-                    let step = dog_chase_speed * dt * (float64) g->enemy_speed_pct / 100.0
+                    let step = dog_chase_speed * dt * enemy_speed_factor(g)
                     let adx = math.abs(g->pos_x - e->x)
                     let ady = math.abs(g->pos_y - e->y)
                     if adx <= 1.0 + step && ady <= 1.0 + step && check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then
                         e->state = enemy_state.shoot
                         e->anim_frame = 0
-                        e->anim_timer = shoot_frame_time
+                        e->anim_timer = shoot_frame_time / enemy_speed_factor(g)
                         e->shoot_fired = false
                     else
                         advance_move(lv, g, ac, self_idx, dog_chase_speed, dt, true)
@@ -1203,7 +1215,9 @@ module enemies =
                     // Shoot roll: the original uses (tics<<4)/dist against
                     // a 256-range rnd. We approximate with a dt-scaled
                     // chance so 35Hz and 70Hz tick rates behave
-                    // equivalently. chance ≈ dt*40 / max(dist, 1).
+                    // equivalently. chance ≈ dt*40 / max(dist, 1). The
+                    // Enemy Speed slider scales this rate proportionally
+                    // so faster enemies actually fire faster.
                     if check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then
                         let dxi = (int32) g->pos_x - e->tile_x
                         let dyi = (int32) g->pos_y - e->tile_y
@@ -1211,11 +1225,11 @@ module enemies =
                         let ady = if dyi < 0 then -dyi else dyi
                         let dist_tiles = if adx > ady then adx else ady
                         let d = if dist_tiles < 1 then 1 else dist_tiles
-                        let chance = (int32) (dt * 1400.0) / d   // ~40/tile/sec at 35Hz
+                        let chance = (int32) (dt * 1400.0 * enemy_speed_factor(g)) / d
                         if rnd_byte(g) < chance then
                             e->state = enemy_state.shoot
                             e->anim_frame = 0
-                            e->anim_timer = shoot_frame_time
+                            e->anim_timer = shoot_frame_time / enemy_speed_factor(g)
                             e->shoot_fired = false
                             return
                     advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e->kind), dt, true)
@@ -1243,7 +1257,7 @@ module enemies =
                         e->anim_timer = walk_frame_time
                         e->dir = dir.nodir
                         return
-                    e->anim_timer = shoot_frame_time
+                    e->anim_timer = shoot_frame_time / enemy_speed_factor(g)
                 // Fire on entering each fire-frame in the per-kind
                 // mask. shoot_fired is a per-frame latch so mutants
                 // (mask = bits 0 and 2) fire twice.

@@ -17,12 +17,12 @@ Wolf-FC is a Wolfenstein 3D clone written in FC, intended as a demo of the FC la
 
 ## Build & Run
 
-- **`make`** — Compile FC → C → binary at `./build/wolf-fc`. Incremental: edits to `.fc` files trigger one fcc + cc cycle, no edits → no-op. Requires `fcc` on `PATH` (install from `../fc-lang/` with `make && sudo make install`) and `libsdl2-dev`.
+- **`make`** — Compile FC → C → binary at `./build/<os>/wolf-fc[.exe]` (where `<os>` is `linux` / `windows` / `macos`, so a shared source tree across e.g. WSL + MSYS2 doesn't cross-exec the wrong binary). Incremental: edits to `.fc` files trigger one fcc + cc cycle, no edits → no-op. Requires `fcc` on `PATH` (install from `../fc-lang/` with `make && sudo make install`) and `libsdl2-dev`.
 - **`make check`** — Build the binary if needed, then run the full regression suite (`tests/run-tests.sh`). The dep on the binary in the Make graph means `make check` always runs against an up-to-date build with no manual cache-busting.
 - **`make dev`** — Clean rebuild at `-O0` with debug symbols. Useful for `gdb` / clearer stack traces.
 - **`make install`** / **`make uninstall`** — Install / remove `wolf-fc` binary at `$(PREFIX)/bin` and (if present at install time) `data/*.WL6` at `$(PREFIX)/share/wolf-fc/data/`. Standard `PREFIX` / `DESTDIR` overrides.
 - **`./run.sh`** — Thin wrapper: runs `make -s` then exec's `./build/wolf-fc "$@"`. Same UX as before for `./run.sh --level=8` etc.
-- **`./build/wolf-fc --test <cmd> ...`** — Headless scripted-play mode (see below). No SDL window, no audio device. Use this for automated verification.
+- **`./build/<os>/wolf-fc --test <cmd> ...`** — Headless scripted-play mode (see below). No SDL window, no audio device. Use this for automated verification. (`./run.sh --test ...` works too and is what the regression suite uses.)
 - Press **`s`** in interactive mode to take a screenshot to `~/.wolf-fc/screenshots/ss_NNN.png`. See README.md.
 - Data files (`data/*.WL6`, not committed — users supply from a legitimate Wolf3D copy) are searched in this order: `$WOLF_FC_DATA_DIR` env override, then `./data/` relative to cwd, then the compile-time install location (`$(PREFIX)/share/wolf-fc/data` baked in via `build/install_path.fc`). The startup banner prints `Data dir: <path>`.
 

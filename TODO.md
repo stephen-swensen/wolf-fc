@@ -227,7 +227,9 @@ aspect (same vertical FOV, more peripheral world); UI elements stay in a
   `--no-dogs` CLI), SHADOW DEPTH slider (0=off, 1..5 cosmetic depth
   bands for distance shading; 0 is OG-faithful, ≥1 is an opt-in
   improvement), BJ SPEED + ENEMY SPEED sliders (20..200% in ±5%
-  steps, scaling player and enemy movement respectively; 100% =
+  steps; BJ SPEED scales player movement only, ENEMY SPEED scales
+  every enemy's patrol/chase speed *and* their firing rate — so
+  the slider is a single linear-ish difficulty knob; 100% =
   OG-faithful), and a RESET row that restores all six toggles
   (No Dogs, Shadow Depth, BJ Speed, Enemy Speed — plus the SOUND
   submenu's Music + SFX) and the Change View selection to defaults.

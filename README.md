@@ -74,14 +74,14 @@ See [`fc-lang/README.md`](https://github.com/stephen-swensen/fc-lang) (or `make 
 The project uses a GNU Makefile (the same convention as `fc-lang`):
 
 ```bash
-make                    # build the binary at ./build/wolf-fc
-./build/wolf-fc         # run the game
+make                    # build the binary at ./build/<os>/wolf-fc
+./run.sh                # build (if needed) and run
 make check              # build (if needed) and run the regression suite
 make dev                # clean rebuild at -O0 with debug symbols
 make help               # list every target and variable
 ```
 
-`./run.sh` is a thin convenience wrapper that runs `make -s` and then execs the binary, so `./run.sh --level=8` still works exactly as before.
+Build artifacts land in `./build/<os>/` (e.g. `build/linux/`, `build/windows/`) so a single source tree shared across two OSes — for example WSL Linux and MSYS2 on the same Windows box accessing the WSL filesystem via `\\wsl.localhost\...` — can hold both binaries without one stomping the other. `./run.sh` and `make check` use `make print-bin` to find the right binary for whichever OS they're running on.
 
 ### Installing system-wide
 

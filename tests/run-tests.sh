@@ -39,9 +39,11 @@ done
 # Always run `make -s` so the test binary is up-to-date with the current
 # source tree. Make's dep graph means this is a no-op when nothing has
 # changed, so there's no separate cache to bust on stale-binary scenarios.
+# `make print-bin` returns the per-OS binary path (build/linux/, build/
+# windows/, ...) so a shared source tree can hold both.
 WOLF_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$WOLF_DIR/build/wolf-fc"
 (cd "$WOLF_DIR" && make -s) || { echo "build failed" >&2; exit 2; }
+BIN="$WOLF_DIR/$(cd "$WOLF_DIR" && make -s print-bin)"
 
 # Isolate the test's save / screenshot directory so the suite can't stomp on
 # the real user's saves. The binary honours WOLF_FC_HOME as an override for

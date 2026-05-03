@@ -562,12 +562,18 @@ struct game =
     // to full black at the far end. Read every frame by the
     // raycaster + billboards via `raycaster.shadow_floor_from_depth`.
     shadow_depth: int32
-    // Movement-speed multipliers as percentages (20..200, default 100).
-    // bj_speed_pct scales every player speed (forward / back / strafe
-    // / turn); enemy_speed_pct scales every patrol + chase speed in
-    // combat.fc (and the dog lunge-range gate that uses speed × dt).
-    // Default 100 keeps OG-faithful behaviour. Persisted in
-    // ~/.wolf-fc/config alongside shadow_depth / view_mode.
+    // Speed multipliers as percentages (20..200, default 100).
+    // bj_speed_pct scales every player movement: forward / back /
+    // strafe / turn. enemy_speed_pct scales every patrol + chase
+    // speed (and the dog lunge-range gate) AND every facet of enemy
+    // firing — attack-decision chance + shoot-anim wind-up — so the
+    // slider behaves as a single difficulty knob with roughly linear
+    // damage-vs-speed (~2.5× at 200% across measured scenarios; AI
+    // geometry quirks make exact linearity scenario-dependent).
+    // Player firing rate is not scaled by bj_speed_pct — that would
+    // feel like a weapon-handling tweak rather than a movement
+    // preference. Default 100 keeps OG-faithful behaviour. Persisted
+    // in ~/.wolf-fc/config alongside shadow_depth / view_mode.
     bj_speed_pct: int32
     enemy_speed_pct: int32
     // --test CLI flag: suppresses UX-only flourishes that would otherwise
