@@ -224,9 +224,13 @@ module menu =
     // at (112, 184) on every menu screen — a small graphic showing
     // the mouse / keyboard hint banner. We re-anchor with ui_offset_x
     // so it stays centred over the 320-wide UI grid in widescreen.
+    // The pic ships with 8 rows of BORDCOLOR padding above its frame;
+    // we skip the top 3 so it stops overwriting the menu window's
+    // bottom bevel (the visible glyphs stay at the same screen y).
     private let draw_help_pic = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                  pal: const uint32[]) ->
-        pics.draw(rc, vg, pal, pics.id.c_mouselback, rc->ui_offset_x + 112, 184)
+        pics.draw_clipped_top(rc, vg, pal, pics.id.c_mouselback,
+            rc->ui_offset_x + 112, 187, 3)
 
     // Pick a row's text colour given selected / locked flags. Mirrors
     // the OG's `color_norml` / `color_hlite` arrays.

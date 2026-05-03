@@ -224,6 +224,15 @@ module pics =
     // rc->pic_cache; subsequent calls are a plain ARGB memcpy.
     let draw = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                 chunk: int32, dst_x: int32, dst_y: int32) ->
+        draw_clipped_top(rc, vg, pal, chunk, dst_x, dst_y, 0)
+
+    // Same as draw, but skips the first `src_top_skip` rows of the source
+    // pic. Used by the bottom-of-menu hint art whose top rows are pure
+    // BORDCOLOR padding that would otherwise overwrite the menu window's
+    // bottom bevel.
+    let draw_clipped_top = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                            pal: const uint32[], chunk: int32,
+                            dst_x: int32, dst_y: int32, src_top_skip: int32) ->
         if chunk < 0 || chunk >= (int32) rc->pic_cache.len then return
         if rc->pic_cache[chunk].len == 0 then
             let pic = vgagraph.load_pic(vg, chunk)
@@ -239,8 +248,9 @@ module pics =
         let buf = rc->pic_cache[chunk]
         let w = vgagraph.pic_width(vg, chunk)
         let h = vgagraph.pic_height(vg, chunk)
-        for y in 0..h
-            let dy = dst_y + y
+        let y0 = if src_top_skip < 0 then 0 else src_top_skip
+        for y in y0..h
+            let dy = dst_y + y - y0
             if dy < 0 || dy >= game_h then continue
             for x in 0..w
                 let dx = dst_x + x
