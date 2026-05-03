@@ -559,10 +559,10 @@ assert_contains "deathcam:auto-advances-to-episode-end" \
     "phase=episode_end"
 # The death scream fires a second time when the replay animation starts
 # (matches the original: re-entering the die-cascade hits A_DeathScream
-# again). At wait:320 we're just past the pre_replay beat so Schabbs's
+# again). At wait:330 we're just past the pre_replay beat so Schabbs's
 # death cry should be audible — sound 24 is MEINGOTTSND ("Mein Gott!").
 assert_contains "deathcam:death-scream-replays-on-replay-anim" \
-    "setlevel:18 killenemy:0 wait:320 digi_slots" \
+    "setlevel:18 killenemy:0 wait:330 digi_slots" \
     "sound=24"
 # The `advance` test command dismisses the death-cam early, same way a
 # space press would end the taunt card and (after the rest of the

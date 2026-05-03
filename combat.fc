@@ -145,7 +145,7 @@ module enemies =
     let walk_frame_time     = 0.12  // seconds per W1/W2/W3/W4 cycle frame
     private let shoot_frame_time    = 0.20  // humanoid shoot-windup frame duration
     private let pain_time           = 0.143 // pain flinch duration (10 tics @ 70Hz)
-    let die_frame_time      = 0.18  // per frame during death animation
+    let die_frame_time      = 15.0 / 70.0  // 15 tics per frame during death animation
     private let sight_range         = 16.0  // tiles — max LOS distance for sight check
 
     // Enemy Speed slider as a unit-free multiplier. Scales every
@@ -278,23 +278,24 @@ module enemies =
         | _ -> true
 
     // Bitmask: bit N set = fire (or bite) on entering shoot-frame N.
-    // Mutants use a double-shot pattern (T_Shoot on s_mutshoot1 and
-    // s_mutshoot3 in the original); most other hitscan enemies fire
-    // once at frame 2 of their 3-frame shoot cycle. Projectile bosses
-    // have shorter or longer shoot-frame tables and are mapped to
-    // match the original's states.cpp entries: Schabbs / Giftmacher
-    // throw once on their 2nd frame (bit 1), Fat throws on frame 2
-    // (bit 1) with the rest of his frames left idle, and fake Hitler
-    // launches a flame on every frame of his 2-frame approximation of
-    // the original's 8-frame salvo.
+    // The original's T_Shoot callback runs on entry to the muzzle-flash
+    // pose (SHOOT2 in a SHOOT1/SHOOT2/SHOOT3 cycle) — frame index 1 in
+    // our zero-indexed table. Mutants use a double-shot pattern
+    // (T_Shoot on s_mutshoot1 and s_mutshoot3); their first fire is on
+    // SHOOT1 (frame 0), the windup-less variant. Bosses with longer
+    // shoot tables (SS, Hans, Gretel, Mecha, real Hitler, Fat, fake
+    // Hitler) fire multiple times in the original; most are compressed
+    // here into a 3-frame table and only some of those fires are
+    // preserved — see TODO for the proper transcription.
     private let shoot_fire_mask_for_kind = (k: enemy_kind) ->
         match k with
-        | mutant -> 5    // 0b0101 — frames 0 and 2
-        | hans | gretel -> 5    // bosses fire on both shoot frames (chain gun)
-        | schabbs | giftmacher | fat -> 2  // 0b0010 — frame 1
-        | hitler_fake -> 3   // 0b0011 — both frames (flame salvo)
-        | mecha_hitler -> 7  // 0b0111 — 3 bullet bursts per shoot cycle
-        | _         -> 4    // 0b0100 — frame 2
+        | mutant -> 5    // 0b0101 — frames 0 and 2 (mutant has no windup; SHOOT1 fires)
+        | hans | gretel -> 6    // 0b0110 — frames 1 and 2 (chain gun, compressed from 6 fires)
+        | schabbs | giftmacher | fat -> 2  // 0b0010 — frame 1 (rocket/needle on the muzzle frame)
+        | hitler_fake -> 3   // 0b0011 — both frames (flame salvo, compressed from 8)
+        | mecha_hitler -> 6  // 0b0110 — frames 1 and 2 (no fire on windup)
+        | hitler -> 6        // 0b0110 — same shape as mecha; OG fires 5× across SHOOT2/SHOOT3
+        | _         -> 2    // 0b0010 — frame 1 (the muzzle-flash pose)
 
     // Pickup item to drop on death (pickups.item_kind.decoration =
     // nothing). SS drop a machine gun; guards, officers, and mutants
