@@ -3368,13 +3368,15 @@ let main = (args: str[]) ->
         // Generate and queue audio: music -> AdLib SFX -> digi SFX -> SDL.
         // Buffer is 1024 STEREO frames (2048 int16 values = 4096 bytes);
         // drivers write L/R interleaved additively. Back-pressure threshold
-        // is also in bytes.
-        // Keep ~90 ms of queued stereo audio. Bigger than strictly needed
-        // but cheap insurance against single-frame render hitches: if the
-        // queue empties between fills, PulseAudio/PipeWire backends can
-        // disconnect the SDL_QueueAudio stream entirely (silent music + SFX
-        // until restart), which is exactly the failure mode we kept hitting.
-        let queue_hi_water = 16384u32   // bytes; ~92ms of stereo audio
+        // is also in bytes. Peak queue depth is roughly hi_water + 4096
+        // (one full fill above the skip threshold), so this caps SFX
+        // latency at ~70ms — close enough to the OG's ~23ms callback
+        // latency to feel snappy, with enough cushion that a single-frame
+        // render hitch doesn't underrun. Underruns on WASAPI/DirectSound
+        // are a momentary stutter; on PulseAudio/PipeWire they can
+        // disconnect the SDL_QueueAudio stream entirely, so if you tune
+        // this lower, test on Linux too.
+        let queue_hi_water = 8192u32   // bytes; ~46ms of stereo audio
         let skip_audio = audio_dev == 0u32 ||
             sdl2.queued_audio_size(audio_dev) >= queue_hi_water
         if !skip_audio then
