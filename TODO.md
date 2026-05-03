@@ -603,7 +603,7 @@ Working:
   - Enemy-fire distance-based hit chance / damage roll (SS are more accurate); dogs melee bite
   - Drops pickup on kill (guard/officer → clip, SS → machine gun, dog/mutant → nothing)
   - Live enemies block player movement with a "can always move away" exception (no mutual-deadlock when an enemy walks onto the player); corpses don't block
-  - Mutants double-shot per shoot cycle (T_Shoot fires on frames 0 and 2); other enemies fire once mid-windup
+  - Per-kind shoot cycle transcribed from the original's state tables (s_*shoot1..N): mutants fire 2× (no windup), guards/officers/Schabbs/Giftmacher fire 1× after 30/6/30/30-tic windup, SS fires 4× across SHOOT2/SHOOT3 swing, Hans/Gretel chain-gun fires 6× per cycle, Mecha/real-Hitler fire 5×, fake-Hitler launches 8 flames, Fat opens with a rocket then 4 chain-gun bullets. Both `shoot_frames[9]` and per-frame `shoot_times[9]` come from the OG state durations.
   - Enemies open closed doors during chase/patrol — pause at the door tile, kick it open, then walk through (wolf4sdl T_Chase OpenDoor)
 - Player firearm hits trigger HITENEMYSND on impact
 - Static decorations block player and enemy movement per wolf4sdl `statinfo[].block` (barrels, tables, wells, lamps, columns, etc.); pickups, lights, gibs, and skeletons stay walk-through
@@ -630,7 +630,7 @@ Working:
 - [x] Pacman ghosts: Blinky/Pinky/Clyde/Inky spawn from plane-1 tiles 224..227 (found on E3M10 = level 29), chase player, touch damage. Sprite indices 288..295 verified visually.
 - [x] Mutant-specific double-shot pattern (they fire twice per shoot cycle in wolf4sdl).
 - [x] Enemy projectile attacks: Schabbs syringe (`pk_needle`), Giftmacher / Fat rocket (`pk_rocket`, with boom on wall hit), fake Hitler flame (`pk_fire`). Ported from wolf4sdl's T_SchabbThrow / T_GiftThrow / T_Launch / T_FakeFire + T_Projectile. Damage rolls match the original (20-51 / 30-61 / 0-31). Rockets fire MISSILEHITSND on wall impact; flames dissipate silently.
-- [x] Mecha Hitler: the armored mech-suit stage of the E3M9 boss. Spawns from plane-1 tile 178 with 800-1200 HP, 3-bullet BOSSFIRESND bursts, MECHSTEPSND on walk frames 0 / 2. When his HP hits zero he plays a 3-frame die-anim (SCHEISTSND) and morphs the actor slot in place into `hitler` (sprite base 345) with the 500-900 HP tier from A_HitlerMorph; real Hitler's kill then routes through the regular death-cam cutscene. `--near-boss` excludes hitler_fake decoys so the teleport lands at the mech.
+- [x] Mecha Hitler: the armored mech-suit stage of the E3M9 boss. Spawns from plane-1 tile 178 with 800-1200 HP, 5-bullet BOSSFIRESND bursts (s_mechashoot1..6 transcribed), MECHSTEPSND on walk frames 0 / 2. When his HP hits zero he plays a 3-frame die-anim (SCHEISTSND) and morphs the actor slot in place into `hitler` (sprite base 345) with the 500-900 HP tier from A_HitlerMorph; real Hitler's kill then routes through the regular death-cam cutscene. `--near-boss` excludes hitler_fake decoys so the teleport lands at the mech.
 
 ### Weapons and combat
 - [x] Weapon-specific hit sounds (HITENEMYSND when a shot connects).

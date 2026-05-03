@@ -585,14 +585,15 @@ assert_regex "proj:fake-hitler-flame-in-flight" \
     "setlevel:28 goto:25,57 wait:20 projectiles" \
     "proj\[[0-9]+\] fire"
 # Standing one tile north of Schabbs gives a clean LOS with no flanking
-# mutants in fire range. At wait:18 the needle is mid-flight; by wait:20
-# it has connected and health has dropped by at least 20 (needle rolls
-# 20-51 per hit in the original).
+# mutants in fire range. The original's s_schabbshoot1 holds for 30
+# tics (windup) before T_SchabbThrow fires on s_schabbshoot2; at
+# wait:25 the needle is mid-flight, by wait:27 it has connected and
+# health has dropped by at least 20 (needle rolls 20-51 per hit).
 assert_contains "proj:schabbs-needle-in-flight" \
-    "setlevel:18 goto:31,17 wait:18 projectiles" \
+    "setlevel:18 goto:31,17 wait:25 projectiles" \
     "needle"
 assert_regex "proj:schabbs-needle-damages-player" \
-    "setlevel:18 goto:31,17 wait:20 state" \
+    "setlevel:18 goto:31,17 wait:27 state" \
     "health=([0-7][0-9]|80)"
 # Giftmacher on E4M9 at (27,18) fires rockets at the player one tile south;
 # one rocket hit alone drops the player by 30-61 HP. Rocket damage is

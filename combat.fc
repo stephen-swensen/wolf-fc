@@ -143,7 +143,6 @@ module enemies =
     private let dog_chase_speed      = 3.2043
     private let ghost_chase_speed    = 1.0938
     let walk_frame_time     = 0.12  // seconds per W1/W2/W3/W4 cycle frame
-    private let shoot_frame_time    = 0.20  // humanoid shoot-windup frame duration
     private let pain_time           = 0.143 // pain flinch duration (10 tics @ 70Hz)
     let die_frame_time      = 15.0 / 70.0  // 15 tics per frame during death animation
     private let sight_range         = 16.0  // tiles — max LOS distance for sight check
@@ -175,7 +174,17 @@ module enemies =
         die_frames: int32[4]
         num_die_frames: int32
         dead_frame: int32
-        shoot_frames: int32[4]
+        // 9 slots: SS and Fake Hitler have 9-frame shoot cycles in the
+        // original (s_ssshoot1..9, s_fakeshoot1..9). Shorter cycles
+        // leave the trailing entries unused — `num_shoot_frames` bounds
+        // the iteration.
+        shoot_frames: int32[9]
+        // Per-frame hold time in seconds. Mirrors the original's state
+        // tables, where each frame's `tictime` varies (typically 6, 8,
+        // 10, 20, or 30 tics @ 70Hz). Variable timings preserve the
+        // long pre-fire windup before bursts and the short bursts
+        // themselves; uniform timings would smear both.
+        shoot_times:  float64[9]
         num_shoot_frames: int32
 
     // True iff this kind uses the 8-angle rotating walk-sprite table
@@ -278,24 +287,26 @@ module enemies =
         | _ -> true
 
     // Bitmask: bit N set = fire (or bite) on entering shoot-frame N.
-    // The original's T_Shoot callback runs on entry to the muzzle-flash
-    // pose (SHOOT2 in a SHOOT1/SHOOT2/SHOOT3 cycle) — frame index 1 in
-    // our zero-indexed table. Mutants use a double-shot pattern
-    // (T_Shoot on s_mutshoot1 and s_mutshoot3); their first fire is on
-    // SHOOT1 (frame 0), the windup-less variant. Bosses with longer
-    // shoot tables (SS, Hans, Gretel, Mecha, real Hitler, Fat, fake
-    // Hitler) fire multiple times in the original; most are compressed
-    // here into a 3-frame table and only some of those fires are
-    // preserved — see TODO for the proper transcription.
+    // Each kind's frame table now matches the original's full state
+    // sequence (s_*shoot1..N), so masks line up bit-for-bit with which
+    // frames carry T_Shoot / T_Bite / T_GiftThrow / T_FakeFire / etc.
+    // in wl_act2.cpp. Defaults are explicit per kind — no fallthrough,
+    // since the right value is wholly a function of the OG state table.
     private let shoot_fire_mask_for_kind = (k: enemy_kind) ->
         match k with
-        | mutant -> 5    // 0b0101 — frames 0 and 2 (mutant has no windup; SHOOT1 fires)
-        | hans | gretel -> 6    // 0b0110 — frames 1 and 2 (chain gun, compressed from 6 fires)
-        | schabbs | giftmacher | fat -> 2  // 0b0010 — frame 1 (rocket/needle on the muzzle frame)
-        | hitler_fake -> 3   // 0b0011 — both frames (flame salvo, compressed from 8)
-        | mecha_hitler -> 6  // 0b0110 — frames 1 and 2 (no fire on windup)
-        | hitler -> 6        // 0b0110 — same shape as mecha; OG fires 5× across SHOOT2/SHOOT3
-        | _         -> 2    // 0b0010 — frame 1 (the muzzle-flash pose)
+        | guard         -> 2     // 0b0000_0010 — fire on s_grdshoot2 (frame 1)
+        | officer       -> 2     // 0b0000_0010 — fire on s_ofcshoot2
+        | dog           -> 2     // 0b0000_0010 — bite on s_dogjump2
+        | mutant        -> 5     // 0b0000_0101 — fire on s_mutshoot1 + s_mutshoot3 (no windup)
+        | ss            -> 170   // 0b1010_1010 — fire on s_ssshoot2/4/6/8 (frames 1/3/5/7)
+        | hans | gretel -> 126   // 0b0111_1110 — chain-gun: fire on frames 1..6 (s_*shoot2..7)
+        | schabbs       -> 2     // 0b0000_0010 — single needle on s_schabbshoot2
+        | giftmacher    -> 2     // 0b0000_0010 — single rocket on s_giftshoot2
+        | fat           -> 62    // 0b0011_1110 — frame 1 (rocket) + frames 2..5 (bullets)
+        | hitler_fake   -> 255   // 0b1111_1111 — flame on every s_fakeshoot1..8 (frame 8 idle)
+        | mecha_hitler  -> 62    // 0b0011_1110 — fire on frames 1..5 (s_mechashoot2..6)
+        | hitler        -> 62    // 0b0011_1110 — same as mecha (s_hitlershoot2..6)
+        | blinky | pinky | clyde | inky -> 0  // ghosts never enter shoot state
 
     // Pickup item to drop on death (pickups.item_kind.decoration =
     // nothing). SS drop a machine gun; guards, officers, and mutants
@@ -333,136 +344,195 @@ module enemies =
 
     // Per-kind sprite tables — one per enemy_kind variant, keyed by
     // the kind → table lookup in `sprites_for_kind` below.
+    // SHOOT1 windup → SHOOT2 muzzle flash → SHOOT3 recoil. Frame
+    // durations 20/20/20 tics from s_grdshoot1..3 in the original.
     private let sprites_guard = sprite_table {
         stand_base = 50, walk_base = 58,
         pain1 = 90, pain2 = 94,
         die_frames = int32[4] { 91, 92, 93, 0 }, num_die_frames = 3,
         dead_frame = 95,
-        shoot_frames = int32[4] { 96, 97, 98, 0 }, num_shoot_frames = 3
+        shoot_frames = int32[9] { 96, 97, 98, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = float64[9] { 20.0/70.0, 20.0/70.0, 20.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        num_shoot_frames = 3
     }
+    // Dog jump-bite: JUMP1 → JUMP2 (T_Bite) → JUMP3 → JUMP1 → W1_1.
+    // 5 frames at 10 tics each, mirroring s_dogjump1..5.
     private let sprites_dog = sprite_table {
         stand_base = 99, walk_base = 99,
         pain1 = 99, pain2 = 99,  // dogs don't show pain
         die_frames = int32[4] { 131, 132, 133, 0 }, num_die_frames = 3,
         dead_frame = 134,
-        shoot_frames = int32[4] { 135, 136, 137, 0 }, num_shoot_frames = 3  // jump-bite frames
+        shoot_frames = int32[9] { 135, 136, 137, 135, 99, 0, 0, 0, 0 },
+        shoot_times  = float64[9] { 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0 },
+        num_shoot_frames = 5
     }
+    // SS bounces between SHOOT2/SHOOT3 four times after the initial
+    // SHOOT1 windup; mirrors s_ssshoot1..9 (20/20/10×7 tics, fires on
+    // s_ssshoot2/4/6/8 = frames 1/3/5/7).
     private let sprites_ss = sprite_table {
         stand_base = 138, walk_base = 146,
         pain1 = 178, pain2 = 182,
         die_frames = int32[4] { 179, 180, 181, 0 }, num_die_frames = 3,
         dead_frame = 183,
-        shoot_frames = int32[4] { 184, 185, 186, 0 }, num_shoot_frames = 3
+        shoot_frames = int32[9] { 184, 185, 186, 185, 186, 185, 186, 185, 186 },
+        shoot_times  = float64[9] { 20.0/70.0, 20.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0 },
+        num_shoot_frames = 9
     }
+    // Mutant fires twice per cycle with no real windup — SHOOT1 (6t)
+    // already carries T_Shoot, then SHOOT2 (20t) settles, SHOOT3 (10t)
+    // fires the second round, SHOOT4 (20t) recovers.
     private let sprites_mut = sprite_table {
         stand_base = 187, walk_base = 195,
         pain1 = 227, pain2 = 231,
         die_frames = int32[4] { 228, 229, 230, 232 }, num_die_frames = 4,
         dead_frame = 233,
-        shoot_frames = int32[4] { 234, 235, 236, 237 }, num_shoot_frames = 4
+        shoot_frames = int32[9] { 234, 235, 236, 237, 0, 0, 0, 0, 0 },
+        shoot_times  = float64[9] { 6.0/70.0, 20.0/70.0, 10.0/70.0, 20.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        num_shoot_frames = 4
     }
+    // Officer: short SHOOT1 (6t) windup, long SHOOT2 (20t) fire frame,
+    // SHOOT3 (10t) recovery — s_ofcshoot1..3.
     private let sprites_ofc = sprite_table {
         stand_base = 238, walk_base = 246,
         pain1 = 278, pain2 = 282,
         die_frames = int32[4] { 279, 280, 281, 283 }, num_die_frames = 4,
         dead_frame = 284,
-        shoot_frames = int32[4] { 285, 286, 287, 0 }, num_shoot_frames = 3
+        shoot_frames = int32[9] { 285, 286, 287, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = float64[9] { 6.0/70.0, 20.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        num_shoot_frames = 3
     }
+    // Hans Grosse — chain-gun boss. SHOOT1 windup (30t) then six
+    // alternating SHOOT2/SHOOT3 fires (10t each) then SHOOT1 recovery,
+    // matching s_bossshoot1..8.
     private let sprites_hans = sprite_table {
         stand_base = 296, walk_base = 296,
         pain1 = 300, pain2 = 300,
         die_frames = int32[4] { 304, 305, 306, 0 }, num_die_frames = 3,
         dead_frame = 303,
-        shoot_frames = int32[4] { 300, 301, 302, 0 }, num_shoot_frames = 3
+        shoot_frames = int32[9] { 300, 301, 302, 301, 302, 301, 302, 300, 0 },
+        shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0 },
+        num_shoot_frames = 8
     }
+    // Schabbs: 30t windup, 10t throw — single needle per cycle.
     private let sprites_schabbs = sprite_table {
         stand_base = 307, walk_base = 307,
         pain1 = 311, pain2 = 311,
         die_frames = int32[4] { 313, 314, 315, 0 }, num_die_frames = 3,
         dead_frame = 316,
-        shoot_frames = int32[4] { 311, 312, 0, 0 }, num_shoot_frames = 2
+        shoot_frames = int32[9] { 311, 312, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        num_shoot_frames = 2
     }
     // Fake Hitler: only one SHOOT pose (325); FIRE1/FIRE2 are projectile
-    // sprites, not character animation frames.
+    // sprites, not character animation frames. Eight flame projectiles
+    // each at 8 tics, then one trailing 8t hold (s_fakeshoot1..9).
     private let sprites_hitler_fake = sprite_table {
         stand_base = 321, walk_base = 321,
         pain1 = 325, pain2 = 325,
         die_frames = int32[4] { 328, 329, 330, 331 }, num_die_frames = 4,
         dead_frame = 333,
-        shoot_frames = int32[4] { 325, 325, 0, 0 }, num_shoot_frames = 2
+        shoot_frames = int32[9] { 325, 325, 325, 325, 325, 325, 325, 325, 325 },
+        shoot_times  = float64[9] { 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0 },
+        num_shoot_frames = 9
     }
-    // Mecha Hitler — the armored mech suit. No dedicated pain pose in
-    // the original, so pain reuses SHOOT1 (the neutral "arms forward"
-    // stance). The original fires 5 shots per burst by alternating
-    // SHOOT2/SHOOT3; we compress to 3 (shoot_fire_mask = 0b0111) to
-    // stay within the 4-slot sprite_table.shoot_frames.
+    // Mecha Hitler — the armored mech suit. SHOOT1 (30t windup) then
+    // five alternating SHOOT2/SHOOT3 fires at 10t each, mirroring
+    // s_mechashoot1..6. No dedicated pain pose so pain reuses SHOOT1.
     private let sprites_mecha_hitler = sprite_table {
         stand_base = 334, walk_base = 334,
         pain1 = 338, pain2 = 338,
         die_frames = int32[4] { 342, 343, 344, 0 }, num_die_frames = 3,
         dead_frame = 341,
-        shoot_frames = int32[4] { 338, 339, 340, 0 }, num_shoot_frames = 3
+        shoot_frames = int32[9] { 338, 339, 340, 339, 340, 339, 0, 0, 0 },
+        shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
+        num_shoot_frames = 6
     }
-    // Real Hitler has 7 die frames — we truncate to the 4 the struct holds.
+    // Real Hitler — same shoot cadence as Mecha (30/10×5). Has 7 die
+    // frames in the original; we truncate to the 4 the struct holds.
     private let sprites_hitler = sprite_table {
         stand_base = 345, walk_base = 345,
         pain1 = 349, pain2 = 349,
         die_frames = int32[4] { 353, 354, 355, 356 }, num_die_frames = 4,
         dead_frame = 352,
-        shoot_frames = int32[4] { 349, 350, 351, 0 }, num_shoot_frames = 3
+        shoot_frames = int32[9] { 349, 350, 351, 350, 351, 350, 0, 0, 0 },
+        shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
+        num_shoot_frames = 6
     }
+    // Giftmacher: 30t windup, 10t rocket throw — single rocket per cycle.
     private let sprites_giftmacher = sprite_table {
         stand_base = 360, walk_base = 360,
         pain1 = 364, pain2 = 364,
         die_frames = int32[4] { 366, 367, 368, 0 }, num_die_frames = 3,
         dead_frame = 369,
-        shoot_frames = int32[4] { 364, 365, 0, 0 }, num_shoot_frames = 2
+        shoot_frames = int32[9] { 364, 365, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        num_shoot_frames = 2
     }
-    // Gretel: placed after the rocket/smoke/boom block (370..384) in
+    // Gretel: same chain-gun cadence as Hans (s_gretelshoot1..8). Sprite
+    // block is placed after the rocket/smoke/boom region (370..384) in
     // the non-SPEAR build.
     private let sprites_gretel = sprite_table {
         stand_base = 385, walk_base = 385,
         pain1 = 389, pain2 = 389,
         die_frames = int32[4] { 393, 394, 395, 0 }, num_die_frames = 3,
         dead_frame = 392,
-        shoot_frames = int32[4] { 389, 390, 391, 0 }, num_shoot_frames = 3
+        shoot_frames = int32[9] { 389, 390, 391, 390, 391, 390, 391, 389, 0 },
+        shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0 },
+        num_shoot_frames = 8
     }
     // Fat Face (E6 boss): 4 walk, 4 shoot, 3 die, 1 dead at 396..407.
+    // Mixed attack: SHOOT1 (30t windup) → SHOOT2 (10t T_GiftThrow =
+    // rocket) → SHOOT3 (10t T_Shoot = bullet) → SHOOT4 (10t T_Shoot)
+    // → SHOOT3 (10t T_Shoot) → SHOOT4 (10t T_Shoot). The shoot
+    // dispatch routes frame 1 to projectile.spawn and frames 2-5 to
+    // fire_at_player.
     private let sprites_fat = sprite_table {
         stand_base = 396, walk_base = 396,
         pain1 = 400, pain2 = 400,
         die_frames = int32[4] { 404, 405, 406, 0 }, num_die_frames = 3,
         dead_frame = 407,
-        shoot_frames = int32[4] { 400, 401, 402, 403 }, num_shoot_frames = 4
+        shoot_frames = int32[9] { 400, 401, 402, 403, 402, 403, 0, 0, 0 },
+        shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
+        num_shoot_frames = 6
     }
     // Pacman ghosts: 288..295, 2 walk frames each, no other states.
+    // Ghosts never enter the shoot state — they damage on contact in
+    // the chase branch — so the shoot table is dead weight for them.
     private let sprites_blinky = sprite_table {
         stand_base = 288, walk_base = 288,
         pain1 = 288, pain2 = 289,
         die_frames = int32[4] { 288, 289, 0, 0 }, num_die_frames = 2,
         dead_frame = 289,
-        shoot_frames = int32[4] { 288, 0, 0, 0 }, num_shoot_frames = 1
+        shoot_frames = int32[9] { 288, 0, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = float64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        num_shoot_frames = 1
     }
     private let sprites_pinky = sprite_table {
         stand_base = 290, walk_base = 290,
         pain1 = 290, pain2 = 291,
         die_frames = int32[4] { 290, 291, 0, 0 }, num_die_frames = 2,
         dead_frame = 291,
-        shoot_frames = int32[4] { 290, 0, 0, 0 }, num_shoot_frames = 1
+        shoot_frames = int32[9] { 290, 0, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = float64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        num_shoot_frames = 1
     }
     private let sprites_clyde = sprite_table {
         stand_base = 292, walk_base = 292,
         pain1 = 292, pain2 = 293,
         die_frames = int32[4] { 292, 293, 0, 0 }, num_die_frames = 2,
         dead_frame = 293,
-        shoot_frames = int32[4] { 292, 0, 0, 0 }, num_shoot_frames = 1
+        shoot_frames = int32[9] { 292, 0, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = float64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        num_shoot_frames = 1
     }
     private let sprites_inky = sprite_table {
         stand_base = 294, walk_base = 294,
         pain1 = 294, pain2 = 295,
         die_frames = int32[4] { 294, 295, 0, 0 }, num_die_frames = 2,
         dead_frame = 295,
-        shoot_frames = int32[4] { 294, 0, 0, 0 }, num_shoot_frames = 1
+        shoot_frames = int32[9] { 294, 0, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = float64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        num_shoot_frames = 1
     }
 
     let sprites_for_kind = (k: enemy_kind) ->
@@ -1182,9 +1252,10 @@ module enemies =
                     let adx = math.abs(g->pos_x - e->x)
                     let ady = math.abs(g->pos_y - e->y)
                     if adx <= 1.0 + step && ady <= 1.0 + step && check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then
+                        let sp = sprites_for_kind(e->kind)
                         e->state = enemy_state.shoot
                         e->anim_frame = 0
-                        e->anim_timer = shoot_frame_time / enemy_speed_factor(g)
+                        e->anim_timer = sp.shoot_times[0] / enemy_speed_factor(g)
                         e->shoot_fired = false
                     else
                         advance_move(lv, g, ac, self_idx, dog_chase_speed, dt, true)
@@ -1228,9 +1299,10 @@ module enemies =
                         let d = if dist_tiles < 1 then 1 else dist_tiles
                         let chance = (int32) (dt * 1400.0 * enemy_speed_factor(g)) / d
                         if rnd_byte(g) < chance then
+                            let sp = sprites_for_kind(e->kind)
                             e->state = enemy_state.shoot
                             e->anim_frame = 0
-                            e->anim_timer = shoot_frame_time / enemy_speed_factor(g)
+                            e->anim_timer = sp.shoot_times[0] / enemy_speed_factor(g)
                             e->shoot_fired = false
                             return
                     advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e->kind), dt, true)
@@ -1258,17 +1330,28 @@ module enemies =
                         e->anim_timer = walk_frame_time
                         e->dir = dir.nodir
                         return
-                    e->anim_timer = shoot_frame_time / enemy_speed_factor(g)
+                    e->anim_timer = sp.shoot_times[e->anim_frame] / enemy_speed_factor(g)
                 // Fire on entering each fire-frame in the per-kind
-                // mask. shoot_fired is a per-frame latch so mutants
-                // (mask = bits 0 and 2) fire twice.
+                // mask. shoot_fired is a per-frame latch so multi-fire
+                // cycles (mutants, SS, Hans/Gretel chaingun, Mecha,
+                // real Hitler, fake Hitler flame, Fat) discharge once
+                // per frame transition.
                 let mask = shoot_fire_mask_for_kind(e->kind)
                 if !e->shoot_fired && (mask & (1 << e->anim_frame)) != 0 then
                     e->shoot_fired = true
                     match e->kind with
                     | dog -> projectiles.enemy_bite_player(lv, g, ac, e)
-                    | schabbs | giftmacher | fat | hitler_fake ->
+                    | schabbs | giftmacher | hitler_fake ->
                         projectiles.spawn(lv, ac, g, e, projectiles.kind_for_enemy(e->kind))
+                    | fat ->
+                        // Fat opens with a rocket on s_fatshoot2 (frame 1)
+                        // and follows up with four chaingun bullets on
+                        // frames 2-5 — single state with mixed attack
+                        // types in the original.
+                        if e->anim_frame == 1 then
+                            projectiles.spawn(lv, ac, g, e, projectiles.kind_for_enemy(e->kind))
+                        else
+                            fire_at_player(lv, g, ac, e)
                     | _   -> fire_at_player(lv, g, ac, e)
 
         let update_enemies = (w: world*, dt: float64) ->
