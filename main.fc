@@ -2721,7 +2721,15 @@ let main = (args: str[]) ->
                             sdl2.set_fullscreen(win, sdl2.window_fullscreen_desktop)
                             void()
                     else
-                        if on_wsl then sdl2.restore_window(win)
+                        if on_wsl then
+                            // restore_window alone doesn't drop the
+                            // maximized state on WSLg — an explicit
+                            // resize forces the WM to un-maximize.
+                            // No reposition: WSLg's Xwayland doesn't
+                            // honor SDL_WINDOWPOS_CENTERED and treats
+                            // the sentinel as a literal pixel coord.
+                            sdl2.restore_window(win)
+                            sdl2.set_window_size(win, runtime_screen_w, runtime_actual_h)
                         else
                             sdl2.set_fullscreen(win, 0u32)
                             sdl2.maximize_window(win)
