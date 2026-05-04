@@ -1322,6 +1322,30 @@ module enemies =
             | shoot ->
                 let sp = sprites_for_kind(e->kind)
                 if e->anim_timer <= 0.0 then
+                    // Fire at end of current state, BEFORE advancing.
+                    // The original's actor stepper runs each state's
+                    // action callback when its timer expires and only
+                    // then transitions to the next state, so mask bit
+                    // N means "fire when state N's timer expires" —
+                    // putting damage on the same tick the next state's
+                    // sprite (e.g. the SHOOT3 muzzle flash following a
+                    // SHOOT2 windup) first becomes visible.
+                    let mask = shoot_fire_mask_for_kind(e->kind)
+                    if (mask & (1 << e->anim_frame)) != 0 then
+                        match e->kind with
+                        | dog -> projectiles.enemy_bite_player(lv, g, ac, e)
+                        | schabbs | giftmacher | hitler_fake ->
+                            projectiles.spawn(lv, ac, g, e, projectiles.kind_for_enemy(e->kind))
+                        | fat ->
+                            // Fat opens with a rocket on frame 1 and
+                            // follows up with four chaingun bullets on
+                            // frames 2-5 — mixed attack types within a
+                            // single state cycle in the original.
+                            if e->anim_frame == 1 then
+                                projectiles.spawn(lv, ac, g, e, projectiles.kind_for_enemy(e->kind))
+                            else
+                                fire_at_player(lv, g, ac, e)
+                        | _   -> fire_at_player(lv, g, ac, e)
                     e->anim_frame = e->anim_frame + 1
                     e->shoot_fired = false
                     if e->anim_frame >= sp.num_shoot_frames then
@@ -1331,28 +1355,6 @@ module enemies =
                         e->dir = dir.nodir
                         return
                     e->anim_timer = sp.shoot_times[e->anim_frame] / enemy_speed_factor(g)
-                // Fire on entering each fire-frame in the per-kind
-                // mask. shoot_fired is a per-frame latch so multi-fire
-                // cycles (mutants, SS, Hans/Gretel chaingun, Mecha,
-                // real Hitler, fake Hitler flame, Fat) discharge once
-                // per frame transition.
-                let mask = shoot_fire_mask_for_kind(e->kind)
-                if !e->shoot_fired && (mask & (1 << e->anim_frame)) != 0 then
-                    e->shoot_fired = true
-                    match e->kind with
-                    | dog -> projectiles.enemy_bite_player(lv, g, ac, e)
-                    | schabbs | giftmacher | hitler_fake ->
-                        projectiles.spawn(lv, ac, g, e, projectiles.kind_for_enemy(e->kind))
-                    | fat ->
-                        // Fat opens with a rocket on s_fatshoot2 (frame 1)
-                        // and follows up with four chaingun bullets on
-                        // frames 2-5 — single state with mixed attack
-                        // types in the original.
-                        if e->anim_frame == 1 then
-                            projectiles.spawn(lv, ac, g, e, projectiles.kind_for_enemy(e->kind))
-                        else
-                            fire_at_player(lv, g, ac, e)
-                    | _   -> fire_at_player(lv, g, ac, e)
 
         let update_enemies = (w: world*, dt: float64) ->
             let sprite_start = w->ac->vs->sprite_start

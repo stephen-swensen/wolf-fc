@@ -585,34 +585,34 @@ assert_regex "proj:fake-hitler-flame-in-flight" \
     "setlevel:28 goto:25,57 wait:20 projectiles" \
     "proj\[[0-9]+\] fire"
 # Standing one tile north of Schabbs gives a clean LOS with no flanking
-# mutants in fire range. The original's s_schabbshoot1 holds for 30
-# tics (windup) before T_SchabbThrow fires on s_schabbshoot2; at
-# wait:25 the needle is mid-flight, by wait:27 it has connected and
-# health has dropped by at least 20 (needle rolls 20-51 per hit).
+# mutants in fire range. Schabbs's first shoot state is a 30-tic windup
+# (no throw), then a 10-tic throw frame whose action fires at the end
+# of that frame; at wait:30 the needle is mid-flight, by wait:32 it has
+# connected and health has dropped by at least 20 (needle rolls 20-51).
 assert_contains "proj:schabbs-needle-in-flight" \
-    "setlevel:18 goto:31,17 wait:25 projectiles" \
+    "setlevel:18 goto:31,17 wait:30 projectiles" \
     "needle"
 assert_regex "proj:schabbs-needle-damages-player" \
-    "setlevel:18 goto:31,17 wait:27 state" \
+    "setlevel:18 goto:31,17 wait:32 state" \
     "health=([0-7][0-9]|80)"
 # Giftmacher on E4M9 at (27,18) fires rockets at the player one tile south;
 # one rocket hit alone drops the player by 30-61 HP. Rocket damage is
 # distinctive enough that we check the value clearly fell below 70.
 assert_regex "proj:giftmacher-rocket-damages-player" \
-    "setlevel:38 goto:27,19 wait:25 state" \
+    "setlevel:38 goto:27,19 wait:30 state" \
     "health=([0-6][0-9]|70)"
-# Fat Face on E6M9 also spawns rockets from the same T_GiftThrow path;
-# mostly a coverage check that setlevel:58 reaches the right map.
+# Fat Face on E6M9 also spawns rockets from the same projectile-throw
+# path; mostly a coverage check that setlevel:58 reaches the right map.
 assert_contains "proj:fat-face-spawns-rockets" \
     "setlevel:58 enemylist" \
     "kind=fat state=stand"
-# "Can I Play Daddy" (baby) quarters incoming damage per TakeDamage's
-# `points >>= 2` branch in the original. Same Giftmacher rocket hit that
-# drops the player to 55 HP on hard leaves 89 HP on baby — 45 >> 2 = 11.
-# Both are deterministic under the seeded PCG stream.
+# "Can I Play Daddy" (baby) quarters incoming damage in the original's
+# TakeDamage. Same Giftmacher rocket hit that drops the player below 70
+# HP on hard leaves them at 88 HP on baby — proof of the >>2 scaling
+# under the seeded PCG stream.
 assert_contains "proj:baby-difficulty-quarters-rocket-damage" \
-    "--difficulty=0 setlevel:38 goto:27,19 wait:25 state" \
-    "health=89"
+    "--difficulty=0 setlevel:38 goto:27,19 wait:30 state" \
+    "health=88"
 
 section "cli flags"
 # --level=N drops the player straight onto level N in playing phase — the
