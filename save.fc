@@ -527,7 +527,9 @@ module save =
                 let lines = text.split(contents, "\n")
                 defer free(lines)
                 if lines.len < 2 then false
-                else if !text.starts_with(lines[0], "WLFC 2") then false
+                else if !text.starts_with(lines[0], "WLFC 2") then
+                    io.write("save: %s{path} is an older format and cannot be loaded by this build — delete the file to dismiss this slot\n", stderr)
+                    false
                 else
                     let g = w->g
                     // Reset both PCG streams to a seed-0 baseline
