@@ -2594,11 +2594,17 @@ let main = (args: str[]) ->
 
     // Initialize SDL2 (interactive mode only)
     sdl2.set_hint(c"SDL_WINDOWS_DPI_AWARENESS", c"system")
+    // Ask X11 window managers to skip composition for our window so
+    // vsync syncs with scanout instead of the compositor's blit.
+    // Ignored on Windows / Wayland / WSLg.
+    sdl2.set_hint(c"SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", c"1")
     sdl2.init(sdl2.init_video | sdl2.init_audio)
 
-    // Window: resizable, fullscreen (borderless display-sized) on start.
-    // F11 / Alt+Enter toggles between fullscreen and maximized — both
-    // paths share the body of the toggle below.
+    // Window: created in fullscreen-desktop mode so the WM treats us as
+    // a real fullscreen client (X11 compositors only unredirect for
+    // _NET_WM_STATE_FULLSCREEN, not for borderless display-sized
+    // windows). The size args become the windowed size after F11 /
+    // Alt+Enter toggles out of fullscreen.
     // Display geometry. The framebuffer is fb_w × fb_h (set above
     // from the display aspect — see Hor+ widescreen detection); the
     // texture is 2× both dims; the logical-size scale-out target
@@ -2609,14 +2615,10 @@ let main = (args: str[]) ->
     let mut runtime_screen_w = w->rc->screen_w
     let mut runtime_screen_h = w->rc->fb_h * 2
     let mut runtime_actual_h = (w->rc->fb_h * 12 / 10) * 2   // VGA pixel-aspect-corrected (1.2)
-    let flags = sdl2.window_shown | sdl2.window_resizable | sdl2.window_allow_highdpi
+    let flags = sdl2.window_shown | sdl2.window_resizable
+        | sdl2.window_allow_highdpi | sdl2.window_fullscreen_desktop
     let win = sdl2.create_window(c"Wolf-FC",
         sdl2.pos_centered, sdl2.pos_centered, runtime_screen_w, runtime_actual_h, flags)
-    let mut db = sdl2.rect { x = 0, y = 0, w = 0, h = 0 }
-    sdl2.get_display_bounds(0, &db)
-    sdl2.set_bordered(win, 0)
-    sdl2.set_window_position(win, db.x, db.y)
-    sdl2.set_window_size(win, db.w, db.h)
     let mut fullscreen = true
 
     // Renderer with vsync.
@@ -2702,14 +2704,10 @@ let main = (args: str[]) ->
                 if (k == sdl2.key_f11 || is_alt_enter) && !is_key_repeat then
                     fullscreen = !fullscreen
                     if fullscreen then
-                        let mut db = sdl2.rect { x = 0, y = 0, w = 0, h = 0 }
-                        sdl2.get_display_bounds(0, &db)
-                        sdl2.set_bordered(win, 0)
-                        sdl2.set_window_position(win, db.x, db.y)
-                        sdl2.set_window_size(win, db.w, db.h)
+                        sdl2.set_fullscreen(win, sdl2.window_fullscreen_desktop)
+                        void()
                     else
-                        sdl2.set_bordered(win, 1)
-                        sdl2.restore_window(win)
+                        sdl2.set_fullscreen(win, 0u32)
                         sdl2.maximize_window(win)
                     sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
                     if is_alt_enter then continue
