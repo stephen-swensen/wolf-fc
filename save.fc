@@ -251,7 +251,9 @@ module save =
     import math from std::
     import random from std::
 
-    private let version = 1
+    // Bumped to 2 when the per-enemy `shoot_fired` token was dropped;
+    // v1 saves can no longer be loaded.
+    private let version = 2
 
     // Number of save slots available in the save/load menus.
     let num_slots = 10
@@ -492,9 +494,8 @@ module save =
                     let si = enemy_state_to_int(e->state)
                     let amb = if e->ambush then 1 else 0
                     let nfd = if e->notified then 1 else 0
-                    let sh = if e->shoot_fired then 1 else 0
                     io.write(
-                        "enemy %d{i} %14.6f{e->x} %14.6f{e->y} %d{e->tile_x} %d{e->tile_y} %d{ki} %d{si} %d{e->dir} %d{e->hp} %d{e->anim_frame} %14.6f{e->anim_timer} %d{sh} %14.6f{e->move_remaining} %d{amb} %d{nfd} %14.6f{e->reaction_timer} %14.6f{e->touch_cooldown}\n", f)
+                        "enemy %d{i} %14.6f{e->x} %14.6f{e->y} %d{e->tile_x} %d{e->tile_y} %d{ki} %d{si} %d{e->dir} %d{e->hp} %d{e->anim_frame} %14.6f{e->anim_timer} %14.6f{e->move_remaining} %d{amb} %d{nfd} %14.6f{e->reaction_timer} %14.6f{e->touch_cooldown}\n", f)
                 // PRNG state. Bits round-trip through signed int64
                 // (same width as uint64 under 2's complement); load
                 // reinterprets via (uint64). Older saves lack this
@@ -526,7 +527,7 @@ module save =
                 let lines = text.split(contents, "\n")
                 defer free(lines)
                 if lines.len < 2 then false
-                else if !text.starts_with(lines[0], "WLFC ") then false
+                else if !text.starts_with(lines[0], "WLFC 2") then false
                 else
                     let g = w->g
                     // Reset both PCG streams to a seed-0 baseline
@@ -674,7 +675,7 @@ module save =
                         else if text.starts_with(line, "enemy ") && level_loaded then
                             let toks = split_ws(line)
                             defer free_split(toks)
-                            if toks.len >= 15 then
+                            if toks.len >= 17 then
                                 let ei = unwrap_int(toks[1])
                                 if ei >= 0 && ei < w->lv->num_enemies then
                                     let e = &w->lv->enemies[ei]
@@ -688,19 +689,11 @@ module save =
                                     e->hp             = unwrap_int(toks[9])
                                     e->anim_frame     = unwrap_int(toks[10])
                                     e->anim_timer     = unwrap_float(toks[11])
-                                    e->shoot_fired    = unwrap_int(toks[12]) != 0
-                                    e->move_remaining = unwrap_float(toks[13])
-                                    e->ambush         = unwrap_int(toks[14]) != 0
-                                    if toks.len >= 16 then
-                                        e->notified = unwrap_int(toks[15]) != 0
-                                    if toks.len >= 17 then
-                                        e->reaction_timer = unwrap_float(toks[16])
-                                    else
-                                        e->reaction_timer = 0.0
-                                    if toks.len >= 18 then
-                                        e->touch_cooldown = unwrap_float(toks[17])
-                                    else
-                                        e->touch_cooldown = 0.0
+                                    e->move_remaining = unwrap_float(toks[12])
+                                    e->ambush         = unwrap_int(toks[13]) != 0
+                                    e->notified       = unwrap_int(toks[14]) != 0
+                                    e->reaction_timer = unwrap_float(toks[15])
+                                    e->touch_cooldown = unwrap_float(toks[16])
                     // Recompute area_by_player from the restored door
                     // states so enemy AI sees the correct
                     // connectivity. areas.connect walks the door list

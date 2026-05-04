@@ -115,7 +115,6 @@ module enemies =
         hp: int32
         anim_frame: int32         // index into the state's frame list (walk 0-3, shoot 0-2, die 0-3)
         anim_timer: float64       // seconds until next anim transition
-        shoot_fired: bool         // set true after the damage-roll frame in shoot, so we only fire once per attack
         move_remaining: float64   // distance (tiles) left to reach the next tile center
         dist_to_player: float64   // squared distance, used for draw sort
         dist_flat: float64        // tile-grid distance, used for some AI decisions
@@ -986,7 +985,6 @@ module enemies =
             e->anim_timer     = walk_frame_time
             e->dir            = dir.nodir
             e->move_remaining = 0.0
-            e->shoot_fired    = false
             e->notified       = true
             e->reaction_timer = 0.0
 
@@ -1256,7 +1254,6 @@ module enemies =
                         e->state = enemy_state.shoot
                         e->anim_frame = 0
                         e->anim_timer = sp.shoot_times[0] / enemy_speed_factor(g)
-                        e->shoot_fired = false
                     else
                         advance_move(lv, g, ac, self_idx, dog_chase_speed, dt, true)
                         advance_walk_anim(e)
@@ -1303,7 +1300,6 @@ module enemies =
                             e->state = enemy_state.shoot
                             e->anim_frame = 0
                             e->anim_timer = sp.shoot_times[0] / enemy_speed_factor(g)
-                            e->shoot_fired = false
                             return
                     advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e->kind), dt, true)
                     let prev_walk_frame = e->anim_frame
@@ -1347,7 +1343,6 @@ module enemies =
                                 fire_at_player(lv, g, ac, e)
                         | _   -> fire_at_player(lv, g, ac, e)
                     e->anim_frame = e->anim_frame + 1
-                    e->shoot_fired = false
                     if e->anim_frame >= sp.num_shoot_frames then
                         e->state = enemy_state.chase
                         e->anim_frame = 0

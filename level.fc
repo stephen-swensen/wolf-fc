@@ -988,7 +988,6 @@ module spawn =
             hp = hp,
             anim_frame = anim_frame,
             anim_timer = enemies.walk_frame_time,
-            shoot_fired = false,
             move_remaining = 0.0,
             dist_to_player = 0.0,
             dist_flat = 0.0,
