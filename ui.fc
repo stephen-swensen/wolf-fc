@@ -745,16 +745,25 @@ module hud =
     // `US_RndT()>>6` (giving 0..3) with 3 mapped down to 1, so the
     // distribution is 0=25% / 1=50% / 2=25% — the centre variant is
     // most common, which gives the face a natural "look forward"
-    // bias with occasional glances. Our dt is fixed at 1/35s in
-    // tests; multiplying by 70 yields ~2 units per tick, matching
-    // the original's 70Hz tics rate.
+    // bias with occasional glances. dt*70 yields the original's
+    // tics-since-last-frame at the 70Hz tic rate.
+    //
+    // Important: the original locks its frame loop to a max of 70Hz
+    // (CalcTics sleeps when tics == 0), so the threshold reroll runs
+    // at most 70 times per second. wolf-fc's render rate floats with
+    // the monitor — at 144Hz a naive once-per-frame check would get
+    // ~2x the OG's reroll chances and cycle the face visibly faster.
+    // Gate the reroll on the accumulator crossing a new integer-tic
+    // boundary, so the check rate is ≤ 70Hz no matter the refresh.
     let update_face = (g: game*, dt: float64) ->
+        let old_count = g->face_count
         g->face_count = g->face_count + dt * 70.0
-        if g->face_count > (float64) face_rnd_byte(g) then
-            let roll = face_rnd_byte(g) / 64       // 0..3
-            let frame = if roll == 3 then 1 else roll
-            g->face_frame = frame
-            g->face_count = 0.0
+        if (int64) g->face_count > (int64) old_count then
+            if g->face_count > (float64) face_rnd_byte(g) then
+                let roll = face_rnd_byte(g) / 64       // 0..3
+                let frame = if roll == 3 then 1 else roll
+                g->face_frame = frame
+                g->face_count = 0.0
 
     // Draw a right-aligned decimal number using the VGAGRAPH number
     // pics. `digits` is the cell count; shorter numbers get
