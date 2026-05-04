@@ -2594,17 +2594,27 @@ let main = (args: str[]) ->
 
     // Initialize SDL2 (interactive mode only)
     sdl2.set_hint(c"SDL_WINDOWS_DPI_AWARENESS", c"system")
+    // WSLg's Xwayland mis-handles SDL fullscreen-desktop at Windows
+    // DPI > 100% (the surface is sized in physical pixels and overflows
+    // the visible screen). Detect WSL and fall back to a maximized
+    // window — that path lets the Windows WM size the maximized rect
+    // correctly for the current DPI.
+    let on_wsl = match sys.env("WSL_DISTRO_NAME") with
+        | some(_) -> true
+        | none -> false
     // Ask X11 window managers to skip composition for our window so
     // vsync syncs with scanout instead of the compositor's blit.
-    // Ignored on Windows / Wayland / WSLg.
-    sdl2.set_hint(c"SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", c"1")
+    // Ignored on Windows / Wayland. Skipped on WSL because we're not
+    // going fullscreen there anyway, and the hint can confuse Xwayland.
+    if !on_wsl then
+        sdl2.set_hint(c"SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", c"1")
+        void()
     sdl2.init(sdl2.init_video | sdl2.init_audio)
 
-    // Window: created in fullscreen-desktop mode so the WM treats us as
-    // a real fullscreen client (X11 compositors only unredirect for
-    // _NET_WM_STATE_FULLSCREEN, not for borderless display-sized
-    // windows). The size args become the windowed size after F11 /
-    // Alt+Enter toggles out of fullscreen.
+    // Window: fullscreen-desktop everywhere except WSL, where we
+    // create a normal resizable window and call maximize_window
+    // immediately. Either way the X11 compositor unredirect path is
+    // exercised for the tearing fix on native Linux.
     // Display geometry. The framebuffer is fb_w × fb_h (set above
     // from the display aspect — see Hor+ widescreen detection); the
     // texture is 2× both dims; the logical-size scale-out target
@@ -2615,10 +2625,12 @@ let main = (args: str[]) ->
     let mut runtime_screen_w = w->rc->screen_w
     let mut runtime_screen_h = w->rc->fb_h * 2
     let mut runtime_actual_h = (w->rc->fb_h * 12 / 10) * 2   // VGA pixel-aspect-corrected (1.2)
+    let fullscreen_flag = if on_wsl then 0u32 else sdl2.window_fullscreen_desktop
     let flags = sdl2.window_shown | sdl2.window_resizable
-        | sdl2.window_allow_highdpi | sdl2.window_fullscreen_desktop
+        | sdl2.window_allow_highdpi | fullscreen_flag
     let win = sdl2.create_window(c"Wolf-FC",
         sdl2.pos_centered, sdl2.pos_centered, runtime_screen_w, runtime_actual_h, flags)
+    if on_wsl then sdl2.maximize_window(win)
     let mut fullscreen = true
 
     // Renderer with vsync.
@@ -2704,11 +2716,15 @@ let main = (args: str[]) ->
                 if (k == sdl2.key_f11 || is_alt_enter) && !is_key_repeat then
                     fullscreen = !fullscreen
                     if fullscreen then
-                        sdl2.set_fullscreen(win, sdl2.window_fullscreen_desktop)
-                        void()
+                        if on_wsl then sdl2.maximize_window(win)
+                        else
+                            sdl2.set_fullscreen(win, sdl2.window_fullscreen_desktop)
+                            void()
                     else
-                        sdl2.set_fullscreen(win, 0u32)
-                        sdl2.maximize_window(win)
+                        if on_wsl then sdl2.restore_window(win)
+                        else
+                            sdl2.set_fullscreen(win, 0u32)
+                            sdl2.maximize_window(win)
                     sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
                     if is_alt_enter then continue
                 // Per-phase dispatch for everything else.
