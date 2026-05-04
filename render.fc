@@ -74,7 +74,7 @@ module raycaster =
                 rc->dbuf[row + (int64) x] = floor_color
 
         // Reset z-buffer.
-        for i in 0..rc->fb_w
+        for i in 0..rc->screen_w
             rc->zbuf[i] = 1e6
 
         // Push-wall sub-tile offset. pw_fx/pw_fy are the world-space
@@ -86,9 +86,13 @@ module raycaster =
         let pw_fx = (float64) lv->pushwall.tile_x + pw_sub * (float64) lv->pushwall.dir_x
         let pw_fy = (float64) lv->pushwall.tile_y + pw_sub * (float64) lv->pushwall.dir_y
 
-        // Cast one ray per screen column.
-        for col in 0..rc->fb_w
-            let cam_x = 2.0 * (float64) col / (float64) rc->fb_w - 1.0
+        // Cast one ray per dbuf column (screen_w = 2 × fb_w). At 2x
+        // horizontal density the rays sample twice as finely as the
+        // logical fb_w grid, matching the existing 2x vertical
+        // supersample (view_render_h = 2 × view_h) so near-vertical
+        // wall edges and far-distance texture columns stop shimmering.
+        for col in 0..rc->screen_w
+            let cam_x = 2.0 * (float64) col / (float64) rc->screen_w - 1.0
             let ray_dx = g->dir_x + g->plane_x * cam_x
             let ray_dy = g->dir_y + g->plane_y * cam_x
             let mut map_x = (int32) g->pos_x
@@ -281,7 +285,7 @@ module raycaster =
 
             let step_v = 64.0 / (float64) line_h
             let mut tex_pos = (float64) (draw_start - view_render_h / 2 + line_h / 2) * step_v
-            let dcol = (int64) col * 2
+            let dcol = (int64) col
 
             for y in draw_start..draw_end
                 let mut tex_y = (int32) tex_pos
@@ -293,9 +297,7 @@ module raycaster =
                 let mut shade = dist_shade(perp_dist, shadow_floor)
                 if side == 1 then shade = shade * 0.75
                 let color = shade_color(pal[(int32) pix], shade)
-                let dest = (int64) y * sw + dcol
-                rc->dbuf[dest] = color
-                rc->dbuf[dest + 1] = color
+                rc->dbuf[(int64) y * sw + dcol] = color
 
 
 // ============================================================
@@ -390,7 +392,7 @@ module billboards =
         let data_off = (int64) hdr.col_offsets[sprite_col]
         let upper = view_render_h / 2 - sprite_h / 2
         let sw = (int64) rc->screen_w
-        let dcol = (int64) screen_x * 2
+        let dcol = (int64) screen_x
         let mut off = base + data_off
         loop
             let endy_raw = (int32) bytes.u16(vs->raw, off)
@@ -410,9 +412,7 @@ module billboards =
                     let ey = if sy1 > view_render_h then view_render_h else sy1
                     loop
                         if sy >= ey then break
-                        let dest = (int64) sy * sw + dcol
-                        rc->dbuf[dest] = color
-                        rc->dbuf[dest + 1] = color
+                        rc->dbuf[(int64) sy * sw + dcol] = color
                         sy = sy + 1
 
     // Render the sorted billboards (static sprites + enemies). Caller
@@ -431,21 +431,21 @@ module billboards =
             let tx = inv_det * (g->dir_y * sx - g->dir_x * sy)
             let ty = inv_det * (g->plane_x * sy - g->plane_y * sx)
             if ty <= 0.1 then continue
-            let scr_x = (int32) ((float64) (rc->fb_w / 2) * (1.0 + tx / ty))
-            // spr_w is in fb-col units (logical 320-wide); spr_h is in
-            // dbuf-row units (view_render_h). The on-screen aspect ratio
-            // matches the OG: at ty=1 a sprite is view_h fb-cols wide
-            // and view_render_h dbuf-rows tall, which after 2x horizontal
-            // expansion + 4:3 vertical stretch displays the same as the
-            // OG's 160x160 sprite in a 320x160 viewport.
-            let spr_w = (int32) ((float64) view_h / ty)
+            // scr_x, spr_w are in dbuf-col units (screen_w-wide grid),
+            // matching the raycaster's per-dbuf-col ray density. spr_h
+            // stays in dbuf-row units (view_render_h). At ty=1 a sprite
+            // spans view_render_h dbuf-cols × view_render_h dbuf-rows;
+            // after the display's 4:3 vertical stretch this matches the
+            // original's 160×160 sprite in its 320×160 viewport.
+            let scr_x = (int32) ((float64) (rc->screen_w / 2) * (1.0 + tx / ty))
+            let spr_w = (int32) ((float64) view_render_h / ty)
             let spr_h = (int32) ((float64) view_render_h / ty)
             if spr_w < 1 || spr_h < 1 then continue
             let half_w = spr_w / 2
             let draw_x0 = scr_x - half_w
             let draw_x1 = scr_x + half_w
             for stripe in draw_x0..draw_x1
-                if stripe >= 0 && stripe < rc->fb_w then
+                if stripe >= 0 && stripe < rc->screen_w then
                     if ty < rc->zbuf[stripe] then
                         let tex_col = (stripe - draw_x0) * 64 / spr_w
                         let spr_shade = raycaster.dist_shade(ty, shadow_floor)

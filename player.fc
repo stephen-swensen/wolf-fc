@@ -630,8 +630,10 @@ module player =
     // Draw a t_compshape sprite as a HUD overlay, stretched to
     // (dst_w, dst_h) at screen position (dst_x, dst_y). Transparent
     // (unused) source pixels are skipped implicitly by the run-list
-    // format. Framebuffer writes are clipped to the 3D viewport
-    // (0..view_h) so the weapon never paints onto the HUD bar.
+    // format. dst_x / dst_w are in dbuf-col units (screen_w-wide
+    // grid), dst_y / dst_h in dbuf-row units (view_render_h-tall
+    // viewport). Writes are clipped to the 3D viewport so the
+    // weapon never paints onto the HUD bar.
     let draw_hud_sprite = (rc: render_ctx*, vs: const vswap.vswap_file*, pal: const uint32[],
                            page: int32, dst_x: int32, dst_y: int32,
                            dst_w: int32, dst_h: int32) ->
@@ -642,7 +644,7 @@ module player =
         for sc in hdr.left_pix..(hdr.right_pix + 1)
             let sx0 = dst_x + sc * dst_w / 64
             let sx1 = dst_x + (sc + 1) * dst_w / 64
-            if sx1 <= 0 || sx0 >= rc->fb_w then continue
+            if sx1 <= 0 || sx0 >= rc->screen_w then continue
             let data_off = (int64) hdr.col_offsets[sc]
             let mut off = base + data_off
             loop
@@ -661,12 +663,9 @@ module player =
                     let y0 = if sy0 < 0 then 0 else sy0
                     let y1 = if sy1 > view_render_h then view_render_h else sy1
                     for sx in sx0..sx1
-                        if sx < 0 || sx >= rc->fb_w then continue
-                        let dcol = (int64) sx * 2
+                        if sx < 0 || sx >= rc->screen_w then continue
                         for sy in y0..y1
-                            let dest = (int64) sy * sw + dcol
-                            rc->dbuf[dest] = color
-                            rc->dbuf[dest + 1] = color
+                            rc->dbuf[(int64) sy * sw + (int64) sx] = color
 
     // Draw the currently-held weapon sprite centered at the bottom
     // of the 3D viewport. Sprite page =
@@ -676,16 +675,16 @@ module player =
         let frame = g->weapon_frame
         let sprite_idx = weapon_sprite_base[g->weapon] + frame
         let page = vs->sprite_start + sprite_idx
-        // Scale the 64x64 source to fill the viewport height,
+        // Scale the 64×64 source to fill the viewport height,
         // centered. Source transparency covers the upper rows so
         // only the bottom portion of the weapon is actually drawn.
-        // Width is in fb-col units (logical 320-wide); height is in
-        // dbuf-row units (view_render_h is the viewport's dbuf-row span).
-        // Each fb-col writes to 2 dbuf cols inside draw_hud_sprite, so
-        // the gun ends up 2*dw dbuf cols wide and dh dbuf rows tall —
-        // same on-screen size as before view_render_h doubled.
-        let dw = view_h
+        // dw / dx are in dbuf-col units (screen_w-wide grid); dh /
+        // dy are in dbuf-row units (view_render_h-tall viewport).
+        // dw = view_render_h gives a square sprite that matches the
+        // original 160-fb-col wide gun after the display's vertical
+        // 4:3 stretch.
+        let dw = view_render_h
         let dh = view_render_h
-        let dx = (rc->fb_w - dw) / 2
+        let dx = (rc->screen_w - dw) / 2
         let dy = view_render_h - dh
         draw_hud_sprite(rc, vs, pal, page, dx, dy, dw, dh)

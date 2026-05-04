@@ -923,7 +923,7 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
         ui_offset_x = (fb_w - 320) / 2,
         fb = alloc(uint32[fb_w * fb_h] {})!,
         dbuf = alloc(uint32[(fb_w * 2) * (fb_h * 2)] {})!,
-        zbuf = alloc(float64[fb_w] {})!,
+        zbuf = alloc(float64[fb_w * 2] {})!,
         billboards = alloc(billboard[tilemap.max_sprites + enemies.max_enemies + projectiles.max_projectiles] {})!,
         num_billboards = 0,
         title_bg = pics.build_title_bg_cache(vg, pal, fb_w, fb_h),
@@ -981,7 +981,7 @@ let apply_view_mode = (w: world*, vg: const vgagraph.vgagraph_file*,
         rc->ui_offset_x = (new_fb_w - 320) / 2
         rc->fb = alloc(uint32[new_fb_w * rc->fb_h] {})!
         rc->dbuf = alloc(uint32[(new_fb_w * 2) * (rc->fb_h * 2)] {})!
-        rc->zbuf = alloc(float64[new_fb_w] {})!
+        rc->zbuf = alloc(float64[new_fb_w * 2] {})!
         rc->title_bg = pics.build_title_bg_cache(vg, pal, new_fb_w, rc->fb_h)
         // Rescale the player's camera plane to the new FOV magnitude
         // while preserving direction. Plane is always perpendicular
