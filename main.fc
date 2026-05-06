@@ -718,6 +718,13 @@ struct render_ctx =
     screen_w: int32        // = scale * fb_w  — dbuf width / texture width
     screen_h: int32        // = scale * fb_h  — dbuf height / texture height
     view_render_h: int32   // = scale * view_h — 3D viewport row count in dbuf
+    // Cached renderer drawable size in real pixels (last known value
+    // from SDL_GetRendererOutputSize). Updated on startup and on
+    // SDL_WINDOWEVENT_SIZE_CHANGED. Used by the Change View menu to
+    // show the full geometry pipeline; not a load-bearing input
+    // anywhere — the scale-pick path queries SDL directly.
+    drawable_w: int32
+    drawable_h: int32
     ui_offset_x: int32
     fb: uint32[]       // fb_w x fb_h ARGB — primary software-rendered frame
     dbuf: uint32[]     // screen_w x screen_h ARGB — Nx nearest-neighbor upscale of fb
@@ -930,6 +937,8 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
         screen_w = fb_w * scale,
         screen_h = fb_h * scale,
         view_render_h = view_h * scale,
+        drawable_w = 0,
+        drawable_h = 0,
         ui_offset_x = (fb_w - 320) / 2,
         fb = alloc(uint32[fb_w * fb_h] {})!,
         dbuf = alloc(uint32[(fb_w * scale) * (fb_h * scale)] {})!,
@@ -1990,6 +1999,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         else if p == "optionsmenu" then
             g->phase = game_phase.main_menu
             g->menu_level = menu.nav.options
+        else if p == "changeview" then
+            g->phase = game_phase.main_menu
+            g->menu_level = menu.nav.changeview
         else if p == "savemenu" then
             g->phase = game_phase.main_menu
             g->menu_level = menu.nav.savelist
@@ -2738,6 +2750,8 @@ let main = (args: str[]) ->
     let optimal_scale = compute_scale_factor(out_w, out_h, w->rc->fb_w, w->rc->fb_h)
     io.write("Renderer output %d{out_w}x%d{out_h} -> super-sample %d{optimal_scale}x\n", stdout)
     apply_scale_factor(w, vg, pal, optimal_scale)
+    w->rc->drawable_w = out_w
+    w->rc->drawable_h = out_h
     // Mutable so the Change View menu can resize on the fly when
     // fb_w changes (the SS factor is sticky across view-mode changes).
     let mut runtime_screen_w = w->rc->screen_w
@@ -2813,6 +2827,8 @@ let main = (args: str[]) ->
                 let mut new_out_w = 0i32
                 let mut new_out_h = 0i32
                 sdl2.get_output_size(ren, &new_out_w, &new_out_h)
+                w->rc->drawable_w = new_out_w
+                w->rc->drawable_h = new_out_h
                 let new_scale = compute_scale_factor(new_out_w, new_out_h, w->rc->fb_w, w->rc->fb_h)
                 if apply_scale_factor(w, vg, pal, new_scale) then
                     io.write("Drawable %d{new_out_w}x%d{new_out_h} -> super-sample %d{new_scale}x\n", stdout)

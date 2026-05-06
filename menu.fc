@@ -475,15 +475,37 @@ module menu =
             if i == g->view_mode then
                 let lw = font.text_width(f, label)
                 font.draw_text(rc, f, x_label + lw + 4, row_y, "*", pal[pal_readh])
-        // Footer notes the in-effect resolution and supersample
-        // factor. Changes apply immediately on Enter — no restart
-        // needed. The SS factor is auto-picked from the renderer
-        // output size at startup; not user-selectable here.
+        // Footer: walk the four geometry stages of the pipeline
+        // with their actual numbers, so the player can see exactly
+        // how the chosen view mode + auto-picked supersample factor
+        // map all the way from CPU framebuffer to monitor pixels.
+        // Changes apply immediately on Enter — no restart needed.
+        //
+        // Two-column layout (label | value) left-aligned at a fixed
+        // x so the numbers stack cleanly under each other regardless
+        // of label length. Anchored a few pixels in from the native
+        // 4:3 left bound (`ui_offset_x`) — not the picker window's
+        // x — so the value text has the full 320-wide native UI
+        // region to extend into. Necessary because the longest line
+        // ("Logical  1600 x 1200  (1.2x VGA aspect)") on a HiDPI
+        // panel at scale=5 is ~210px wide, which would overflow if
+        // the block started at the picker window's cursor column.
         let info_y = cv_y + cv_h + 4
-        font.draw_centered(rc, f, info_y,
-            "Active: %d{rc->fb_w} x %d{rc->fb_h}", pal[pal_text])
-        font.draw_centered(rc, f, info_y + 10,
-            "Super-sampling: %d{rc->scale}x", pal[pal_text])
+        let logical_h = rc->fb_h * 12 / 10 * rc->scale
+        let label_x = rc->ui_offset_x + 8
+        let value_x = label_x + 88
+        font.draw_text(rc, f, label_x, info_y,      "Framebuffer", pal[pal_text])
+        font.draw_text(rc, f, value_x, info_y,
+            "%d{rc->fb_w} x %d{rc->fb_h}", pal[pal_text])
+        font.draw_text(rc, f, label_x, info_y + 9,  "Texture", pal[pal_text])
+        font.draw_text(rc, f, value_x, info_y + 9,
+            "%d{rc->screen_w} x %d{rc->screen_h}   (%d{rc->scale}x supersample)", pal[pal_text])
+        font.draw_text(rc, f, label_x, info_y + 18, "Logical", pal[pal_text])
+        font.draw_text(rc, f, value_x, info_y + 18,
+            "%d{rc->screen_w} x %d{logical_h}   (1.2x VGA aspect)", pal[pal_text])
+        font.draw_text(rc, f, label_x, info_y + 27, "Drawable", pal[pal_text])
+        font.draw_text(rc, f, value_x, info_y + 27,
+            "%d{rc->drawable_w} x %d{rc->drawable_h}", pal[pal_text])
         draw_help_pic(rc, vg, pal)
         // 1px blue outline on the inside of the framebuffer
         // perimeter so the user can verify the active mode isn't
