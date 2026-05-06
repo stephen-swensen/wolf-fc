@@ -103,6 +103,7 @@ make uninstall                      # remove the binary + share/wolf-fc/ tree
 | `--near-boss` | After the level loads, teleport the player to an open tile adjacent to the first boss enemy on the map, facing the boss. No-op on maps without a boss. Combine with `--level=N` to start a specific boss fight immediately. |
 | `--near-goldkey` / `--near-silverkey` / `--near-gibs` | Same idea but for the first gold-key / silver-key / gibs pickup on the map. Handy for eyeballing HUD changes and the gibs-at-low-HP branch without playing through. First gibs map is `E1M2` (`--level=1 --near-gibs`). |
 | `--cheat` | Pre-activate both Doom-style cheats (`IDDQD` god mode + `IDKFA` all-keys / all-weapons / full non-depleting ammo / locked score) from the very first frame. The gifts re-apply on every death while the IDKFA latch stays on. |
+| `--max-scale=N` | Cap the auto-picked supersample factor at N (default 6, floor 2). Lower for older CPUs that stutter at the auto-pick; raise on high-end machines where 4K+ panels could put more rays to good use. See [Display pipeline](#display-pipeline) below. |
 
 ### Jump-to-boss cheat sheet
 
@@ -303,9 +304,21 @@ The audio pipeline each frame: zero buffer → `imf.fill` (music) → `adlib.fil
 
 SDL2's role in wolf-fc is deliberately minimal — it's a host abstraction, not a rendering framework. Each frame, the engine draws into a `uint32[]` ARGB framebuffer entirely in FC, then uploads it as a single streaming texture via `SDL_UpdateTexture` + `SDL_RenderCopy` + `SDL_RenderPresent`; the scale-quality hint is pinned to `nearest` for crisp upscaling. The 2D renderer is never asked to draw geometry — no `SDL_RenderFillRect`, no per-sprite textures, no shaders. Audio is equally bare: `SDL_QueueAudio` receives raw S16 PCM that our own mixer produced (no `SDL_AudioCallback`, no `SDL_mixer`). Input is keyboard-only, driven by `SDL_PollEvent` against `SDL_KEYDOWN`/`SDL_KEYUP`. No `SDL_image`, `SDL_ttf`, `SDL_mixer`, or `SDL_net` — just core `SDL2`, linked dynamically.
 
-### Hor+ widescreen
+### Display pipeline
 
-The framebuffer width is dynamic and the horizontal FOV scales with it (Hor+: same vertical FOV, more peripheral world; wall verticals stay perspective-correct). UI elements (HUD, menus, fonts) stay in a 320-wide region centred inside the wider framebuffer. The mode is selected from **Main Menu → CHANGE VIEW**:
+The screen image walks four stages between the CPU raycaster and your monitor's pixels. **Main Menu → CHANGE VIEW** prints the current numbers at every stage so you can see exactly what your machine is doing.
+
+```
+  CPU framebuffer    fb_w × fb_h     square pixels
+        ↓ scale × scale block stamp (CPU nearest-neighbor)
+  Texture            sw × sh         square pixels   sw = scale·fb_w, sh = scale·fb_h
+        ↓ SDL_RenderSetLogicalSize(sw, sh × 1.2)
+  Logical            sw × sh × 1.2   "VGA pixel" stretched
+        ↓ SDL letterbox into drawable, preserving logical aspect
+  Drawable           out_w × out_h   real panel pixels
+```
+
+**Hor+ widescreen.** `fb_w` is dynamic and the horizontal FOV scales with it (Hor+: same vertical FOV, more peripheral world; wall verticals stay perspective-correct). UI elements (HUD, menus, fonts) stay in a 320-wide region centred inside the wider framebuffer. Picked from CHANGE VIEW:
 
 - **Auto** queries the SDL display, computes `fb_w = round(320 × display_aspect / (4/3))`, and clamps to `[320, 640]` (even values only). Any aspect ratio works — ultrawide, vertical, exotic — not just the named presets below.
 - **Original 4:3** pins `fb_w = 320` (the original game).
@@ -313,6 +326,22 @@ The framebuffer width is dynamic and the horizontal FOV scales with it (Hor+: sa
 - **Widescreen 16:9** pins `fb_w = 428`.
 
 The choice persists in `~/.wolf-fc/config` and applies on the fly without a restart.
+
+**Supersampling.** The 2× upscaler the original SDL port shipped with is replaced by a runtime supersample factor `scale ∈ [2..6]` picked from `SDL_GetRendererOutputSize` at startup. The pick is the largest integer that fits inside the actual pixel drawable in both axes (after the 1.2× VGA-aspect stretch), so the texture matches the panel as closely as possible before SDL's downstream stretch. Side effect: the raycaster casts `scale × fb_w` rays per frame, so a 16:10 panel at 1920×1200 sees ~5× the ray density of the OG, far more sample points per wall column, and visibly less near-vertical edge stairstep.
+
+Reference points at native pixel resolutions in **Auto** view mode (the picker matches `fb_w` to the panel aspect, so SDL's downstream stretch is minimal):
+
+| Drawable    | Auto fb_w  | scale     | Texture     | Notes |
+|-------------|------------|-----------|-------------|-------|
+| 1280 × 720  | 428 (16:9) | 2         |  856 × 400  | small panel — supersampling capped by horizontal pixels |
+| 1920 × 1080 | 428 (16:9) | 4         | 1712 × 800  | clean 16:9 fit |
+| 1920 × 1200 | 384 (16:10)| 5         | 1920 × 1000 | perfect 1:1 to drawable |
+| 2560 × 1440 | 428 (16:9) | 5         | 2140 × 1000 | horizontally bound |
+| 3840 × 2160 | 428 (16:9) | 6 (clamp) | 2568 × 1200 | natural pick is 8; `--max-scale=8` to unlock |
+
+The factor re-picks on cross-monitor moves between different-DPI displays (Windows per-monitor v2) and on view-mode changes (the binding axis differs at fb_w=320 vs fb_w=384 vs fb_w=428 against the same drawable). Override the upper clamp with `--max-scale=N` to either ease CPU load on slower machines (e.g. `--max-scale=4`) or unlock more rays on high-end systems with very high-DPI panels (e.g. `--max-scale=8`). Floor stays at 2 regardless.
+
+**Platform notes.** On native Windows, wolf-fc declares per-monitor v2 DPI awareness so the renderer reports real pixels (not OS-DPI-scaled coordinates). On Linux/X11 with fractional-scaling compositors (Cinnamon, GNOME), the X canvas is what SDL sees — typically a render-larger-then-downscale arrangement (e.g. 1920×1080 panel @ 150% reports as 2560×1440), and the compositor applies a final downscale invisible to clients. That free-supersampling path costs CPU but yields a smoother panel image; cap with `--max-scale` if it's too expensive. WSLg's XWayland reports its own client-area size and ignores Windows DPI hints — there's no SDL2 path that surfaces real-pixel resolution from inside a WSLg client.
 
 ### Customising the quit prompt
 
@@ -328,7 +357,7 @@ Wolfenstein 3D itself has a complicated licensing history: the original id Softw
 
 All engine logic in this repo is written from scratch in FC. In particular:
 
-- **Rendering** — the DDA raycaster, sprite renderer (`t_compshape` decoder), HUD, weapon overlay, 2× upscaler, and distance shading are original implementations.
+- **Rendering** — the DDA raycaster, sprite renderer (`t_compshape` decoder), HUD, weapon overlay, dynamic-factor supersample upscaler, and distance shading are original implementations.
 - **Audio** — the OPL2 (YM3812) FM synth in [`opl2.fc`](opl2.fc) is from-scratch, not a port of Nuked OPL3 (LGPL, used by Wolf4SDL) or MAME's OPL cores. The IMF / AdLib SFX / digitized-sound drivers in [`sound.fc`](sound.fc) are original.
 - **PNG writer** ([`png.fc`](png.fc)) — pure-FC implementation of the PNG + zlib specs (CRC-32, Adler-32, stored deflate).
 - **Game code** — player movement, collision, door/push-wall animation, pickups, weapon cycling, level transitions, and the test-mode command interpreter are original.
