@@ -977,19 +977,19 @@ let compute_fb_w_for_view_mode = (view_mode: int32) ->
 
 // Pick the supersample factor (CPU-side software upscale) given the
 // renderer's actual pixel drawable. Larger is sharper but more
-// raycasting work — the cap prevents pathological loads on very high-
-// DPI panels. The 5/6 factor on the height side ≈ 1/1.2, undoing the
-// VGA pixel-aspect stretch SDL applies via logical-size mismatch, so
-// we pick the largest scale that fits inside the drawable area before
-// SDL's downstream stretch.
-let compute_scale_factor = (out_w: int32, out_h: int32, fb_w: int32, fb_h: int32) ->
+// raycasting work — `max_scale` is the upper clamp (default 6 from
+// CLI parsing; --max-scale=N to override). The 5/6 factor on the
+// height side ≈ 1/1.2, undoing the VGA pixel-aspect stretch SDL
+// applies via logical-size mismatch, so we pick the largest scale
+// that fits inside the drawable area before SDL's downstream stretch.
+let compute_scale_factor = (out_w: int32, out_h: int32, fb_w: int32, fb_h: int32, max_scale: int32) ->
     if out_w <= 0 || out_h <= 0 then 2
     else
         let scale_w = out_w / fb_w
         let scale_h = out_h * 5 / (fb_h * 6)
         let mut s = if scale_w < scale_h then scale_w else scale_h
         if s < 2 then s = 2
-        if s > 6 then s = 6
+        if s > max_scale then s = max_scale
         s
 
 // Free + realloc the size-dependent buffers (fb if fb_w changed,
@@ -2375,6 +2375,13 @@ let main = (args: str[]) ->
     //                           depleting), and a locked score. The
     //                           gifts re-apply on every death-respawn
     //                           while the IDKFA latch stays on.
+    //   --max-scale=N         — cap the auto-picked supersample factor
+    //                           at N (default 6). Lower for older CPUs
+    //                           that stutter at the auto-pick; raise
+    //                           for high-end machines where 4K+ panels
+    //                           could benefit from more rays. Floor is
+    //                           2 (the OG-doubled raycaster density);
+    //                           values below 2 are clamped up.
     let mut test_mode = false
     let mut start_level = -1
     let mut start_difficulty = -1
@@ -2384,6 +2391,10 @@ let main = (args: str[]) ->
     let mut start_near_gibs = false
     let mut arg_no_dogs = false
     let mut arg_cheat = false
+    // Default supersample cap. Hardcoded ceiling matches the original
+    // pre-CLI clamp; --max-scale lets the user move it in either
+    // direction. Floor stays at 2 inside compute_scale_factor.
+    let mut max_scale = 6
     for i in 1..(int32) args.len
         let a = args[(int64) i]
         if a == "--no-dogs" then arg_no_dogs = true
@@ -2400,6 +2411,10 @@ let main = (args: str[]) ->
         if text.starts_with(a, "--difficulty=") then
             match text.parse_int32(a[13..a.len]) with
             | some(n) -> if n >= 0 && n < 4 then start_difficulty = n
+            | none    -> void()
+        if text.starts_with(a, "--max-scale=") then
+            match text.parse_int32(a[12..a.len]) with
+            | some(n) -> if n >= 2 then max_scale = n
             | none    -> void()
 
     // PRNG seed: deterministic 0 in --test mode so scripted scenarios
@@ -2747,8 +2762,8 @@ let main = (args: str[]) ->
         out_h = next_h
         sdl2.delay(20u32)
         wait_ms = wait_ms + 20u32
-    let optimal_scale = compute_scale_factor(out_w, out_h, w->rc->fb_w, w->rc->fb_h)
-    io.write("Renderer output %d{out_w}x%d{out_h} -> super-sample %d{optimal_scale}x\n", stdout)
+    let optimal_scale = compute_scale_factor(out_w, out_h, w->rc->fb_w, w->rc->fb_h, max_scale)
+    io.write("Renderer output %d{out_w}x%d{out_h} -> super-sample %d{optimal_scale}x (cap %d{max_scale}x)\n", stdout)
     apply_scale_factor(w, vg, pal, optimal_scale)
     w->rc->drawable_w = out_w
     w->rc->drawable_h = out_h
@@ -2829,7 +2844,7 @@ let main = (args: str[]) ->
                 sdl2.get_output_size(ren, &new_out_w, &new_out_h)
                 w->rc->drawable_w = new_out_w
                 w->rc->drawable_h = new_out_h
-                let new_scale = compute_scale_factor(new_out_w, new_out_h, w->rc->fb_w, w->rc->fb_h)
+                let new_scale = compute_scale_factor(new_out_w, new_out_h, w->rc->fb_w, w->rc->fb_h, max_scale)
                 if apply_scale_factor(w, vg, pal, new_scale) then
                     io.write("Drawable %d{new_out_w}x%d{new_out_h} -> super-sample %d{new_scale}x\n", stdout)
                     sdl2.destroy_texture(tex)
