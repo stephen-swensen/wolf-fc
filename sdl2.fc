@@ -138,8 +138,17 @@ module sdl2 from "SDL2/SDL.h" =
     extern SDL_ShowCursor as show_cursor: (int32) -> int32
 
     // --- Renderer ---
+    extern struct SDL_RendererInfo as renderer_info =
+        name: any*
+        flags: uint32
+        num_texture_formats: uint32
+        texture_formats: uint32[16]
+        max_texture_width: int32
+        max_texture_height: int32
+
     extern SDL_CreateRenderer as create_renderer: (any*, int32, uint32) -> any*
     extern SDL_DestroyRenderer as destroy_renderer: (any*) -> void
+    extern SDL_GetRendererInfo as get_renderer_info: (any*, renderer_info*) -> int32
     extern SDL_RenderSetLogicalSize as set_logical_size: (any*, int32, int32) -> int32
     extern SDL_GetRendererOutputSize as get_output_size: (any*, int32*, int32*) -> int32
     extern SDL_SetRenderDrawColor as set_color: (any*, uint8, uint8, uint8, uint8) -> int32

@@ -2738,9 +2738,15 @@ let main = (args: str[]) ->
     if on_wsl then sdl2.maximize_window(win)
     let mut fullscreen = true
 
-    // Renderer with vsync.
+    // Renderer with vsync. The chosen driver name is logged once so
+    // display/perf issues can be diagnosed (e.g. "software" → CPU
+    // stretch is the bottleneck; "direct3d" / "opengl" / etc. → GPU
+    // pipeline).
     let ren = sdl2.create_renderer(win, -1, sdl2.renderer_vsync)
     sdl2.show_cursor(0)
+    let mut rinfo = default(sdl2.renderer_info)
+    sdl2.get_renderer_info(ren, &rinfo)
+    io.write("Renderer driver: %s{(const str) (const cstr) rinfo.name}\n", stdout)
 
     // Nearest-neighbor scaling — must be set BEFORE creating the texture.
     sdl2.set_hint(c"SDL_RENDER_SCALE_QUALITY", c"nearest")
