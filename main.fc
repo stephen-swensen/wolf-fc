@@ -1518,22 +1518,27 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
         overlay.upscale_nx(w->rc)
         return
     | death_cam ->
-        // Pre-clear fb's top region: low-res viewport overlays (banner
-        // text, etc.) draw into fb at alpha=0xFF; the composite step
-        // skips alpha=0 sentinel pixels so the high-res raycaster
-        // content shows through everywhere else.
-        overlay.clear_view_sentinel(w->rc)
+        // Only the `taunt` sub draws fb-side viewport content (the
+        // "LET'S SEE THAT AGAIN!" pic). All other subs paint directly
+        // to dbuf, so the sentinel clear + composite are pure waste.
+        let dc_overlay = w->g->dc_sub == death_cam.sub.taunt
+        if dc_overlay then overlay.clear_view_sentinel(w->rc)
         death_cam.render(w, vs, pal, w->vg)
         hud.render(w->rc, w->vg, pal, w->g)
-        overlay.composite_view_overlay(w->rc)
+        if dc_overlay then overlay.composite_view_overlay(w->rc)
         overlay.composite_hud(w->rc)
         return
     | _ -> void()
     // 3D phases (playing / dying / bj_victory): raycaster and viewport
     // effects render at high vertical resolution directly into dbuf;
     // HUD and low-res viewport overlays go to fb and are composited
-    // afterward.
-    overlay.clear_view_sentinel(w->rc)
+    // afterward. The fb-side viewport overlay is only ever active for
+    // a banner message or the GET PSYCHED! level-load pic — gate the
+    // sentinel clear + composite on those, since the typical gameplay
+    // frame has no fb-side viewport writers.
+    let view_overlay_active = (w->g->msg_timer > 0.0 && w->g->msg_len > 0)
+        || w->g->get_psyched_timer > 0.0
+    if view_overlay_active then overlay.clear_view_sentinel(w->rc)
     raycaster.render_walls(w->lv, w->rc, w->g, vs, pal)
     billboards.build(w->lv, w->rc, w->g, vs->sprite_start)
     billboards.render(w->rc, w->g, vs, pal)
@@ -1572,7 +1577,7 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
     if w->g->get_psyched_timer > 0.0 then
         pics.render_get_psyched_overlay(w->rc, w->vg, pal,
             w->g->get_psyched_timer, pics.get_psyched_time)
-    overlay.composite_view_overlay(w->rc)
+    if view_overlay_active then overlay.composite_view_overlay(w->rc)
     overlay.composite_hud(w->rc)
     // Pre-intermission fade-to-black: while `next_level` is latched and
     // gameplay is frozen, darken the entire frame linearly as next_level_delay
@@ -2738,6 +2743,17 @@ let main = (args: str[]) ->
     if on_wsl then sdl2.maximize_window(win)
     let mut fullscreen = true
 
+    // Prefer Direct3D 11 over the default Direct3D 9 backend on Windows.
+    // D3D9 in windowed / borderless-fullscreen uses a BitBlt-model swap
+    // chain that goes through DWM as a buffered copy — Present blocks on
+    // the compositor cycle and per-frame cost scales with drawable
+    // pixels, which stalls hard at 4K. D3D11 uses a flip-model swap
+    // chain that DWM can scan out as a hardware overlay, so Present is
+    // close to free regardless of size. Set as a preference, not a
+    // requirement: if D3D11 init fails (or we're not on Windows), SDL
+    // falls back through the rest of its driver list. Must be set
+    // before create_renderer.
+    sdl2.set_hint(c"SDL_RENDER_DRIVER", c"direct3d11")
     // Renderer with vsync. The chosen driver name is logged once so
     // display/perf issues can be diagnosed (e.g. "software" → CPU
     // stretch is the bottleneck; "direct3d" / "opengl" / etc. → GPU
@@ -3587,7 +3603,15 @@ let main = (args: str[]) ->
         // every phase — 3D phases skip the fb intermediate for the
         // viewport region; non-3D phases call upscale_nx internally.
         sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
-        sdl2.clear(ren)
+        // Only clear the backbuffer when SDL's logical-size step will
+        // letterbox/pillarbox into the drawable. With FLIP_DISCARD swap
+        // chains (D3D11) the backbuffer is undefined each frame, so the
+        // letterbox bars need to be black; but when logical aspect
+        // matches drawable aspect, render_copy paints every drawable
+        // pixel and the clear is wasted bandwidth (~33 MB/frame at 4K).
+        let needs_clear = ((int64) runtime_screen_w * (int64) w->rc->drawable_h)
+            != ((int64) runtime_actual_h * (int64) w->rc->drawable_w)
+        if needs_clear then sdl2.clear(ren)
         sdl2.render_copy(ren, tex, (any*) 0, (any*) 0)
         sdl2.present(ren)
 
