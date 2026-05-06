@@ -396,6 +396,7 @@ module death_cam =
         let tics = (int32) (phase_timer * 70.0)
         if (tics & 32) != 0 then return
         let page = vs->sprite_start + sprite_offset
+        let view_render_h = rc->view_render_h
         let dw = view_h
         let dh = view_render_h
         let dx = (rc->fb_w - dw) / 2

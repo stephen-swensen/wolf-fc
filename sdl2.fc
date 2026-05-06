@@ -51,6 +51,14 @@ module sdl2 from "SDL2/SDL.h" =
     extern SDL_QUIT as quit_event: int32
     extern SDL_KEYDOWN as keydown_event: int32
     extern SDL_KEYUP as keyup_event: int32
+    extern SDL_WINDOWEVENT as windowevent: int32
+
+    // SDL_WindowEvent subtypes (event.window.event). We only watch
+    // SIZE_CHANGED — fires for any drawable size change (user
+    // resize, fullscreen toggle, DPI change on cross-monitor move
+    // under permonitorv2), making it a single hook for re-picking
+    // the supersample factor.
+    extern SDL_WINDOWEVENT_SIZE_CHANGED as windowevent_size_changed: uint8
 
     // --- Keys ---
     extern SDLK_UP as key_up: int32
@@ -185,7 +193,23 @@ module sdl2 from "SDL2/SDL.h" =
         type: uint32
         repeat: uint8
         keysym: sdl_keysym
+    // SDL_WindowEvent — emitted with type == SDL_WINDOWEVENT. The
+    // `event` field is the subtype (e.g. SIZE_CHANGED). data1/data2
+    // carry payload (new width/height for resize). Padding fields
+    // are present in the C struct but FC doesn't need them named.
+    extern struct SDL_WindowEvent as window_event =
+        type: uint32
+        timestamp: uint32
+        windowID: uint32
+        event: uint8
+        padding1: uint8
+        padding2: uint8
+        padding3: uint8
+        data1: int32
+        data2: int32
     extern union SDL_Event as sdl_event =
         type: uint32
         key: keyboard_event
+        window: window_event
     extern SDL_PollEvent as poll_event: (sdl_event*) -> int32
+    extern SDL_PumpEvents as pump_events: () -> void

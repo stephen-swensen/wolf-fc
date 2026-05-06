@@ -18,16 +18,14 @@ import random from std::
 let game_w = 320       // internal game resolution (current; will become
                        // rc->fb_w in Hor+ widescreen pass)
 let game_h = 200
-let screen_w = 640     // display resolution (2x scale)
-let screen_h = 400
-let actual_h = 480     // 4:3 corrected height (6 * screen_h / 5)
 let view_h = 160       // 3D viewport height in game coords (HUD takes bottom 40)
-// Internal vertical resolution for the 3D viewport (raycaster + billboards
-// + weapon + view-only overlays). Set to 2× view_h so each output dbuf row
-// in the viewport region maps 1:1 to a raycaster row. Higher view_render_h
-// halves `step_v = 64 / line_h` per integer line_h step → halves texture-row
-// aliasing while walking forward into walls.
-let view_render_h = 320
+// The 3D viewport's CPU-rendered vertical resolution is `rc->view_render_h
+// = rc->scale * view_h`. `rc->scale` is the supersample factor [2..6],
+// picked at startup from `SDL_GetRendererOutputSize` so the dbuf is as
+// close as possible to the actual drawable pixel area before SDL's final
+// nearest-neighbor stretch. Higher scale → finer ray density and finer
+// `step_v = 64 / line_h` granularity → less near-vertical edge stairstep
+// and less wall-row aliasing while walking forward.
 let map_size = 64
 
 // `tan(36°)` — the OG horizontal half-FOV at the right edge of the 320-wide
@@ -712,10 +710,17 @@ struct render_ctx =
     // + billboards) and full-screen fills span 0..fb_w.
     fb_w: int32
     fb_h: int32
-    screen_w: int32    // display texture width = 2 * fb_w
+    // Supersample factor in [2..6]. Picked at startup from the renderer
+    // output size so dbuf approaches the drawable pixel count. `screen_w`
+    // / `screen_h` / `view_render_h` are derived (cached so they don't
+    // multiply on every read in hot raycaster loops).
+    scale: int32
+    screen_w: int32        // = scale * fb_w  — dbuf width / texture width
+    screen_h: int32        // = scale * fb_h  — dbuf height / texture height
+    view_render_h: int32   // = scale * view_h — 3D viewport row count in dbuf
     ui_offset_x: int32
     fb: uint32[]       // fb_w x fb_h ARGB — primary software-rendered frame
-    dbuf: uint32[]     // (2*fb_w) x (2*fb_h) ARGB — 2x nearest-neighbor upscale of fb
+    dbuf: uint32[]     // screen_w x screen_h ARGB — Nx nearest-neighbor upscale of fb
     zbuf: float64[]    // per-column wall perp-distance, for sprite clipping
     billboards: billboard[]    // back-to-front draw list (statics + enemies)
     num_billboards: int32
@@ -909,21 +914,26 @@ let keysym_to_ascii = (k: int32, mods: uint16) ->
 // Allocate renderer scratch buffers. One instance per process. `fb_w`
 // is the framebuffer width — typically the OG 320, or wider for
 // Hor+ widescreen (384 / 428 / etc., set from the display aspect).
-// `fb_h` stays 200 (vertical FOV preserved). The dbuf upscale buffer
-// is 2x both dimensions. Decodes the title-screen backdrop once so
-// pics.blit_title_bg is a cheap memcpy on every menu frame, and sizes
-// pic_cache to hold one ARGB buffer per VGAGRAPH chunk (lazily
-// populated on first draw).
+// `fb_h` stays 200 (vertical FOV preserved). `scale` is the supersample
+// factor [2..6] — dbuf is `scale * fb_w` × `scale * fb_h`. Test mode
+// pins scale = 2 to keep regression screenshots bit-stable; interactive
+// mode picks the value via `compute_scale_factor` after the renderer is
+// up. Decodes the title-screen backdrop once so pics.blit_title_bg is a
+// cheap memcpy on every menu frame, and sizes pic_cache to hold one ARGB
+// buffer per VGAGRAPH chunk (lazily populated on first draw).
 let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
-                        fb_w: int32, fb_h: int32) ->
+                        fb_w: int32, fb_h: int32, scale: int32) ->
     let rc = alloc(render_ctx {
         fb_w = fb_w,
         fb_h = fb_h,
-        screen_w = fb_w * 2,
+        scale = scale,
+        screen_w = fb_w * scale,
+        screen_h = fb_h * scale,
+        view_render_h = view_h * scale,
         ui_offset_x = (fb_w - 320) / 2,
         fb = alloc(uint32[fb_w * fb_h] {})!,
-        dbuf = alloc(uint32[(fb_w * 2) * (fb_h * 2)] {})!,
-        zbuf = alloc(float64[fb_w * 2] {})!,
+        dbuf = alloc(uint32[(fb_w * scale) * (fb_h * scale)] {})!,
+        zbuf = alloc(float64[fb_w * scale] {})!,
         billboards = alloc(billboard[tilemap.max_sprites + enemies.max_enemies + projectiles.max_projectiles] {})!,
         num_billboards = 0,
         title_bg = pics.build_title_bg_cache(vg, pal, fb_w, fb_h),
@@ -936,9 +946,10 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
 // Resolve a view-mode preference into a concrete framebuffer width.
 // Auto (0) queries the display; Original / 16:10 / 16:9 use fixed
 // values from `config.view_mode_to_fb_w`. Always clamps to [320, 640]
-// and rounds up to even (so the 2× upscale buffer stays a multiple
-// of 2). Test-mode callers should bypass this and just use 320 — SDL
-// isn't initialised in that path.
+// and rounds up to even (so dbuf width stays a multiple of 2). Aspect-
+// only — no use of absolute pixel counts, so DPI scaling doesn't
+// affect this. Test-mode callers should bypass this and just use 320 —
+// SDL isn't initialised in that path.
 let compute_fb_w_for_view_mode = (view_mode: int32) ->
     let forced = config.view_mode_to_fb_w(view_mode)
     if forced > 0 then forced
@@ -948,51 +959,93 @@ let compute_fb_w_for_view_mode = (view_mode: int32) ->
         if db.w <= 0 || db.h <= 0 then 320
         else
             let display_aspect = (float64) db.w / (float64) db.h
-            let scale = display_aspect / (4.0 / 3.0)
-            let mut x = (int32) (320.0 * scale)
+            let aspect_scale = display_aspect / (4.0 / 3.0)
+            let mut x = (int32) (320.0 * aspect_scale)
             if x < 320 then x = 320
             if x > 640 then x = 640
             if x % 2 != 0 then x = x + 1
             x
 
-// Apply a view-mode change on the fly. Resizes the framebuffer /
-// upscale / z-buffer / title-bg cache, rescales the player's camera-
-// plane vector to the new FOV magnitude, and updates `g->view_mode`.
-// Returns true if the framebuffer width actually changed (caller is
-// expected to re-create the SDL texture and re-set the renderer's
-// logical size). The pic_cache is left intact — pic-pixel buffers
-// are independent of fb_w (pics blit at native size).
+// Pick the supersample factor (CPU-side software upscale) given the
+// renderer's actual pixel drawable. Larger is sharper but more
+// raycasting work — the cap prevents pathological loads on very high-
+// DPI panels. The 5/6 factor on the height side ≈ 1/1.2, undoing the
+// VGA pixel-aspect stretch SDL applies via logical-size mismatch, so
+// we pick the largest scale that fits inside the drawable area before
+// SDL's downstream stretch.
+let compute_scale_factor = (out_w: int32, out_h: int32, fb_w: int32, fb_h: int32) ->
+    if out_w <= 0 || out_h <= 0 then 2
+    else
+        let scale_w = out_w / fb_w
+        let scale_h = out_h * 5 / (fb_h * 6)
+        let mut s = if scale_w < scale_h then scale_w else scale_h
+        if s < 2 then s = 2
+        if s > 6 then s = 6
+        s
+
+// Free + realloc the size-dependent buffers (fb if fb_w changed,
+// title_bg if fb_w changed, dbuf + zbuf always when scale or fb_w
+// changed). Updates the derived geometry fields. Pic cache is left
+// intact since pic-pixel buffers are independent of these dimensions.
+// Returns whether anything changed; caller decides whether to rescale
+// the camera plane (only on fb_w change) and whether to recreate the
+// SDL texture (on either change).
+let resize_render_ctx = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                         pal: const uint32[], new_fb_w: int32, new_scale: int32) ->
+    let fb_w_changed = new_fb_w != rc->fb_w
+    let scale_changed = new_scale != rc->scale
+    if !fb_w_changed && !scale_changed then false
+    else
+        if fb_w_changed then
+            free(rc->fb)
+            free(rc->title_bg)
+        free(rc->dbuf)
+        free(rc->zbuf)
+        rc->fb_w = new_fb_w
+        rc->scale = new_scale
+        rc->screen_w = new_fb_w * new_scale
+        rc->screen_h = rc->fb_h * new_scale
+        rc->view_render_h = view_h * new_scale
+        rc->ui_offset_x = (new_fb_w - 320) / 2
+        if fb_w_changed then
+            rc->fb = alloc(uint32[new_fb_w * rc->fb_h] {})!
+            rc->title_bg = pics.build_title_bg_cache(vg, pal, new_fb_w, rc->fb_h)
+        rc->dbuf = alloc(uint32[rc->screen_w * rc->screen_h] {})!
+        rc->zbuf = alloc(float64[rc->screen_w] {})!
+        true
+
+// Apply a view-mode change on the fly. Picks the new fb_w from the
+// view mode and delegates the realloc to resize_render_ctx, then
+// rescales the player's camera-plane vector to the new FOV magnitude
+// (only the fb_w change affects FOV; scale is pure pixel density).
+// Returns true if anything actually changed — caller recreates the
+// SDL texture + resets logical size on true.
 let apply_view_mode = (w: world*, vg: const vgagraph.vgagraph_file*,
                        pal: const uint32[], view_mode: int32) ->
     let new_fb_w = compute_fb_w_for_view_mode(view_mode)
     let new_plane_factor = fov_factor * (float64) new_fb_w / 320.0
     let g = w->g
     let rc = w->rc
-    let changed = new_fb_w != rc->fb_w
-    if changed then
-        // Free the old size-dependent buffers + cache, then alloc
-        // fresh ones at the new dimensions.
-        free(rc->fb)
-        free(rc->dbuf)
-        free(rc->zbuf)
-        free(rc->title_bg)
-        rc->fb_w = new_fb_w
-        rc->screen_w = new_fb_w * 2
-        rc->ui_offset_x = (new_fb_w - 320) / 2
-        rc->fb = alloc(uint32[new_fb_w * rc->fb_h] {})!
-        rc->dbuf = alloc(uint32[(new_fb_w * 2) * (rc->fb_h * 2)] {})!
-        rc->zbuf = alloc(float64[new_fb_w * 2] {})!
-        rc->title_bg = pics.build_title_bg_cache(vg, pal, new_fb_w, rc->fb_h)
+    let fb_w_was = rc->fb_w
+    let changed = resize_render_ctx(rc, vg, pal, new_fb_w, rc->scale)
+    if new_fb_w != fb_w_was then
         // Rescale the player's camera plane to the new FOV magnitude
         // while preserving direction. Plane is always perpendicular
         // to dir with magnitude == plane_factor; multiplying by the
         // ratio keeps that invariant after the change.
-        let scale = new_plane_factor / g->plane_factor
-        g->plane_x = g->plane_x * scale
-        g->plane_y = g->plane_y * scale
+        let plane_scale = new_plane_factor / g->plane_factor
+        g->plane_x = g->plane_x * plane_scale
+        g->plane_y = g->plane_y * plane_scale
         g->plane_factor = new_plane_factor
     g->view_mode = view_mode
     changed
+
+// Apply a supersample-scale change on the fly. Reallocates dbuf +
+// zbuf at the new size; fb / title_bg / camera plane are unaffected.
+// Returns true on a real change.
+let apply_scale_factor = (w: world*, vg: const vgagraph.vgagraph_file*,
+                          pal: const uint32[], new_scale: int32) ->
+    resize_render_ctx(w->rc, vg, pal, w->rc->fb_w, new_scale)
 
 // Allocate the save/load menu cache + scratch buffers. One instance per
 // process (only one save/load menu can be open at a time).
@@ -1419,31 +1472,31 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
     match w->g->phase with
     | pg13 ->
         pg13_screen.render(w->rc, w->vg, pal)
-        overlay.upscale_2x(w->rc)
+        overlay.upscale_nx(w->rc)
         return
     | title ->
         title_screen.render(w->rc, w->vg, pal, w->font, w->hs, w->g->phase_timer)
-        overlay.upscale_2x(w->rc)
+        overlay.upscale_nx(w->rc)
         return
     | main_menu ->
         menu.render_main(w->rc, w->sm, w->vg, pal, w->font, w->g, w->ac)
-        overlay.upscale_2x(w->rc)
+        overlay.upscale_nx(w->rc)
         return
     | intermission ->
         intermission.render(w->rc, w->vg, pal, w->g)
-        overlay.upscale_2x(w->rc)
+        overlay.upscale_nx(w->rc)
         return
     | episode_end ->
         episode_end.render(w->rc, w->vg, pal, w->font, w->g)
-        overlay.upscale_2x(w->rc)
+        overlay.upscale_nx(w->rc)
         return
     | endart ->
         endart_screen.render(w->rc, w->vg, pal, w->font, w->g)
-        overlay.upscale_2x(w->rc)
+        overlay.upscale_nx(w->rc)
         return
     | high_scores ->
         high_scores_screen.render(w->rc, w->vg, pal, w->font, w->hs, w->g->phase_timer)
-        overlay.upscale_2x(w->rc)
+        overlay.upscale_nx(w->rc)
         return
     | death_cam ->
         // Pre-clear fb's top region: low-res viewport overlays (banner
@@ -2400,10 +2453,20 @@ let main = (args: str[]) ->
     let mut fb_w = 320
     let mut plane_factor = fov_factor
     if !test_mode then
+        // Per-monitor v2 DPI awareness. MUST be set before the
+        // first SDL_Init(SDL_INIT_VIDEO) — Windows applies the
+        // process-wide DPI policy when the video driver initializes
+        // and ignores any later changes (the underlying
+        // SetProcessDpiAwarenessContext is one-shot per process).
+        // Without this hint SDL falls back to system-DPI-aware,
+        // which means SDL_GetRendererOutputSize returns OS-scaled
+        // coords (1280×800 on a 1920×1200 panel @150%) instead of
+        // real pixels. Ignored on non-Windows platforms.
+        sdl2.set_hint(c"SDL_WINDOWS_DPI_AWARENESS", c"permonitorv2")
         sdl2.init(sdl2.init_video)
         fb_w = compute_fb_w_for_view_mode(cfg.view_mode)
         plane_factor = fov_factor * (float64) fb_w / 320.0
-        io.write("View mode %s{config.view_mode_label(cfg.view_mode)} → fb %d{fb_w}x200\n", stdout)
+        io.write("View mode %s{config.view_mode_label(cfg.view_mode)} -> fb %d{fb_w}x200\n", stdout)
 
     // Assemble the `world` — the handle that groups game state, level data,
     // renderer, and audio. Orchestrators take `world*`; narrower functions
@@ -2501,7 +2564,7 @@ let main = (args: str[]) ->
         g = g,
         lv = build_level(lv_data, vs->sprite_start, g->difficulty, g->no_dogs),
         lv_data = lv_data,
-        rc = build_render_ctx(vg, pal, fb_w, game_h),
+        rc = build_render_ctx(vg, pal, fb_w, game_h, 2),
         ac = alloc(audio_ctx {
             vs = vs,
             ad = ad,
@@ -2592,8 +2655,9 @@ let main = (args: str[]) ->
             run_test_cmd(w, args[(int64) ti], pal, test_dt)
         return 0
 
-    // Initialize SDL2 (interactive mode only)
-    sdl2.set_hint(c"SDL_WINDOWS_DPI_AWARENESS", c"system")
+    // (DPI awareness was already declared before the first VIDEO
+    // init above — Windows enforces one-shot, so setting the hint
+    // again here would be a no-op.)
     // WSLg's Xwayland mis-handles SDL fullscreen-desktop at Windows
     // DPI > 100% (the surface is sized in physical pixels and overflows
     // the visible screen). Detect WSL and fall back to a maximized
@@ -2616,32 +2680,72 @@ let main = (args: str[]) ->
     // immediately. Either way the X11 compositor unredirect path is
     // exercised for the tearing fix on native Linux.
     // Display geometry. The framebuffer is fb_w × fb_h (set above
-    // from the display aspect — see Hor+ widescreen detection); the
-    // texture is 2× both dims; the logical-size scale-out target
-    // applies the VGA 1.2 pixel aspect (game_h * 1.2 * 2 = 480) so a
-    // 4:3 fb (320 wide) renders at 640×480 and a 16:10 fb (384 wide)
-    // renders at 768×480.
-    // Mutable so the Change View menu can resize on the fly.
-    let mut runtime_screen_w = w->rc->screen_w
-    let mut runtime_screen_h = w->rc->fb_h * 2
-    let mut runtime_actual_h = (w->rc->fb_h * 12 / 10) * 2   // VGA pixel-aspect-corrected (1.2)
+    // from the display aspect — see Hor+ widescreen detection). The
+    // texture is `scale × scale` of the fb, where `scale` is the
+    // supersample factor we pick from SDL_GetRendererOutputSize once
+    // the renderer is alive (see below). The logical-size scale-out
+    // target applies the VGA 1.2 pixel aspect so the texture stretches
+    // to (screen_w × fb_h × 1.2 × scale) on screen, then SDL letterboxes
+    // that into the actual drawable. Open the window first at a
+    // safe initial size — fullscreen-desktop ignores it, and on WSL
+    // we maximize immediately, so this only affects the brief window
+    // creation moment.
+    let initial_screen_w = w->rc->screen_w
+    let initial_actual_h = (w->rc->fb_h * 12 / 10) * w->rc->scale
     let fullscreen_flag = if on_wsl then 0u32 else sdl2.window_fullscreen_desktop
     let flags = sdl2.window_shown | sdl2.window_resizable
         | sdl2.window_allow_highdpi | fullscreen_flag
     let win = sdl2.create_window(c"Wolf-FC",
-        sdl2.pos_centered, sdl2.pos_centered, runtime_screen_w, runtime_actual_h, flags)
+        sdl2.pos_centered, sdl2.pos_centered, initial_screen_w, initial_actual_h, flags)
     if on_wsl then sdl2.maximize_window(win)
     let mut fullscreen = true
 
     // Renderer with vsync.
     let ren = sdl2.create_renderer(win, -1, sdl2.renderer_vsync)
-    sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
     sdl2.show_cursor(0)
 
     // Nearest-neighbor scaling — must be set BEFORE creating the texture.
     sdl2.set_hint(c"SDL_RENDER_SCALE_QUALITY", c"nearest")
 
-    // Streaming texture at 2× framebuffer dims.
+    // Now that the renderer exists we can ask it for the actual
+    // pixel drawable area (DPI-correct, unlike SDL_GetDisplayBounds
+    // which reports OS-scaled coords) and pick the supersample
+    // factor accordingly.
+    //
+    // On WSLg (and other Wayland-ish stacks) SDL_MaximizeWindow is
+    // async — the surface isn't resized until the compositor
+    // acknowledges the request. Polling output_size right after
+    // would catch the pre-maximize size and lock us at scale=2.
+    // Pump events + small delay + retry until the size settles or
+    // we hit a 250ms ceiling. On native fullscreen-desktop the
+    // first query already returns the final size, so this is a
+    // no-op in the common case.
+    let mut out_w = 0i32
+    let mut out_h = 0i32
+    sdl2.get_output_size(ren, &out_w, &out_h)
+    let mut wait_ms = 0u32
+    loop
+        if wait_ms >= 250u32 then break
+        sdl2.pump_events()
+        let mut next_w = 0i32
+        let mut next_h = 0i32
+        sdl2.get_output_size(ren, &next_w, &next_h)
+        if next_w == out_w && next_h == out_h && wait_ms > 0u32 then break
+        out_w = next_w
+        out_h = next_h
+        sdl2.delay(20u32)
+        wait_ms = wait_ms + 20u32
+    let optimal_scale = compute_scale_factor(out_w, out_h, w->rc->fb_w, w->rc->fb_h)
+    io.write("Renderer output %d{out_w}x%d{out_h} -> super-sample %d{optimal_scale}x\n", stdout)
+    apply_scale_factor(w, vg, pal, optimal_scale)
+    // Mutable so the Change View menu can resize on the fly when
+    // fb_w changes (the SS factor is sticky across view-mode changes).
+    let mut runtime_screen_w = w->rc->screen_w
+    let mut runtime_screen_h = w->rc->screen_h
+    let mut runtime_actual_h = (w->rc->fb_h * 12 / 10) * w->rc->scale
+    sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
+
+    // Streaming texture at the chosen supersample dims.
     let mut tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
         sdl2.tex_streaming, runtime_screen_w, runtime_screen_h)
 
@@ -2696,6 +2800,29 @@ let main = (args: str[]) ->
             if sdl2.poll_event(&event) == 0 then break
             let t = (int32) event.type
             if t == sdl2.quit_event then running = false
+            // Drawable-size change (user resize, fullscreen toggle,
+            // DPI change on cross-monitor move under permonitorv2).
+            // Re-query the renderer output size, re-pick the
+            // supersample factor, and rebuild the texture + logical
+            // size to match. apply_scale_factor is a no-op when the
+            // pick is unchanged, so events that don't move the
+            // needle (e.g. transient events at the same DPI) just
+            // walk past.
+            if t == sdl2.windowevent
+                && event.window.event == sdl2.windowevent_size_changed then
+                let mut new_out_w = 0i32
+                let mut new_out_h = 0i32
+                sdl2.get_output_size(ren, &new_out_w, &new_out_h)
+                let new_scale = compute_scale_factor(new_out_w, new_out_h, w->rc->fb_w, w->rc->fb_h)
+                if apply_scale_factor(w, vg, pal, new_scale) then
+                    io.write("Drawable %d{new_out_w}x%d{new_out_h} -> super-sample %d{new_scale}x\n", stdout)
+                    sdl2.destroy_texture(tex)
+                    runtime_screen_w = w->rc->screen_w
+                    runtime_screen_h = w->rc->screen_h
+                    runtime_actual_h = (w->rc->fb_h * 12 / 10) * w->rc->scale
+                    tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
+                        sdl2.tex_streaming, runtime_screen_w, runtime_screen_h)
+                    sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
             if t == sdl2.keydown_event then
                 let k = event.key.keysym.sym
                 // OS key-autorepeat fires SDL_KEYDOWN every ~30 ms while a key
@@ -3015,8 +3142,8 @@ let main = (args: str[]) ->
                             if resized then
                                 sdl2.destroy_texture(tex)
                                 runtime_screen_w = w->rc->screen_w
-                                runtime_screen_h = w->rc->fb_h * 2
-                                runtime_actual_h = (w->rc->fb_h * 12 / 10) * 2
+                                runtime_screen_h = w->rc->screen_h
+                                runtime_actual_h = (w->rc->fb_h * 12 / 10) * w->rc->scale
                                 tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
                                     sdl2.tex_streaming, runtime_screen_w, runtime_screen_h)
                                 sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
@@ -3408,9 +3535,9 @@ let main = (args: str[]) ->
             void()
 
         // Upload framebuffer to texture and display. render_frame
-        // produces a fully-composited 640x400 dbuf for every phase
-        // (3D phases skip the fb intermediate for the viewport region;
-        // non-3D phases call upscale_2x internally).
+        // produces a fully-composited dbuf (screen_w × screen_h) for
+        // every phase — 3D phases skip the fb intermediate for the
+        // viewport region; non-3D phases call upscale_nx internally.
         sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
         sdl2.clear(ren)
         sdl2.render_copy(ren, tex, (any*) 0, (any*) 0)

@@ -641,6 +641,7 @@ module player =
         if !hdr.valid then return   // sparse page
         let base = hdr.base
         let sw = (int64) rc->screen_w
+        let view_render_h = rc->view_render_h
         for sc in hdr.left_pix..(hdr.right_pix + 1)
             let sx0 = dst_x + sc * dst_w / 64
             let sx1 = dst_x + (sc + 1) * dst_w / 64
@@ -683,6 +684,7 @@ module player =
         // dw = view_render_h gives a square sprite that matches the
         // original 160-fb-col wide gun after the display's vertical
         // 4:3 stretch.
+        let view_render_h = rc->view_render_h
         let dw = view_render_h
         let dh = view_render_h
         let dx = (rc->screen_w - dw) / 2

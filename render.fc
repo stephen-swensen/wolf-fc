@@ -2,7 +2,8 @@
 //   raycaster  — DDA wall / door / push-wall column rasterizer
 //   billboards — enemies + sprites + projectiles sorted back-to-front
 //                and drawn over the wall frame with the z-buffer
-//   overlay    — viewport tints, dissolve stipples, final 2x upscale,
+//   overlay    — viewport tints, dissolve stipples, final Nx upscale
+//                (N = rc->scale, the supersample factor in [2..6]),
 //                screenshot / PNG pipeline
 
 
@@ -62,6 +63,7 @@ module raycaster =
         let floor_color = pal[0x19]
         // Shadow depth from the user's Options-menu setting.
         let shadow_floor = shadow_floor_from_depth(g->shadow_depth)
+        let view_render_h = rc->view_render_h
         let half = view_render_h / 2
         let sw = (int64) rc->screen_w
         for y in 0..half
@@ -86,10 +88,10 @@ module raycaster =
         let pw_fx = (float64) lv->pushwall.tile_x + pw_sub * (float64) lv->pushwall.dir_x
         let pw_fy = (float64) lv->pushwall.tile_y + pw_sub * (float64) lv->pushwall.dir_y
 
-        // Cast one ray per dbuf column (screen_w = 2 × fb_w). At 2x
-        // horizontal density the rays sample twice as finely as the
-        // logical fb_w grid, matching the existing 2x vertical
-        // supersample (view_render_h = 2 × view_h) so near-vertical
+        // Cast one ray per dbuf column (screen_w = scale × fb_w). At
+        // higher supersample factors the rays sample more finely than
+        // the logical fb_w grid, matching the matching vertical
+        // supersample (view_render_h = scale × view_h) so near-vertical
         // wall edges and far-distance texture columns stop shimmering.
         for col in 0..rc->screen_w
             let cam_x = 2.0 * (float64) col / (float64) rc->screen_w - 1.0
@@ -390,6 +392,7 @@ module billboards =
         if sprite_col < hdr.left_pix || sprite_col > hdr.right_pix then return
         let base = hdr.base
         let data_off = (int64) hdr.col_offsets[sprite_col]
+        let view_render_h = rc->view_render_h
         let upper = view_render_h / 2 - sprite_h / 2
         let sw = (int64) rc->screen_w
         let dcol = (int64) screen_x
@@ -424,6 +427,7 @@ module billboards =
                   vs: const vswap.vswap_file*, pal: const uint32[]) ->
         let inv_det = 1.0 / (g->plane_x * g->dir_y - g->dir_x * g->plane_y)
         let shadow_floor = raycaster.shadow_floor_from_depth(g->shadow_depth)
+        let view_render_h = rc->view_render_h
         for i in 0..rc->num_billboards
             let bb = rc->billboards[i]
             let sx = bb.x - g->pos_x
@@ -475,6 +479,7 @@ module overlay =
         let tg = (float64) ((tint >> 8) & 0xFFu32) * a
         let tb = (float64) (tint & 0xFFu32) * a
         let sw = (int64) rc->screen_w
+        let view_render_h = rc->view_render_h
         for y in 0..view_render_h
             let row = (int64) y * sw
             for x in 0..rc->screen_w
@@ -515,6 +520,7 @@ module overlay =
         let threshold = (uint32) (p * 65536.0)
         let color = 0xFF000000u32 | (tint & 0x00FFFFFFu32)
         let sw = (int64) rc->screen_w
+        let view_render_h = rc->view_render_h
         for y in 0..view_render_h
             let row = (int64) y * sw
             for x in 0..rc->screen_w
@@ -533,20 +539,24 @@ module overlay =
         let x = (rc->fb_w - tw) / 2
         hud.draw_text(rc, x, y, s, color, scale)
 
-    // Upscale fb (fb_w x fb_h) to dbuf (2*fb_w x 2*fb_h) with
-    // nearest-neighbor 2x. Stride uses rc->screen_w (= 2 * fb_w) so
-    // widescreen framebuffers blit correctly.
-    let upscale_2x = (rc: render_ctx*) ->
+    // Upscale fb (fb_w x fb_h) to dbuf (screen_w x screen_h) with
+    // nearest-neighbor at rc->scale (the supersample factor). Each
+    // source pixel paints a `scale × scale` block. Stride uses
+    // rc->screen_w so widescreen framebuffers blit correctly.
+    let upscale_nx = (rc: render_ctx*) ->
+        let s = rc->scale
+        let sw = (int64) rc->screen_w
+        let fbw = (int64) rc->fb_w
         for y in 0..rc->fb_h
+            let dy0 = (int64) (y * s)
+            let src = (int64) y * fbw
             for x in 0..rc->fb_w
-                let c = rc->fb[(int64) y * (int64) rc->fb_w + (int64) x]
-                let dx = (int64) x * 2
-                let dy = (int64) y * 2
-                let sw = (int64) rc->screen_w
-                rc->dbuf[dy * sw + dx] = c
-                rc->dbuf[dy * sw + dx + 1] = c
-                rc->dbuf[(dy + 1) * sw + dx] = c
-                rc->dbuf[(dy + 1) * sw + dx + 1] = c
+                let c = rc->fb[src + (int64) x]
+                let dx0 = (int64) (x * s)
+                for ky in 0..s
+                    let row = (dy0 + (int64) ky) * sw + dx0
+                    for kx in 0..s
+                        rc->dbuf[row + (int64) kx] = c
 
     // 3D-phase pipeline helpers. The viewport region of dbuf (rows
     // 0..view_render_h) is filled at high vertical resolution by
@@ -566,39 +576,41 @@ module overlay =
             rc->fb[i] = 0u32
 
     // Composite fb's top region (rows 0..view_h, alpha != 0) onto
-    // dbuf's viewport region (rows 0..view_render_h) at 2x2 nearest
-    // neighbor. Sentinel pixels (alpha == 0) are skipped so the
-    // high-res raycaster content stays visible underneath.
+    // dbuf's viewport region (rows 0..view_render_h) at scale × scale
+    // nearest neighbor. Sentinel pixels (alpha == 0) are skipped so
+    // the high-res raycaster content stays visible underneath.
     let composite_view_overlay = (rc: render_ctx*) ->
+        let s = rc->scale
         let sw = (int64) rc->screen_w
         let fbw = (int64) rc->fb_w
         for y in 0..view_h
-            let dy = (int64) y * 2
+            let dy0 = (int64) (y * s)
             let src = (int64) y * fbw
             for x in 0..rc->fb_w
                 let c = rc->fb[src + (int64) x]
                 if (c & 0xFF000000u32) != 0u32 then
-                    let dx = (int64) x * 2
-                    rc->dbuf[dy * sw + dx] = c
-                    rc->dbuf[dy * sw + dx + 1] = c
-                    rc->dbuf[(dy + 1) * sw + dx] = c
-                    rc->dbuf[(dy + 1) * sw + dx + 1] = c
+                    let dx0 = (int64) (x * s)
+                    for ky in 0..s
+                        let row = (dy0 + (int64) ky) * sw + dx0
+                        for kx in 0..s
+                            rc->dbuf[row + (int64) kx] = c
 
-    // 2x2 nearest-neighbor blit of fb's HUD region (rows view_h..fb_h)
-    // → dbuf's HUD region (rows view_render_h..2*fb_h).
+    // scale × scale nearest-neighbor blit of fb's HUD region (rows
+    // view_h..fb_h) → dbuf's HUD region (rows view_render_h..screen_h).
     let composite_hud = (rc: render_ctx*) ->
+        let s = rc->scale
         let sw = (int64) rc->screen_w
         let fbw = (int64) rc->fb_w
         for y in view_h..rc->fb_h
-            let dy = (int64) y * 2
+            let dy0 = (int64) (y * s)
             let src = (int64) y * fbw
             for x in 0..rc->fb_w
                 let c = rc->fb[src + (int64) x]
-                let dx = (int64) x * 2
-                rc->dbuf[dy * sw + dx] = c
-                rc->dbuf[dy * sw + dx + 1] = c
-                rc->dbuf[(dy + 1) * sw + dx] = c
-                rc->dbuf[(dy + 1) * sw + dx + 1] = c
+                let dx0 = (int64) (x * s)
+                for ky in 0..s
+                    let row = (dy0 + (int64) ky) * sw + dx0
+                    for kx in 0..s
+                        rc->dbuf[row + (int64) kx] = c
 
     // Tint the entire dbuf (full final frame, viewport + HUD) toward
     // `tint` at `alpha`. Used after compositing for fades that must
@@ -612,7 +624,7 @@ module overlay =
         let tg = (float64) ((tint >> 8) & 0xFFu32) * a
         let tb = (float64) (tint & 0xFFu32) * a
         let sw = (int64) rc->screen_w
-        let total_h = rc->fb_h * 2
+        let total_h = rc->screen_h
         for y in 0..total_h
             let row = (int64) y * sw
             for x in 0..rc->screen_w
@@ -624,18 +636,20 @@ module overlay =
                     0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
 
     // Downsample dbuf's viewport region (rows 0..view_render_h) back
-    // into fb's top region (rows 0..view_h) at 2:1 in both axes. Used
-    // before save_png so screenshots stay 320x200 with the live
-    // high-res viewport content visible. Samples the (0,0) corner of
-    // each 2x2 block (cheap, matches the 2x upscale's pixel layout).
+    // into fb's top region (rows 0..view_h) at scale:1 in both axes.
+    // Used before save_png so screenshots stay fb_w × fb_h with the
+    // live high-res viewport content visible. Samples the (0,0)
+    // corner of each scale × scale block (cheap, matches the upscale
+    // pixel layout).
     let flatten_view_to_fb = (rc: render_ctx*) ->
+        let s = rc->scale
         let sw = (int64) rc->screen_w
         let fbw = (int64) rc->fb_w
         for y in 0..view_h
-            let src_row = (int64) y * 2 * sw
+            let src_row = (int64) (y * s) * sw
             let dst_row = (int64) y * fbw
             for x in 0..rc->fb_w
-                rc->fb[dst_row + (int64) x] = rc->dbuf[src_row + (int64) x * 2]
+                rc->fb[dst_row + (int64) x] = rc->dbuf[src_row + (int64) (x * s)]
 
     // Compute a derived screenshot path. `path` ends in ".png" by
     // convention — strip that, append `suffix`, then ".png" — so
@@ -646,21 +660,20 @@ module overlay =
         else alloc("%s{path}%s{suffix}.png")!
 
     // Display height for the aspect-corrected screenshot — matches
-    // runtime_actual_h: fb_h(=200) × 1.2 × 2 = 480.
+    // runtime_actual_h: fb_h(=200) × 1.2 × scale.
     let display_h = (rc: render_ctx*) ->
-        rc->fb_h * 12 / 10 * 2
+        rc->fb_h * 12 / 10 * rc->scale
 
-    // Stretch dbuf vertically from 2*fb_h rows to display_h rows using
+    // Stretch dbuf vertically from screen_h rows to display_h rows using
     // nearest-neighbor sampling — same kernel SDL uses with
     // `SDL_HINT_RENDER_SCALE_QUALITY="nearest"` and a logical size of
     // (screen_w × display_h). Result is the post-aspect-correction
-    // frame the player actually sees on screen (e.g. 640×480 in 4:3,
-    // 768×480 in 16:10, 852×480 in 16:9). Pixels are square in display
-    // space. Caller allocates `dst` of size screen_w × display_h(rc).
+    // frame the player actually sees on screen. Pixels are square in
+    // display space. Caller allocates `dst` of size screen_w × display_h(rc).
     private let render_display_buffer = (rc: render_ctx*, dst: uint32[]) ->
         let dst_h = display_h(rc)
         let sw = (int64) rc->screen_w
-        let src_h = rc->fb_h * 2
+        let src_h = rc->screen_h
         for y in 0..dst_h
             let src_y = (int64) y * (int64) src_h / (int64) dst_h
             let src_row = src_y * sw
@@ -675,14 +688,13 @@ module overlay =
     //     from dbuf for 3D phases. Stable across view modes (testers
     //     and screenshot regressions can pixel-compare without aspect
     //     math). What the game's *coordinate system* sees.
-    //   - `<base>-raw.png` — 2*fb_w × 2*fb_h, the raw dbuf as
+    //   - `<base>-raw.png` — screen_w × screen_h, the raw dbuf as
     //     uploaded to the SDL texture. Square pixels. Best for
     //     pixel-precise inspection of the renderer (high-res
     //     viewport rows are present here).
-    //   - `<base>-display.png` — 2*fb_w × actual_h (e.g. 640×480 in
-    //     4:3, 768×480 in 16:10), the aspect-corrected post-stretch
-    //     image. Pixels are square in display space — what the
-    //     player actually sees on the screen.
+    //   - `<base>-display.png` — screen_w × display_h (the aspect-
+    //     corrected post-stretch image). Pixels are square in display
+    //     space — what the player actually sees on the screen.
     // All three carry the same Wolf-FC tEXt metadata.
     let save_png = (w: world*, path: const str) ->
         let g = w->g
@@ -700,7 +712,7 @@ module overlay =
         png.write(path, w->rc->fb, w->rc->fb_w, game_h, meta)
         let raw_path = derive_path(path, "-raw")
         defer free(raw_path)
-        png.write(raw_path, w->rc->dbuf, w->rc->screen_w, w->rc->fb_h * 2, meta)
+        png.write(raw_path, w->rc->dbuf, w->rc->screen_w, w->rc->screen_h, meta)
         let disp_h = display_h(w->rc)
         let disp = alloc(uint32[(int64) w->rc->screen_w * (int64) disp_h] {})!
         defer free(disp)

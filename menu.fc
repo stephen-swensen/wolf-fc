@@ -475,11 +475,15 @@ module menu =
             if i == g->view_mode then
                 let lw = font.text_width(f, label)
                 font.draw_text(rc, f, x_label + lw + 4, row_y, "*", pal[pal_readh])
-        // Footer notes the in-effect resolution. Changes apply
-        // immediately on Enter — no restart needed.
+        // Footer notes the in-effect resolution and supersample
+        // factor. Changes apply immediately on Enter — no restart
+        // needed. The SS factor is auto-picked from the renderer
+        // output size at startup; not user-selectable here.
         let info_y = cv_y + cv_h + 4
         font.draw_centered(rc, f, info_y,
             "Active: %d{rc->fb_w} x %d{rc->fb_h}", pal[pal_text])
+        font.draw_centered(rc, f, info_y + 10,
+            "Super-sampling: %d{rc->scale}x", pal[pal_text])
         draw_help_pic(rc, vg, pal)
         // 1px blue outline on the inside of the framebuffer
         // perimeter so the user can verify the active mode isn't
