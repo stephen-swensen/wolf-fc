@@ -553,6 +553,12 @@ struct game =
     // Read by spawn.spawn_enemies; takes effect on the next level
     // build (changing it mid-level doesn't despawn live dogs).
     no_dogs: bool
+    // Upper clamp on the auto-picked supersample factor. CLI-only
+    // (--max-scale=N), default 6. Read by `compute_scale_factor`
+    // both at startup and on view-mode changes — stashed on game
+    // so `apply_view_mode` can re-pick the scale when fb_w changes
+    // without threading the cap through every call site.
+    max_scale: int32
     // Shadow Depth (0..100). Controls how dark walls / sprites get
     // at long distance — 0 disables distance fading entirely (the
     // OG-faithful default; the original has no distance shading,
@@ -1024,11 +1030,13 @@ let resize_render_ctx = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
         true
 
 // Apply a view-mode change on the fly. Picks the new fb_w from the
-// view mode and delegates the realloc to resize_render_ctx, then
-// rescales the player's camera-plane vector to the new FOV magnitude
-// (only the fb_w change affects FOV; scale is pure pixel density).
-// Returns true if anything actually changed — caller recreates the
-// SDL texture + resets logical size on true.
+// view mode + re-picks the supersample factor against the new fb_w
+// (the optimal scale is fb_w-dependent: a 16:10 fb at 384 wide hits
+// the panel's horizontal budget at one scale, a 16:9 fb at 428 hits
+// it at a smaller scale), delegates the realloc to resize_render_ctx,
+// and rescales the player's camera-plane vector to the new FOV
+// magnitude. Returns true if anything actually changed — caller
+// recreates the SDL texture + resets logical size on true.
 let apply_view_mode = (w: world*, vg: const vgagraph.vgagraph_file*,
                        pal: const uint32[], view_mode: int32) ->
     let new_fb_w = compute_fb_w_for_view_mode(view_mode)
@@ -1036,7 +1044,9 @@ let apply_view_mode = (w: world*, vg: const vgagraph.vgagraph_file*,
     let g = w->g
     let rc = w->rc
     let fb_w_was = rc->fb_w
-    let changed = resize_render_ctx(rc, vg, pal, new_fb_w, rc->scale)
+    let new_scale = compute_scale_factor(rc->drawable_w, rc->drawable_h,
+                                          new_fb_w, rc->fb_h, g->max_scale)
+    let changed = resize_render_ctx(rc, vg, pal, new_fb_w, new_scale)
     if new_fb_w != fb_w_was then
         // Rescale the player's camera plane to the new FOV magnitude
         // while preserving direction. Plane is always perpendicular
@@ -2566,6 +2576,7 @@ let main = (args: str[]) ->
         // is always "force on", absence falls back to whatever the user
         // last toggled in the Options menu.
         no_dogs = if arg_no_dogs then true else cfg.no_dogs,
+        max_scale = max_scale,
         shadow_depth = cfg.shadow_depth,
         bj_speed_pct = cfg.bj_speed_pct,
         enemy_speed_pct = cfg.enemy_speed_pct,
