@@ -294,13 +294,19 @@ module raycaster =
             let mut shade = dist_shade(perp_dist, shadow_floor)
             if side == 1 then shade = shade * 0.75
 
+            // The wall texel address is page_base + tex_x*64 + tex_y;
+            // only tex_y varies per pixel, so resolve the column base
+            // once. Inlining the index also lets gcc see the bounds
+            // check against vs->raw.len without going through bytes.u32.
+            let col_base = vswap.page_offset(vs, tex_page) + (int64) tex_x * 64
+
             for y in draw_start..draw_end
                 let mut tex_y = (int32) tex_pos
                 if tex_y < 0 then tex_y = 0
                 if tex_y > 63 then tex_y = 63
                 tex_pos = tex_pos + step_v
 
-                let pix = vswap.wall_pixel(vs, tex_page, tex_x, tex_y)
+                let pix = vs->raw[col_base + (int64) tex_y]
                 let color = shade_color(pal[(int32) pix], shade)
                 rc->dbuf[(int64) y * sw + dcol] = color
 
