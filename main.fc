@@ -3606,7 +3606,15 @@ let main = (args: str[]) ->
         // every phase — 3D phases skip the fb intermediate for the
         // viewport region; non-3D phases call upscale_nx internally.
         sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
-        sdl2.clear(ren)
+        // Only clear the backbuffer when SDL's logical-size step will
+        // letterbox/pillarbox into the drawable. With FLIP_DISCARD swap
+        // chains (D3D11) the backbuffer is undefined each frame, so the
+        // letterbox bars need to be black; but when logical aspect
+        // matches drawable aspect, render_copy paints every drawable
+        // pixel and the clear is wasted bandwidth (~33 MB/frame at 4K).
+        let needs_clear = ((int64) runtime_screen_w * (int64) w->rc->drawable_h)
+            != ((int64) runtime_actual_h * (int64) w->rc->drawable_w)
+        if needs_clear then sdl2.clear(ren)
         sdl2.render_copy(ren, tex, (any*) 0, (any*) 0)
         sdl2.present(ren)
 
