@@ -1312,10 +1312,12 @@ let start_new_game_here = (w: world*, vs: const vswap.vswap_file*) ->
     reload_level_data(w, vs)
     spawn.find_player_start(w->lv_data, g)
     reset_level_counters(g, w->lv)
-    player.reset_for_new_game(g)
     // A new game starts cheat-free regardless of what the prior session
-    // had latched.
+    // had latched. Clear before reset_for_new_game — reset_for_life
+    // re-grants the IDKFA full kit if idkfa_mode is still latched, which
+    // would leak ammo / keys / chain gun into the new game.
     player.cheats.clear_modes(g)
+    player.reset_for_new_game(g)
     // reset_for_new_game zeros `score`; mirror that into `oldscore`
     // so the death-rewind has a sane baseline (rewinds to 0, not
     // whatever score the previous game ended on).
