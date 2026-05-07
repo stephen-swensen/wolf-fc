@@ -289,6 +289,11 @@ module raycaster =
             let mut tex_pos = (float64) (draw_start - view_render_h / 2 + line_h / 2) * step_v
             let dcol = (int64) col
 
+            // shade depends only on perp_dist, shadow_floor, side — all
+            // column-invariant; hoist out of the per-pixel loop.
+            let mut shade = dist_shade(perp_dist, shadow_floor)
+            if side == 1 then shade = shade * 0.75
+
             for y in draw_start..draw_end
                 let mut tex_y = (int32) tex_pos
                 if tex_y < 0 then tex_y = 0
@@ -296,8 +301,6 @@ module raycaster =
                 tex_pos = tex_pos + step_v
 
                 let pix = vswap.wall_pixel(vs, tex_page, tex_x, tex_y)
-                let mut shade = dist_shade(perp_dist, shadow_floor)
-                if side == 1 then shade = shade * 0.75
                 let color = shade_color(pal[(int32) pix], shade)
                 rc->dbuf[(int64) y * sw + dcol] = color
 

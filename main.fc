@@ -1719,6 +1719,35 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         overlay.save_png(w, arg[3..arg.len])
         io.write("Saved %s{arg[3..arg.len]}\n", stdout)
         void()
+    else if text.starts_with(arg, "setscale:") then
+        // Resize dbuf/zbuf to the given supersample factor. Test mode
+        // normally pins scale=2 (so screenshot regressions stay
+        // bit-stable); this command is for the perf bench harness to
+        // probe higher-scale codepaths headlessly.
+        match text.parse_int32(arg[9..arg.len]) with
+        | some(n) ->
+            if n >= 2 && n <= 8 then
+                apply_scale_factor(w, w->vg, pal, n)
+                void()
+            else bad("scale in [2,8]")
+        | none -> bad("integer scale factor")
+    else if text.starts_with(arg, "bench:") then
+        // Render `n` full frames and report total/per-frame wall time.
+        // Drives the raycaster + billboards + overlay pipeline at the
+        // current scale. Use after `setscale:N` and a position-setting
+        // sequence (e.g. fwd:35) to measure a representative scene.
+        match text.parse_int32(arg[6..arg.len]) with
+        | some(n) ->
+            let t0 = sys.time()
+            for j in 0..n
+                render_frame(w, w->ac->vs, pal)
+            let t1 = sys.time()
+            let total_ms = t1 - t0
+            let per_frame = if n > 0 then (float64) total_ms / (float64) n else 0.0
+            let fps = if total_ms > 0 then (float64) n * 1000.0 / (float64) total_ms else 0.0
+            io.write("bench scale=%d{w->rc->scale} screen=%d{w->rc->screen_w}x%d{w->rc->screen_h} frames=%d{n} total=%d{total_ms}ms per_frame=%6.3f{per_frame}ms fps=%6.1f{fps}\n", stdout)
+            void()
+        | none -> bad("integer frame count")
     else if arg == "state" then
         io.write("pos=(%8.4f{g->pos_x}, %8.4f{g->pos_y}) dir=(%8.4f{g->dir_x}, %8.4f{g->dir_y})\n", stdout)
         io.write("health=%d{g->health} ammo=%d{g->ammo} score=%d{g->score} lives=%d{g->lives} level=%d{g->level_num} weapon=%d{g->weapon} best=%d{g->best_weapon}\n", stdout)
