@@ -1244,9 +1244,13 @@ let advance_next_level = (w: world*, vs: const vswap.vswap_file*) ->
     g->oldscore = g->score
     g->level_num = episode.next_level_num(g->level_num, g->went_secret)
     g->went_secret = false
-    // Wolf3D clears keys between levels.
-    g->has_gold_key = false
-    g->has_silver_key = false
+    // Wolf3D clears keys between levels — but IDKFA's "all keys"
+    // promise outranks that, so the latch keeps them across the
+    // transition (otherwise IDKFA-locked players hit a locked door
+    // on the next floor with no recourse).
+    if !g->idkfa_mode then
+        g->has_gold_key = false
+        g->has_silver_key = false
     // Re-arm per-episode recording for the upcoming level.
     g->ep_recorded_current = false
     reload_level_data(w, vs)
@@ -1309,6 +1313,9 @@ let start_new_game_here = (w: world*, vs: const vswap.vswap_file*) ->
     spawn.find_player_start(w->lv_data, g)
     reset_level_counters(g, w->lv)
     player.reset_for_new_game(g)
+    // A new game starts cheat-free regardless of what the prior session
+    // had latched.
+    player.cheats.clear_modes(g)
     // reset_for_new_game zeros `score`; mirror that into `oldscore`
     // so the death-rewind has a sane baseline (rewinds to 0, not
     // whatever score the previous game ended on).

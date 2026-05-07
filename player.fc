@@ -436,6 +436,16 @@ module player =
                 g->cheat_bat_latched = true
             if !bat_all then g->cheat_bat_latched = false
 
+        // Wipe latched cheat modes + sequence-machine progress.
+        // Called when a new game starts or a save is loaded so cheats
+        // from a prior session don't leak into the new one.
+        let clear_modes = (g: game*) ->
+            g->god_mode = false
+            g->idkfa_mode = false
+            g->noclip = false
+            g->iddqd_progress = 0
+            g->idkfa_progress = 0
+
     // ============================================================
     // Player update (movement, input, use-action dispatch)
     // ============================================================

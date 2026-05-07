@@ -542,6 +542,11 @@ module save =
                     // live game had reached.
                     g->rng_enemy = random.pcg_random.make_with_channel(0u64, enemies.rng_channel)
                     g->rng_face  = random.pcg_random.make_with_channel(0u64, hud.rng_channel)
+                    // Loading a slot drops any cheat latches the live
+                    // session had picked up (IDDQD / IDKFA / noclip).
+                    // Save files don't persist cheat state, so this
+                    // also keeps load deterministic.
+                    player.cheats.clear_modes(g)
                     let mut level_loaded = false
                     let mut i = 0
                     loop
