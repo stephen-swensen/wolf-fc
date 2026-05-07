@@ -757,28 +757,6 @@ struct render_ctx =
     pic_cache: uint32[][]
     // Rotating screenshot slot counter (wraps at overlay.screenshot_max_slots).
     screenshot_slot: int32
-    // Wall-clock millisecond timestamp (SDL_GetTicks units) of the last
-    // time we ran a full `render_frame` for a non-3D phase. Used to
-    // throttle title / menu / intermission / etc. to ~15 fps so they
-    // stop re-rasterising the entire dbuf at 60 fps when nothing
-    // visually changes. 0 = never rendered → first check forces a
-    // render. Reset by `resize_render_ctx` when buffers are realloc'd.
-    last_static_render_ms: uint32
-    // Wall-clock timestamp of the last in-3D-phase HUD blit (`hud.render`
-    // + `composite_hud`). Same throttling rationale: the 40-row HUD
-    // strip's contents change only on discrete events (score / health /
-    // ammo / face / weapon / keys), all well below 15 Hz, but the blit
-    // costs ~2.5 MB of dbuf writes at scale=6/fb_w=426. Reset on dbuf
-    // realloc so the first frame after a resize forces a fresh blit.
-    last_hud_blit_ms: uint32
-    // Set by `composite_hud` (via render_frame) when the HUD region of
-    // dbuf was just rewritten; consumed by the main-loop texture-upload
-    // path to ship a HUD sub-rect to VRAM. When false, the texture's
-    // HUD region is already in sync with dbuf and the upload is skipped
-    // — saves ~2.5 MB of CPU→GPU transfer per frame at scale=6/fb_w=426
-    // on most gameplay frames (the HUD blit itself is throttled to ~15
-    // fps, so the upload would be redundant ~75% of the time).
-    hud_pending_upload: bool
 
 // Sound system handle: loaded-asset refs + SFX playback state.
 struct audio_ctx =
@@ -976,10 +954,7 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
         title_bg = pics.build_title_bg_cache(vg, pal, fb_w, fb_h),
         god_face = pics.build_god_face_cache(vg, pal),
         pic_cache = alloc(uint32[][vg->num_chunks] {})!,
-        screenshot_slot = 0,
-        last_static_render_ms = 0u32,
-        last_hud_blit_ms = 0u32,
-        hud_pending_upload = false
+        screenshot_slot = 0
     })!
     rc
 
@@ -1052,11 +1027,6 @@ let resize_render_ctx = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
             rc->title_bg = pics.build_title_bg_cache(vg, pal, new_fb_w, rc->fb_h)
         rc->dbuf = alloc(uint32[rc->screen_w * rc->screen_h] {})!
         rc->zbuf = alloc(float64[rc->screen_w] {})!
-        // dbuf was just zero-allocated, so any throttled state from the
-        // previous geometry is gone. Force the next frame's full
-        // render + HUD blit by zeroing the timers.
-        rc->last_static_render_ms = 0u32
-        rc->last_hud_blit_ms = 0u32
         true
 
 // Apply a view-mode change on the fly. Picks the new fb_w from the
@@ -1517,25 +1487,6 @@ let tick = (w: world*, dt: float64) ->
     let _changed = update_phase_transitions(w, w->ac->vs)
 
 // Render the full game frame to fb (used before saving a screenshot).
-// Phases without a continuously-changing 3D viewport — no raycaster
-// runs, render_frame ends in upscale_nx. Throttled to ~15 fps by the
-// main loop so menus / title / intermission don't burn ~24 MB of write
-// + upload bandwidth per frame at scale=6 just to redisplay the same
-// pixels. (The 3D phases — playing / dying / bj_victory / death_cam —
-// always render at full rate; the HUD inside those phases is throttled
-// independently inside render_frame itself.)
-let is_static_phase = (phase: game_phase) ->
-    match phase with
-    | pg13 | title | main_menu | intermission | episode_end | endart | high_scores -> true
-    | _ -> false
-
-// 67 ms ≈ 15 fps. Below perceptual threshold for non-animated UI
-// elements (cursor blink at 3.5 Hz, BJ face animation at ~2 Hz) and
-// for HUD digit changes (a score tick lands within one HUD blit
-// window). Used by both the static-phase throttle and the in-play HUD
-// blit throttle.
-let render_throttle_ms = 67u32
-
 let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[]) ->
     match w->g->phase with
     | pg13 ->
@@ -1567,39 +1518,22 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
         overlay.upscale_nx(w->rc)
         return
     | death_cam ->
-        // Only the `taunt` sub draws fb-side viewport content (the
-        // "LET'S SEE THAT AGAIN!" pic). All other subs paint directly
-        // to dbuf, so the sentinel clear + composite are pure waste.
-        let dc_overlay = w->g->dc_sub == death_cam.sub.taunt
-        if dc_overlay then overlay.clear_view_sentinel(w->rc)
+        // Pre-clear fb's top region: low-res viewport overlays (banner
+        // text, etc.) draw into fb at alpha=0xFF; the composite step
+        // skips alpha=0 sentinel pixels so the high-res raycaster
+        // content shows through everywhere else.
+        overlay.clear_view_sentinel(w->rc)
         death_cam.render(w, vs, pal, w->vg)
-        // Test mode bypasses the wall-clock throttle so scripted-screenshot
-        // commands are deterministic — sdl2.get_ticks() isn't a stable
-        // signal when SDL was never initialised. (next_level isn't a
-        // concern here — death_cam never enters the elevator-fade path —
-        // but the symmetry with the 3D-phase gate is worth keeping.)
-        let dc_now = sdl2.get_ticks()
-        let dc_blit_hud = w->g->test_mode || w->g->next_level
-            || (dc_now - w->rc->last_hud_blit_ms) >= render_throttle_ms
-        if dc_blit_hud then
-            hud.render(w->rc, w->vg, pal, w->g)
-            w->rc->last_hud_blit_ms = dc_now
-        if dc_overlay then overlay.composite_view_overlay(w->rc)
-        if dc_blit_hud then
-            overlay.composite_hud(w->rc)
-            w->rc->hud_pending_upload = true
+        hud.render(w->rc, w->vg, pal, w->g)
+        overlay.composite_view_overlay(w->rc)
+        overlay.composite_hud(w->rc)
         return
     | _ -> void()
     // 3D phases (playing / dying / bj_victory): raycaster and viewport
     // effects render at high vertical resolution directly into dbuf;
     // HUD and low-res viewport overlays go to fb and are composited
-    // afterward. The fb-side viewport overlay is only ever active for
-    // a banner message or the GET PSYCHED! level-load pic — gate the
-    // sentinel clear + composite on those, since the typical gameplay
-    // frame has no fb-side viewport writers.
-    let view_overlay_active = (w->g->msg_timer > 0.0 && w->g->msg_len > 0)
-        || w->g->get_psyched_timer > 0.0
-    if view_overlay_active then overlay.clear_view_sentinel(w->rc)
+    // afterward.
+    overlay.clear_view_sentinel(w->rc)
     raycaster.render_walls(w->lv, w->rc, w->g, vs, pal)
     billboards.build(w->lv, w->rc, w->g, vs->sprite_start)
     billboards.render(w->rc, w->g, vs, pal)
@@ -1626,17 +1560,7 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
             w->g->respawn_fade_timer / player.respawn_fade_time
         else 0.0
     overlay.dissolve_stipple(w->rc, red_tint, stipple_progress)
-    let now_ms = sdl2.get_ticks()
-    // The pre-intermission elevator fade applies dbuf_tint_full to the
-    // whole dbuf every frame; if the HUD blit is throttled, successive
-    // tints compound on the same stale pixels and the HUD strobes
-    // brighter on each fresh blit. Force a per-frame blit while
-    // next_level is latched so the tint always starts from a fresh HUD.
-    let blit_hud = w->g->test_mode || w->g->next_level
-        || (now_ms - w->rc->last_hud_blit_ms) >= render_throttle_ms
-    if blit_hud then
-        hud.render(w->rc, w->vg, pal, w->g)
-        w->rc->last_hud_blit_ms = now_ms
+    hud.render(w->rc, w->vg, pal, w->g)
     hud.render_message(w->rc, w->font, w->g)
     // "GET PSYCHED!" level-entry overlay. The original fills the 3D
     // viewport with VIEWCOLOR (palette 0x7f), draws the pic centered, and
@@ -1648,10 +1572,8 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
     if w->g->get_psyched_timer > 0.0 then
         pics.render_get_psyched_overlay(w->rc, w->vg, pal,
             w->g->get_psyched_timer, pics.get_psyched_time)
-    if view_overlay_active then overlay.composite_view_overlay(w->rc)
-    if blit_hud then
-        overlay.composite_hud(w->rc)
-        w->rc->hud_pending_upload = true
+    overlay.composite_view_overlay(w->rc)
+    overlay.composite_hud(w->rc)
     // Pre-intermission fade-to-black: while `next_level` is latched and
     // gameplay is frozen, darken the entire frame linearly as next_level_delay
     // ticks down. Gives the player immediate visual feedback that the
@@ -3656,18 +3578,8 @@ let main = (args: str[]) ->
                 ms = some(font.music_load(ad, want_chunk))
                 current_music_chunk = want_chunk
 
-        // Render. Static phases (title / menu / intermission / endart /
-        // pg13 / episode_end / high_scores) get throttled to ~15 fps so
-        // they don't burn ~24 MB/frame of CPU write + texture-upload
-        // bandwidth at scale=6 just to redisplay an unchanged image.
-        // 3D phases always render at full rate; the HUD inside those
-        // phases is throttled independently inside render_frame.
-        let static_now_ms = sdl2.get_ticks()
-        let in_static_phase = is_static_phase(g->phase)
-        let skip_static_render = in_static_phase
-            && (static_now_ms - w->rc->last_static_render_ms) < render_throttle_ms
-        if !skip_static_render then
-            render_frame(w, vs, pal)
+        // Render
+        render_frame(w, vs, pal)
 
         // Generate and queue audio: music -> AdLib SFX -> digi SFX -> SDL.
         // Buffer is 1024 STEREO frames (2048 int16 values = 4096 bytes);
@@ -3693,43 +3605,8 @@ let main = (args: str[]) ->
         // produces a fully-composited dbuf (screen_w × screen_h) for
         // every phase — 3D phases skip the fb intermediate for the
         // viewport region; non-3D phases call upscale_nx internally.
-        // Skipped when the static-phase throttle decided not to
-        // re-render this iteration: the streaming texture retains its
-        // prior contents, render_copy below re-presents them.
-        //
-        // For 3D phases we split the upload into a viewport sub-rect
-        // (always uploaded — raycaster rewrites it every frame) and a
-        // HUD sub-rect (uploaded only when composite_hud just refreshed
-        // it, signalled via rc->hud_pending_upload). Since the HUD blit
-        // is throttled to ~15 fps, ~75% of gameplay frames now ship
-        // only the viewport rows to VRAM, saving ~110 MB/s of upload
-        // bandwidth at scale=6/fb_w=426.
-        if !skip_static_render then
-            if in_static_phase then
-                sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
-                w->rc->hud_pending_upload = false
-                w->rc->last_static_render_ms = static_now_ms
-            else
-                let view_rows = w->rc->view_render_h
-                let mut view_rect = sdl2.rect { x = 0, y = 0, w = runtime_screen_w, h = view_rows }
-                sdl2.update_texture(tex, (any*) &view_rect,
-                    (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
-                if w->rc->hud_pending_upload then
-                    let hud_rows = runtime_screen_h - view_rows
-                    let mut hud_rect = sdl2.rect { x = 0, y = view_rows, w = runtime_screen_w, h = hud_rows }
-                    let hud_offset = (int64) view_rows * (int64) runtime_screen_w
-                    sdl2.update_texture(tex, (any*) &hud_rect,
-                        (any*) w->rc->dbuf[hud_offset..].ptr, runtime_screen_w * 4)
-                    w->rc->hud_pending_upload = false
-        // Only clear the backbuffer when SDL's logical-size step will
-        // letterbox/pillarbox into the drawable. With FLIP_DISCARD swap
-        // chains (D3D11) the backbuffer is undefined each frame, so the
-        // letterbox bars need to be black; but when logical aspect
-        // matches drawable aspect, render_copy paints every drawable
-        // pixel and the clear is wasted bandwidth (~33 MB/frame at 4K).
-        let needs_clear = ((int64) runtime_screen_w * (int64) w->rc->drawable_h)
-            != ((int64) runtime_actual_h * (int64) w->rc->drawable_w)
-        if needs_clear then sdl2.clear(ren)
+        sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
+        sdl2.clear(ren)
         sdl2.render_copy(ren, tex, (any*) 0, (any*) 0)
         sdl2.present(ren)
 
