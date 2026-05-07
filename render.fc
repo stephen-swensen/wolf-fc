@@ -300,15 +300,23 @@ module raycaster =
             // check against vs->raw.len without going through bytes.u32.
             let col_base = vswap.page_offset(vs, tex_page) + (int64) tex_x * 64
 
+            // Pre-shade all 64 source rows of this wall column into a
+            // stack-local LUT. The per-pixel inner loop becomes just
+            // `dbuf[...] = lut[tex_y]` — no shade_color call, no pal
+            // lookup, no vs->raw bounds check inside the hot loop. At
+            // 6× supersample columns can run 500–960 pixels tall, so
+            // amortising 64 setups is a clear win.
+            let mut col_lut = uint32[64] {}
+            for ty in 0..64
+                let pix = vs->raw[col_base + (int64) ty]
+                col_lut[ty] = shade_color(pal[(int32) pix], shade)
+
             for y in draw_start..draw_end
                 let mut tex_y = (int32) tex_pos
                 if tex_y < 0 then tex_y = 0
                 if tex_y > 63 then tex_y = 63
                 tex_pos = tex_pos + step_v
-
-                let pix = vs->raw[col_base + (int64) tex_y]
-                let color = shade_color(pal[(int32) pix], shade)
-                rc->dbuf[(int64) y * sw + dcol] = color
+                rc->dbuf[(int64) y * sw + dcol] = col_lut[tex_y]
 
 
 // ============================================================
