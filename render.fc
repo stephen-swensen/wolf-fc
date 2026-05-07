@@ -326,14 +326,20 @@ module billboards =
                 dist_sq = dx * dx + dy * dy
             }
             n = n + 1
+        // Same projection the renderer uses for billboards: tx/ty in
+        // [-1, 1] = on-screen, with margin for partial-edge overlap.
+        // Using tx/ty (FOV-normalized) keeps the threshold invariant
+        // across view modes — a raw |lateral| / forward check would
+        // tighten in widescreen because plane_factor scales with fb_w.
+        let inv_det = 1.0 / (g->plane_x * g->dir_y - g->dir_x * g->plane_y)
         for i in 0..lv->num_enemies
             let e = &lv->enemies[i]
             let page_rel = enemies.sprite_page(e, g->pos_x, g->pos_y)
             let dx = e->x - g->pos_x
             let dy = e->y - g->pos_y
-            let fd = dx * g->dir_x + dy * g->dir_y
-            let ld = dx * g->plane_x + dy * g->plane_y
-            e->last_visible = fd > 0.1 && math.abs(ld) <= fd * 1.2
+            let tx = inv_det * (g->dir_y * dx - g->dir_x * dy)
+            let ty = inv_det * (g->plane_x * dy - g->plane_y * dx)
+            e->last_visible = ty > 0.1 && math.abs(tx) <= ty * 1.2
             rc->billboards[n] = billboard {
                 x = e->x,
                 y = e->y,
