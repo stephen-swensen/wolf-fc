@@ -575,6 +575,19 @@ assert_contains "deathcam:advance-skips-to-episode-end" \
 assert_contains "deathcam:hans-still-drops-gold-key" \
     "setlevel:8 killenemy:0 goto:34,14 state" \
     "gold=1"
+# render_sprite must compute the SPR_DEATHCAM destination rect in
+# dbuf-cell units (screen_w grid), not fb-cell units. A previous
+# regression mixed those coordinate spaces, which shrank the sprite to
+# 160 dbuf-cols (instead of view_render_h) and centered it in fb_w
+# (instead of screen_w), making the flashing "DEATH CAM" label appear
+# small + squished in the top-left of the viewport instead of
+# full-size and centered. Test mode runs at scale=2/fb_w=320, so
+# screen_w=640 and view_render_h=320 — the correct centered + square
+# layout is dx=160 dy=0 dw=320 dh=320. Bug-shape values were dx=80
+# dw=160.
+assert_contains "deathcam:sprite-layout-uses-dbuf-coords" \
+    "dcsprite" \
+    "dcsprite dx=160 dy=0 dw=320 dh=320"
 
 section "enemy projectiles"
 # Fake Hitler on E3M9 unloads a flame salvo down the corridor west of him.

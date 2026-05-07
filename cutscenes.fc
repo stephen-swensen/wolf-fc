@@ -387,6 +387,31 @@ module death_cam =
                 g->dc_fade = 1.0
                 g->dc_sub = sub.done
 
+    // Layout for the SPR_DEATHCAM sprite within the dbuf-cell grid.
+    // Same sizing as the player gun (square, view_render_h on each
+    // side, centered horizontally, top-aligned in the viewport so the
+    // letters appear high). Coordinates are in dbuf-cell units, NOT
+    // fb-cell units — `draw_hud_sprite` interprets them on the
+    // screen_w grid. Used by `render_sprite` and exposed for the
+    // test-mode `dcsprite` probe so a layout regression is caught
+    // without having to drive the whole death_cam phase.
+    struct sprite_layout =
+        dx: int32
+        dy: int32
+        dw: int32
+        dh: int32
+
+    let compute_sprite_layout = (rc: render_ctx*) ->
+        let view_render_h = rc->view_render_h
+        let dw = view_render_h
+        let dh = view_render_h
+        sprite_layout {
+            dx = (rc->screen_w - dw) / 2,
+            dy = view_render_h - dh,
+            dw = dw,
+            dh = dh
+        }
+
     // Draw the SPR_DEATHCAM sprite at the bottom-center of the
     // viewport, sized the same way player.render_weapon sizes the gun.
     // Flashes on/off per phase_timer; caller is expected to gate on
@@ -396,12 +421,8 @@ module death_cam =
         let tics = (int32) (phase_timer * 70.0)
         if (tics & 32) != 0 then return
         let page = vs->sprite_start + sprite_offset
-        let view_render_h = rc->view_render_h
-        let dw = view_h
-        let dh = view_render_h
-        let dx = (rc->fb_w - dw) / 2
-        let dy = view_render_h - dh
-        player.draw_hud_sprite(rc, vs, pal, page, dx, dy, dw, dh)
+        let l = compute_sprite_layout(rc)
+        player.draw_hud_sprite(rc, vs, pal, page, l.dx, l.dy, l.dw, l.dh)
 
     // Render one frame of the death_cam cutscene. Normal viewport
     // during the pre-fade hold; a dissolve-to-backdrop during

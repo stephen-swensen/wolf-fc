@@ -771,6 +771,14 @@ struct render_ctx =
     // costs ~2.5 MB of dbuf writes at scale=6/fb_w=426. Reset on dbuf
     // realloc so the first frame after a resize forces a fresh blit.
     last_hud_blit_ms: uint32
+    // Set by `composite_hud` (via render_frame) when the HUD region of
+    // dbuf was just rewritten; consumed by the main-loop texture-upload
+    // path to ship a HUD sub-rect to VRAM. When false, the texture's
+    // HUD region is already in sync with dbuf and the upload is skipped
+    // — saves ~2.5 MB of CPU→GPU transfer per frame at scale=6/fb_w=426
+    // on most gameplay frames (the HUD blit itself is throttled to ~15
+    // fps, so the upload would be redundant ~75% of the time).
+    hud_pending_upload: bool
 
 // Sound system handle: loaded-asset refs + SFX playback state.
 struct audio_ctx =
@@ -970,7 +978,8 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
         pic_cache = alloc(uint32[][vg->num_chunks] {})!,
         screenshot_slot = 0,
         last_static_render_ms = 0u32,
-        last_hud_blit_ms = 0u32
+        last_hud_blit_ms = 0u32,
+        hud_pending_upload = false
     })!
     rc
 
@@ -1576,7 +1585,9 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
             hud.render(w->rc, w->vg, pal, w->g)
             w->rc->last_hud_blit_ms = dc_now
         if dc_overlay then overlay.composite_view_overlay(w->rc)
-        if dc_blit_hud then overlay.composite_hud(w->rc)
+        if dc_blit_hud then
+            overlay.composite_hud(w->rc)
+            w->rc->hud_pending_upload = true
         return
     | _ -> void()
     // 3D phases (playing / dying / bj_victory): raycaster and viewport
@@ -1638,7 +1649,9 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
         pics.render_get_psyched_overlay(w->rc, w->vg, pal,
             w->g->get_psyched_timer, pics.get_psyched_time)
     if view_overlay_active then overlay.composite_view_overlay(w->rc)
-    if blit_hud then overlay.composite_hud(w->rc)
+    if blit_hud then
+        overlay.composite_hud(w->rc)
+        w->rc->hud_pending_upload = true
     // Pre-intermission fade-to-black: while `next_level` is latched and
     // gameplay is frozen, darken the entire frame linearly as next_level_delay
     // ticks down. Gives the player immediate visual feedback that the
@@ -2212,6 +2225,14 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             if s->playing then active = active + 1
             io.write("slot %d{i}: playing=%d{if s->playing then 1 else 0} sound=%d{s->sound_num}\n", stdout)
         io.write("active=%d{active}\n", stdout)
+        void()
+    else if arg == "dcsprite" then
+        // Dump the SPR_DEATHCAM sprite layout that death_cam.render_sprite
+        // would use. Layout is in dbuf-cell units; a regression that
+        // re-introduces the fb-vs-dbuf coordinate mixup (small sprite in
+        // the upper-left corner) shifts these values.
+        let l = death_cam.compute_sprite_layout(w->rc)
+        io.write("dcsprite dx=%d{l.dx} dy=%d{l.dy} dw=%d{l.dw} dh=%d{l.dh} screen_w=%d{w->rc->screen_w} view_render_h=%d{w->rc->view_render_h}\n", stdout)
         void()
     else if arg == "probe" then
         // Diagnostic: why can't the player move from their current position?
@@ -3675,9 +3696,31 @@ let main = (args: str[]) ->
         // Skipped when the static-phase throttle decided not to
         // re-render this iteration: the streaming texture retains its
         // prior contents, render_copy below re-presents them.
+        //
+        // For 3D phases we split the upload into a viewport sub-rect
+        // (always uploaded — raycaster rewrites it every frame) and a
+        // HUD sub-rect (uploaded only when composite_hud just refreshed
+        // it, signalled via rc->hud_pending_upload). Since the HUD blit
+        // is throttled to ~15 fps, ~75% of gameplay frames now ship
+        // only the viewport rows to VRAM, saving ~110 MB/s of upload
+        // bandwidth at scale=6/fb_w=426.
         if !skip_static_render then
-            sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
-            if in_static_phase then w->rc->last_static_render_ms = static_now_ms
+            if in_static_phase then
+                sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
+                w->rc->hud_pending_upload = false
+                w->rc->last_static_render_ms = static_now_ms
+            else
+                let view_rows = w->rc->view_render_h
+                let mut view_rect = sdl2.rect { x = 0, y = 0, w = runtime_screen_w, h = view_rows }
+                sdl2.update_texture(tex, (any*) &view_rect,
+                    (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
+                if w->rc->hud_pending_upload then
+                    let hud_rows = runtime_screen_h - view_rows
+                    let mut hud_rect = sdl2.rect { x = 0, y = view_rows, w = runtime_screen_w, h = hud_rows }
+                    let hud_offset = (int64) view_rows * (int64) runtime_screen_w
+                    sdl2.update_texture(tex, (any*) &hud_rect,
+                        (any*) w->rc->dbuf[hud_offset..].ptr, runtime_screen_w * 4)
+                    w->rc->hud_pending_upload = false
         // Only clear the backbuffer when SDL's logical-size step will
         // letterbox/pillarbox into the drawable. With FLIP_DISCARD swap
         // chains (D3D11) the backbuffer is undefined each frame, so the
