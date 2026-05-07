@@ -72,7 +72,7 @@ GEN_FC := $(BUILD_DIR)/install_path.fc
 # readability — it's the entry point.
 SRCS_FC := sdl2.fc opl2.fc sound.fc png.fc data.fc \
            sfx.fc ui.fc save.fc combat.fc level.fc cutscenes.fc \
-           menu.fc player.fc render.fc main.fc
+           menu.fc player.fc render.fc profile.fc main.fc
 
 # Stdlib resolution: derive from `fcc`'s install prefix on PATH (same logic
 # the old run.sh used). Override with FCC_STDLIB if your layout is unusual.

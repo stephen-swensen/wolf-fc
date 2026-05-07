@@ -1,0 +1,429 @@
+// Wolf-FC frame profiler — opt-in via --profile / --profile=N.
+//
+// Sampling model:
+//   * Primary unit is a *phase block* — from the frame the game enters a
+//     game_phase variant until the frame it leaves it (or until the user
+//     quits). Each phase block is one entry in profile.txt.
+//   * Within a phase, samples are flushed every N seconds (default 5,
+//     overridable via --profile=N). Each sub-sample reports only the
+//     activity since the last flush — not cumulative.
+//   * At the end of a phase, a phase-summary block is appended that
+//     covers the whole phase (sum/avg of every sub-sample inside it,
+//     including the trailing partial one if the phase ended mid-window).
+//   * profile.txt is *appended* to as the session runs and overwritten
+//     fresh on each --profile launch.
+//
+// Design constraints:
+//   * One profile_ctx is always allocated and hung off `world.prof`.
+//     When --profile is absent, `enabled` is false and every helper
+//     short-circuits on its first instruction (one load + branch).
+//   * No instrumentation lives outside main.fc's dispatchers
+//     (`tick`, `render_frame`, the main loop). Hot leaf code in
+//     render.fc / sound.fc / combat.fc is untouched, so disabling the
+//     profiler reverts to the exact pre-profiler call graph.
+//   * Slot ids are plain int32 constants (not a `union`) because we
+//     need O(1) array indexing into the bucket arrays — see the
+//     `module naming: keep descriptive types, drop variant prefixes`
+//     memory for context, but array-indexed enum-like sets are the
+//     conventional exception (cf. `dir.east = 0` in combat.fc).
+
+module profile =
+    import io from std::
+
+    // Slot ids. Order matches the columns we emit in the report.
+    // When adding a slot: append it here, bump `num_slots`, append
+    // its display name in `slot_name`.
+    module slot =
+        let frame                = 0
+        let event_poll           = 1
+        let tick_total           = 2
+        let tick_player          = 3
+        let tick_doors           = 4
+        let tick_pushwall        = 5
+        let tick_weapon          = 6
+        let tick_enemies         = 7
+        let tick_projectiles     = 8
+        let tick_pickups         = 9
+        let tick_hud_face        = 10
+        let tick_dying           = 11
+        let tick_phase_other     = 12
+        let phase_transitions    = 13
+        let render_total         = 14
+        let render_raycaster     = 15
+        let render_bb_build      = 16
+        let render_bb_render     = 17
+        let render_player_weapon = 18
+        let render_hud           = 19
+        let render_overlays      = 20
+        let render_upscale       = 21
+        let render_phase_other   = 22
+        let audio_fill           = 23
+        let audio_queue          = 24
+        let texture_upload       = 25
+        let render_copy          = 26
+        let present              = 27
+
+    let num_slots = 28
+
+    // Capture context. Lives on `world.prof` and is always non-null
+    // (avoids option-pointer ceremony in the per-frame helpers); the
+    // `enabled` flag is the gate.
+    //
+    // Two parallel accumulators:
+    //   sub_*  — reset every N seconds (and on phase change). Emitted
+    //            verbatim as one "sub-sample" block.
+    //   ph_*   — reset only on phase change. Each completed sub-sample
+    //            is folded into ph_* before sub_* is reset, so ph_*
+    //            holds the running total for the active phase.
+    struct profile_ctx =
+        enabled: bool
+        sub_secs: float64           // sub-sample window length
+        perf_freq: uint64           // SDL perf-counter ticks per second
+        // Open file handle for profile.txt (none if disabled or open
+        // failed). Kept open the whole session so each block flushes
+        // immediately rather than re-opening.
+        out_file: any*?
+        output_path: str
+
+        // Time anchors.
+        session_start: uint64       // perf counter at first frame
+        sub_start: uint64           // perf counter at start of current sub-sample
+        phase_start: uint64         // perf counter at start of current phase
+
+        // Current phase — captured on the first frame and updated on
+        // every change.
+        current_phase: game_phase
+        has_phase: bool             // false until the first frame_end
+
+        // Sub-sample accumulators. Reset at every flush (N-second tick
+        // OR phase change).
+        sub_ticks: uint64[]
+        sub_calls: int64[]
+        sub_max:   uint64[]
+        sub_frame_count: int64
+        sub_frame_max:   uint64
+
+        // Phase accumulators. Reset only on phase change. Each completed
+        // sub-sample folds into these (see fold_sub_into_phase) before
+        // sub_* is wiped, so they hold the cumulative phase total.
+        ph_ticks: uint64[]
+        ph_calls: int64[]
+        ph_max:   uint64[]
+        ph_frame_count: int64
+        ph_frame_max:   uint64
+        ph_sub_count: int32         // number of sub-samples folded so far
+
+    let make = (enabled: bool, sub_secs: float64, output_path: str) ->
+        let st  = alloc(uint64[num_slots] {})!
+        let sc  = alloc(int64[num_slots] {})!
+        let sx  = alloc(uint64[num_slots] {})!
+        let pt  = alloc(uint64[num_slots] {})!
+        let pc  = alloc(int64[num_slots] {})!
+        let px  = alloc(uint64[num_slots] {})!
+        let perf_freq = sdl2.get_perf_freq()
+        alloc(profile_ctx {
+            enabled = enabled,
+            sub_secs = sub_secs,
+            perf_freq = perf_freq,
+            out_file = default(any*?),
+            output_path = output_path,
+            session_start = 0u64,
+            sub_start = 0u64,
+            phase_start = 0u64,
+            current_phase = default(game_phase),
+            has_phase = false,
+            sub_ticks = st,
+            sub_calls = sc,
+            sub_max = sx,
+            sub_frame_count = 0i64,
+            sub_frame_max = 0u64,
+            ph_ticks = pt,
+            ph_calls = pc,
+            ph_max = px,
+            ph_frame_count = 0i64,
+            ph_frame_max = 0u64,
+            ph_sub_count = 0
+        })!
+
+    let destroy = (p: profile_ctx*) ->
+        if p->out_file.is_some then io.close(p->out_file!)
+        free(p->sub_ticks)
+        free(p->sub_calls)
+        free(p->sub_max)
+        free(p->ph_ticks)
+        free(p->ph_calls)
+        free(p->ph_max)
+        free(p->output_path)
+        free(p)
+
+    // Open profile.txt (truncating any previous session) and write the
+    // session header. Called once just before the main loop starts.
+    let start_capture = (p: profile_ctx*) ->
+        if !p->enabled then return
+        let now = sdl2.get_perf_counter()
+        p->session_start = now
+        p->sub_start = now
+        p->phase_start = now
+        match io.open(p->output_path, "w") with
+        | none ->
+            io.write("profile: failed to open %s{p->output_path}\n", stderr)
+            void()
+        | some(f) ->
+            p->out_file = some(f)
+            io.write("Wolf-FC profile session\n", f)
+            io.write("Path:        %s{p->output_path}\n", f)
+            io.write("Sub-sample:  %4.1f{p->sub_secs}s\n", f)
+            io.write("Slots: see end_scope wrappers in main.fc.\n", f)
+            io.write("\n", f)
+            io.flush(f)
+
+    // Hot helpers. Both must be tiny so the disabled fast path is
+    // a single load + branch + return.
+    //
+    // Idiom at the call site:
+    //     let _t = profile.start_scope(p)
+    //     do_work(...)
+    //     profile.end_scope(p, profile.slot.something, _t)
+
+    let start_scope = (p: profile_ctx*) ->
+        if !p->enabled then return 0u64
+        sdl2.get_perf_counter()
+
+    let end_scope = (p: profile_ctx*, slot_id: int32, t0: uint64) ->
+        if !p->enabled then return
+        let now = sdl2.get_perf_counter()
+        let dt = now - t0
+        let i = (int64) slot_id
+        p->sub_ticks[i] = p->sub_ticks[i] + dt
+        p->sub_calls[i] = p->sub_calls[i] + 1
+        if dt > p->sub_max[i] then p->sub_max[i] = dt
+
+    let frame_begin = (p: profile_ctx*) ->
+        start_scope(p)
+
+    // ----------------------------------------------------------
+    // Internal helpers — block emission + accumulator management.
+    // ----------------------------------------------------------
+
+    // Slot label for the per-block table. Keep aligned with the slot
+    // ids above. Two-space indent on sub-slots is intentional — it
+    // visually nests them under their parent (`tick (all)` /
+    // `render (all)`) when the table is sorted by name.
+    private let slot_name = (slot_id: int32) ->
+        if slot_id == slot.frame                    then "frame"
+        else if slot_id == slot.event_poll          then "event_poll"
+        else if slot_id == slot.tick_total          then "tick (all)"
+        else if slot_id == slot.tick_player         then "  tick.player"
+        else if slot_id == slot.tick_doors          then "  tick.doors"
+        else if slot_id == slot.tick_pushwall       then "  tick.pushwall"
+        else if slot_id == slot.tick_weapon         then "  tick.weapon"
+        else if slot_id == slot.tick_enemies        then "  tick.enemies"
+        else if slot_id == slot.tick_projectiles    then "  tick.projectiles"
+        else if slot_id == slot.tick_pickups        then "  tick.pickups"
+        else if slot_id == slot.tick_hud_face       then "  tick.hud_face"
+        else if slot_id == slot.tick_dying          then "  tick.dying"
+        else if slot_id == slot.tick_phase_other    then "  tick.phase_other"
+        else if slot_id == slot.phase_transitions   then "phase_transitions"
+        else if slot_id == slot.render_total        then "render (all)"
+        else if slot_id == slot.render_raycaster    then "  render.raycaster"
+        else if slot_id == slot.render_bb_build     then "  render.bb_build"
+        else if slot_id == slot.render_bb_render    then "  render.bb_render"
+        else if slot_id == slot.render_player_weapon then "  render.player_weapon"
+        else if slot_id == slot.render_hud          then "  render.hud"
+        else if slot_id == slot.render_overlays     then "  render.overlays"
+        else if slot_id == slot.render_upscale      then "  render.upscale"
+        else if slot_id == slot.render_phase_other  then "  render.phase_other"
+        else if slot_id == slot.audio_fill          then "audio.fill"
+        else if slot_id == slot.audio_queue         then "audio.queue"
+        else if slot_id == slot.texture_upload      then "texture_upload"
+        else if slot_id == slot.render_copy         then "render_copy"
+        else if slot_id == slot.present             then "present"
+        else "unknown"
+
+    private let phase_label_of = (p: game_phase) ->
+        match p with
+        | pg13         -> "pg13"
+        | title        -> "title"
+        | main_menu    -> "main_menu"
+        | playing      -> "playing"
+        | dying        -> "dying"
+        | intermission -> "intermission"
+        | bj_victory   -> "bj_victory"
+        | death_cam    -> "death_cam"
+        | episode_end  -> "episode_end"
+        | endart       -> "endart"
+        | high_scores  -> "high_scores"
+
+    private let ticks_to_ms = (ticks: uint64, freq: uint64) ->
+        if freq == 0u64 then 0.0
+        else (float64) ticks * 1000.0 / (float64) freq
+
+    // Render one slot table sorted by total_ticks descending. Skips
+    // slots with zero calls so phase-specific blocks (e.g. main_menu,
+    // which doesn't run any tick.* slots) stay readable.
+    private let write_slot_table = (f: any*, freq: uint64,
+                                    ticks: uint64[], calls: int64[],
+                                    maxes: uint64[], total_ms: float64) ->
+        io.write("  slot                       total_ms       calls      avg_us      max_us   %block\n", f)
+        let order = alloc(int32[num_slots] {})!
+        defer free(order)
+        for i in 0..num_slots
+            order[i] = i
+        for i in 0..num_slots
+            let mut best = i
+            for j in (i + 1)..num_slots
+                if ticks[(int64) order[j]] > ticks[(int64) order[best]] then
+                    best = j
+            if best != i then
+                let tmp = order[i]
+                order[i] = order[best]
+                order[best] = tmp
+        for i in 0..num_slots
+            let s = order[i]
+            let si = (int64) s
+            let n = calls[si]
+            if n == 0i64 then continue
+            let total = ticks_to_ms(ticks[si], freq)
+            let avg_us = total * 1000.0 / (float64) n
+            let max_us = ticks_to_ms(maxes[si], freq) * 1000.0
+            let pct = if total_ms > 0.0 then total * 100.0 / total_ms else 0.0
+            io.write("  %-22s{slot_name(s)}  %12.3f{total}  %10d{n}  %10.2f{avg_us}  %10.2f{max_us}  %7.2f{pct}\n", f)
+
+    // Emit the current sub-sample as a block. `partial` flags blocks
+    // that ended due to a phase change before the full N seconds
+    // elapsed.
+    private let emit_sub_block = (p: profile_ctx*, end_tick: uint64, partial: bool) ->
+        match p->out_file with
+        | none -> void()
+        | some(f) ->
+            let span_ticks = end_tick - p->sub_start
+            let span_ms = ticks_to_ms(span_ticks, p->perf_freq)
+            let begin_off = ticks_to_ms(p->sub_start - p->session_start, p->perf_freq) / 1000.0
+            let end_off = ticks_to_ms(end_tick - p->session_start, p->perf_freq) / 1000.0
+            let frames = p->sub_frame_count
+            let max_fr = ticks_to_ms(p->sub_frame_max, p->perf_freq)
+            let avg_fr = if frames > 0 then span_ms / (float64) frames else 0.0
+            let fps = if span_ms > 0.0 then (float64) frames * 1000.0 / span_ms else 0.0
+            let tag = if partial then " (partial)" else ""
+            io.write("--- sub-sample [%s{phase_label_of(p->current_phase)}] +%5.3f{begin_off}s..+%5.3f{end_off}s  %5.3f{span_ms / 1000.0}s  %d{frames} fr  avg %5.3f{avg_fr}ms  max %5.3f{max_fr}ms  %4.1f{fps} fps%s{tag} ---\n", f)
+            write_slot_table(f, p->perf_freq, p->sub_ticks, p->sub_calls, p->sub_max, span_ms)
+            io.write("\n", f)
+            io.flush(f)
+
+    // Emit the phase summary block. Called when the phase changes (or
+    // at session end). `end_tick` is the perf counter at the moment we
+    // closed the phase out.
+    private let emit_phase_block = (p: profile_ctx*, end_tick: uint64) ->
+        match p->out_file with
+        | none -> void()
+        | some(f) ->
+            let span_ticks = end_tick - p->phase_start
+            let span_ms = ticks_to_ms(span_ticks, p->perf_freq)
+            let begin_off = ticks_to_ms(p->phase_start - p->session_start, p->perf_freq) / 1000.0
+            let end_off = ticks_to_ms(end_tick - p->session_start, p->perf_freq) / 1000.0
+            let frames = p->ph_frame_count
+            let max_fr = ticks_to_ms(p->ph_frame_max, p->perf_freq)
+            let avg_fr = if frames > 0 then span_ms / (float64) frames else 0.0
+            let fps = if span_ms > 0.0 then (float64) frames * 1000.0 / span_ms else 0.0
+            io.write("=== phase [%s{phase_label_of(p->current_phase)}] +%5.3f{begin_off}s..+%5.3f{end_off}s  %5.3f{span_ms / 1000.0}s  %d{frames} fr  %d{p->ph_sub_count} sub-samples  avg %5.3f{avg_fr}ms  max %5.3f{max_fr}ms  %4.1f{fps} fps ===\n", f)
+            write_slot_table(f, p->perf_freq, p->ph_ticks, p->ph_calls, p->ph_max, span_ms)
+            io.write("\n", f)
+            io.flush(f)
+
+    // Add the current sub_* values into ph_* and zero sub_*.
+    private let fold_sub_into_phase = (p: profile_ctx*) ->
+        for i in 0..num_slots
+            let si = (int64) i
+            p->ph_ticks[si] = p->ph_ticks[si] + p->sub_ticks[si]
+            p->ph_calls[si] = p->ph_calls[si] + p->sub_calls[si]
+            if p->sub_max[si] > p->ph_max[si] then p->ph_max[si] = p->sub_max[si]
+            p->sub_ticks[si] = 0u64
+            p->sub_calls[si] = 0i64
+            p->sub_max[si] = 0u64
+        p->ph_frame_count = p->ph_frame_count + p->sub_frame_count
+        if p->sub_frame_max > p->ph_frame_max then p->ph_frame_max = p->sub_frame_max
+        p->sub_frame_count = 0i64
+        p->sub_frame_max = 0u64
+        p->ph_sub_count = p->ph_sub_count + 1
+
+    // Wipe the phase accumulator. Called after we emit the phase
+    // summary block, before we start collecting the next phase.
+    private let reset_phase_accum = (p: profile_ctx*) ->
+        for i in 0..num_slots
+            let si = (int64) i
+            p->ph_ticks[si] = 0u64
+            p->ph_calls[si] = 0i64
+            p->ph_max[si] = 0u64
+        p->ph_frame_count = 0i64
+        p->ph_frame_max = 0u64
+        p->ph_sub_count = 0
+
+    // ----------------------------------------------------------
+    // frame_end: per-frame entry. Updates accumulators and triggers
+    // sub-sample / phase-boundary flushes.
+    // ----------------------------------------------------------
+
+    let frame_end = (p: profile_ctx*, t0: uint64, current_phase: game_phase) ->
+        if !p->enabled then return
+        let now = sdl2.get_perf_counter()
+        let dt = now - t0
+        // Roll the frame timing into both the slot bucket (so it shows
+        // up alongside the others in tables) and the dedicated frame
+        // stats fields used in block headers.
+        let i = (int64) slot.frame
+        p->sub_ticks[i] = p->sub_ticks[i] + dt
+        p->sub_calls[i] = p->sub_calls[i] + 1
+        if dt > p->sub_max[i] then p->sub_max[i] = dt
+        p->sub_frame_count = p->sub_frame_count + 1
+        if dt > p->sub_frame_max then p->sub_frame_max = dt
+
+        // First frame of the session: latch the initial phase and
+        // anchor both windows. No flush yet — we have no data to emit.
+        if !p->has_phase then
+            p->current_phase = current_phase
+            p->has_phase = true
+            return
+
+        // Phase change: flush the in-progress sub-sample (partial),
+        // fold it into the phase, emit the phase summary, then reset.
+        // The new phase begins at `now`.
+        if current_phase != p->current_phase then
+            emit_sub_block(p, now, true)
+            fold_sub_into_phase(p)
+            emit_phase_block(p, now)
+            reset_phase_accum(p)
+            p->current_phase = current_phase
+            p->phase_start = now
+            p->sub_start = now
+            return
+
+        // Sub-sample window expired? Flush the sub-sample, fold its
+        // numbers into the phase total, and start the next window.
+        // Phase total keeps growing.
+        let elapsed = (float64) (now - p->sub_start) / (float64) p->perf_freq
+        if elapsed >= p->sub_secs then
+            emit_sub_block(p, now, false)
+            fold_sub_into_phase(p)
+            p->sub_start = now
+
+    // Called at session end (user quit). Flushes whatever's pending —
+    // in-progress sub-sample (partial), then phase summary — and
+    // closes the file. Idempotent.
+    let flush_pending = (p: profile_ctx*) ->
+        if !p->enabled then return
+        if p->out_file.is_none then return
+        if p->has_phase then
+            let now = sdl2.get_perf_counter()
+            // Only emit a sub-block if the in-progress window has any
+            // data; otherwise we'd write an empty "0 fr" block.
+            if p->sub_frame_count > 0i64 then
+                emit_sub_block(p, now, true)
+                fold_sub_into_phase(p)
+            // Phase summary always emits if there were any frames in
+            // the phase. The phase will normally have folded data even
+            // if the trailing sub was empty (e.g. quit happened right
+            // after a sub-flush).
+            if p->ph_frame_count > 0i64 then
+                emit_phase_block(p, now)
+        io.close(p->out_file!)
+        p->out_file = default(any*?)

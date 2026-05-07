@@ -106,6 +106,7 @@ make uninstall                      # remove the binary + share/wolf-fc/ tree
 | `--near-goldkey` / `--near-silverkey` / `--near-gibs` | Same idea but for the first gold-key / silver-key / gibs pickup on the map. Handy for eyeballing HUD changes and the gibs-at-low-HP branch without playing through. First gibs map is `E1M2` (`--level=1 --near-gibs`). |
 | `--cheat` | Pre-activate both Doom-style cheats (`IDDQD` god mode + `IDKFA` all-keys / all-weapons / full non-depleting ammo / locked score) from the very first frame. The gifts re-apply on every death while the IDKFA latch stays on. |
 | `--max-scale=N` | Cap the auto-picked supersample factor at N (default 6, floor 2). Lower for older CPUs that stutter at the auto-pick; raise on high-end machines where 4K+ panels could put more rays to good use. See [Display pipeline](#display-pipeline) below. |
+| `--profile` / `--profile=N` | Continuous frame profiler. Appends a per-slot timing block to `~/.wolf-fc/profile.txt` every N seconds (default 5) and on every phase change (pg13 → title → main_menu → playing → ...). Each phase ends with a summary block covering the whole phase. Sub-samples cover only their own window (not cumulative); phase summaries fold all sub-samples for that phase. Gameplay runs normally — the file is overwritten at launch and appended to as the session progresses. Disabled by default; the per-frame instrumentation is a single load + branch when off, so the code can stay in place. Ignored under `--test`. |
 
 ### Jump-to-boss cheat sheet
 

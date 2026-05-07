@@ -820,6 +820,11 @@ struct world =
     vg: const vgagraph.vgagraph_file*  // VGAGRAPH: fonts, status bar, BJ face,
                                  // title screen, menu graphics.
     font: font.info*             // small menu/UI font (chunk 1)
+    // Frame profiler. Always allocated; `prof->enabled` is false unless
+    // `--profile` was passed, in which case every per-frame system call
+    // is wrapped in start_scope/end_scope. The disabled fast path is
+    // one load + branch per scope — see profile.fc.
+    prof: profile.profile_ctx*
 
 // ============================================================
 // Cross-subsystem helpers
@@ -1402,6 +1407,7 @@ let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
 // they stay in sync. Add new per-frame systems here, not at each caller.
 let tick = (w: world*, dt: float64) ->
     let g = w->g
+    let _t_tick = profile.start_scope(w->prof)
     // Damage flash and respawn fade decay every frame regardless of phase.
     if g->damage_flash_timer > 0.0 then
         g->damage_flash_timer = g->damage_flash_timer - dt
@@ -1447,7 +1453,9 @@ let tick = (w: world*, dt: float64) ->
             // Even with the rest of gameplay frozen, dying actors keep
             // animating so anything mid-die when the elevator switch fired
             // finishes its death cascade before the tally screen.
+            let _t_dying = profile.start_scope(w->prof)
             enemies.ai.update_dying_enemies(w->lv, w->g, dt)
+            profile.end_scope(w->prof, profile.slot.tick_dying, _t_dying)
         else
             // The original's PlayLoop resets madenoise at the top of each
             // frame; we follow suit so noise from one tick only wakes
@@ -1456,15 +1464,32 @@ let tick = (w: world*, dt: float64) ->
             // it on a knife hit.
             g->made_noise = false
             g->level_time = g->level_time + dt
+            let _t_pl = profile.start_scope(w->prof)
             player.update(w->lv, g, dt, w->ac)
+            profile.end_scope(w->prof, profile.slot.tick_player, _t_pl)
+            let _t_dr = profile.start_scope(w->prof)
             doors.update(w->lv, g, dt, w->ac, player.radius)
+            profile.end_scope(w->prof, profile.slot.tick_doors, _t_dr)
+            let _t_pw = profile.start_scope(w->prof)
             pushwall.update(w->lv, dt)
+            profile.end_scope(w->prof, profile.slot.tick_pushwall, _t_pw)
+            let _t_wp = profile.start_scope(w->prof)
             player.update_weapon(w, dt)
+            profile.end_scope(w->prof, profile.slot.tick_weapon, _t_wp)
+            let _t_en = profile.start_scope(w->prof)
             enemies.ai.update_enemies(w, dt)
+            profile.end_scope(w->prof, profile.slot.tick_enemies, _t_en)
+            let _t_pj = profile.start_scope(w->prof)
             projectiles.update_all(w->lv, g, w->ac, dt)
+            profile.end_scope(w->prof, profile.slot.tick_projectiles, _t_pj)
+            let _t_pk = profile.start_scope(w->prof)
             pickups.check(w->lv, g, w->ac)
+            profile.end_scope(w->prof, profile.slot.tick_pickups, _t_pk)
+            let _t_hf = profile.start_scope(w->prof)
             hud.update_face(g, dt)
+            profile.end_scope(w->prof, profile.slot.tick_hud_face, _t_hf)
     | _ ->
+        let _t_other = profile.start_scope(w->prof)
         g->phase_timer = g->phase_timer + dt
         if g->phase == game_phase.title
                 && g->phase_timer >= title_screen.cycle_total then
@@ -1490,41 +1515,73 @@ let tick = (w: world*, dt: float64) ->
             // transition, so the tick order matters.
             enemies.ai.update_dying_enemies(w->lv, w->g, dt)
             death_cam.tick(w->lv, g, w->ac, dt)
+        profile.end_scope(w->prof, profile.slot.tick_phase_other, _t_other)
+    profile.end_scope(w->prof, profile.slot.tick_total, _t_tick)
     // Phase transitions (death collapse → restart / game-over). Main loop
     // layers music switching on top of this; test mode doesn't need music
     // so it can ignore the return value.
+    let _t_pt = profile.start_scope(w->prof)
     let _changed = update_phase_transitions(w, w->ac->vs)
+    profile.end_scope(w->prof, profile.slot.phase_transitions, _t_pt)
 
 // Render the full game frame to fb (used before saving a screenshot).
 let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[]) ->
     match w->g->phase with
     | pg13 ->
+        let _t_p = profile.start_scope(w->prof)
         pg13_screen.render(w->rc, w->vg, pal)
+        profile.end_scope(w->prof, profile.slot.render_phase_other, _t_p)
+        let _t_u = profile.start_scope(w->prof)
         overlay.upscale_nx(w->rc)
+        profile.end_scope(w->prof, profile.slot.render_upscale, _t_u)
         return
     | title ->
+        let _t_p = profile.start_scope(w->prof)
         title_screen.render(w->rc, w->vg, pal, w->font, w->hs, w->g->phase_timer)
+        profile.end_scope(w->prof, profile.slot.render_phase_other, _t_p)
+        let _t_u = profile.start_scope(w->prof)
         overlay.upscale_nx(w->rc)
+        profile.end_scope(w->prof, profile.slot.render_upscale, _t_u)
         return
     | main_menu ->
+        let _t_p = profile.start_scope(w->prof)
         menu.render_main(w->rc, w->sm, w->vg, pal, w->font, w->g, w->ac)
+        profile.end_scope(w->prof, profile.slot.render_phase_other, _t_p)
+        let _t_u = profile.start_scope(w->prof)
         overlay.upscale_nx(w->rc)
+        profile.end_scope(w->prof, profile.slot.render_upscale, _t_u)
         return
     | intermission ->
+        let _t_p = profile.start_scope(w->prof)
         intermission.render(w->rc, w->vg, pal, w->g)
+        profile.end_scope(w->prof, profile.slot.render_phase_other, _t_p)
+        let _t_u = profile.start_scope(w->prof)
         overlay.upscale_nx(w->rc)
+        profile.end_scope(w->prof, profile.slot.render_upscale, _t_u)
         return
     | episode_end ->
+        let _t_p = profile.start_scope(w->prof)
         episode_end.render(w->rc, w->vg, pal, w->font, w->g)
+        profile.end_scope(w->prof, profile.slot.render_phase_other, _t_p)
+        let _t_u = profile.start_scope(w->prof)
         overlay.upscale_nx(w->rc)
+        profile.end_scope(w->prof, profile.slot.render_upscale, _t_u)
         return
     | endart ->
+        let _t_p = profile.start_scope(w->prof)
         endart_screen.render(w->rc, w->vg, pal, w->font, w->g)
+        profile.end_scope(w->prof, profile.slot.render_phase_other, _t_p)
+        let _t_u = profile.start_scope(w->prof)
         overlay.upscale_nx(w->rc)
+        profile.end_scope(w->prof, profile.slot.render_upscale, _t_u)
         return
     | high_scores ->
+        let _t_p = profile.start_scope(w->prof)
         high_scores_screen.render(w->rc, w->vg, pal, w->font, w->hs, w->g->phase_timer)
+        profile.end_scope(w->prof, profile.slot.render_phase_other, _t_p)
+        let _t_u = profile.start_scope(w->prof)
         overlay.upscale_nx(w->rc)
+        profile.end_scope(w->prof, profile.slot.render_upscale, _t_u)
         return
     | death_cam ->
         // Pre-clear fb's top region: low-res viewport overlays (banner
@@ -1532,10 +1589,16 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
         // skips alpha=0 sentinel pixels so the high-res raycaster
         // content shows through everywhere else.
         overlay.clear_view_sentinel(w->rc)
+        let _t_p = profile.start_scope(w->prof)
         death_cam.render(w, vs, pal, w->vg)
+        profile.end_scope(w->prof, profile.slot.render_phase_other, _t_p)
+        let _t_h = profile.start_scope(w->prof)
         hud.render(w->rc, w->vg, pal, w->g)
+        profile.end_scope(w->prof, profile.slot.render_hud, _t_h)
+        let _t_o = profile.start_scope(w->prof)
         overlay.composite_view_overlay(w->rc)
         overlay.composite_hud(w->rc)
+        profile.end_scope(w->prof, profile.slot.render_overlays, _t_o)
         return
     | _ -> void()
     // 3D phases (playing / dying / bj_victory): raycaster and viewport
@@ -1543,10 +1606,18 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
     // HUD and low-res viewport overlays go to fb and are composited
     // afterward.
     overlay.clear_view_sentinel(w->rc)
+    let _t_rc = profile.start_scope(w->prof)
     raycaster.render_walls(w->lv, w->rc, w->g, vs, pal)
+    profile.end_scope(w->prof, profile.slot.render_raycaster, _t_rc)
+    let _t_bb = profile.start_scope(w->prof)
     billboards.build(w->lv, w->rc, w->g, vs->sprite_start)
+    profile.end_scope(w->prof, profile.slot.render_bb_build, _t_bb)
+    let _t_br = profile.start_scope(w->prof)
     billboards.render(w->rc, w->g, vs, pal)
+    profile.end_scope(w->prof, profile.slot.render_bb_render, _t_br)
+    let _t_pw = profile.start_scope(w->prof)
     player.render_weapon(w->rc, vs, pal, w->g)
+    profile.end_scope(w->prof, profile.slot.render_player_weapon, _t_pw)
     // Damage / death red overlays — applied over the 3D view, under the HUD.
     // Phase-filtered renderers above return early, so this block only runs
     // during playing or dying. Damage flash is a brief uniform alpha
@@ -1556,6 +1627,7 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
     let flash_a = if w->g->damage_flash_timer > 0.0 then
         w->g->damage_flash_timer / player.damage_flash_time * 0.45
     else 0.0
+    let _t_ov = profile.start_scope(w->prof)
     if flash_a > 0.0 then overlay.viewport_tint(w->rc, red_tint, flash_a)
     let stipple_progress = match w->g->phase with
     | dying ->
@@ -1569,8 +1641,11 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
             w->g->respawn_fade_timer / player.respawn_fade_time
         else 0.0
     overlay.dissolve_stipple(w->rc, red_tint, stipple_progress)
+    profile.end_scope(w->prof, profile.slot.render_overlays, _t_ov)
+    let _t_hud = profile.start_scope(w->prof)
     hud.render(w->rc, w->vg, pal, w->g)
     hud.render_message(w->rc, w->font, w->g)
+    profile.end_scope(w->prof, profile.slot.render_hud, _t_hud)
     // "GET PSYCHED!" level-entry overlay. The original fills the 3D
     // viewport with VIEWCOLOR (palette 0x7f), draws the pic centered, and
     // paints a progress bar across the bottom of the pic frame. We
@@ -1581,6 +1656,7 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
     if w->g->get_psyched_timer > 0.0 then
         pics.render_get_psyched_overlay(w->rc, w->vg, pal,
             w->g->get_psyched_timer, pics.get_psyched_time)
+    let _t_co = profile.start_scope(w->prof)
     overlay.composite_view_overlay(w->rc)
     overlay.composite_hud(w->rc)
     // Pre-intermission fade-to-black: while `next_level` is latched and
@@ -1593,6 +1669,7 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
         let frac = 1.0 - w->g->next_level_delay / player.elevator_wait_time
         let alpha = if frac < 0.0 then 0.0 else if frac > 1.0 then 1.0 else frac
         overlay.dbuf_tint_full(w->rc, 0x000000u32, alpha)
+    profile.end_scope(w->prof, profile.slot.render_overlays, _t_co)
 
 
 // ============================================================
@@ -2409,6 +2486,13 @@ let main = (args: str[]) ->
     //                           could benefit from more rays. Floor is
     //                           2 (the OG-doubled raycaster density);
     //                           values below 2 are clamped up.
+    //   --profile[=N]         — sample frame timings for N seconds
+    //                           (default 5), then write a per-slot
+    //                           breakdown to ~/.wolf-fc/profile.txt and
+    //                           exit. When the flag is absent the
+    //                           per-frame instrumentation is a single
+    //                           load + branch and adds no measurable
+    //                           overhead.
     let mut test_mode = false
     let mut start_level = -1
     let mut start_difficulty = -1
@@ -2418,6 +2502,8 @@ let main = (args: str[]) ->
     let mut start_near_gibs = false
     let mut arg_no_dogs = false
     let mut arg_cheat = false
+    let mut arg_profile = false
+    let mut arg_profile_secs = 5.0
     // Default supersample cap. Hardcoded ceiling matches the original
     // pre-CLI clamp; --max-scale lets the user move it in either
     // direction. Floor stays at 2 inside compute_scale_factor.
@@ -2431,6 +2517,7 @@ let main = (args: str[]) ->
         if a == "--near-silverkey" then start_near_silverkey = true
         if a == "--near-gibs" then start_near_gibs = true
         if a == "--cheat" then arg_cheat = true
+        if a == "--profile" then arg_profile = true
         if text.starts_with(a, "--level=") then
             match text.parse_int32(a[8..a.len]) with
             | some(n) -> if n >= 0 && n < 60 then start_level = n
@@ -2442,6 +2529,11 @@ let main = (args: str[]) ->
         if text.starts_with(a, "--max-scale=") then
             match text.parse_int32(a[12..a.len]) with
             | some(n) -> if n >= 2 then max_scale = n
+            | none    -> void()
+        if text.starts_with(a, "--profile=") then
+            arg_profile = true
+            match text.parse_int32(a[10..a.len]) with
+            | some(n) -> if n > 0 then arg_profile_secs = (float64) n
             | none    -> void()
 
     // PRNG seed: deterministic 0 in --test mode so scripted scenarios
@@ -2615,6 +2707,20 @@ let main = (args: str[]) ->
     // Sound system (valid in all modes; in --test and --screenshot nothing
     // actually reaches the speakers because SDL audio isn't opened, but
     // sfx.trigger / digi.fill work over this same ctx either way).
+    // Profile context. Always allocated; `enabled = false` keeps it dormant
+    // unless `--profile` was passed. When enabled we don't run the profiler
+    // in --test mode (no SDL → no useful timings, and tests want determinism
+    // over instrumentation overhead). The output path is composed once here
+    // (wolf-fc data dir + /profile.txt); profile.destroy frees it.
+    let prof_enabled = arg_profile && !test_mode
+    if prof_enabled then
+        let _ok = paths.ensure_save_dir()
+        void()
+    let prof_path = match paths.wolf_data_dir() with
+        | some(dir) ->
+            defer free(dir)
+            alloc("%s{dir}/profile.txt")!
+        | none -> alloc("profile.txt")!
     let w = alloc(world {
         g = g,
         lv = build_level(lv_data, vs->sprite_start, g->difficulty, g->no_dogs),
@@ -2630,7 +2736,8 @@ let main = (args: str[]) ->
         sm = build_save_menu_ctx(),
         hs = build_highscore_ctx(),
         vg = vg,
-        font = font.load(vg, pics.id.font_small)
+        font = font.load(vg, pics.id.font_small),
+        prof = profile.make(prof_enabled, arg_profile_secs, prof_path)
     })!
     // Initial per-level counters mirror what was tallied during build_level.
     g->total_kills = w->lv->total_enemies
@@ -2707,6 +2814,8 @@ let main = (args: str[]) ->
         for ti in (test_idx + 1)..(int32) args.len
             if args[(int64) ti] == "--no-dogs" then continue
             if args[(int64) ti] == "--cheat" then continue
+            if args[(int64) ti] == "--profile" then continue
+            if text.starts_with(args[(int64) ti], "--profile=") then continue
             run_test_cmd(w, args[(int64) ti], pal, test_dt)
         return 0
 
@@ -2859,9 +2968,16 @@ let main = (args: str[]) ->
     let mut last_ticks = sdl2.get_ticks()
     let mut event = default(sdl2.sdl_event)
 
+    // Latch the profiler's start tick on the first iteration of the loop —
+    // before any frame work runs so the duration window measures real
+    // gameplay frames, not the fixed startup cost of SDL/audio/data init.
+    profile.start_capture(w->prof)
+
     loop
         if !running then break
         if g->want_quit then break
+
+        let _t_frame = profile.frame_begin(w->prof)
 
         // Delta time
         let now = sdl2.get_ticks()
@@ -2870,6 +2986,7 @@ let main = (args: str[]) ->
         if dt > 0.1 then dt = 0.1    // clamp large spikes
 
         // Poll events
+        let _t_ev = profile.start_scope(w->prof)
         loop
             if sdl2.poll_event(&event) == 0 then break
             let t = (int32) event.type
@@ -3531,6 +3648,7 @@ let main = (args: str[]) ->
                 // Any keyup rearms the IN_Ack latch so the next press can fire.
                 g->key_ack = false
                 g->key_ack_handled = false
+        profile.end_scope(w->prof, profile.slot.event_poll, _t_ev)
 
         // Cheat chords (M+L+I, B+A+T). Only fires while actually playing,
         // so holding the letters on menus / intermission / death screens
@@ -3588,7 +3706,9 @@ let main = (args: str[]) ->
                 current_music_chunk = want_chunk
 
         // Render
+        let _t_rf = profile.start_scope(w->prof)
         render_frame(w, vs, pal)
+        profile.end_scope(w->prof, profile.slot.render_total, _t_rf)
 
         // Generate and queue audio: music -> AdLib SFX -> digi SFX -> SDL.
         // Buffer is 1024 STEREO frames (2048 int16 values = 4096 bytes);
@@ -3605,16 +3725,22 @@ let main = (args: str[]) ->
         let skip_audio = audio_dev == 0u32 ||
             sdl2.queued_audio_size(audio_dev) >= queue_hi_water
         if !skip_audio then
+            let _t_af = profile.start_scope(w->prof)
             mixer.fill_frame(mix_buf, out_buf, ms, music_on,
                 w->ac->sfx, w->ac->digi, 1024, sfx.sample_rate)
+            profile.end_scope(w->prof, profile.slot.audio_fill, _t_af)
+            let _t_aq = profile.start_scope(w->prof)
             sdl2.queue_audio(audio_dev, (any*) out_buf.ptr, 4096u32)
+            profile.end_scope(w->prof, profile.slot.audio_queue, _t_aq)
             void()
 
         // Upload framebuffer to texture and display. render_frame
         // produces a fully-composited dbuf (screen_w × screen_h) for
         // every phase — 3D phases skip the fb intermediate for the
         // viewport region; non-3D phases call upscale_nx internally.
+        let _t_tx = profile.start_scope(w->prof)
         sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
+        profile.end_scope(w->prof, profile.slot.texture_upload, _t_tx)
         // Only clear the backbuffer when SDL's logical-size step will
         // letterbox/pillarbox into the drawable. With FLIP_DISCARD swap
         // chains (D3D11) the backbuffer is undefined each frame, so the
@@ -3624,8 +3750,22 @@ let main = (args: str[]) ->
         let needs_clear = ((int64) runtime_screen_w * (int64) w->rc->drawable_h)
             != ((int64) runtime_actual_h * (int64) w->rc->drawable_w)
         if needs_clear then sdl2.clear(ren)
+        let _t_rcp = profile.start_scope(w->prof)
         sdl2.render_copy(ren, tex, (any*) 0, (any*) 0)
+        profile.end_scope(w->prof, profile.slot.render_copy, _t_rcp)
+        let _t_pr = profile.start_scope(w->prof)
         sdl2.present(ren)
+        profile.end_scope(w->prof, profile.slot.present, _t_pr)
+
+        profile.frame_end(w->prof, _t_frame, g->phase)
+
+    // Profiler: flush any in-progress sub-sample / phase block and
+    // close the file. No-op when --profile wasn't passed.
+    profile.flush_pending(w->prof)
+    if w->prof->enabled then
+        io.write("Profile written to %s{w->prof->output_path}\n", stdout)
+        void()
+    profile.destroy(w->prof)
 
     // Cleanup
     if audio_dev > 0u32 then sdl2.close_audio(audio_dev)
