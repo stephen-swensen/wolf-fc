@@ -66,14 +66,19 @@ module raycaster =
         let view_render_h = rc->view_render_h
         let half = view_render_h / 2
         let sw = (int64) rc->screen_w
-        for y in 0..half
-            let row = (int64) y * sw
-            for x in 0..rc->screen_w
-                rc->dbuf[row + (int64) x] = ceil_color
-        for y in half..view_render_h
-            let row = (int64) y * sw
-            for x in 0..rc->screen_w
-                rc->dbuf[row + (int64) x] = floor_color
+        // Flat fill via the slice's raw pointer. The bounds-checked
+        // `dbuf[i] = c` form keeps gcc to a single store-per-iter
+        // because the cold-path `fc_oob` branch makes the body look
+        // side-effecting; dropping it lets gcc 2x-unroll the store
+        // loop, which is a measurable win even though it doesn't
+        // promote to SIMD.
+        let dbuf_p = rc->dbuf.ptr
+        let ceil_end = (int64) half * sw
+        let view_end = (int64) view_render_h * sw
+        for i in 0..ceil_end
+            dbuf_p[i] = ceil_color
+        for i in ceil_end..view_end
+            dbuf_p[i] = floor_color
 
         // Reset z-buffer.
         for i in 0..rc->screen_w
