@@ -1748,6 +1748,50 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             io.write("bench scale=%d{w->rc->scale} screen=%d{w->rc->screen_w}x%d{w->rc->screen_h} frames=%d{n} total=%d{total_ms}ms per_frame=%6.3f{per_frame}ms fps=%6.1f{fps}\n", stdout)
             void()
         | none -> bad("integer frame count")
+    else if text.starts_with(arg, "benchparts:") then
+        // Per-section profile: time each chunk of the playing-phase
+        // render path independently for `n` iterations. Skips the
+        // playing-phase routing in render_frame so each piece is
+        // measured in isolation. Sums roughly approximate render_frame
+        // (small drift from the omitted phase-match overhead).
+        match text.parse_int32(arg[11..arg.len]) with
+        | some(n) ->
+            let t0 = sys.time()
+            for j in 0..n
+                overlay.clear_view_sentinel(w->rc)
+            let t1 = sys.time()
+            for j in 0..n
+                raycaster.render_walls(w->lv, w->rc, w->g, w->ac->vs, pal)
+            let t2 = sys.time()
+            for j in 0..n
+                billboards.build(w->lv, w->rc, w->g, w->ac->vs->sprite_start)
+                billboards.render(w->rc, w->g, w->ac->vs, pal)
+            let t3 = sys.time()
+            for j in 0..n
+                player.render_weapon(w->rc, w->ac->vs, pal, w->g)
+            let t4 = sys.time()
+            for j in 0..n
+                hud.render(w->rc, w->vg, pal, w->g)
+                hud.render_message(w->rc, w->font, w->g)
+            let t5 = sys.time()
+            for j in 0..n
+                overlay.composite_view_overlay(w->rc)
+            let t6 = sys.time()
+            for j in 0..n
+                overlay.composite_hud(w->rc)
+            let t7 = sys.time()
+            let nf = (float64) n
+            io.write("benchparts scale=%d{w->rc->scale} frames=%d{n}\n", stdout)
+            io.write("  clear_view_sentinel : %7.3f{(float64) (t1 - t0) / nf}ms\n", stdout)
+            io.write("  raycaster.walls     : %7.3f{(float64) (t2 - t1) / nf}ms\n", stdout)
+            io.write("  billboards build+ren: %7.3f{(float64) (t3 - t2) / nf}ms\n", stdout)
+            io.write("  render_weapon       : %7.3f{(float64) (t4 - t3) / nf}ms\n", stdout)
+            io.write("  hud render+msg      : %7.3f{(float64) (t5 - t4) / nf}ms\n", stdout)
+            io.write("  composite view      : %7.3f{(float64) (t6 - t5) / nf}ms\n", stdout)
+            io.write("  composite hud       : %7.3f{(float64) (t7 - t6) / nf}ms\n", stdout)
+            io.write("  total               : %7.3f{(float64) (t7 - t0) / nf}ms\n", stdout)
+            void()
+        | none -> bad("integer frame count")
     else if arg == "state" then
         io.write("pos=(%8.4f{g->pos_x}, %8.4f{g->pos_y}) dir=(%8.4f{g->dir_x}, %8.4f{g->dir_y})\n", stdout)
         io.write("health=%d{g->health} ammo=%d{g->ammo} score=%d{g->score} lives=%d{g->lives} level=%d{g->level_num} weapon=%d{g->weapon} best=%d{g->best_weapon}\n", stdout)
