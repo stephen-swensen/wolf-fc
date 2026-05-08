@@ -74,6 +74,10 @@ module config =
         // Stored as int so the file is greppable; "auto" is encoded
         // as 0 — `view_mode_to_fb_w` reads the value back.
         view_mode: int32
+        // Supersample factor for the CPU upscale step. 0=auto (display-
+        // driven, capped by --max-scale), 2..12=explicit. When non-auto,
+        // the chosen value is used verbatim and --max-scale is ignored.
+        scale_factor: int32
         // Speed multipliers as percentages (20..200, default 100).
         // bj_speed_pct scales the player's walking / strafing / turning.
         // enemy_speed_pct scales every enemy's patrol + chase speed
@@ -114,6 +118,13 @@ module config =
         | 3 -> 428
         | _ -> 0
 
+    // Scale-factor (supersample) preference. 0 means "auto-pick from
+    // the renderer's drawable size" (capped by --max-scale); 2..12
+    // are explicit and bypass the cap.
+    let scale_factor_auto = 0
+    let scale_factor_min  = 2
+    let scale_factor_max  = 12
+
     let defaults = () ->
         prefs {
             music_on = true,
@@ -130,6 +141,10 @@ module config =
             // Auto by default — detect display at startup so users on
             // any aspect get sensible widescreen out of the box.
             view_mode = 0,
+            // Auto-pick the supersample factor from the drawable size
+            // (capped by --max-scale). Users can pin an explicit
+            // 2..12 from the Change View menu.
+            scale_factor = scale_factor_auto,
             bj_speed_pct = 100,
             enemy_speed_pct = 100
         }
@@ -146,6 +161,7 @@ module config =
             no_dogs = w->g->no_dogs,
             shadow_depth = w->g->shadow_depth,
             view_mode = w->g->view_mode,
+            scale_factor = w->g->scale_factor,
             bj_speed_pct = w->g->bj_speed_pct,
             enemy_speed_pct = w->g->enemy_speed_pct
         }
@@ -204,6 +220,18 @@ module config =
                         | some(v) ->
                             p.view_mode = if v < 0 || v > 3 then 0 else v
                         | none -> void()
+                    else if text.starts_with(line, "scale_factor ") then
+                        match text.parse_int32(line[13..line.len]) with
+                        | some(v) ->
+                            // 0 = auto; otherwise clamp to [min, max].
+                            // Out-of-range values fall back to auto so a
+                            // hand-edited config can't pin an unusable
+                            // factor.
+                            p.scale_factor = if v == scale_factor_auto then scale_factor_auto
+                                else if v < scale_factor_min then scale_factor_auto
+                                else if v > scale_factor_max then scale_factor_max
+                                else v
+                        | none -> void()
                     else if text.starts_with(line, "bj_speed_pct ") then
                         match text.parse_int32(line[13..line.len]) with
                         | some(v) ->
@@ -239,6 +267,7 @@ module config =
                 io.write("no_dogs %d{if p.no_dogs then 1 else 0}\n", f)
                 io.write("shadow_depth %d{p.shadow_depth}\n", f)
                 io.write("view_mode %d{p.view_mode}\n", f)
+                io.write("scale_factor %d{p.scale_factor}\n", f)
                 io.write("bj_speed_pct %d{p.bj_speed_pct}\n", f)
                 io.write("enemy_speed_pct %d{p.enemy_speed_pct}\n", f)
                 void()

@@ -443,10 +443,19 @@ module menu =
         draw_help_pic(rc, vg, pal)
 
     // ============================================================
-    // Change View — view-mode picker (Auto / Original / 16:10 / 16:9)
+    // Change View — two left/right pickers:
+    //   Aspect Ratio: Auto / Original (4:3) / 16:10 / 16:9
+    //   Scale Factor: Auto / 2x..12x
+    // Up/Down moves between rows; Left/Right cycles the value on the
+    // selected row and applies the change immediately.
     // ============================================================
 
-    let changeview_len = 4
+    let changeview_len = 2
+
+    // Public so main.fc's nav handler can reach for the cycle bounds
+    // without duplicating the row → field mapping.
+    let changeview_aspect_row = 0
+    let changeview_scale_row  = 1
 
     private let render_changeview_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                            pal: const uint32[], f: const font.info*,
@@ -461,20 +470,28 @@ module menu =
         let row_step = 18
         let x_cursor = cv_x + 8
         let x_label  = cv_x + 36
+        // Right-anchored column for the picker value. Sized to fit
+        // "Widescreen (16:10)" with a few px of padding on either side.
+        let x_value  = cv_x + cv_w - 116
         for i in 0..changeview_len
             let row_y = row_top + i * row_step
             let is_sel = g->menu_sel == i
             if is_sel then
                 draw_cursor(rc, vg, pal, x_cursor, row_y - 2, time)
             let color = row_color(pal, is_sel, false)
-            let label = config.view_mode_label(i)
-            font.draw_text(rc, f, x_label, row_y, label, color)
-            // Mark the active mode (the one currently in effect) with
-            // a trailing asterisk — placed right of the label so the
-            // gun-cursor on the selected row doesn't overlap it.
-            if i == g->view_mode then
-                let lw = font.text_width(f, label)
-                font.draw_text(rc, f, x_label + lw + 4, row_y, "*", pal[pal_readh])
+            if i == changeview_aspect_row then
+                font.draw_text(rc, f, x_label, row_y, "Aspect Ratio", color)
+                font.draw_text(rc, f, x_value, row_y,
+                    config.view_mode_label(g->view_mode), color)
+            else if i == changeview_scale_row then
+                font.draw_text(rc, f, x_label, row_y, "Scale Factor", color)
+                // Show the user's choice (Auto vs 2x..12x). The
+                // resolved supersample factor is exposed by the
+                // footer's "Texture" line below.
+                if g->scale_factor == 0 then
+                    font.draw_text(rc, f, x_value, row_y, "Auto", color)
+                else
+                    font.draw_text(rc, f, x_value, row_y, "%d{g->scale_factor}x", color)
         // Footer: walk the four geometry stages of the pipeline
         // with their actual numbers, so the player can see exactly
         // how the chosen view mode + auto-picked supersample factor

@@ -547,6 +547,12 @@ struct game =
     // startup from this value. Changing the value mid-session
     // updates the config file but only takes effect on next launch.
     view_mode: int32
+    // Supersample-factor preference (Change View menu).
+    // 0=auto-pick from drawable size (capped by --max-scale), or an
+    // explicit 2..12 that bypasses the cap. Read by the resize
+    // handler, the initial scale pick, and `apply_view_mode` — when
+    // non-zero the auto-pick path is skipped entirely.
+    scale_factor: int32
 
     // No-dogs mod toggle. Set from the Options menu (persisted in
     // ~/.wolf-fc/config) or from the --no-dogs CLI flag at launch.
@@ -998,6 +1004,15 @@ let compute_scale_factor = (out_w: int32, out_h: int32, fb_w: int32, fb_h: int32
         if s > max_scale then s = max_scale
         s
 
+// Resolve the player's `scale_factor` preference into a concrete
+// supersample factor. An explicit non-zero choice (2..12, set from
+// the Change View menu) wins outright and bypasses --max-scale; Auto
+// (0) falls through to the auto-pick which honours the CLI cap.
+let pick_scale_factor = (out_w: int32, out_h: int32, fb_w: int32, fb_h: int32,
+                          max_scale: int32, scale_factor: int32) ->
+    if scale_factor != 0 then scale_factor
+    else compute_scale_factor(out_w, out_h, fb_w, fb_h, max_scale)
+
 // Free + realloc the size-dependent buffers (fb if fb_w changed,
 // title_bg if fb_w changed, dbuf + zbuf always when scale or fb_w
 // changed). Updates the derived geometry fields. Pic cache is left
@@ -1044,8 +1059,8 @@ let apply_view_mode = (w: world*, vg: const vgagraph.vgagraph_file*,
     let g = w->g
     let rc = w->rc
     let fb_w_was = rc->fb_w
-    let new_scale = compute_scale_factor(rc->drawable_w, rc->drawable_h,
-                                          new_fb_w, rc->fb_h, g->max_scale)
+    let new_scale = pick_scale_factor(rc->drawable_w, rc->drawable_h,
+                                        new_fb_w, rc->fb_h, g->max_scale, g->scale_factor)
     let changed = resize_render_ctx(rc, vg, pal, new_fb_w, new_scale)
     if new_fb_w != fb_w_was then
         // Rescale the player's camera plane to the new FOV magnitude
@@ -2604,6 +2619,7 @@ let main = (args: str[]) ->
         plane_x = 0.0, plane_y = plane_factor,
         plane_factor = plane_factor,
         view_mode = cfg.view_mode,
+        scale_factor = cfg.scale_factor,
         key_up = false, key_down = false,
         key_left = false, key_right = false,
         key_shift = false, key_alt = false,
@@ -2880,8 +2896,11 @@ let main = (args: str[]) ->
         out_h = next_h
         sdl2.delay(20u32)
         wait_ms = wait_ms + 20u32
-    let optimal_scale = compute_scale_factor(out_w, out_h, w->rc->fb_w, w->rc->fb_h, max_scale)
-    io.write("Renderer output %d{out_w}x%d{out_h} -> super-sample %d{optimal_scale}x (cap %d{max_scale}x)\n", stdout)
+    let optimal_scale = pick_scale_factor(out_w, out_h, w->rc->fb_w, w->rc->fb_h, max_scale, g->scale_factor)
+    if g->scale_factor != 0 then
+        io.write("Renderer output %d{out_w}x%d{out_h} -> super-sample %d{optimal_scale}x (manual)\n", stdout)
+    else
+        io.write("Renderer output %d{out_w}x%d{out_h} -> super-sample %d{optimal_scale}x (cap %d{max_scale}x)\n", stdout)
     apply_scale_factor(w, vg, pal, optimal_scale)
     w->rc->drawable_w = out_w
     w->rc->drawable_h = out_h
@@ -2962,7 +2981,7 @@ let main = (args: str[]) ->
                 sdl2.get_output_size(ren, &new_out_w, &new_out_h)
                 w->rc->drawable_w = new_out_w
                 w->rc->drawable_h = new_out_h
-                let new_scale = compute_scale_factor(new_out_w, new_out_h, w->rc->fb_w, w->rc->fb_h, max_scale)
+                let new_scale = pick_scale_factor(new_out_w, new_out_h, w->rc->fb_w, w->rc->fb_h, max_scale, g->scale_factor)
                 if apply_scale_factor(w, vg, pal, new_scale) then
                     io.write("Drawable %d{new_out_w}x%d{new_out_h} -> super-sample %d{new_scale}x\n", stdout)
                     sdl2.destroy_texture(tex)
@@ -3160,7 +3179,7 @@ let main = (args: str[]) ->
                             | 5 ->
                                 // CHANGE VIEW → view-mode picker
                                 g->menu_level = menu.nav.changeview
-                                g->menu_sel = g->view_mode
+                                g->menu_sel = 0
                             | 6 ->
                                 // VIEW SCORES → high-scores screen.
                                 // hs_source=from_menu so the dismiss
@@ -3273,20 +3292,44 @@ let main = (args: str[]) ->
                             g->menu_level = menu.nav.main
                             g->menu_sel = 1     // back to SOUND row
                     else if g->menu_level == menu.nav.changeview then
-                        // View-mode picker: arrow up/down navigates the
-                        // four modes; Enter commits + applies the choice
-                        // on the fly. apply_view_mode resizes the
-                        // framebuffer / upscale / z-buffer / title-bg
-                        // cache and rescales the player's plane vector;
-                        // we follow up by recreating the SDL texture +
-                        // updating the renderer's logical size so the
-                        // new fb dimensions actually reach the display.
+                        // Two left/right pickers: Aspect Ratio (row 0)
+                        // and Scale Factor (row 1). Up/Down moves between
+                        // rows; Left/Right cycles the selected row's
+                        // value and applies it on the fly. apply_view_mode
+                        // / apply_scale_factor reallocate the size-
+                        // dependent buffers; the texture + logical size
+                        // are rebuilt below whenever screen_w / screen_h
+                        // change so the new dims actually reach the
+                        // display.
                         if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + menu.changeview_len - 1) % menu.changeview_len
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % menu.changeview_len
-                        else if is_confirm then
-                            let resized = apply_view_mode(w, w->vg, pal, g->menu_sel)
+                        else if k == sdl2.key_left || k == sdl2.key_right then
+                            let dir = if k == sdl2.key_left then -1 else 1
+                            let mut resized = false
+                            if g->menu_sel == menu.changeview_aspect_row then
+                                // Aspect Ratio cycles 0..3 (Auto, 4:3,
+                                // 16:10, 16:9). Wraps so left from Auto
+                                // lands on 16:9 — every step is reachable
+                                // without restarting the loop.
+                                let n = 4
+                                let next = (g->view_mode + dir + n) % n
+                                resized = apply_view_mode(w, w->vg, pal, next)
+                            else if g->menu_sel == menu.changeview_scale_row then
+                                // Scale Factor cycles Auto, 2x..12x as a
+                                // 12-position list (0, 2, 3, ..., 12).
+                                // Compute the next slot in that list and
+                                // map back to the underlying value.
+                                let mut idx = if g->scale_factor == 0 then 0
+                                    else g->scale_factor - 1
+                                let n = config.scale_factor_max
+                                idx = (idx + dir + n) % n
+                                let next = if idx == 0 then 0 else idx + 1
+                                g->scale_factor = next
+                                let new_scale = pick_scale_factor(w->rc->drawable_w, w->rc->drawable_h,
+                                    w->rc->fb_w, w->rc->fb_h, max_scale, g->scale_factor)
+                                resized = apply_scale_factor(w, w->vg, pal, new_scale)
                             config.save(config.snapshot(w))
                             if resized then
                                 sdl2.destroy_texture(tex)
