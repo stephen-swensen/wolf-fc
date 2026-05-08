@@ -759,15 +759,46 @@ struct render_ctx =
     screenshot_slot: int32
 
 // Sound system handle: loaded-asset refs + SFX playback state.
+//
+// In callback-mode audio (the only mode after we ditched SDL_QueueAudio),
+// SDL spawns its own audio thread that calls `audio_cb` whenever the
+// device buffer needs more samples. The callback reads `ms` / `music_on`
+// / `sfx` / `digi` / `mix_buf`; the main thread writes them. To keep
+// those mutations safe, the main thread holds `sdl2.lock_audio(device_id)`
+// across every frame's event-poll + tick + phase-transition + music-swap
+// region — long enough to cover every `sfx.trigger` call site in the
+// codebase, short enough not to underrun the device.
 struct audio_ctx =
     vs: const vswap.vswap_file*      // VSWAP — digi sound data + wall/sprite pages
     ad: audio.audio_data*      // AUDIOT — AdLib SFX chunks + music
     sfx: adlib.sfx_state*      // AdLib SFX playback (owns its own OPL2 chip)
     digi: digi.player*         // 8-bit PCM playback (up to 4 slots)
     // Sound submenu's "Sound Effects: ON/OFF" toggle. Read by sfx.trigger_*
-    // — when false, every sfx call no-ops. Music has its own gate
-    // (`music_on` on `game`, consulted in the main-loop mixer).
+    // — when false, every sfx call no-ops.
     sfx_on: bool
+    // Callback-mode state. `device_id` is 0 in test mode (no SDL audio).
+    // `mix_buf` is the int32 working buffer the callback mixes into before
+    // soft-clipping into SDL's int16 output. `ms` / `music_on` are read by
+    // the callback's mixer.fill_frame call.
+    device_id: uint32
+    mix_buf: int32[]
+    ms: imf.player*?
+    music_on: bool
+    sample_rate: int32
+
+// SDL audio callback. SDL spawns its own audio thread and calls this
+// whenever the device buffer needs refilling; `stream` points at the raw
+// device buffer and `len` is the byte count we must fill (one period
+// = `samples * channels * sizeof(int16)` = 4096 bytes at samples=1024).
+// Reads `ms` / `music_on` / `sfx` / `digi` from the audio_ctx; the main
+// thread mutates those under `sdl2.lock_audio` so this callback always
+// observes a consistent snapshot.
+let audio_cb = (userdata: any*, stream: uint8*, len: int32) ->
+    let ac = (audio_ctx*) userdata
+    let frames = len / 4    // bytes / (2 channels × 2 bytes-per-sample)
+    let out_ptr = (int16*) stream
+    mixer.fill_frame(ac->mix_buf, out_ptr, ac->ms, ac->music_on,
+                     ac->sfx, ac->digi, frames, ac->sample_rate)
 
 // Save/load menu scratch. One instance per process — only one menu is open
 // at a time, so sharing is fine. `slots` is refreshed by save.refresh_slots
@@ -2698,7 +2729,13 @@ let main = (args: str[]) ->
             ad = ad,
             sfx = adlib.init((float64) sfx.sample_rate),
             digi = digi.init(vs),
-            sfx_on = cfg.sfx_on
+            sfx_on = cfg.sfx_on,
+            // Filled in after SDL audio open below; default-init for now.
+            device_id = 0u32,
+            mix_buf = default(int32[]),
+            ms = default(imf.player*?),
+            music_on = cfg.music_on,
+            sample_rate = sfx.sample_rate
         })!,
         sm = build_save_menu_ctx(),
         hs = build_highscore_ctx(),
@@ -2896,33 +2933,58 @@ let main = (args: str[]) ->
     let mut tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
         sdl2.tex_streaming, runtime_screen_w, runtime_screen_h)
 
-    // Set up audio device and start music. Output is stereo (2 channels
-    // interleaved L,R,…) so enemy SFX can pan spatially via digi.
+    // Set up audio device in callback mode. SDL drives a dedicated audio
+    // thread that calls `audio_cb` whenever the hardware buffer needs
+    // refilling. Output is stereo (2 channels interleaved L,R,…) so
+    // enemy SFX can pan spatially via digi. `userdata` is our audio_ctx
+    // so the callback can reach mixer state without globals.
+    //
+    // Allocate mix_buf BEFORE open_audio: the audio thread starts
+    // dispatching the callback as soon as we unpause, and the callback
+    // dereferences ac->mix_buf on its first invocation.
+    w->ac->mix_buf = alloc(int32[2048] {})!
+    // samples = device-buffer length in stereo frames. The hardware
+    // calls our callback once every `samples` frames, so this is the
+    // dominant latency knob in callback mode. 512 @ 44.1 kHz = ~12 ms,
+    // which native WASAPI / ALSA / PipeWire / CoreAudio all grant
+    // comfortably (their floors are typically 5–10 ms in shared mode).
+    // Hosts that can't grant 512 (e.g. WSL2's PulseAudio bridge, some
+    // older Windows drivers) silently round up; the obtained-spec log
+    // line below shows what we actually got. Don't raise this for the
+    // worst-case host — that punishes every native user. Likewise don't
+    // drop below 512: 256 occasionally causes glitches on Windows shared
+    // mode where the wakeup jitter approaches the period.
     let mut spec = sdl2.audio_spec {
         freq = sfx.sample_rate, format = sdl2.audio_s16sys,
-        channels = 2u8, silence = 0u8, samples = 1024u16,
-        padding = 0u16, size = 0u32, callback = (any*) 0, userdata = (any*) 0
+        channels = 2u8, silence = 0u8, samples = 512u16,
+        padding = 0u16, size = 0u32,
+        callback = (any*) &audio_cb,
+        userdata = (any*) w->ac
     }
     let mut obtained = default(sdl2.audio_spec)
     let audio_dev = sdl2.open_audio((any*) 0, 0, &spec, &obtained, 0)
+    w->ac->device_id = audio_dev
+    // Audio diagnostics: print requested vs granted spec so PA / WASAPI /
+    // WSL2 host overrides are visible. The `samples` field is a hint;
+    // the host driver decides what to actually grant.
+    if audio_dev > 0u32 then
+        io.write("[audio] open dev=%d{(int32) audio_dev} req: freq=%d{spec.freq} samples=%d{(int32) spec.samples} ch=%d{(int32) spec.channels} | got: freq=%d{obtained.freq} samples=%d{(int32) obtained.samples} ch=%d{(int32) obtained.channels} size=%d{(int32) obtained.size}\n", stderr)
+    else
+        io.write("[audio] open FAILED\n", stderr)
     // First-frame music = whatever fits the initial phase (title →
     // WONDERIN). Phase-driven swap below keeps this in sync afterward.
+    // Loaded BEFORE unpause so the callback's first invocation already
+    // sees the IMF player; otherwise the title screen has a beat of
+    // silence before music kicks in.
     let mut current_music_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
-    let mut ms = if audio_dev > 0u32 && current_music_chunk < ad->num_chunks then
-        sdl2.pause_audio(audio_dev, 0)
-        some(font.music_load(ad, current_music_chunk))
-    else default(imf.player*?)
-    // 1024 stereo frames per audio batch. `mix_buf` is int32 so the three
-    // source fills (music, AdLib SFX, digi PCM) can sum without the per-
-    // stage clipping that would otherwise starve later stages of headroom.
-    // `out_buf` receives the soft-clipped int16 samples that actually get
-    // queued to SDL (2048 int16 = 4096 bytes).
-    let mix_buf = alloc(int32[2048] {})!
-    let out_buf = alloc(int16[2048] {})!
+    if audio_dev > 0u32 && current_music_chunk < ad->num_chunks then
+        w->ac->ms = some(font.music_load(ad, current_music_chunk))
     // Honour the persisted music preference: even if the IMF player
     // loaded successfully, start the mixer with music silenced when
     // the user has toggled music off in a previous session.
-    let mut music_on = ms.is_some && g->music_on
+    w->ac->music_on = w->ac->ms.is_some && g->music_on
+    // Unpause unconditionally so SFX work even with no music loaded.
+    if audio_dev > 0u32 then sdl2.pause_audio(audio_dev, 0)
 
     // Fresh screenshot directory each session — user copies any they want to keep.
     overlay.clear_screenshots()
@@ -2941,6 +3003,16 @@ let main = (args: str[]) ->
         let mut dt = (float64) (now - last_ticks) / 1000.0
         last_ticks = now
         if dt > 0.1 then dt = 0.1    // clamp large spikes
+
+        // Lock the audio callback for the whole frame body (event poll,
+        // tick, phase transitions, music swap). Every `sfx.trigger` site
+        // — gameplay code, menu nav, cheat activations, cutscenes —
+        // mutates state shared with the audio thread, and a global lock
+        // around the frame body covers all of them without per-call-site
+        // locking. Released just before `render_frame` below; render
+        // itself touches no audio state and is the longest single step,
+        // so unlocking before it minimizes callback wait time.
+        if audio_dev > 0u32 then sdl2.lock_audio(audio_dev)
 
         // Poll events
         loop
@@ -3265,9 +3337,7 @@ let main = (args: str[]) ->
                                 w->ac->sfx_on = !w->ac->sfx_on
                             else
                                 g->music_on = !g->music_on
-                                music_on = g->music_on
-                                if !music_on && audio_dev > 0u32 then
-                                    sdl2.clear_audio(audio_dev)
+                                w->ac->music_on = g->music_on
                             config.save(config.snapshot(w))
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
@@ -3649,39 +3719,25 @@ let main = (args: str[]) ->
         // distinct from ack keys; see the high_scores arm above).
         // Sync the active music to whatever phase we're now in. Only swap
         // when the chunk actually changed, so we don't restart the IMF
-        // player every frame. Don't call `sdl2.clear_audio` here — the
-        // already-queued ~46 ms of old music drains naturally while the
-        // new chunk's samples take over, which sounds cleaner than the
-        // audible underrun a hard flush causes.
+        // player every frame. Mutates ac->ms, which the audio callback
+        // reads — must happen under the lock that wraps this whole frame
+        // body (acquired right after the dt computation, released just
+        // below before render).
         let want_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
         if want_chunk != current_music_chunk then
             if audio_dev > 0u32 && want_chunk < ad->num_chunks then
-                if ms.is_some then imf.destroy(ms!)
-                ms = some(font.music_load(ad, want_chunk))
+                if w->ac->ms.is_some then imf.destroy(w->ac->ms!)
+                w->ac->ms = some(font.music_load(ad, want_chunk))
                 current_music_chunk = want_chunk
+
+        // End of audio-shared region: release the SDL audio lock so the
+        // callback thread can resume. Render runs unlocked — no shared
+        // state with the audio thread, and rendering is the longest part
+        // of the frame; locking through it would risk callback starvation.
+        if audio_dev > 0u32 then sdl2.unlock_audio(audio_dev)
 
         // Render
         render_frame(w, vs, pal)
-
-        // Generate and queue audio: music -> AdLib SFX -> digi SFX -> SDL.
-        // Buffer is 1024 STEREO frames (2048 int16 values = 4096 bytes);
-        // drivers write L/R interleaved additively. Back-pressure threshold
-        // is also in bytes. Peak queue depth is roughly hi_water + 4096
-        // (one full fill above the skip threshold), so this caps SFX
-        // latency at ~70ms — close enough to the OG's ~23ms callback
-        // latency to feel snappy, with enough cushion that a single-frame
-        // render hitch doesn't underrun. Underruns on WASAPI/DirectSound
-        // are a momentary stutter; on PulseAudio/PipeWire they can
-        // disconnect the SDL_QueueAudio stream entirely, so if you tune
-        // this lower, test on Linux too.
-        let queue_hi_water = 8192u32   // bytes; ~46ms of stereo audio
-        let skip_audio = audio_dev == 0u32 ||
-            sdl2.queued_audio_size(audio_dev) >= queue_hi_water
-        if !skip_audio then
-            mixer.fill_frame(mix_buf, out_buf, ms, music_on,
-                w->ac->sfx, w->ac->digi, 1024, sfx.sample_rate)
-            sdl2.queue_audio(audio_dev, (any*) out_buf.ptr, 4096u32)
-            void()
 
         // Upload framebuffer to texture and display. render_frame
         // produces a fully-composited dbuf (screen_w × screen_h) for

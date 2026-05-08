@@ -451,18 +451,21 @@ module mixer =
             if s < 0 then 0 - mag else mag
 
     // Apply the soft-clip curve elementwise, converting the int32 mix
-    // buffer into the int16 queue buffer. `count` is the total sample
-    // count (stereo frames × 2), matching the buffer lengths.
-    let soft_clip_to_int16 = (src: int32[], dst: int16[], count: int32) ->
+    // buffer into a raw int16 output buffer. `count` is the total sample
+    // count (stereo frames × 2). `dst` is a raw pointer because the
+    // SDL audio callback hands us a `uint8*` (cast to `int16*`) — building
+    // an FC slice from a raw pointer is awkward, so we just take the ptr.
+    let soft_clip_to_int16 = (src: int32[], dst: int16*, count: int32) ->
         for i in 0..count
-            dst[i] = (int16) soft_clip_sample(src[(int64) i])
+            *(dst + (int64) i) = (int16) soft_clip_sample(src[(int64) i])
 
     // One audio-fill cycle: clear the int32 mix buffer, add each active
     // source, and soft-clip into the int16 output buffer. `frames` is the
-    // stereo frame count (e.g. 1024); buffers must hold at least
-    // `frames * 2` slots. `music` may be none (no track loaded) or
-    // silenced via `music_on=false`; both paths skip the imf.fill step.
-    let fill_frame = (mix_buf: int32[], out_buf: int16[],
+    // stereo frame count (e.g. 1024); `mix_buf` must hold at least
+    // `frames * 2` slots; `out_ptr` must point at `frames * 2 * 2` bytes
+    // (= `len` from the SDL audio callback). `music` may be none (no track
+    // loaded) or silenced via `music_on=false`; both paths skip imf.fill.
+    let fill_frame = (mix_buf: int32[], out_ptr: int16*,
                       music: imf.player*?, music_on: bool,
                       sfx: adlib.sfx_state*, dg: digi.player*,
                       frames: int32, sample_rate: int32) ->
@@ -473,4 +476,4 @@ module mixer =
             imf.fill(music!, mix_buf, frames, sample_rate)
         adlib.fill(sfx, mix_buf, frames, sample_rate)
         digi.fill(dg, mix_buf, frames, sample_rate)
-        soft_clip_to_int16(mix_buf, out_buf, samples)
+        soft_clip_to_int16(mix_buf, out_ptr, samples)

@@ -192,6 +192,13 @@ module sdl2 from "SDL2/SDL.h" =
     extern SDL_GetQueuedAudioSize as queued_audio_size: (uint32) -> uint32
     extern SDL_ClearQueuedAudio as clear_audio: (uint32) -> void
     extern SDL_CloseAudioDevice as close_audio: (uint32) -> void
+    // Callback-mode mutex: while held, SDL won't dispatch the audio
+    // callback. Use to make state shared with the callback safe to mutate
+    // from the main thread. Lock duration must stay well under the device
+    // buffer length (~23 ms at samples=1024, freq=44100) or the device
+    // underruns while waiting.
+    extern SDL_LockAudioDevice as lock_audio: (uint32) -> void
+    extern SDL_UnlockAudioDevice as unlock_audio: (uint32) -> void
 
     // --- Events ---
     extern struct SDL_Keysym as sdl_keysym =
