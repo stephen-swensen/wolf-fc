@@ -511,8 +511,8 @@ module font =
             pixels = raw
         })!
         let h = (int32) bytes.u16(raw, 0i64)
-        let mut loc = int32[256] {}
-        let mut wdt = int32[256] {}
+        let loc = int32[256] {}
+        let wdt = int32[256] {}
         for i in 0..256
             // location[] is 256 uint16 entries starting at offset 2.
             loc[i] = (int32) bytes.u16(raw, 2i64 + (int64) i * 2)
@@ -677,7 +677,7 @@ module hud =
     let draw_number = (rc: render_ctx*, x: int32, y: int32, num: int32, color: uint32, scale: int32) ->
         let mut n = num
         if n < 0 then n = 0
-        let mut digits = int32[8] { 0, 0, 0, 0, 0, 0, 0, 0 }
+        let digits = int32[8] { 0, 0, 0, 0, 0, 0, 0, 0 }
         let mut count = 0
         if n == 0 then
             digits[0] = 0
@@ -773,7 +773,7 @@ module hud =
     private let draw_vg_number = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                           px: int32, py: int32, digits: int32, num: int32) ->
         let mut n = if num < 0 then 0 else num
-        let mut out_digits = int32[16] {}
+        let out_digits = int32[16] {}
         let mut count = 0
         if n == 0 then
             out_digits[0] = 0

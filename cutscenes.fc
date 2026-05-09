@@ -746,7 +746,7 @@ module intermission =
     let write_lpic_number = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                              x: int32, y: int32, num: int32, align_right: bool) ->
         let mut n = if num < 0 then 0 else num
-        let mut digits = int32[12] {}
+        let digits = int32[12] {}
         let mut count = 0
         if n == 0 then
             digits[0] = 0
@@ -1162,13 +1162,13 @@ module endart_screen =
         if page >= g->endart_total_pages then page = g->endart_total_pages - 1
         let start = g->endart_page_offsets[(int64) page]
         // Per-row margin arrays — ^G updates the rows it overlaps.
-        let mut lefts  = int32[18] {}
-        let mut rights = int32[18] {}
+        let lefts  = int32[18] {}
+        let rights = int32[18] {}
         for i in 0..text_rows
             lefts[i]  = left_margin
             rights[i] = rc->fb_w - right_margin
         // Skip the ^P line itself.
-        let mut i = skip_to_eol(g->endart_data, start + 2)
+        let i = skip_to_eol(g->endart_data, start + 2)
         let mut st = layout_state {
             px = lefts[0],
             py = top_margin,
@@ -1180,7 +1180,7 @@ module endart_screen =
         let data = g->endart_data
         let dn = (int32) data.len
         // Single-word scratch buffer (OG's WORDLIMIT = 80).
-        let mut word_buf = uint8[80] {}
+        let word_buf = uint8[80] {}
         loop
             if st.done then break
             if st.cursor >= dn then break

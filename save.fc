@@ -177,7 +177,7 @@ module config =
     // returns the defaults — no failure mode, since "no preferences
     // saved yet" is the expected state on a first launch.
     let load = () ->
-        let mut p = defaults()
+        let p = defaults()
         match config_path() with
         | none -> p
         | some(path) ->
@@ -1076,7 +1076,7 @@ module highscore =
                     // (instead of a closure) because FC closures can't
                     // capture mutable bindings.
                     let mut p = 6i64       // past "score "
-                    let mut nums = int32[3] {}
+                    let nums = int32[3] {}
                     for ti in 0..3
                         let start = p
                         loop

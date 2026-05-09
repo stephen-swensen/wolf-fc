@@ -2408,8 +2408,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
     else if arg == "enemies" then
         // Summary: counts by kind and by state, for regression checks.
         // Buckets: 0=guard, 1=officer, 2=ss, 3=dog, 4=mutant, 5=boss, 6=ghost.
-        let mut by_kind = int32[7] { 0, 0, 0, 0, 0, 0, 0 }
-        let mut by_state = int32[7] { 0, 0, 0, 0, 0, 0, 0 }
+        let by_kind = int32[7] { 0, 0, 0, 0, 0, 0, 0 }
+        let by_state = int32[7] { 0, 0, 0, 0, 0, 0, 0 }
         for i in 0..w->lv->num_enemies
             let e = w->lv->enemies[i]
             let ki = match e.kind with
@@ -2577,7 +2577,7 @@ let main = (args: str[]) ->
     defer free(p_maphead0)
     let p_gamemaps0 = data_path.wl6(data_dir, "GAMEMAPS.WL6")
     defer free(p_gamemaps0)
-    let mut lv_data = maps.load(p_maphead0, p_gamemaps0, 0)
+    let lv_data = maps.load(p_maphead0, p_gamemaps0, 0)
     io.write("  map %d{lv_data->width}x%d{lv_data->height}\n", stdout)
 
     // Persistent user preferences (sound toggles for now; key bindings

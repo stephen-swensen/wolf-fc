@@ -181,7 +181,7 @@ module vswap =
             else
                 let lp = (int32) bytes.u16(raw, base)
                 let rp = (int32) bytes.u16(raw, base + 2)
-                let mut col_off = uint16[64] {}
+                let col_off = uint16[64] {}
                 let count = rp - lp + 1
                 for c in 0..count
                     col_off[lp + c] = bytes.u16(raw, base + 4 + (int64) c * 2)
