@@ -106,12 +106,12 @@ module raycaster =
         // writes 16 adjacent dbuf positions per row, so the per-pixel
         // store traffic collapses from one cache line per write to one
         // cache line per 16 writes.
-        let mut bd_skip = uint8[16] {}
-        let mut bd_draw_start = int32[16] {}
-        let mut bd_draw_end = int32[16] {}
-        let mut bd_step_v = float64[16] {}
-        let mut bd_tex_pos = float64[16] {}
-        let mut bd_col_lut = uint32[1024] {}
+        let bd_skip = uint8[16] {}
+        let bd_draw_start = int32[16] {}
+        let bd_draw_end = int32[16] {}
+        let bd_step_v = float64[16] {}
+        let bd_tex_pos = float64[16] {}
+        let bd_col_lut = uint32[1024] {}
         let num_blocks = (rc->screen_w + 15) / 16
         for blk in 0..num_blocks
             let block_col = blk * 16
