@@ -302,8 +302,6 @@ Wolf-fc depends only on the installed FC compiler (`fcc`) and stdlib — see [In
 - **`png.fc`** — Pure-FC PNG writer (CRC-32, Adler-32, stored deflate, optional tEXt metadata).
 - **`run.sh`** — build + run wrapper; handles Linux/macOS and MSYS2/MinGW.
 
-The audio pipeline each frame: zero buffer → `imf.fill` (music) → `adlib.fill` (AdLib SFX) → `digi.fill` (8-bit PCM) → SDL audio queue (back-pressured via `SDL_GetQueuedAudioSize` to keep latency ≤ ~50 ms).
-
 SDL2's role in wolf-fc is deliberately minimal — it's a host abstraction, not a rendering framework. Each frame, the engine draws into a `uint32[]` ARGB framebuffer entirely in FC, then uploads it as a single streaming texture via `SDL_UpdateTexture` + `SDL_RenderCopy` + `SDL_RenderPresent`; the scale-quality hint is pinned to `nearest` for crisp upscaling. The 2D renderer is never asked to draw geometry — no `SDL_RenderFillRect`, no per-sprite textures, no shaders. Audio is equally bare: `SDL_QueueAudio` receives raw S16 PCM that our own mixer produced (no `SDL_AudioCallback`, no `SDL_mixer`). Input is keyboard-only, driven by `SDL_PollEvent` against `SDL_KEYDOWN`/`SDL_KEYUP`. No `SDL_image`, `SDL_ttf`, `SDL_mixer`, or `SDL_net` — just core `SDL2`, linked dynamically.
 
 ### Display pipeline
@@ -368,6 +366,53 @@ Reference points at native pixel resolutions in **Auto** (the aspect picker matc
 - **Conditional backbuffer clear.** SDL's letterbox / pillarbox bars only need to be drawn when the logical surface doesn't fully tile the drawable; the per-frame `SDL_RenderClear` is skipped otherwise (~33 MB/frame saved at 4K).
 
 **Platform notes.** On native Windows, wolf-fc declares per-monitor v2 DPI awareness so the renderer reports real pixels (not OS-DPI-scaled coordinates). On Linux/X11 with fractional-scaling compositors (Cinnamon, GNOME), the X canvas is what SDL sees — typically a render-larger-then-downscale arrangement (e.g. 1920×1080 panel @ 150% reports as 2560×1440), and the compositor applies a final downscale invisible to clients. That free-supersampling path costs CPU but yields a smoother panel image; cap with `--max-scale` if it's too expensive. WSLg's XWayland reports its own client-area size and ignores Windows DPI hints — there's no SDL2 path that surfaces real-pixel resolution from inside a WSLg client.
+
+### Audio pipeline
+
+Wolf-fc generates one stereo audio batch per frame entirely in FC, then pushes it to SDL2 via `SDL_QueueAudio`. The output is **44.1 kHz signed 16-bit interleaved stereo** at 1024 frames per batch (~23 ms). No `SDL_AudioCallback`, no `SDL_mixer` — the main loop drives sample generation and decides when to produce.
+
+Three format drivers in [`sound.fc`](sound.fc), each consuming bytes from a Wolf3D audio chunk and mixing additively into a shared `int32` buffer:
+
+- **`imf`** (music) — id Music Format. A flat sequence of `(reg, val, delay)` events written to a YM3812 OPL2 chip at a 700 Hz tick rate. Loops the track at end-of-stream. Has a `volume` knob for level-end fade-out. Owns a dedicated chip so its register state never collides with SFX.
+- **`adlib`** (SFX fallback) — id-Software AdLibSound chunks. A 23-byte header (length, priority, 16-byte instrument, block) followed by one F-number byte per 140 Hz tick. One voice on channel 0. Owns a separate OPL2 chip so SFX never disrupts the music chip. Used as the fallback for sounds that have no digitized version.
+- **`digi`** (PCM SFX, preferred) — 8-bit unsigned PCM straight from the trailing pages of `VSWAP.WL6`, recorded at 7042 Hz, nearest-neighbor resampled to 44.1 kHz. Up to 4 simultaneous slots (matches the original Sound Blaster mixing). No chip involved.
+
+Each `sfx.id` constant has both a `digi_slot[id]` and an `adlib_chunk[id]`; `sfx.trigger` prefers digi, falls through to AdLib if no digi exists for that ID. The two SFX paths use different chips, so a fast retrigger of an AdLib effect cleanly preempts itself without ever touching the music chip.
+
+```
+   mix_buf := 0                                 int32[2048]   stereo, ~23 ms
+       ↓ imf.fill           music chip → mono, duplicated L = R
+       ↓ adlib.fill         SFX chip   → mono, duplicated L = R
+       ↓ digi.fill          4 slots    → per-slot pan → L, R independently
+       ↓ mixer.soft_clip_to_int16                int16[2048]
+       ↓ SDL_QueueAudio
+   SDL device queue                             44.1 kHz, S16 stereo
+```
+
+`mix_buf` is `int32` so the three additive fills can sum freely without per-stage clipping starving later stages of headroom (digi, last in line, was the biggest loser before we widened the intermediate). The final soft-clip is a rational asymptotic curve — linear up to ±24000, then `y = knee + over × range / (range + over)` toward an asymptote at ±32767 — so a single source peak gets ~1.5 dB of compression and three sources peaking together still don't hard-clip. Mirrors how Sound Blaster hardware summed FM and PCM in the analog domain.
+
+**Ticked event-driven generation.** The OPL2 chip in [`opl2.fc`](opl2.fc) runs at the output sample rate. Both `imf` and `adlib` route their per-sample work through one shared helper, `opl2.fill_ticked`, that advances a `tick_accum` counter every emitted sample and invokes the driver's `advance` closure once per event tick:
+
+```
+samples_per_tick = sample_rate / tick_rate
+                 = 44100 / 700  =  63   IMF music
+                 = 44100 / 140  = 315   AdLib SFX
+```
+
+So one chip sample → push to buf → maybe advance one event. The same loop body works at any chip / tick-rate combination, which is why both drivers reuse it unmodified.
+
+**OPL2 emulator.** [`opl2.fc`](opl2.fc) is a from-scratch YM3812 emulator: 18 operators, 9 channels, 4 waveforms, ADSR envelopes, KSL/KSR, feedback FM, soft tremolo / vibrato. The pieces that audibly differentiate OPL2 from a generic FM synth — log-domain envelopes (linear in dB), EGT-controlled sustain release, fast key-scale rate, 256-entry log-sin table per quadrant — are modeled directly. The pieces Wolf3D doesn't use (rhythm mode, CSM, NTS) are skipped on purpose. Two independent chip instances run simultaneously, one for music and one for AdLib SFX, so triggering an effect never glitches the music's register state.
+
+**Stereo and panning.** OPL2 is mono, so `fill_ticked` duplicates each generated sample to both channels. Digi slots carry per-slot `gain_l` / `gain_r` derived from the pan parameter and add into L and R independently. `sfx.trigger_at` projects the source-to-player vector onto the camera-plane axis to compute pan, so an enemy visible on the right of the screen pans right — same projection the raycaster uses to place its sprite, by design.
+
+**Slot management.**
+
+- **AdLib SFX** runs one chunk at a time on its dedicated chip. New triggers honour an `SD_PlaySound`-style priority gate: a strictly lower priority is dropped, equal-or-greater preempts. So an incidental wall bump can't trample an in-flight pickup confirmation, but cross→cross retriggers restart audibly.
+- **Digi** has 4 slots. Slot selection is: (1) if the same `sound_num` is already playing in any slot, rewind that slot in place and update its pan — no overlap, no stacking; (2) otherwise pick the first idle slot; (3) otherwise steal slot 0. The dedup in step 1 keeps held-down wall-bump retriggers from burning through all four slots in a few hundred ms — that used to disconnect the SDL queue stream entirely on PulseAudio backends.
+
+**Loudness alignment.** Digi's `pcm_scale = 172` is chosen so a centered 8-bit PCM peak hits ~±22000 in `mix_buf` — the same scale OPL2's `sample` function emits at full envelope. Music, AdLib SFX, and digi therefore sit at roughly equal hardware-mixer loudness without any explicit gain matching, mirroring what the original Sound Blaster delivered through its analog mixer.
+
+**Backpressure.** The main loop watches `SDL_GetQueuedAudioSize` and skips `mixer.fill_frame` entirely when the device queue already holds ≥ 8192 bytes (~46 ms of stereo). Peak depth is ~70 ms (one full fill above the threshold). Underruns on WASAPI / DirectSound are a momentary stutter; on PulseAudio / PipeWire they can disconnect the queue stream, so the threshold is tuned with a generous cushion. Music chunk swaps (phase change) destroy the old IMF player and load the new chunk without flushing the device queue — the in-flight samples drain naturally into the new track, which sounds cleaner than the underrun a hard flush causes.
 
 ### Customising the quit prompt
 
