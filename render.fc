@@ -63,6 +63,15 @@ module raycaster =
         let floor_color = pal[0x19]
         // Shadow depth from the user's Options-menu setting.
         let shadow_floor = shadow_floor_from_depth(g->shadow_depth)
+        // Pre-shaded side-1 (Y-side) palette. The OG-faithful default
+        // (shadow_depth = 0 → shadow_floor = 1.0) keeps shade pinned
+        // to {1.0, 0.75} per column, so the per-column LUT setup can
+        // skip 64 shade_color calls each by indexing pal_dim directly
+        // for the side-1 case (and pal for side-0). 256 calls at
+        // frame entry are amortized over thousands of column setups.
+        let pal_dim = uint32[256] {}
+        for i in 0..256
+            pal_dim[i] = shade_color(pal[i], 0.75)
         let view_render_h = rc->view_render_h
         let half = view_render_h / 2
         let sw = (int64) rc->screen_w
@@ -102,10 +111,19 @@ module raycaster =
         // Columns are processed in blocks of 16 (one cache line of
         // dwords on x86_64). Phase 1 runs the per-column DDA + texture
         // setup for all 16 columns and stashes per-column state in
-        // stack-local arrays. Phase 2 then walks the union y-range and
-        // writes 16 adjacent dbuf positions per row, so the per-pixel
-        // store traffic collapses from one cache line per write to one
-        // cache line per 16 writes.
+        // stack-local arrays. Phase 2 then walks each block as three
+        // y-bands so per-pixel branches drop out of the common case:
+        //   - upper edge band  [y_min, fast_lo) — keeps the per-k
+        //     skip / range tests; runs only over the rows above the
+        //     deepest draw_start.
+        //   - fast band        [fast_lo, fast_hi) — every column is
+        //     active; the inner k-loop unrolls cleanly with no
+        //     per-pixel branches and writes 16 adjacent dbuf cells
+        //     per row.
+        //   - lower edge band  [fast_hi, y_max) — the symmetric
+        //     bottom-edge case.
+        // Per-pixel store traffic is one cache line of dwords per
+        // row, so the whole block writes a contiguous Nx16 stripe.
         let bd_skip = uint8[16] {}
         let bd_draw_start = int32[16] {}
         let bd_draw_end = int32[16] {}
@@ -332,10 +350,25 @@ module raycaster =
                 // block LUT. Phase 2's per-pixel inner loop becomes just
                 // `dbuf[...] = bd_col_lut[k*64 + tex_y]` — no shade_color
                 // call, no pal lookup, no vs->raw bounds check.
+                //
+                // The {1.0, 0.75} fast paths (the shadow-disabled
+                // default) skip shade_color in the per-row body —
+                // pal_dim is pre-shaded once per frame. The dynamic
+                // path (shadow_depth > 0, distance fading on) keeps
+                // the original per-row shade_color call.
                 let lut_base = (int64) k * 64
-                for ty in 0..64
-                    let pix = vs->raw[col_base + (int64) ty]
-                    bd_col_lut[lut_base + (int64) ty] = shade_color(pal[(int32) pix], shade)
+                if shade == 1.0 then
+                    for ty in 0..64
+                        let pix = vs->raw[col_base + (int64) ty]
+                        bd_col_lut[lut_base + (int64) ty] = pal[(int32) pix]
+                else if shade == 0.75 then
+                    for ty in 0..64
+                        let pix = vs->raw[col_base + (int64) ty]
+                        bd_col_lut[lut_base + (int64) ty] = pal_dim[(int32) pix]
+                else
+                    for ty in 0..64
+                        let pix = vs->raw[col_base + (int64) ty]
+                        bd_col_lut[lut_base + (int64) ty] = shade_color(pal[(int32) pix], shade)
 
                 bd_draw_start[k] = draw_start
                 bd_draw_end[k] = draw_end
@@ -343,18 +376,66 @@ module raycaster =
                 bd_tex_pos[k] = tex_pos
                 bd_skip[k] = 0u8
 
-            // Phase 2: tile-rasterize. Walk the union y-range across the
-            // 16-column block and write one cache line of dbuf per row.
-            // Columns whose [draw_start, draw_end) doesn't include the
-            // current y are simply not stored (a branch, not a write).
+            // Phase 2: y_min / y_max bound the union of active
+            // columns; fast_lo / fast_hi bound the intersection — but
+            // only when *every* column in the block is active, since
+            // the fast band has no per-k skip test and would otherwise
+            // splatter stale stack data into dbuf at skipped k. Mixed-
+            // active blocks fall through with fast_lo == fast_hi so
+            // only the edge bands run (the union covers everything).
             let mut y_min = view_render_h
             let mut y_max = 0
+            let mut fast_lo = 0
+            let mut fast_hi = 0
+            let mut all_active = true
             for k in 0..16
-                if bd_skip[k] == 0u8 then
+                if bd_skip[k] != 0u8 then
+                    all_active = false
+                else
                     if bd_draw_start[k] < y_min then y_min = bd_draw_start[k]
                     if bd_draw_end[k] > y_max then y_max = bd_draw_end[k]
+            if all_active then
+                fast_lo = y_min
+                fast_hi = y_max
+                for k in 0..16
+                    if bd_draw_start[k] > fast_lo then fast_lo = bd_draw_start[k]
+                    if bd_draw_end[k] < fast_hi then fast_hi = bd_draw_end[k]
+                if fast_hi < fast_lo then fast_hi = fast_lo
 
-            for y in y_min..y_max
+            // Upper edge band: y in [y_min, fast_lo). At least one
+            // active column hasn't started yet, so keep the per-k
+            // skip / range tests.
+            let mut up_hi = fast_lo
+            if up_hi > y_max then up_hi = y_max
+            for y in y_min..up_hi
+                let row_base = (int64) y * sw + (int64) block_col
+                for k in 0..16
+                    if bd_skip[k] == 0u8 then
+                        if y >= bd_draw_start[k] && y < bd_draw_end[k] then
+                            let mut tex_y = (int32) bd_tex_pos[k]
+                            if tex_y < 0 then tex_y = 0
+                            if tex_y > 63 then tex_y = 63
+                            bd_tex_pos[k] = bd_tex_pos[k] + bd_step_v[k]
+                            dbuf_p[row_base + (int64) k] = bd_col_lut[(int64) k * 64 + (int64) tex_y]
+
+            // Fast band: y in [fast_lo, fast_hi). All columns active,
+            // no per-pixel skip / range branches; gcc unrolls k=0..16
+            // and the body is double-add + cvttsd2si + LUT load +
+            // store, one cache line of dbuf per row.
+            for y in fast_lo..fast_hi
+                let row_base = (int64) y * sw + (int64) block_col
+                for k in 0..16
+                    let mut tex_y = (int32) bd_tex_pos[k]
+                    if tex_y < 0 then tex_y = 0
+                    if tex_y > 63 then tex_y = 63
+                    bd_tex_pos[k] = bd_tex_pos[k] + bd_step_v[k]
+                    dbuf_p[row_base + (int64) k] = bd_col_lut[(int64) k * 64 + (int64) tex_y]
+
+            // Lower edge band: y in [fast_hi, y_max). Symmetric to
+            // the upper edge — at least one column has finished.
+            let mut lo_lo = fast_hi
+            if lo_lo < y_min then lo_lo = y_min
+            for y in lo_lo..y_max
                 let row_base = (int64) y * sw + (int64) block_col
                 for k in 0..16
                     if bd_skip[k] == 0u8 then
