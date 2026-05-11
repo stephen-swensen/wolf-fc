@@ -635,6 +635,15 @@ module overlay =
     // 1/4 each. Runs after the raycaster + billboards + weapon
     // pipeline so viewport tints / dissolves can operate on the
     // (cheaper) dbuf resolution afterward.
+    //
+    // The 4-way average uses the SWAR rounding-avg pattern stacked
+    // twice: `avg2(a, b) = (a|b) - (((a^b)>>1) & 0x7F7F7F7F)` runs
+    // a byte-parallel ceil-rounded average across all four ARGB
+    // lanes in 5 ALU ops. The 0x7F mask blocks shift bits crossing
+    // byte boundaries; the alpha lane comes through as 0xFF since
+    // every viewport pixel is opaque, so no extra alpha re-OR is
+    // needed. Each step ceil-rounds — net per-channel bias vs the
+    // "exact" sum/4 is ±0.75/255, below visible threshold.
     let ssaa_downsample = (rc: render_ctx*) ->
         if !rc->ssaa then return
         let dst_w = rc->screen_w
@@ -643,6 +652,7 @@ module overlay =
         let dst_stride = (int64) dst_w
         let src = rc->ssaa_buf.ptr
         let dst = rc->dbuf.ptr
+        let mask = 0x7F7F7F7Fu32
         for y in 0..dst_h
             let src_row0 = (int64) (y * 2) * src_w
             let src_row1 = src_row0 + src_w
@@ -653,18 +663,9 @@ module overlay =
                 let c01 = src[src_row0 + sx + 1]
                 let c10 = src[src_row1 + sx]
                 let c11 = src[src_row1 + sx + 1]
-                // Per-channel average. (a + b + c + d) >> 2 with
-                // masked-out channels — avoids overflow into adjacent
-                // bytes without going through float. Alpha is opaque
-                // throughout the 3D viewport so the result keeps
-                // 0xFF in the high byte.
-                let r = (((c00 >> 16u32) & 0xFFu32) + ((c01 >> 16u32) & 0xFFu32)
-                       + ((c10 >> 16u32) & 0xFFu32) + ((c11 >> 16u32) & 0xFFu32)) >> 2u32
-                let g = (((c00 >> 8u32) & 0xFFu32) + ((c01 >> 8u32) & 0xFFu32)
-                       + ((c10 >> 8u32) & 0xFFu32) + ((c11 >> 8u32) & 0xFFu32)) >> 2u32
-                let b = ((c00 & 0xFFu32) + (c01 & 0xFFu32)
-                       + (c10 & 0xFFu32) + (c11 & 0xFFu32)) >> 2u32
-                dst[dst_row + (int64) x] = 0xFF000000u32 | (r << 16u32) | (g << 8u32) | b
+                let top = (c00 | c01) - (((c00 ^ c01) >> 1u32) & mask)
+                let bot = (c10 | c11) - (((c10 ^ c11) >> 1u32) & mask)
+                dst[dst_row + (int64) x] = (top | bot) - (((top ^ bot) >> 1u32) & mask)
 
     // Overlay a color tint over the 3D viewport by blending each
     // pixel toward `tint` at `alpha` (0..1). alpha=0 is a no-op;
