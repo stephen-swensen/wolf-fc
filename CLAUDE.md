@@ -5,7 +5,7 @@
 Wolf-FC is a Wolfenstein 3D port that doubles as a flagship FC-language demo. Three constraints shape every decision:
 
 1. **License-clean.** Wolf3D's id source and wolf4sdl are GPLv2. *Our* code must be an original implementation — no copy/paste, no line-for-line paraphrase, no comments naming GPL filenames or functions. Consult those references for *behavior*, then write your own. See feedback memories on copyleft hygiene.
-2. **Faithful to the OG.** Gameplay, timing, scoring, AI, HUD layout, music/SFX cues should match the original (WL6 / GOODTIMES build). Tasteful improvements (widescreen, supersampling, save slots) are welcome but call out divergences explicitly.
+2. **OG-faithful by default, modern where it pays off.** The baseline is the original WL6 / GOODTIMES build: gameplay, timing, scoring, AI, HUD layout, music/SFX cues. We deviate where it clearly helps in a modern context — Hor+ widescreen, supersampling, save slots, the Change View submenu — or via opt-in toggles that ship off-by-default (No Dogs, shading, etc.). Two rules: keep the OG path available and bit-stable (the regression suite pins test mode to OG geometry), and call out every divergence explicitly so a player or maintainer can tell what's faithful from what's ours.
 3. **Depends on original data files.** `data/*.WL6` are user-supplied from a legitimate Wolf3D install and are *not* committed. The engine reads `.WL6` directly — no asset conversion step.
 
 The project also serves as an end-to-end demo of FC: stdlib usage, modules, generics, C interop (SDL2, OPL2), manual memory management.
