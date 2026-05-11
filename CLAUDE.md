@@ -14,7 +14,7 @@ The project also serves as an end-to-end demo of FC: stdlib usage, modules, gene
 
 - **`../fc-lang/`** — FC compiler + stdlib. Treat as installed and up-to-date.
   - **`../fc-lang/spec/fc-spec.html`** — full language specification. Authoritative.
-  - **`../fc-lang/spec/examples.fc`** — runnable, commented quick reference covering every core feature. **Skim this at the start of a session** if you haven't worked in FC recently.
+  - **`../fc-lang/spec/examples.fc`** — runnable, commented quick reference covering core features. **Read this in full at the start of every new session** to prime your understanding of FC syntax and semantics — don't rely on memory or training data.
   - **`../fc-lang/stdlib/`** — stdlib source (`io`, `math`, `sys`, `text`, `random`, `data`). Installed copy is what the build actually consumes.
   - **`../fc-lang/CLAUDE.md`** — compiler-internal notes; useful when an `fcc` bug needs investigating.
 
