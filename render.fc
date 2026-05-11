@@ -642,8 +642,9 @@ module overlay =
     // lanes in 5 ALU ops. The 0x7F mask blocks shift bits crossing
     // byte boundaries; the alpha lane comes through as 0xFF since
     // every viewport pixel is opaque, so no extra alpha re-OR is
-    // needed. Each step ceil-rounds — net per-channel bias vs the
-    // "exact" sum/4 is ±0.75/255, below visible threshold.
+    // needed. Each step rounds up by 0 or 0.5, so the stacked result
+    // is biased above the exact mean by up to +1/255 per channel —
+    // below visible threshold and the same trade x86 PAVGB makes.
     let ssaa_downsample = (rc: render_ctx*) ->
         if !rc->ssaa then return
         let dst_w = rc->screen_w
