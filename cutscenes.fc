@@ -387,14 +387,15 @@ module death_cam =
                 g->dc_fade = 1.0
                 g->dc_sub = sub.done
 
-    // Layout for the SPR_DEATHCAM sprite within the dbuf-cell grid.
-    // Same sizing as the player gun (square, view_render_h on each
-    // side, centered horizontally, top-aligned in the viewport so the
-    // letters appear high). Coordinates are in dbuf-cell units, NOT
+    // Layout for the SPR_DEATHCAM sprite within the vbuf-cell grid.
+    // Same sizing as the player gun (square, vbuf_h on each side,
+    // centered horizontally, top-aligned in the viewport so the
+    // letters appear high). Coordinates are in vbuf-cell units, NOT
     // fb-cell units — `draw_hud_sprite` interprets them on the
-    // screen_w grid. Used by `render_sprite` and exposed for the
-    // test-mode `dcsprite` probe so a layout regression is caught
-    // without having to drive the whole death_cam phase.
+    // vbuf_w grid (which is screen_w without SSAA or 2·screen_w with
+    // SSAA). Used by `render_sprite` and exposed for the test-mode
+    // `dcsprite` probe so a layout regression is caught without
+    // having to drive the whole death_cam phase.
     struct sprite_layout =
         dx: int32
         dy: int32
@@ -402,11 +403,11 @@ module death_cam =
         dh: int32
 
     let compute_sprite_layout = (rc: render_ctx*) ->
-        let view_render_h = rc->view_render_h
+        let view_render_h = rc->vbuf_h
         let dw = view_render_h
         let dh = view_render_h
         sprite_layout {
-            dx = (rc->screen_w - dw) / 2,
+            dx = (rc->vbuf_w - dw) / 2,
             dy = view_render_h - dh,
             dw = dw,
             dh = dh
@@ -449,6 +450,10 @@ module death_cam =
                 render_sprite(rc, vs, pal, g->phase_timer)
             else
                 player.render_weapon(rc, vs, pal, g)
+            // Resolve the SSAA viewport buffer into dbuf before the
+            // tint / dissolve steps operate on dbuf-resolution
+            // pixels. No-op when SSAA is off.
+            overlay.ssaa_downsample(rc)
             if s == sub.fade_to_black then
                 // Viewport-only fade — HUD redraws fresh in render_frame
                 // after death_cam.render returns, so HUD doesn't need to

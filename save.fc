@@ -78,6 +78,12 @@ module config =
         // driven, capped by --max-scale), 2..12=explicit. When non-auto,
         // the chosen value is used verbatim and --max-scale is ignored.
         scale_factor: int32
+        // Opt-in 2× super-sample anti-aliasing applied on top of the
+        // scale factor. When on, the 3D viewport renders into a buffer
+        // sized 2·screen_w × 2·view_render_h and is box-filter
+        // downsampled into dbuf before HUD composite. Default off —
+        // costs 4× the raycaster work.
+        ssaa: bool
         // Speed multipliers as percentages (20..200, default 100).
         // bj_speed_pct scales the player's walking / strafing / turning.
         // enemy_speed_pct scales every enemy's patrol + chase speed
@@ -145,6 +151,7 @@ module config =
             // (capped by --max-scale). Users can pin an explicit
             // 2..12 from the Change View menu.
             scale_factor = scale_factor_auto,
+            ssaa = false,
             bj_speed_pct = 100,
             enemy_speed_pct = 100
         }
@@ -162,6 +169,7 @@ module config =
             shadow_depth = w->g->shadow_depth,
             view_mode = w->g->view_mode,
             scale_factor = w->g->scale_factor,
+            ssaa = w->g->ssaa,
             bj_speed_pct = w->g->bj_speed_pct,
             enemy_speed_pct = w->g->enemy_speed_pct
         }
@@ -232,6 +240,10 @@ module config =
                                 else if v > scale_factor_max then scale_factor_max
                                 else v
                         | none -> void()
+                    else if text.starts_with(line, "ssaa ") then
+                        match text.parse_int32(line[5..line.len]) with
+                        | some(v) -> p.ssaa = v != 0
+                        | none -> void()
                     else if text.starts_with(line, "bj_speed_pct ") then
                         match text.parse_int32(line[13..line.len]) with
                         | some(v) ->
@@ -268,6 +280,7 @@ module config =
                 io.write("shadow_depth %d{p.shadow_depth}\n", f)
                 io.write("view_mode %d{p.view_mode}\n", f)
                 io.write("scale_factor %d{p.scale_factor}\n", f)
+                io.write("ssaa %d{if p.ssaa then 1 else 0}\n", f)
                 io.write("bj_speed_pct %d{p.bj_speed_pct}\n", f)
                 io.write("enemy_speed_pct %d{p.enemy_speed_pct}\n", f)
                 void()

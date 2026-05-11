@@ -72,26 +72,31 @@ module raycaster =
         let pal_dim = uint32[256] {}
         for i in 0..256
             pal_dim[i] = shade_color(pal[i], 0.75)
-        let view_render_h = rc->view_render_h
+        // Render-target dims pulled from vbuf. Without SSAA this is
+        // (screen_w, view_render_h) writing into dbuf's top region;
+        // with SSAA it's (2·screen_w, 2·view_render_h) writing into
+        // a separately-allocated ssaa_buf that is later box-filtered
+        // into dbuf.
+        let view_render_h = rc->vbuf_h
         let half = view_render_h / 2
-        let sw = (int64) rc->screen_w
+        let sw = (int64) rc->vbuf_w
         // Flat fill via the slice's raw pointer. The bounds-checked
-        // `dbuf[i] = c` form keeps gcc to a single store-per-iter
+        // `vbuf[i] = c` form keeps gcc to a single store-per-iter
         // because the cold-path `fc_oob` branch makes the body look
         // side-effecting; dropping it lets gcc 2x-unroll the store
         // loop, which is a measurable win even though it doesn't
         // promote to SIMD.
-        let dbuf_p = rc->dbuf.ptr
+        let vbuf_p = rc->vbuf.ptr
         let ceil_end = (int64) half * sw
         let view_end = (int64) view_render_h * sw
         for i in 0..ceil_end
-            dbuf_p[i] = ceil_color
+            vbuf_p[i] = ceil_color
         for i in ceil_end..view_end
-            dbuf_p[i] = floor_color
+            vbuf_p[i] = floor_color
 
         // Reset z-buffer.
-        for i in 0..rc->screen_w
-            rc->zbuf[i] = 1e6
+        for i in 0..rc->vbuf_w
+            rc->vzbuf[i] = 1e6
 
         // Push-wall sub-tile offset. pw_fx/pw_fy are the world-space
         // lower-left corner of the 1x1 wall AABB during its slide.
@@ -130,7 +135,7 @@ module raycaster =
         let bd_step_v = float64[16] {}
         let bd_tex_pos = float64[16] {}
         let bd_col_lut = uint32[1024] {}
-        let num_blocks = (rc->screen_w + 15) / 16
+        let num_blocks = (rc->vbuf_w + 15) / 16
         for blk in 0..num_blocks
             let block_col = blk * 16
             // Phase 1: per-column DDA + texture-column setup. Each
@@ -140,8 +145,8 @@ module raycaster =
             for k in 0..16
                 let col = block_col + k
                 bd_skip[k] = 1u8
-                if col >= rc->screen_w then continue
-                let cam_x = 2.0 * (float64) col / (float64) rc->screen_w - 1.0
+                if col >= rc->vbuf_w then continue
+                let cam_x = 2.0 * (float64) col / (float64) rc->vbuf_w - 1.0
                 let ray_dx = g->dir_x + g->plane_x * cam_x
                 let ray_dy = g->dir_y + g->plane_y * cam_x
                 let mut map_x = (int32) g->pos_x
@@ -271,7 +276,7 @@ module raycaster =
 
                 if tile_val == 0 && !is_door_hit && !is_pushwall_hit then continue
                 if perp_dist <= 0.001 then continue
-                rc->zbuf[(int64) col] = perp_dist
+                rc->vzbuf[(int64) col] = perp_dist
 
                 let line_h = (int32) ((float64) view_render_h / perp_dist)
                 let mut draw_start = view_render_h / 2 - line_h / 2
@@ -416,7 +421,7 @@ module raycaster =
                             if tex_y < 0 then tex_y = 0
                             if tex_y > 63 then tex_y = 63
                             bd_tex_pos[k] = bd_tex_pos[k] + bd_step_v[k]
-                            dbuf_p[row_base + (int64) k] = bd_col_lut[(int64) k * 64 + (int64) tex_y]
+                            vbuf_p[row_base + (int64) k] = bd_col_lut[(int64) k * 64 + (int64) tex_y]
 
             // Fast band: y in [fast_lo, fast_hi). All columns active,
             // no per-pixel skip / range branches; gcc unrolls k=0..16
@@ -429,7 +434,7 @@ module raycaster =
                     if tex_y < 0 then tex_y = 0
                     if tex_y > 63 then tex_y = 63
                     bd_tex_pos[k] = bd_tex_pos[k] + bd_step_v[k]
-                    dbuf_p[row_base + (int64) k] = bd_col_lut[(int64) k * 64 + (int64) tex_y]
+                    vbuf_p[row_base + (int64) k] = bd_col_lut[(int64) k * 64 + (int64) tex_y]
 
             // Lower edge band: y in [fast_hi, y_max). Symmetric to
             // the upper edge — at least one column has finished.
@@ -444,7 +449,7 @@ module raycaster =
                             if tex_y < 0 then tex_y = 0
                             if tex_y > 63 then tex_y = 63
                             bd_tex_pos[k] = bd_tex_pos[k] + bd_step_v[k]
-                            dbuf_p[row_base + (int64) k] = bd_col_lut[(int64) k * 64 + (int64) tex_y]
+                            vbuf_p[row_base + (int64) k] = bd_col_lut[(int64) k * 64 + (int64) tex_y]
 
 
 // ============================================================
@@ -543,9 +548,9 @@ module billboards =
         if sprite_col < hdr.left_pix || sprite_col > hdr.right_pix then return
         let base = hdr.base
         let data_off = (int64) hdr.col_offsets[sprite_col]
-        let view_render_h = rc->view_render_h
+        let view_render_h = rc->vbuf_h
         let upper = view_render_h / 2 - sprite_h / 2
-        let sw = (int64) rc->screen_w
+        let sw = (int64) rc->vbuf_w
         let dcol = (int64) screen_x
         let mut off = base + data_off
         loop
@@ -566,7 +571,7 @@ module billboards =
                     let ey = if sy1 > view_render_h then view_render_h else sy1
                     loop
                         if sy >= ey then break
-                        rc->dbuf[(int64) sy * sw + dcol] = color
+                        rc->vbuf[(int64) sy * sw + dcol] = color
                         sy = sy + 1
 
     // Render the sorted billboards (static sprites + enemies). Caller
@@ -578,7 +583,10 @@ module billboards =
                   vs: const vswap.vswap_file*, pal: const uint32[]) ->
         let inv_det = 1.0 / (g->plane_x * g->dir_y - g->dir_x * g->plane_y)
         let shadow_floor = raycaster.shadow_floor_from_depth(g->shadow_depth)
-        let view_render_h = rc->view_render_h
+        // Render-target dims pulled from vbuf — match the raycaster's
+        // grid so sprite columns line up with wall columns regardless
+        // of whether SSAA is on or off.
+        let view_render_h = rc->vbuf_h
         for i in 0..rc->num_billboards
             let bb = rc->billboards[i]
             let sx = bb.x - g->pos_x
@@ -586,13 +594,14 @@ module billboards =
             let tx = inv_det * (g->dir_y * sx - g->dir_x * sy)
             let ty = inv_det * (g->plane_x * sy - g->plane_y * sx)
             if ty <= 0.1 then continue
-            // scr_x, spr_w are in dbuf-col units (screen_w-wide grid),
-            // matching the raycaster's per-dbuf-col ray density. spr_h
-            // stays in dbuf-row units (view_render_h). At ty=1 a sprite
-            // spans view_render_h dbuf-cols × view_render_h dbuf-rows;
-            // after the display's 4:3 vertical stretch this matches the
-            // original's 160×160 sprite in its 320×160 viewport.
-            let scr_x = (int32) ((float64) (rc->screen_w / 2) * (1.0 + tx / ty))
+            // scr_x, spr_w are in vbuf-col units (vbuf_w-wide grid),
+            // matching the raycaster's per-column ray density. spr_h
+            // stays in vbuf-row units (vbuf_h). At ty=1 a sprite spans
+            // view_render_h dbuf-cols × view_render_h dbuf-rows after
+            // SSAA downsample; after the display's 4:3 vertical
+            // stretch this matches the original's 160×160 sprite in
+            // its 320×160 viewport.
+            let scr_x = (int32) ((float64) (rc->vbuf_w / 2) * (1.0 + tx / ty))
             let spr_w = (int32) ((float64) view_render_h / ty)
             let spr_h = (int32) ((float64) view_render_h / ty)
             if spr_w < 1 || spr_h < 1 then continue
@@ -600,8 +609,8 @@ module billboards =
             let draw_x0 = scr_x - half_w
             let draw_x1 = scr_x + half_w
             for stripe in draw_x0..draw_x1
-                if stripe >= 0 && stripe < rc->screen_w then
-                    if ty < rc->zbuf[stripe] then
+                if stripe >= 0 && stripe < rc->vbuf_w then
+                    if ty < rc->vzbuf[stripe] then
                         let tex_col = (stripe - draw_x0) * 64 / spr_w
                         let spr_shade = raycaster.dist_shade(ty, shadow_floor)
                         draw_sprite_col(rc, vs, pal, bb.shape_page,
@@ -617,6 +626,45 @@ module overlay =
     import text from std::
 
     let screenshot_max_slots = 100
+
+    // Box-filter the 2× SSAA viewport buffer down into dbuf's
+    // viewport region. No-op when SSAA is off. Each dbuf cell
+    // averages its 4 ssaa_buf neighbors (top-left, top-right,
+    // bottom-left, bottom-right) — same kernel as bilinear at
+    // integer 2× ratio, but cheaper since the weights collapse to
+    // 1/4 each. Runs after the raycaster + billboards + weapon
+    // pipeline so viewport tints / dissolves can operate on the
+    // (cheaper) dbuf resolution afterward.
+    let ssaa_downsample = (rc: render_ctx*) ->
+        if !rc->ssaa then return
+        let dst_w = rc->screen_w
+        let dst_h = rc->view_render_h
+        let src_w = (int64) (2 * dst_w)
+        let dst_stride = (int64) dst_w
+        let src = rc->ssaa_buf.ptr
+        let dst = rc->dbuf.ptr
+        for y in 0..dst_h
+            let src_row0 = (int64) (y * 2) * src_w
+            let src_row1 = src_row0 + src_w
+            let dst_row = (int64) y * dst_stride
+            for x in 0..dst_w
+                let sx = (int64) (x * 2)
+                let c00 = src[src_row0 + sx]
+                let c01 = src[src_row0 + sx + 1]
+                let c10 = src[src_row1 + sx]
+                let c11 = src[src_row1 + sx + 1]
+                // Per-channel average. (a + b + c + d) >> 2 with
+                // masked-out channels — avoids overflow into adjacent
+                // bytes without going through float. Alpha is opaque
+                // throughout the 3D viewport so the result keeps
+                // 0xFF in the high byte.
+                let r = (((c00 >> 16u32) & 0xFFu32) + ((c01 >> 16u32) & 0xFFu32)
+                       + ((c10 >> 16u32) & 0xFFu32) + ((c11 >> 16u32) & 0xFFu32)) >> 2u32
+                let g = (((c00 >> 8u32) & 0xFFu32) + ((c01 >> 8u32) & 0xFFu32)
+                       + ((c10 >> 8u32) & 0xFFu32) + ((c11 >> 8u32) & 0xFFu32)) >> 2u32
+                let b = ((c00 & 0xFFu32) + (c01 & 0xFFu32)
+                       + (c10 & 0xFFu32) + (c11 & 0xFFu32)) >> 2u32
+                dst[dst_row + (int64) x] = 0xFF000000u32 | (r << 16u32) | (g << 8u32) | b
 
     // Overlay a color tint over the 3D viewport by blending each
     // pixel toward `tint` at `alpha` (0..1). alpha=0 is a no-op;

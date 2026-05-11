@@ -443,19 +443,21 @@ module menu =
         draw_help_pic(rc, vg, pal)
 
     // ============================================================
-    // Change View — two left/right pickers:
+    // Change View — three left/right pickers:
     //   Aspect Ratio: Auto / Original (4:3) / 16:10 / 16:9
     //   Scale Factor: Auto / 2x..12x
+    //   Anti-Alias:   OFF / ON   (2× SSAA on top of Scale Factor)
     // Up/Down moves between rows; Left/Right cycles the value on the
     // selected row and applies the change immediately.
     // ============================================================
 
-    let changeview_len = 2
+    let changeview_len = 3
 
     // Public so main.fc's nav handler can reach for the cycle bounds
     // without duplicating the row → field mapping.
     let changeview_aspect_row = 0
     let changeview_scale_row  = 1
+    let changeview_ssaa_row   = 2
 
     private let render_changeview_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                            pal: const uint32[], f: const font.info*,
@@ -492,6 +494,13 @@ module menu =
                     font.draw_text(rc, f, x_value, row_y, "Auto", color)
                 else
                     font.draw_text(rc, f, x_value, row_y, "%d{g->scale_factor}x", color)
+            else if i == changeview_ssaa_row then
+                font.draw_text(rc, f, x_label, row_y, "Anti-Alias", color)
+                // 2× SSAA on top of Scale Factor. The resolved
+                // internal buffer dimensions show up on the footer's
+                // "Anti-Alias" line when on; off → no extra row.
+                font.draw_text(rc, f, x_value, row_y,
+                    if g->ssaa then "ON" else "OFF", color)
         // Footer: walk the four geometry stages of the pipeline
         // with their actual numbers, so the player can see exactly
         // how the chosen view mode + auto-picked supersample factor
@@ -514,14 +523,20 @@ module menu =
         font.draw_text(rc, f, label_x, info_y,      "Framebuffer", pal[pal_text])
         font.draw_text(rc, f, value_x, info_y,
             "%d{rc->fb_w} x %d{rc->fb_h}", pal[pal_text])
-        font.draw_text(rc, f, label_x, info_y + 9,  "Texture", pal[pal_text])
-        font.draw_text(rc, f, value_x, info_y + 9,
-            "%d{rc->screen_w} x %d{rc->screen_h}   (%d{rc->scale}x supersample)", pal[pal_text])
-        font.draw_text(rc, f, label_x, info_y + 18, "Logical", pal[pal_text])
+        font.draw_text(rc, f, label_x, info_y + 9,  "Anti-Alias", pal[pal_text])
+        if rc->ssaa then
+            font.draw_text(rc, f, value_x, info_y + 9,
+                "%d{2 * rc->screen_w} x %d{2 * rc->view_render_h}   (2x SSAA, viewport)", pal[pal_text])
+        else
+            font.draw_text(rc, f, value_x, info_y + 9, "off", pal[pal_text])
+        font.draw_text(rc, f, label_x, info_y + 18,  "Texture", pal[pal_text])
         font.draw_text(rc, f, value_x, info_y + 18,
-            "%d{rc->screen_w} x %d{logical_h}   (1.2x VGA aspect)", pal[pal_text])
-        font.draw_text(rc, f, label_x, info_y + 27, "Drawable", pal[pal_text])
+            "%d{rc->screen_w} x %d{rc->screen_h}   (%d{rc->scale}x supersample)", pal[pal_text])
+        font.draw_text(rc, f, label_x, info_y + 27, "Logical", pal[pal_text])
         font.draw_text(rc, f, value_x, info_y + 27,
+            "%d{rc->screen_w} x %d{logical_h}   (1.2x VGA aspect)", pal[pal_text])
+        font.draw_text(rc, f, label_x, info_y + 36, "Drawable", pal[pal_text])
+        font.draw_text(rc, f, value_x, info_y + 36,
             "%d{rc->drawable_w} x %d{rc->drawable_h}", pal[pal_text])
         draw_help_pic(rc, vg, pal)
         // 1px blue outline on the inside of the framebuffer
