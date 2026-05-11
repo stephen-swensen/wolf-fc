@@ -295,7 +295,7 @@ All project modules are declared at the top level (no namespaces), so they're re
 
 **Rendering and UI**
 
-- **`render.fc`** — DDA wall raycaster, billboard sort + draw, and the viewport-overlay pipeline (damage flash, elevator fade, dying-phase stipple, supersample upscaler, screenshot capture). See [Display pipeline](#display-pipeline).
+- **`render.fc`** — DDA wall raycaster, billboard sort + draw, and the viewport-overlay pipeline (damage flash, elevator fade, dying-phase stipple, supersample upscaler, optional 2× SSAA box-downsample, screenshot capture). See [Display pipeline](#display-pipeline).
 - **`ui.fc`** — UI primitives shared by every non-3D phase: music track IDs + the per-level `songs[]` table, the cached VGAGRAPH pic blitter, font, and the status-bar HUD with BJ-face animation.
 - **`menu.fc`** — Main menu and submenus (episode, difficulty, map, save / load slot list, change-view).
 - **`cutscenes.fc`** — Per-phase state machines and renderers for the title screen, parental-advisory splash, intermission scoring, BJ victory, death-cam, episode-end art screen (the `^P`/`^E`/`^C`/... markup parser lives here), and the high-scores screen with inline name editor.
@@ -309,7 +309,7 @@ All project modules are declared at the top level (no namespaces), so they're re
 **I/O and host**
 
 - **`data.fc`** — Wolf3D asset loading: `bytes` (little-endian readers), `palette` (256-entry VGA), `vswap` (wall textures, sprites, PCM), `maps` (Carmack + RLEW map decompression), `vgagraph` (Huffman-coded UI graphics), `audio` (AUDIOHED / AUDIOT chunk index).
-- **`save.fc`** — Save / load slots and the on-disk encoding, `~/.wolf-fc/config` persistence (music / SFX / no-dogs / shadow-depth / view-mode), and a leaf `paths` module that resolves `~/.wolf-fc/` directory locations.
+- **`save.fc`** — Save / load slots and the on-disk encoding, `~/.wolf-fc/config` persistence (music / SFX / no-dogs / shadow-depth / view-mode / scale-factor / SSAA / speeds), and a leaf `paths` module that resolves `~/.wolf-fc/` directory locations.
 - **`sdl2.fc`** — Flat `extern` FFI against `SDL2/SDL.h`: lifecycle, window (incl. fullscreen-desktop + high-DPI), the accelerated 2D renderer (used only as a blit primitive for one streaming ARGB8888 texture), keyboard events, and the audio device.
 - **`png.fc`** — Pure-FC PNG writer (CRC-32, Adler-32, stored deflate, optional tEXt metadata) used by the screenshot path.
 
@@ -317,42 +317,47 @@ SDL2's role is deliberately minimal — it's a host abstraction, not a rendering
 
 ### Display pipeline
 
-Wolf-fc renders one ARGB frame per tick entirely in FC, then hands it to SDL2 as a single streaming texture. Two CPU buffers do the work:
+Wolf-fc renders one ARGB frame per tick entirely in FC, then hands it to SDL2 as a single streaming texture. Up to three CPU buffers do the work:
 
 - **`fb`** (`fb_w × 200`) — logical framebuffer for the HUD, menus, fonts, and low-resolution viewport overlays (banner messages, GET PSYCHED!). Stable layout — UI code never has to know about supersampling.
 - **`dbuf`** (`screen_w × screen_h`, where `screen_w = scale × fb_w` and `screen_h = scale × 200`) — the supersampled buffer that walks out to SDL.
+- **`ssaa_buf`** (`2 × screen_w × 2 × view_render_h`, viewport only) — allocated only when Anti-Alias is on. The 3D viewport renders here at 2× density on both axes and is box-filter downsampled into the viewport region of `dbuf` before any tint / dissolve runs. HUD is not antialiased (it's bitmap pixel art).
 
-3D phases (playing / dying / bj_victory / death_cam) write the viewport directly into `dbuf` at full supersampled resolution; HUD work funnels through `fb`. Two compositor passes merge them at the end of the frame:
+3D phases (playing / dying / bj_victory / death_cam) write the viewport through a `vbuf` slice that aliases either `dbuf`'s top rows (SSAA off, raycaster writes straight through) or `ssaa_buf` (SSAA on, downsample into `dbuf` afterward). HUD work funnels through `fb`. Two compositor passes merge them at the end of the frame:
 
 ```
    raycaster.render_walls       ─┐
-   billboards.render             ├─  high-res writes               dbuf
-   player.render_weapon          │     (screen_w × screen_h)
-   overlay.viewport_tint        ─┘
-                                                                    fb
-   hud.render                   ─┐                                  (fb_w × 200)
+   billboards.render             ├─  high-res writes              vbuf
+   player.render_weapon          │     (vbuf_w × vbuf_h)
+                                ─┘
+                                  ↓ overlay.ssaa_downsample (no-op if SSAA off)
+   overlay.viewport_tint        ─── viewport-region writes       dbuf
+                                                                  (screen_w × screen_h)
+                                                                  fb
+   hud.render                   ─┐                                (fb_w × 200)
    hud.render_message            ├─  logical-resolution writes
    pics.render_get_psyched      ─┘
                                   ↓ overlay.composite_view_overlay
                                   ↓ overlay.composite_hud
                                   ↓ SDL_UpdateTexture (one ARGB texture)
-   logical surface                screen_w × (screen_h × 1.2)        VGA pixel aspect
+   logical surface                screen_w × (screen_h × 1.2)      VGA pixel aspect
                                   ↓ SDL letterbox into drawable
-   drawable                       out_w × out_h                      real panel pixels
+   drawable                       out_w × out_h                    real panel pixels
 ```
 
 Non-3D phases (title / main menu / intermission / endart / high scores) skip the dbuf intermediate: everything draws into `fb`, then `overlay.upscale_nx` paints the whole thing into `dbuf` in one pass.
 
 **Hor+ widescreen.** `fb_w` is dynamic and the horizontal FOV scales with it (Hor+: same vertical FOV, more peripheral world; wall verticals stay perspective-correct). UI elements stay anchored in a 320-wide region centred inside the wider framebuffer.
 
-**Two pickers in Main Menu → Change View** drive the geometry, side by side, with a four-line footer that prints the live numbers for every stage so you can see exactly how the choices map down to your monitor:
+**Three pickers in Main Menu → Change View** drive the geometry, with a five-line footer that prints the live numbers for every stage so you can see exactly how the choices map down to your monitor:
 
 - **Aspect Ratio** — `Auto` queries the SDL display, computes `fb_w = round(320 × display_aspect / (4/3))`, and clamps to `[320, 640]` (even values only). Any aspect ratio works — ultrawide, vertical, exotic — not just the named presets. `Original (4:3)` pins `fb_w = 320`. `Widescreen (16:10)` pins 384. `Widescreen (16:9)` pins 428.
 - **Scale Factor** — `Auto` picks the largest integer in `[2 .. max_scale]` (default `max_scale = 6`, override with `--max-scale=N`) that fits inside the actual pixel drawable in both axes after the 1.2× VGA-aspect stretch, so the texture matches the panel as closely as possible before SDL's downstream stretch. Or pin to a specific `2x .. 12x` if you want deterministic behaviour regardless of window size.
+- **Anti-Alias** — `OFF` by default. `ON` allocates a `2 × screen_w × 2 × view_render_h` ARGB buffer and renders the 3D viewport into it at 2× horizontal + 2× vertical density on top of the Scale Factor, then box-filter downsamples into `dbuf`. Independent of `max_scale` — the 2× factor stacks regardless, so Scale 6 + AA is a 12× internal raycast. Smooths wall-edge stairsteps, sprite silhouettes, and texture-banding diagonals; doesn't touch the HUD. Costs roughly 4× the raycaster work plus one downsample pass.
 
-Both choices persist in `~/.wolf-fc/config` and apply on the fly without a restart. The auto pick re-runs on cross-monitor moves between different-DPI displays (Windows per-monitor v2) and on aspect-ratio changes (the binding axis differs at fb_w=320 vs 384 vs 428 against the same drawable).
+All three choices persist in `~/.wolf-fc/config` and apply on the fly without a restart. The auto pick re-runs on cross-monitor moves between different-DPI displays (Windows per-monitor v2) and on aspect-ratio changes (the binding axis differs at fb_w=320 vs 384 vs 428 against the same drawable).
 
-The raycaster casts `screen_w` rays per frame, so a 16:10 panel at 1920×1200 in Auto sees ~5× the ray density of a fixed 320-column reference — more sample points per wall column means visibly less near-vertical edge stairstep and far-distance texture shimmer.
+The raycaster casts `vbuf_w` rays per frame (= `screen_w` with AA off, `2 × screen_w` with AA on), so a 16:10 panel at 1920×1200 in Auto sees ~5× the ray density of a fixed 320-column reference — more sample points per wall column means visibly less near-vertical edge stairstep and far-distance texture shimmer. Flipping AA on doubles that ray density again and lets the downsample average wall-edge transitions across neighbouring rays.
 
 Reference points at native pixel resolutions in **Auto** (the aspect picker matches `fb_w` to the panel, so SDL's downstream stretch is minimal):
 
@@ -366,12 +371,13 @@ Reference points at native pixel resolutions in **Auto** (the aspect picker matc
 
 **Render-side optimizations.** At supersample factor `N` the raycaster casts `N×` as many rays and writes `N²×` as many viewport pixels as a fixed-320 reference, so the 3D viewport is the hot path by a wide margin. Several layers of work conspire to keep it cheap:
 
-- **DDA wall raycaster.** One ray per `dbuf` column. Door midplane test, push-wall ray-vs-AABB intersection, side-face dimming (Y-faces shaded 25% darker) are all folded into the per-column setup.
+- **DDA wall raycaster.** One ray per `vbuf` column. Door midplane test, push-wall ray-vs-AABB intersection, side-face dimming (Y-faces shaded 25% darker) are all folded into the per-column setup.
 - **Tile-rasterized 16-column blocks.** Columns are processed in groups of 16 (one cache line of dwords on x86_64). Phase 1 runs the per-column DDA + texture setup for all 16 columns and stashes per-column state in stack-local arrays. Phase 2 walks the y-range and writes 16 adjacent dbuf positions per row, so per-pixel store traffic collapses from one cache line per write to one cache line per 16 writes.
 - **Fast / edge band split.** Phase 2 partitions each block into three y-bands. The fast band runs only when every column in the block is active — the inner k-loop has zero per-pixel skip / range branches and gcc unrolls it cleanly. Edge bands above and below keep the full per-pixel tests for partial-coverage rows.
 - **Pre-shaded column LUT.** Each column pre-shades all 64 source rows into a stack-local 64-entry LUT before the per-pixel loop, so the inner loop is a single `dbuf[…] = lut[tex_y]` table lookup — no shade math, no palette indirection, no `vs->raw` bounds check per pixel.
 - **Pre-shaded `pal_dim`.** With distance shading off (the OG-faithful default), `shade` is exactly `1.0` (X-faces) or `0.75` (Y-faces) per column. We precompute `pal_dim = pal × 0.75` once per frame and the LUT setup picks the right palette directly, skipping ~64 `shade_color` calls per column. Distance shading on (Options → Shadow Depth > 0) keeps the original per-pixel path.
-- **Sprite z-buffer.** The wall pass populates a `screen_w`-wide z-buffer of perpendicular distances; billboard sprites column-test against it so they clip correctly behind walls without per-pixel z work.
+- **Sprite z-buffer.** The wall pass populates a `vbuf_w`-wide z-buffer of perpendicular distances; billboard sprites column-test against it so they clip correctly behind walls without per-pixel z work.
+- **SWAR SSAA downsample.** The 2× box filter uses nested byte-parallel rounding-average ops (`avg2(a,b) = (a|b) - (((a^b)>>1) & 0x7F7F7F7F)`) across all four ARGB lanes in 6 ALU ops per output pixel — no per-channel mask / shift / add fan-out. Same kernel x86 PAVGB and ARM URHADD implement in hardware; bias vs. exact mean is up to +1/255 per channel, well below visible threshold.
 - **Pic cache.** `pics.draw` lazily decodes each VGAGRAPH chunk into ARGB once and caches the result, so HUD / menu / intermission frames after the first are flat memcpys.
 - **Pre-decoded title backdrop.** `TITLEPIC` is decoded once at startup and every menu frame just copies it.
 - **Conditional backbuffer clear.** SDL's letterbox / pillarbox bars only need to be drawn when the logical surface doesn't fully tile the drawable; the per-frame `SDL_RenderClear` is skipped otherwise (~33 MB/frame saved at 4K).

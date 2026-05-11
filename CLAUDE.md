@@ -77,11 +77,13 @@ Orchestrators take `world*`; narrow functions take only the sub-contexts they to
 
 Process-wide mutable state goes on a context struct (`game`, `level`, `render_ctx`, `audio_ctx`, `save_menu_ctx`, `highscore_ctx`, …), reachable through `world`. **Do not add `let mut` at file scope.** Applies to scratch buffers/caches, launch-time config (e.g. `game.no_dogs` from `--no-dogs`), and counters (`render_ctx.screenshot_slot`). True constants — fixed tables, tuning parameters, sound-ID enums — stay as file-level `let`s; the rule is about *mutability*, not file scope. This keeps dependencies explicit in function signatures and unlocks future multi-world scenarios (replay, split-screen).
 
-### Hor+ widescreen + supersampling
+### Hor+ widescreen + supersampling + SSAA
 
 The 3D viewport and framebuffer adapt to display aspect ratio; UI stays 320-wide and centres in `ui_offset_x = (fb_w − 320) / 2`. The framebuffer is upscaled by an integer `rc->scale ∈ [2..6]` (picked at startup from `SDL_GetRendererOutputSize`) to a `screen_w × screen_h` dbuf, then nearest-neighbor stretched. Live geometry is on `render_ctx`: `fb_w`, `fb_h` (200, fixed), `scale`, `screen_w/h`, `view_render_h`, `drawable_w/h`, `ui_offset_x`. FOV-derived math reads `g->plane_factor`, not the constant `fov_factor`.
 
-Test mode pins `fb_w = 320`, `scale = 2` so the regression suite stays bit-stable. **When touching viewport geometry read `rc->fb_w`/`rc->scale`/`g->plane_factor`, never the file-scope constants.** The CHANGE VIEW menu calls `apply_view_mode` to re-alloc buffers, recreate the SDL texture, and rescale the player's heading vector in place.
+Optional 2× SSAA on the 3D viewport adds a fourth buffer, `ssaa_buf` (`2·screen_w × 2·view_render_h`, viewport only — HUD is bitmap art). The 3D pipeline (raycaster, billboards, weapon, death-cam sprite) writes through `vbuf` / `vzbuf` slices that alias either dbuf's top rows (SSAA off) or `ssaa_buf` / `ssaa_zbuf` (SSAA on); `rebind_vbuf` is the single chokepoint that flips the aliasing. After the 3D pass `overlay.ssaa_downsample` box-filters `ssaa_buf` into dbuf's viewport region (no-op when off); viewport tints / dissolves then operate on dbuf at the cheaper resolution. **When writing 3D-phase pixels, use `rc->vbuf` / `rc->vzbuf` / `rc->vbuf_w` / `rc->vbuf_h` — never `dbuf`/`zbuf`/`screen_w`/`view_render_h` directly.** Those still belong to overlay / HUD / composite code, which runs after the downsample.
+
+Test mode pins `fb_w = 320`, `scale = 2`, SSAA off so the regression suite stays bit-stable. **When touching viewport geometry read `rc->fb_w`/`rc->scale`/`g->plane_factor`, never the file-scope constants.** The CHANGE VIEW menu calls `apply_view_mode` / `apply_scale_factor` / `apply_ssaa` to re-alloc buffers, rescale the player's heading vector (`apply_view_mode` only), and recreate the SDL texture when `screen_w/h` changed (`apply_ssaa` doesn't touch the texture since `screen_w/h` are unchanged).
 
 ## Source Files
 
@@ -101,7 +103,7 @@ All project modules are top-level (no namespace), so they're reachable from anyw
 | `level.fc` | `difficulty`, `tilemap`, `areas`, `spawn`, `doors`, `pushwall`, `pickups` | Level geometry, spawning, doors/pushwall, pickup collection. |
 | `cutscenes.fc` | `bj_victory`, `death_cam` (nested `sub`), `intermission`, `episode_end`, `endart_screen`, `pg13_screen`, `high_scores_screen`, `title_screen` | Per-phase state machines + renderers. `endart_screen` parses the OG article-markup language. |
 | `menu.fc` | `menu` (nested `nav`) | Main menu and submenus. |
-| `render.fc` | `raycaster`, `billboards`, `overlay` | DDA raycaster, billboard sort+draw, viewport tints/dissolve/upscale/screenshot. |
+| `render.fc` | `raycaster`, `billboards`, `overlay` | DDA raycaster, billboard sort+draw, viewport tints/dissolve/upscale, 2× SSAA box-downsample, screenshot. |
 | `player.fc` | `player` (nested `cheats`) | Movement, collision, camera, weapon firing, MLI/BAT/IDDQD cheats, life/respawn helpers. |
 
 ### `main.fc` — entry point + orchestration
@@ -112,7 +114,7 @@ What's left in `main.fc` is cross-subsystem only:
 - **`module episode`** — `levels_per` (10), `count` (6), `back_to[6]`, `title(ep)`, `next_level_num(level_num, went_secret)`.
 - **`union game_phase`** — `pg13`, `title`, `main_menu`, `playing`, `dying`, `intermission`, `bj_victory`, `death_cam`, `episode_end`, `endart`, `high_scores`. WL6 has no all-episodes-cleared cutscene; episode 6's endart returns to main menu via the high-scores screen. Death with no lives routes straight to `high_scores`.
 - **Core structs:** `world`, `game`, `level`, `render_ctx`, `audio_ctx`, `save_menu_ctx`, `highscore_ctx`, `billboard`.
-- **Factories:** `build_*`, `free_level`, plus `compute_fb_w_for_view_mode` / `apply_view_mode` (resolution helpers).
+- **Factories:** `build_*`, `free_level`, plus `compute_fb_w_for_view_mode` / `pick_scale_factor` / `resize_render_ctx` / `rebind_vbuf` / `apply_view_mode` / `apply_scale_factor` / `apply_ssaa` (resolution + AA helpers).
 - **Cross-subsystem helpers** — `add_score(g, amount)` (single chokepoint for score gains; honors IDKFA lock + 40k extra-life), `give_full_kit(g)` (full pickup set; shared by MLI / IDKFA / `--cheat` / IDKFA-respawn).
 - **Phase routing** — `reset_level_counters`, `reload_level_data`, `advance_next_level`, `advance_next_episode`, `restart_current_level`, `start_new_game_here`, `update_phase_transitions`. `oldscore` is captured on every level entry and consumed by `restart_current_level` on death-with-lives (matches OG's `gamestate.oldscore`).
 - **Dispatchers** — `tick`, `render_frame`, `run_test_cmd` (see above), plus `main`.
@@ -138,7 +140,7 @@ What's left in `main.fc` is cross-subsystem only:
 
 - **Display pipeline must match the OG path** — render at 320-wide × 200, upscale by `scale`, present via `SDL_RenderSetLogicalSize` for 4:3 letterboxing. Set `SDL_HINT_RENDER_SCALE_QUALITY="nearest"` **before** `SDL_CreateTexture`.
 - **Doors block rays from their perpendicular side too.** A vertical door only renders its midpoint slice for X-step rays; a horizontal door only for Y-step. But a ray that arrives from the *wrong* axis must still be solid — otherwise the closed door leaks onto the wall behind it. The raycaster sets `door_side_hit` and renders that hit with DOORWALL+2/+3 (track-side) textures.
-- **320×200 raycaster shimmer is inherent.** Even Steam/DOSBox has it. Don't chase it as a bug; supersampling (`rc->scale`) is the mitigation.
+- **320×200 raycaster shimmer is inherent.** Even Steam/DOSBox has it. Don't chase it as a bug; the mitigations are supersampling (`rc->scale`) for ray density and 2× SSAA (`g->ssaa`) for edge AA after the raycast.
 - **OG WL6 is GOODTIMES.** Features inside `#ifndef GOODTIMES` (e.g. the "Read This!" menu entry) are dead in our target — don't wire them as "fidelity gaps".
 
 ## FC Reminders (project-specific)
