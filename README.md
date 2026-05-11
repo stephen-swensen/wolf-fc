@@ -284,25 +284,36 @@ The tests rely on the enemy RNG's fixed seed for reproducibility — scripted sc
 
 ## Architecture
 
-Wolf-fc depends only on the installed FC compiler (`fcc`) and stdlib — see [Installing the FC compiler](#installing-the-fc-compiler). Every other dependency — SDL2 bindings, the OPL2 emulator, the PNG writer — is vendored into this repo. All project modules are declared at the top level (no namespaces), so they're reachable from any file by qualified name without imports.
+All project modules are declared at the top level (no namespaces), so they're reachable from any file by qualified name without imports. The source tree is split by subsystem:
 
-- **`main.fc`** — Game engine. DDA raycaster + sprite/weapon/HUD renderer, tick-driven game loop, input handling, player movement with collision radius, item pickups, animated doors, push-walls, weapons, level transitions, screenshot capture. Game state, level data, renderer scratch/caches, audio pipeline, and save-menu scratch are grouped into a `world` struct (`{g, lv, rc, ac, sm}`); orchestrators take `world*`, narrower functions take just the sub-contexts they touch. No file-scope mutable state — buffers, caches, counters, and launch-time config all live on one of these context structs.
-- **`data.fc`** — Wolf3D asset loading, 5 top-level modules:
-  - `bytes` — little-endian uint16/uint32/int32 readers
-  - `palette` — 256-entry VGA palette (6-bit → 8-bit ARGB)
-  - `vswap` — VSWAP.WL6 (wall textures, sprites, digitized sounds)
-  - `maps` — MAPHEAD/GAMEMAPS with Carmack + RLEW decompression
-  - `audio` — AUDIOHED/AUDIOT chunk index for music and AdLib SFX
-- **`opl2.fc`** — YM3812 FM synth emulator: chip state, register writes, sample generation, AdLib instrument helpers, and a generic `fill_ticked` runner that both OPL2-based drivers plug into. Standalone, not wolf-specific.
-- **`sound.fc`** — Wolf3D sound-format drivers, three top-level modules:
-  - `imf` — IMF music. Owns an OPL2 chip, reads `(reg, val, delay)` quads from AUDIOT chunks at 700 Hz, loops the track at end.
-  - `adlib` — AdLib SFX. Owns a separate OPL2 chip, parses instrument + note-byte chunks, plays at 140 Hz on channel 0. Used as the fallback for sounds that don't have a digitized version.
-  - `digi` — 8-bit PCM from VSWAP. Up to 4 simultaneous slots, nearest-neighbor resampled 7042 Hz → output rate. Preferred over AdLib for sounds that have a digi version (door open/close, pistol, machine gun, pain).
+**Engine core**
+
+- **`main.fc`** — Entry point. Owns the `world` god-handle (`{g: game*, lv: level*, rc: render_ctx*, ac: audio_ctx*, sm: save_menu_ctx*}`) and its component structs, the factories that build them, the `game_phase` state machine, and the three top-level dispatchers — `tick(w, dt)` (per-frame simulation), `render_frame(w, vs, pal)` (per-frame rendering), and `run_test_cmd(w, arg, ...)` (`--test` command interpreter). Phase-transition routing (level-end, episode-end, death, restart) lives here too. No file-scope mutable state anywhere in the project: buffers, caches, counters, and launch-time config all hang off one of the context structs.
+- **`player.fc`** — Player movement, collision against tilemap + doors + enemies, camera plane update, weapon firing, and the IDDQD / IDKFA / TAB-debug cheats. Owns the per-life / new-game / input-clear reset helpers and movement tuning constants.
+- **`level.fc`** — Per-level geometry and lifecycle: tilemap decode, area-flood reachability, spawn filtering by difficulty, animated doors, push-walls, pickup collection.
+- **`combat.fc`** — Enemy data tables, finite-state AI, projectile simulation, and the player-fired hitscan path.
+
+**Rendering and UI**
+
+- **`render.fc`** — DDA wall raycaster, billboard sort + draw, and the viewport-overlay pipeline (damage flash, elevator fade, dying-phase stipple, supersample upscaler, screenshot capture). See [Display pipeline](#display-pipeline).
+- **`ui.fc`** — UI primitives shared by every non-3D phase: music track IDs + the per-level `songs[]` table, the cached VGAGRAPH pic blitter, font, and the status-bar HUD with BJ-face animation.
+- **`menu.fc`** — Main menu and submenus (episode, difficulty, map, save / load slot list, change-view).
+- **`cutscenes.fc`** — Per-phase state machines and renderers for the title screen, parental-advisory splash, intermission scoring, BJ victory, death-cam, episode-end art screen (the `^P`/`^E`/`^C`/... markup parser lives here), and the high-scores screen with inline name editor.
+
+**Audio**
+
+- **`sound.fc`** — Format drivers (`imf` music, `adlib` SFX, `digi` PCM) and the additive `mixer` that consumes them. See [Audio pipeline](#audio-pipeline).
+- **`sfx.fc`** — Sound-effect trigger helpers, the 73 sound-ID enum, and the `digi_slot[]` / `adlib_chunk[]` lookup tables that pick the right delivery path per ID.
+- **`opl2.fc`** — Standalone YM3812 FM synth emulator: chip state, register writes, sample generation, AdLib instrument helpers, and the shared `fill_ticked` driver runner. Not wolf-specific.
+
+**I/O and host**
+
+- **`data.fc`** — Wolf3D asset loading: `bytes` (little-endian readers), `palette` (256-entry VGA), `vswap` (wall textures, sprites, PCM), `maps` (Carmack + RLEW map decompression), `vgagraph` (Huffman-coded UI graphics), `audio` (AUDIOHED / AUDIOT chunk index).
+- **`save.fc`** — Save / load slots and the on-disk encoding, `~/.wolf-fc/config` persistence (music / SFX / no-dogs / shadow-depth / view-mode), and a leaf `paths` module that resolves `~/.wolf-fc/` directory locations.
 - **`sdl2.fc`** — Flat `extern` FFI against `SDL2/SDL.h`: lifecycle, window (incl. fullscreen-desktop + high-DPI), the accelerated 2D renderer (used only as a blit primitive for one streaming ARGB8888 texture), keyboard events, and the audio device.
-- **`png.fc`** — Pure-FC PNG writer (CRC-32, Adler-32, stored deflate, optional tEXt metadata).
-- **`run.sh`** — build + run wrapper; handles Linux/macOS and MSYS2/MinGW.
+- **`png.fc`** — Pure-FC PNG writer (CRC-32, Adler-32, stored deflate, optional tEXt metadata) used by the screenshot path.
 
-SDL2's role in wolf-fc is deliberately minimal — it's a host abstraction, not a rendering framework. Each frame, the engine draws into a `uint32[]` ARGB framebuffer entirely in FC, then uploads it as a single streaming texture via `SDL_UpdateTexture` + `SDL_RenderCopy` + `SDL_RenderPresent`; the scale-quality hint is pinned to `nearest` for crisp upscaling. The 2D renderer is never asked to draw geometry — no `SDL_RenderFillRect`, no per-sprite textures, no shaders. Audio is equally bare: `SDL_QueueAudio` receives raw S16 PCM that our own mixer produced (no `SDL_AudioCallback`, no `SDL_mixer`). Input is keyboard-only, driven by `SDL_PollEvent` against `SDL_KEYDOWN`/`SDL_KEYUP`. No `SDL_image`, `SDL_ttf`, `SDL_mixer`, or `SDL_net` — just core `SDL2`, linked dynamically.
+SDL2's role is deliberately minimal — it's a host abstraction, not a rendering framework. Each frame, the engine draws into a `uint32[]` ARGB framebuffer entirely in FC, then uploads it as a single streaming texture via `SDL_UpdateTexture` + `SDL_RenderCopy` + `SDL_RenderPresent`; the scale-quality hint is pinned to `nearest` for crisp upscaling. The 2D renderer is never asked to draw geometry — no `SDL_RenderFillRect`, no per-sprite textures, no shaders. Audio is equally bare: `SDL_QueueAudio` receives raw S16 PCM that our own mixer produced (no `SDL_AudioCallback`, no `SDL_mixer`). Input is keyboard-only, driven by `SDL_PollEvent` against `SDL_KEYDOWN`/`SDL_KEYUP`. No `SDL_image`, `SDL_ttf`, `SDL_mixer`, or `SDL_net` — just core `SDL2`, linked dynamically.
 
 ### Display pipeline
 
@@ -441,8 +452,8 @@ No file in this repo is a translation, transcription, or line-by-line port of an
 A handful of small **data tables** that encode the original game's design are present verbatim, because any faithful reproduction needs the same values:
 
 - The 256-entry VGA palette in [`data.fc`](data.fc) (identical to Wolf4SDL's `wolfpal.inc` and id's original palette).
-- `ceil_table` in [`main.fc`](main.fc) (per-level ceiling colors — identical to `vgaCeiling[]` in Wolf4SDL's `wl_draw.cpp`).
-- `songs` in [`main.fc`](main.fc) (per-level music assignments — identical to `songs[]` in Wolf4SDL's `wl_play.cpp`).
+- `ceil_table` in [`render.fc`](render.fc) (per-level ceiling colors — identical to `vgaCeiling[]` in Wolf4SDL's `wl_draw.cpp`).
+- `songs` in [`ui.fc`](ui.fc) (per-level music assignments — identical to `songs[]` in Wolf4SDL's `wl_play.cpp`).
 
 These are short tables of indices and color values, not code. The U.S. copyright view of small factual data tables is limited (*Feist v. Rural*), but the selection and ordering of music per level is arguably a creative choice, so we flag it rather than hand-wave it. Anyone who needs maximum licensing purity can replace these tables without touching engine code.
 
