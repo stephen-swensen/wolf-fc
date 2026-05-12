@@ -1,0 +1,8 @@
+// wolf-fc.rc — Windows-only resource script linked into wolf-fc.exe.
+//
+// Resource ID 1 is the application icon. Windows Explorer / Alt-Tab /
+// taskbar / etc. pick up the lowest-numbered ICON resource as the app
+// icon, so making it #1 is the convention. windres resolves the path
+// relative to this .rc file's directory.
+
+1 ICON "icon/wolf-fc.ico"

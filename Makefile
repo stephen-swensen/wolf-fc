@@ -28,6 +28,10 @@ ifneq ($(IS_WINDOWS),)
     EXE         = .exe
     EXTRA_DEFS  = -Dmain=SDL_main
     EXTRA_LIBS  = -lmingw32 -lSDL2main
+    # windres compiles wolf-fc.rc into a COFF object that's linked into
+    # the .exe to embed the application icon (Explorer / Alt-Tab / taskbar).
+    WIN_RC      = packaging/wolf-fc.rc
+    WIN_ICO     = packaging/icon/wolf-fc.ico
 endif
 
 # Per-OS build subdirectory. Lets a single source tree shared across two
@@ -67,6 +71,9 @@ endif
 BIN    := $(BUILD_DIR)/wolf-fc$(EXE)
 GEN_C  := $(BUILD_DIR)/wolf-fc.c
 GEN_FC := $(BUILD_DIR)/install_path.fc
+ifneq ($(IS_WINDOWS),)
+    WIN_RES := $(BUILD_DIR)/wolf-fc-res.o
+endif
 
 # Source list. Order doesn't matter to fcc, but keep main.fc last for
 # readability — it's the entry point.
@@ -85,7 +92,7 @@ else
 endif
 SRCS_STDLIB := $(addprefix $(STDLIB_DIR)/,io.fc text.fc sys.fc math.fc random.fc)
 
-.PHONY: all dev clean install uninstall check help print-bin icon icon-check-deps
+.PHONY: all dev clean install uninstall check help print-bin print-version icon icon-check-deps
 
 all: $(BIN)
 
@@ -95,8 +102,36 @@ all: $(BIN)
 print-bin:
 	@echo $(BIN)
 
-$(BIN): $(GEN_C)
-	$(CC) $(CFLAGS) -o $@ $< $(LIBS)
+# Version derived from the latest commit's UTC date + half-seconds-since-
+# midnight: yy.mm.dd.SS where SS = (commit_unixtime % 86400) / 2. The /2
+# keeps the final part under 65535 so it fits the Windows FILEVERSION
+# quad-int format. Falls back to 0.0.0.0 outside a git checkout (e.g.
+# tarball builds) so the installer can still tag the artifact.
+VERSION := $(shell ts=$$(git log -1 --format=%ct HEAD 2>/dev/null); \
+  if [ -n "$$ts" ]; then \
+    printf '%s.%d' "$$(date -u -d @$$ts +%y.%m.%d)" $$(( (ts % 86400) / 2 )); \
+  else \
+    echo '0.0.0.0'; \
+  fi)
+
+print-version:
+	@echo $(VERSION)
+
+$(BIN): $(GEN_C) $(WIN_RES)
+	$(CC) $(CFLAGS) -o $@ $(GEN_C) $(WIN_RES) $(LIBS)
+
+ifneq ($(IS_WINDOWS),)
+# windres's default preprocessor (gcc -E) is spawned via cmd.exe, which
+# doesn't support UNC cwd (typical when MSYS2 builds against a WSL-side
+# checkout) and re-roots itself to C:\Windows. cygpath -am gives absolute
+# paths so the preprocessor and the -I include lookup both find their
+# files regardless of cwd. The "UNC paths are not supported" warning
+# still prints but the build completes.
+$(WIN_RES): $(WIN_RC) $(WIN_ICO) | $(BUILD_DIR)
+	windres -I "$$(cygpath -am packaging)" \
+	        "$$(cygpath -am $(WIN_RC))" \
+	        -O coff -o $@
+endif
 
 $(GEN_C): $(SRCS_FC) $(GEN_FC) | $(BUILD_DIR)
 	@command -v fcc >/dev/null 2>&1 || { \
@@ -216,6 +251,7 @@ help:
 	@echo "  uninstall     - remove the installed binary and data tree"
 	@echo "  check         - build the binary if needed, then run tests/run-tests.sh"
 	@echo "  print-bin     - echo the per-OS binary path (used by run.sh / run-tests.sh)"
+	@echo "  print-version - echo VERSION (yy.mm.dd.SS, derived from the latest commit)"
 	@echo "  icon          - regenerate packaging/icon/*.png + wolf-fc.ico from the SVGs"
 	@echo ""
 	@echo "Variables:"
