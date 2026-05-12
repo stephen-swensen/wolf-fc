@@ -85,7 +85,7 @@ else
 endif
 SRCS_STDLIB := $(addprefix $(STDLIB_DIR)/,io.fc text.fc sys.fc math.fc random.fc)
 
-.PHONY: all dev clean install uninstall check help print-bin
+.PHONY: all dev clean install uninstall check help print-bin icon icon-check-deps
 
 all: $(BIN)
 
@@ -159,6 +159,54 @@ uninstall:
 check: $(BIN)
 	bash tests/run-tests.sh
 
+# ----------------------------------------------------------------------------
+# Icon regeneration (runs only when packaging/icon/*.svg changes).
+#
+# Two SVG sources: wolf-fc.svg drives 48/64/128/256 (stacked "WOLF"/"FC"),
+# wolf-fc-small.svg drives 16/32 (single-line "WFC" since the four-letter
+# stacked mark smears at small raster sizes). The six PNGs are checked in
+# alongside the multi-res .ico — contributors who don't change the icon
+# never need rsvg-convert or imagemagick.
+#
+# Use ImageMagick 6 (`convert`) or 7 (`magick`), whichever is on PATH.
+# ----------------------------------------------------------------------------
+
+ICON_DIR        := packaging/icon
+ICON_SVG        := $(ICON_DIR)/wolf-fc.svg
+ICON_SVG_SMALL  := $(ICON_DIR)/wolf-fc-small.svg
+ICON_ICO        := $(ICON_DIR)/wolf-fc.ico
+ICON_PNGS       := $(ICON_DIR)/wolf-fc-16.png  $(ICON_DIR)/wolf-fc-32.png \
+                   $(ICON_DIR)/wolf-fc-48.png  $(ICON_DIR)/wolf-fc-64.png \
+                   $(ICON_DIR)/wolf-fc-128.png $(ICON_DIR)/wolf-fc-256.png
+
+icon: icon-check-deps $(ICON_ICO)
+
+icon-check-deps:
+	@command -v rsvg-convert >/dev/null 2>&1 || { \
+		echo "error: 'rsvg-convert' not found (apt install librsvg2-bin)" >&2; \
+		exit 1; \
+	}
+	@command -v magick >/dev/null 2>&1 || command -v convert >/dev/null 2>&1 || { \
+		echo "error: ImageMagick not found (apt install imagemagick)" >&2; \
+		exit 1; \
+	}
+
+$(ICON_DIR)/wolf-fc-16.png: $(ICON_SVG_SMALL)
+	rsvg-convert -w 16 -h 16 $< -o $@
+$(ICON_DIR)/wolf-fc-32.png: $(ICON_SVG_SMALL)
+	rsvg-convert -w 32 -h 32 $< -o $@
+$(ICON_DIR)/wolf-fc-48.png: $(ICON_SVG)
+	rsvg-convert -w 48 -h 48 $< -o $@
+$(ICON_DIR)/wolf-fc-64.png: $(ICON_SVG)
+	rsvg-convert -w 64 -h 64 $< -o $@
+$(ICON_DIR)/wolf-fc-128.png: $(ICON_SVG)
+	rsvg-convert -w 128 -h 128 $< -o $@
+$(ICON_DIR)/wolf-fc-256.png: $(ICON_SVG)
+	rsvg-convert -w 256 -h 256 $< -o $@
+
+$(ICON_ICO): $(ICON_PNGS)
+	$(if $(shell command -v magick 2>/dev/null),magick,convert) $(ICON_PNGS) $@
+
 help:
 	@echo "Targets:"
 	@echo "  all (default) - build the binary at $(BIN)"
@@ -168,6 +216,7 @@ help:
 	@echo "  uninstall     - remove the installed binary and data tree"
 	@echo "  check         - build the binary if needed, then run tests/run-tests.sh"
 	@echo "  print-bin     - echo the per-OS binary path (used by run.sh / run-tests.sh)"
+	@echo "  icon          - regenerate packaging/icon/*.png + wolf-fc.ico from the SVGs"
 	@echo ""
 	@echo "Variables:"
 	@echo "  PREFIX        install root (default: /usr/local)"

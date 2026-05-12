@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Burnt red-brown fill panel with blue outline -->
+  <rect x="14" y="14" width="228" height="228" rx="14" ry="14"
+        fill="#7B2A1F" stroke="#1E3A8A" stroke-width="14"/>
+
+  <!-- Gold "WOLF" / "FC" stacked wordmark.
+       Conservative sizing: font-size + textLength both reduced so the
+       heaviest-weight rsvg-convert glyph rendering still leaves a clean
+       margin to the inner edge of the blue frame. -->
+  <text x="128" y="112" text-anchor="middle"
+        font-family="DejaVu Sans, Arial, sans-serif" font-weight="900" font-size="56"
+        fill="#D4AF37" textLength="148" lengthAdjust="spacingAndGlyphs">WOLF</text>
+  <text x="128" y="194" text-anchor="middle"
+        font-family="DejaVu Sans, Arial, sans-serif" font-weight="900" font-size="56"
+        fill="#D4AF37" textLength="86" lengthAdjust="spacingAndGlyphs">FC</text>
+</svg>

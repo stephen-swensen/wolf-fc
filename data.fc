@@ -7,11 +7,34 @@
 module data_path =
     import sys from std::
     import io from std::
+    import text from std::
+
+    // Read ~/.wolf-fc/data_dir.txt (single line, plain text). The
+    // Windows installer writes this file with the directory the user
+    // picked at install time; deliberately separate from the `config`
+    // file so menu-driven prefs writes can't accidentally drop it.
+    // Returns some(path) when the file exists and has a non-empty
+    // (whitespace-trimmed) first line, else none.
+    private let read_override = () ->
+        match paths.wolf_data_dir() with
+        | none -> default(str?)
+        | some(dir) ->
+            defer free(dir)
+            let path = alloc("%s{dir}/data_dir.txt")!
+            defer free(path)
+            match io.read_all(path) with
+            | none -> default(str?)
+            | some(contents) ->
+                defer free(contents)
+                let trimmed = text.trim(contents)
+                if trimmed.len == 0 then default(str?)
+                else some(alloc("%s{trimmed}")!)
 
     // Resolve the data directory once at startup. Search order:
     //   1. $WOLF_FC_DATA_DIR (env override — highest priority for ad-hoc runs / CI)
-    //   2. ./data            (dev workflow / running from project dir)
-    //   3. install_path.data_dir (compile-time install location, baked
+    //   2. ~/.wolf-fc/data_dir.txt (set by the Windows installer)
+    //   3. ./data            (dev workflow / running from project dir)
+    //   4. install_path.data_dir (compile-time install location, baked
     //                             into build/install_path.fc by the Makefile)
     // Returns a heap str the caller stores on `game.data_dir` and frees
     // at exit. Probes for VSWAP.WL6 to decide whether ./data is the real
@@ -23,10 +46,13 @@ module data_path =
         match sys.env("WOLF_FC_DATA_DIR") with
         | some(env_dir) -> alloc("%s{env_dir}")!
         | none ->
-            let probe = alloc("data/VSWAP.WL6")!
-            defer free(probe)
-            if io.exists(probe) then alloc("data")!
-            else alloc("%s{install_path.data_dir}")!
+            match read_override() with
+            | some(d) -> d
+            | none ->
+                let probe = alloc("data/VSWAP.WL6")!
+                defer free(probe)
+                if io.exists(probe) then alloc("data")!
+                else alloc("%s{install_path.data_dir}")!
 
     // Build a "<dir>/<name>" path. Caller frees the result.
     let wl6 = (data_dir: const str, name: const str) ->
