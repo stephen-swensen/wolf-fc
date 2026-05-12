@@ -269,7 +269,7 @@ module config =
         | none -> void()
         | some(path) ->
             defer free(path)
-            match io.open(path, "w") with
+            match io.open(path, "wb") with
             | none -> void()
             | some(f) ->
                 defer io.close(f)
@@ -467,7 +467,7 @@ module save =
         | some(path) ->
             let g = w->g
             let lv = w->lv
-            match io.open(path, "w") with
+            match io.open(path, "wb") with
             | none ->
                 io.write("save: failed to open %s{path}\n", stderr)
                 void()
@@ -1115,7 +1115,7 @@ module highscore =
         | none -> void()
         | some(path) ->
             defer free(path)
-            match io.open(path, "w") with
+            match io.open(path, "wb") with
             | none -> void()
             | some(f) ->
                 defer io.close(f)

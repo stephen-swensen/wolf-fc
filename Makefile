@@ -92,7 +92,7 @@ else
 endif
 SRCS_STDLIB := $(addprefix $(STDLIB_DIR)/,io.fc text.fc sys.fc math.fc random.fc)
 
-.PHONY: all dev clean install uninstall check help print-bin print-version icon icon-check-deps
+.PHONY: all dev clean install uninstall check help print-bin print-version icon icon-check-deps installer
 
 all: $(BIN)
 
@@ -242,6 +242,64 @@ $(ICON_DIR)/wolf-fc-256.png: $(ICON_SVG)
 $(ICON_ICO): $(ICON_PNGS)
 	$(if $(shell command -v magick 2>/dev/null),magick,convert) $(ICON_PNGS) $@
 
+# ----------------------------------------------------------------------------
+# Windows installer build (MSYS2 UCRT64 only).
+#
+#   make installer
+#     Builds wolf-fc.exe (transitively), then runs Inno Setup's iscc.exe
+#     against packaging/wolf-fc.iss to produce dist/wolf-fc-setup-<ver>.exe.
+#
+# Inputs picked up automatically:
+#   $(VERSION)  - timestamped from the latest commit (see print-version).
+#   SDL2.dll    - the file shipped by mingw-w64-ucrt-x86_64-SDL2.
+#                 Override with SDL2_DLL=/abs/path to a different copy.
+#   iscc.exe    - default-installed by `winget install JRSoftware.InnoSetup`.
+#                 Override with ISCC=/c/.../ISCC.exe if installed elsewhere.
+# ----------------------------------------------------------------------------
+
+ifneq ($(IS_WINDOWS),)
+
+ISCC ?= /c/Program Files (x86)/Inno Setup 6/ISCC.exe
+SDL2_DLL := $(shell pacman -Ql mingw-w64-ucrt-x86_64-SDL2 2>/dev/null \
+            | awk '/SDL2\.dll$$/{print $$2; exit}')
+
+DIST_DIR  := dist
+INSTALLER := $(DIST_DIR)/wolf-fc-setup-$(VERSION).exe
+
+installer: $(INSTALLER)
+
+$(INSTALLER): $(BIN) packaging/wolf-fc.iss $(ICON_ICO) LICENSE README.md | $(DIST_DIR)
+	@[ -n "$(SDL2_DLL)" ] || { \
+		echo "error: SDL2.dll not found via pacman (install mingw-w64-ucrt-x86_64-SDL2 or set SDL2_DLL=)" >&2; \
+		exit 1; \
+	}
+	@[ -x "$(ISCC)" ] || { \
+		echo "error: ISCC.exe not found at $(ISCC)" >&2; \
+		echo "Install Inno Setup ('winget install JRSoftware.InnoSetup') or set ISCC=/path/to/ISCC.exe" >&2; \
+		exit 1; \
+	}
+	@# Pass paths via env vars (read in the .iss with GetEnv()) rather than
+	@# /D defines: /D values get C-string-parsed by iscc, so backslashes in
+	@# UNC paths (\\wsl.localhost\...) or native paths with \U etc. would
+	@# need to be doubled. Env vars come through verbatim. Three small
+	@# Windows / MSYS2 quirks to work around:
+	@#   * MSYS2_ARG_CONV_EXCL='*' stops MSYS2 from path-mangling args
+	@#     passed to native Windows binaries.
+	@#   * The .iss positional must not begin with '/' (iscc reads it as
+	@#     an unknown switch), so cygpath -w (backslashes) for that path.
+	@#   * cygpath -w for the env-var values too, so iscc gets a form it
+	@#     recognises as absolute (UNC or drive-letter, never POSIX).
+	WOLFFC_VERSION='$(VERSION)' \
+	WOLFFC_BIN="$$(cygpath -w $(abspath $(BIN)))" \
+	WOLFFC_SDL2_DLL="$$(cygpath -w $(SDL2_DLL))" \
+	MSYS2_ARG_CONV_EXCL='*' \
+	"$(ISCC)" /Q "$$(cygpath -w $(abspath packaging/wolf-fc.iss))"
+
+$(DIST_DIR):
+	@mkdir -p $@
+
+endif
+
 help:
 	@echo "Targets:"
 	@echo "  all (default) - build the binary at $(BIN)"
@@ -253,6 +311,7 @@ help:
 	@echo "  print-bin     - echo the per-OS binary path (used by run.sh / run-tests.sh)"
 	@echo "  print-version - echo VERSION (yy.mm.dd.SS, derived from the latest commit)"
 	@echo "  icon          - regenerate packaging/icon/*.png + wolf-fc.ico from the SVGs"
+	@echo "  installer     - (MSYS2 UCRT64) build dist/wolf-fc-setup-\$$VERSION.exe via Inno Setup"
 	@echo ""
 	@echo "Variables:"
 	@echo "  PREFIX        install root (default: /usr/local)"
