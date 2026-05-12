@@ -127,7 +127,12 @@ ifneq ($(IS_WINDOWS),)
 # paths so the preprocessor and the -I include lookup both find their
 # files regardless of cwd. The "UNC paths are not supported" warning
 # still prints but the build completes.
-$(WIN_RES): $(WIN_RC) $(WIN_ICO) | $(BUILD_DIR)
+#
+# $(WIN_ICO) is an order-only prerequisite: existence-checked, not
+# mtime-checked. The .ico is committed to the repo and the regular build
+# path must not pull in rsvg-convert / ImageMagick; only `make icon`
+# regenerates it. Fresh-clone mtime skew would otherwise trigger a regen.
+$(WIN_RES): $(WIN_RC) | $(BUILD_DIR) $(WIN_ICO)
 	windres -I "$$(cygpath -am packaging)" \
 	        "$$(cygpath -am $(WIN_RC))" \
 	        -O coff -o $@
@@ -268,7 +273,7 @@ INSTALLER := $(DIST_DIR)/wolf-fc-setup-$(VERSION).exe
 
 installer: $(INSTALLER)
 
-$(INSTALLER): $(BIN) packaging/wolf-fc.iss $(ICON_ICO) LICENSE README.md | $(DIST_DIR)
+$(INSTALLER): $(BIN) packaging/wolf-fc.iss LICENSE README.md | $(DIST_DIR) $(ICON_ICO)
 	@[ -n "$(SDL2_DLL)" ] || { \
 		echo "error: SDL2.dll not found via pacman (install mingw-w64-ucrt-x86_64-SDL2 or set SDL2_DLL=)" >&2; \
 		exit 1; \
