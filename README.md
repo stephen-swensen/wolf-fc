@@ -20,15 +20,17 @@ This is disclosed up front because the project is also intended as a demonstrati
 - **C compiler** — gcc or clang with C11 support
 - **Wolfenstein 3D data files** — `.WL6` files from a legitimate copy of Wolfenstein 3D (e.g. the Steam version). See [Required data files](#required-data-files) for the list and the supported layouts.
 
-### Windows: MSYS2 is required
+### Windows
 
-Wolf-FC on Windows currently runs only inside an [MSYS2](https://www.msys2.org/) UCRT64 shell — there is no vanilla-Windows install path yet. Practically that means:
+**Playing:** download the latest `wolf-fc-setup-<version>.exe` from [GitHub Releases](https://github.com/stephen-swensen/wolf-fc/releases) and run it. The installer
 
-- You build, install, and launch the game from inside an MSYS2 UCRT64 terminal (the `wolf-fc.exe` binary `make install` produces lives at `/usr/local/bin/wolf-fc.exe` under MSYS2's tree, e.g. `C:\msys64\usr\local\bin\wolf-fc.exe`).
-- A double-clicked `wolf-fc.exe` from Windows Explorer (or a desktop shortcut) **will not work** because the binary dynamically links against MSYS2's `libSDL2-2.0.dll` plus a few mingw runtime DLLs, and an Explorer-launched process doesn't inherit MSYS2's `PATH`.
-- The compile-time install data path (`$(PREFIX)/share/wolf-fc/data/`) is also baked relative to MSYS2's filesystem root, so even with the DLLs sorted the binary would only find data files when run with MSYS2 mounted at the same location.
+- installs to `C:\Program Files\Wolf-FC\`, with optional desktop and Start Menu shortcuts and an Add/Remove Programs entry;
+- bundles `SDL2.dll` and links against UCRT, so there is no MSYS2 / mingw runtime dependency on the target machine (Windows 10+, or Windows 7/8 with KB2999226);
+- auto-detects a Steam copy of Wolfenstein 3D and offers its `base` folder as the data-files path; otherwise you Browse to any folder containing the `.WL6` files. The chosen path is recorded in `%USERPROFILE%\.wolf-fc\data_dir.txt`, which `wolf-fc.exe` consults on launch (step 2 in the search order below);
+- proceeds with a soft warning if no `VSWAP.WL6` is at the chosen path — drop the files in later and the game starts working;
+- on uninstall, only prompts about removing `.WL6` files that live *inside* `C:\Program Files\Wolf-FC\data\`. Files at a Steam path or any other folder you pointed it at are left untouched.
 
-A proper redistributable Windows build (bundled SDL2 + runtime DLLs, exe-relative data lookup, optional installer / shortcut) is out of scope for now. If you want to play wolf-fc on Windows today, install MSYS2 UCRT64 and follow the Linux/Unix-style instructions below from inside that shell.
+**Building:** from an [MSYS2](https://www.msys2.org/) UCRT64 shell with `mingw-w64-ucrt-x86_64-SDL2` installed, `make` produces `build/windows/wolf-fc.exe`. To package the redistributable installer end-to-end, `make installer` (still from MSYS2) invokes Inno Setup against `packaging/wolf-fc.iss` and writes `dist/wolf-fc-setup-<version>.exe`. Inno Setup 6 must be installed on the host (`winget install JRSoftware.InnoSetup`).
 
 ### Required data files
 
@@ -48,8 +50,9 @@ VGAGRAPH.WL6   UI graphics + fonts + endart text
 Wolf-FC searches for these files in three locations, in priority order:
 
 1. **`$WOLF_FC_DATA_DIR`** (env override). Highest priority — useful for ad-hoc runs and CI: `WOLF_FC_DATA_DIR=/path/to/wl6 wolf-fc`. On MSYS2/Windows, use a Windows-style mixed path (e.g. `C:/msys64/home/me/wl6`) since the binary's `fopen()` is a Windows C-runtime call that doesn't translate POSIX mounts. `cygpath -m /your/path` prints the right form.
-2. **`./data/`** (relative to the current working directory). The dev workflow: drop the files in the project's `data/` directory and `./run.sh` / `make` / `./build/wolf-fc` find them.
-3. **`$(PREFIX)/share/wolf-fc/data/`** (compile-time install location). The fallback baked into the binary at build time. `make install` will copy `./data/*.WL6` here automatically when present; otherwise put them there manually after install.
+2. **`~/.wolf-fc/data_dir.txt`** — a single line of plain text containing a folder path. The Windows installer writes this on install; you can also edit it by hand to relocate the data files later, or `echo /path/to/wl6 > ~/.wolf-fc/data_dir.txt` on Linux/macOS if you'd rather not set an env var.
+3. **`./data/`** (relative to the current working directory). The dev workflow: drop the files in the project's `data/` directory and `./run.sh` / `make` / `./build/wolf-fc` find them.
+4. **`$(PREFIX)/share/wolf-fc/data/`** (compile-time install location). The fallback baked into the binary at build time. `make install` will copy `./data/*.WL6` here automatically when present; otherwise put them there manually after install.
 
 The startup banner prints `Data dir: <path>` so you can see which layout the running binary picked.
 
@@ -80,6 +83,7 @@ make                    # build the binary at ./build/<os>/wolf-fc
 ./run.sh                # build (if needed) and run
 make check              # build (if needed) and run the regression suite
 make dev                # clean rebuild at -O0 with debug symbols
+make installer          # (MSYS2 UCRT64 only) package dist/wolf-fc-setup-<version>.exe via Inno Setup
 make help               # list every target and variable
 ```
 
