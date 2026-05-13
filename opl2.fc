@@ -161,17 +161,23 @@ module opl2 =
         let ar_c = if ar_eff > 15 then 15 else ar_eff
         let dr_c = if dr_eff > 15 then 15 else dr_eff
         let rr_c = if rr_eff > 15 then 15 else rr_eff
-        // Base times (seconds at rate=1). Real OPL2 has a two-piece rate
-        // table (sub-rate clocking at low rates, linear doubling at high).
-        // We use a single geometric halving per nibble, tuned so mid-range
-        // rates (8..12 — the common music range) match DOSBox closely:
-        //   AR base 11 s  → AR=8 ≈ 86 ms (ref 85 ms), AR=15 ≈ 0.67 ms
-        //   DR base 44 s  → DR=8 ≈ 340 ms (ref 340 ms), DR=15 ≈ 2.7 ms
+        // Base times (seconds at rate=1). Per the YM3812 datasheet, the
+        // chip uses a two-piece rate table (sub-rate clocking at low rates,
+        // linear doubling at high). We approximate with a single geometric
+        // halving per nibble.
+        //   AR base 11 s  → AR=8 ≈ 86 ms, AR=15 ≈ 0.67 ms
+        //   DR base 22 s  → DR=8 ≈ 165 ms (0→48 dB), DR=15 ≈ 1.3 ms
         //   RR uses the DR table.
-        // Low rates (1..4) will be a bit fast vs hardware; acceptable.
+        // The 22-not-44 detail: real OPL2's envelope counter spans ~96 dB
+        // (9-bit, ~0.1875 dB/step per the YM3812 spec), and the published
+        // rate tables are calibrated against that full range. Our env_db
+        // only goes to 48 dB (everything past that is inaudibly quiet —
+        // gain 0.004), so to match the audible portion of a real release
+        // we halve the spec base. Calibrating to the full 96 dB time
+        // leaves notes dragging an octave longer than the original.
         let att_t = rate_time_sec(ar_c, 11.0)
-        let dec_t = rate_time_sec(dr_c, 44.0)
-        let rel_t = rate_time_sec(rr_c, 44.0)
+        let dec_t = rate_time_sec(dr_c, 22.0)
+        let rel_t = rate_time_sec(rr_c, 22.0)
         // Attack: exponential approach to 0 dB. `factor` is the per-sample
         // multiplier applied to env_db, so env_db halves every `att_t/ln(2)`
         // seconds approximately. We pick factor so env_db reaches ~1 dB of
@@ -442,13 +448,21 @@ module opl2 =
             let m_tl_db = (float64) c->op_tl[mi] * 48.0 / 63.0
             let m_am = if c->op_am[mi] then am_db else 0.0
             let m_total_db = c->op_env_db[mi] + m_tl_db + c->op_ksl_db[mi] + m_am
-            // Feedback: shift (7-fb) maps fb=7 to ~1 wavelength of self-mod
-            // (noise-like at peak), fb=1 to ~1/64 wavelength (subtle), fb=0
-            // to none. Average of the two previous modulator outputs is used.
+            // Feedback: at fb=7, real OPL2 self-modulates the modulator by
+            // up to ±2 wavelengths (4π rad — the value listed in the Adlib
+            // programmer's manual); each lower fb halves that. Per the
+            // YM3812 datasheet, the chip sums the operator's two most
+            // recent outputs and right-shifts by (9-fb) — the sum is NOT
+            // pre-averaged. Our normalized math: out is in ±1 (where real
+            // chip's slot_out is ±2 in cycle units), so the shift offset
+            // is `2^(7-fb)` to land at the correct cycle count.
+            // fb=7 → ±2 cycles, fb=3 → ±0.125, fb=0 → none.
+            // This is what makes brass voices like INTROSONG's ch6 (fb=7,
+            // mod mult=6, TL=0) sound harmonic-rich instead of pure-sine.
             let fb = c->ch_fb[ch]
             let mut fbv = 0.0
             if fb > 0 then
-                fbv = (c->ch_prev0[ch] + c->ch_prev1[ch]) / 2.0 / math.pow(2.0, (float64) (7 - fb))
+                fbv = (c->ch_prev0[ch] + c->ch_prev1[ch]) / math.pow(2.0, (float64) (7 - fb))
             let mout = wave_sample(c, c->op_phase[mi] + fbv, c->op_wf[mi], m_total_db)
             c->ch_prev1[ch] = c->ch_prev0[ch]
             c->ch_prev0[ch] = mout
@@ -466,14 +480,16 @@ module opl2 =
                 let cout = wave_sample(c, c->op_phase[ci], c->op_wf[ci], c_total_db)
                 out = out + mout + cout
             else
-                // FM: modulator's output is added to carrier phase. The
-                // YM3812 / Nuked-OPL3 reference applies a ×2 scale here
-                // (op output range ±2048 fed into a 10-bit / 1024-per-cycle
-                // phase index = ±2 wavelengths max FM). Without the ×2,
-                // FM depth is half — mod sidebands are too quiet, so FM
-                // voices that should sound "brassy" (rich harmonic stack)
-                // collapse toward a near-pure carrier sine.
-                let cout = wave_sample(c, c->op_phase[ci] + mout * 2.0, c->op_wf[ci], c_total_db)
+                // FM: modulator's output is added to carrier phase. Per the
+                // YM3812 datasheet, the operator output is a signed 13-bit
+                // value (~±4096 peak) and the phase generator is indexed by
+                // a 10-bit field (1024 entries per cycle) — so the maximum
+                // FM shift is ±4 wavelengths (β = 8π rad). Our normalized
+                // math has mout in ±1, so ×4 lands the correct depth.
+                // Without the ×4, FM voices that should sound "brassy"
+                // (INTROSONG's ch6, INTROCW3's horn lines) collapse toward
+                // a near-pure carrier sine.
+                let cout = wave_sample(c, c->op_phase[ci] + mout * 4.0, c->op_wf[ci], c_total_db)
                 out = out + cout
         if out > 1.0 then out = 1.0
         if out < -1.0 then out = -1.0
