@@ -142,27 +142,28 @@ module opl2 =
         dvb: bool           // vibrato depth (false=±7c, true=±14c)
 
         // ---- Precomputed tables ----
-        // First-quadrant log-sin attenuation, stored as float to retain
-        // sub-env-unit precision. logsin_table[i] is the attenuation to
-        // apply to a "1.0" reference to get |sin(x)| for x = (i + 0.5)
-        // * π/512, in env units. Range 0..~1024 (high values are near-
-        // silent attenuations for phases near zero).
+        // First-quadrant log-sin attenuation in fine units. Each unit
+        // is 1/16 of an env unit = 0.01172 dB; logsin_table[i] is the
+        // attenuation to apply to a "1.0" reference to get |sin(x)| for
+        // x = (i + 0.5) * π/512. Range 0..~16400.
         //
-        // Per the YM3812 datasheet, the chip's actual log_sin table is
-        // stored at ~12-bit precision (~0.0117 dB per LSB) — finer than
-        // our 9-bit env unit (0.1875 dB). Rounding log_sin to int env
-        // units throws away the chip's real precision and produces
-        // wider-than-spec flat plateaus at sine peaks on low-frequency
-        // voices. Keeping the float values preserves the chip's actual
-        // precision through the wave-sample → gain pipeline.
-        logsin_table: float64[256]
-        // Atten (env units) → linear amplitude scaled to op_peak.
-        // gain_table[i] = round(op_peak * 10^(-i * 0.1875 / 20)).
-        // Beyond i≈400 the value is 0 (inaudibly quiet). wave_sample
-        // linearly interpolates between adjacent entries by the
-        // fractional part of (total_atten + sin_atten), which
-        // approximates the chip's continuous-precision exp lookup.
-        gain_table: int32[1024]
+        // The 16× finer resolution matches the YM3812's actual log_sin
+        // precision: per the datasheet the chip stores log_sin at
+        // ~12-bit precision (~0.0117 dB/LSB), finer than our 9-bit env
+        // unit (0.1875 dB). Storing at env-unit precision would round
+        // away the chip's real resolution and produce wider-than-spec
+        // flat plateaus at sine peaks on low-frequency voices. With
+        // 16× finer log_sin and a matching 16× wider gain_table, the
+        // wave-sample → gain pipeline carries through the chip's
+        // actual precision.
+        logsin_table: int32[256]
+        // Atten (1/16 env unit) → linear amplitude scaled to op_peak.
+        // gain_table[i] = round(op_peak * 10^(-i * 0.01172 / 20)).
+        // 16384 entries cover 0..192 dB at 0.01172 dB per step; beyond
+        // i ≈ 6400 the value rounds to 0 (inaudibly quiet). wave_sample
+        // shifts env-unit-precision atten contributions into fine units
+        // before indexing.
+        gain_table: int32[16384]
 
     // ============================================================
     // Initialization
@@ -178,19 +179,20 @@ module opl2 =
             c->op_env[i] = env_max
             c->op_stage[i] = stg_off
         let pi = 3.14159265358979323846
-        // First-quadrant log-sin. -20*log10(sin(x)) / 0.1875 puts it in
-        // env units; stored as float to retain sub-unit precision (see
-        // the field comment for why this matches the chip's actual
-        // log_sin precision).
+        // First-quadrant log-sin in 1/16 env units (0.01172 dB per
+        // unit). See the field comment for the chip-precision rationale.
+        let fine_unit_db = 0.01171875        // 0.1875 / 16
         for i in 0..256
             let x = ((float64) i + 0.5) * pi / 512.0
             let s = math.sin(x)
-            c->logsin_table[i] = 0.0 - 20.0 * math.log10(s) / 0.1875
-        // Gain table. We extend a bit past audible-silence so log-sin
-        // contributions near phase 0 don't clip the index. gain_table[i]
-        // is monotonically decreasing; values past i≈400 round to 0.
-        for i in 0..1024
-            let atten_db = (float64) i * 0.1875
+            let atten = 0.0 - 20.0 * math.log10(s) / fine_unit_db
+            c->logsin_table[i] = (int32) atten
+        // Gain table at 1/16 env-unit resolution. Each entry is the
+        // linear amplitude after the given attenuation in fine units.
+        // Past i≈6400 the value rounds to 0 (inaudibly quiet) but we
+        // size the table to cover the full possible total_fine range.
+        for i in 0..16384
+            let atten_db = (float64) i * fine_unit_db
             let amp = (float64) op_peak * math.pow(10.0, 0.0 - atten_db / 20.0)
             c->gain_table[i] = (int32) amp
         c
@@ -527,15 +529,13 @@ module opl2 =
         if !active then 0i32
         else
             let positive = if wf == 2 then true else half == 0
+            // Combine attenuation contributions in fine units: shift the
+            // env-unit total_atten (env + TL*4 + KSL + AM) left by 4 to
+            // match the 1/16-unit precision of log_sin, then add.
             let sin_atten = c->logsin_table[table_idx]
-            let total = (float64) total_atten + sin_atten
-            let amp = if total >= 1023.0 || total < 0.0 then 0
-                else
-                    let ti = (int32) total
-                    let frac = total - (float64) ti
-                    let amp_lo = c->gain_table[ti]
-                    let amp_hi = c->gain_table[ti + 1]
-                    (int32) ((float64) amp_lo * (1.0 - frac) + (float64) amp_hi * frac)
+            let total_fine = (total_atten << 4) + sin_atten
+            let amp = if total_fine >= 16384 || total_fine < 0 then 0
+                else c->gain_table[total_fine]
             if positive then amp else 0 - amp
 
     // Produce one output sample. Advances the global counter, both
