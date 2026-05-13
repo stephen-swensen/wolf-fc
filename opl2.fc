@@ -142,14 +142,26 @@ module opl2 =
         dvb: bool           // vibrato depth (false=±7c, true=±14c)
 
         // ---- Precomputed tables ----
-        // First-quadrant log-sin in env units. logsin_table[i] is the
-        // attenuation to apply to a "1.0" reference to get |sin(x)|
-        // for x = (i + 0.5) * π/512. Range 0..~1024 (high values are
-        // near-silent attenuations for phases near zero).
-        logsin_table: int32[256]
+        // First-quadrant log-sin attenuation, stored as float to retain
+        // sub-env-unit precision. logsin_table[i] is the attenuation to
+        // apply to a "1.0" reference to get |sin(x)| for x = (i + 0.5)
+        // * π/512, in env units. Range 0..~1024 (high values are near-
+        // silent attenuations for phases near zero).
+        //
+        // Per the YM3812 datasheet, the chip's actual log_sin table is
+        // stored at ~12-bit precision (~0.0117 dB per LSB) — finer than
+        // our 9-bit env unit (0.1875 dB). Rounding log_sin to int env
+        // units throws away the chip's real precision and produces
+        // wider-than-spec flat plateaus at sine peaks on low-frequency
+        // voices. Keeping the float values preserves the chip's actual
+        // precision through the wave-sample → gain pipeline.
+        logsin_table: float64[256]
         // Atten (env units) → linear amplitude scaled to op_peak.
         // gain_table[i] = round(op_peak * 10^(-i * 0.1875 / 20)).
-        // Beyond i≈400 the value is 0 (inaudibly quiet).
+        // Beyond i≈400 the value is 0 (inaudibly quiet). wave_sample
+        // linearly interpolates between adjacent entries by the
+        // fractional part of (total_atten + sin_atten), which
+        // approximates the chip's continuous-precision exp lookup.
         gain_table: int32[1024]
 
     // ============================================================
@@ -166,13 +178,14 @@ module opl2 =
             c->op_env[i] = env_max
             c->op_stage[i] = stg_off
         let pi = 3.14159265358979323846
-        // First-quadrant log-sin. We compute -20*log10(sin(x)) and
-        // divide by 0.1875 to land in env units.
+        // First-quadrant log-sin. -20*log10(sin(x)) / 0.1875 puts it in
+        // env units; stored as float to retain sub-unit precision (see
+        // the field comment for why this matches the chip's actual
+        // log_sin precision).
         for i in 0..256
             let x = ((float64) i + 0.5) * pi / 512.0
             let s = math.sin(x)
-            let atten = 0.0 - 20.0 * math.log10(s) / 0.1875
-            c->logsin_table[i] = (int32) atten
+            c->logsin_table[i] = 0.0 - 20.0 * math.log10(s) / 0.1875
         // Gain table. We extend a bit past audible-silence so log-sin
         // contributions near phase 0 don't clip the index. gain_table[i]
         // is monotonically decreasing; values past i≈400 round to 0.
@@ -515,9 +528,14 @@ module opl2 =
         else
             let positive = if wf == 2 then true else half == 0
             let sin_atten = c->logsin_table[table_idx]
-            let total = total_atten + sin_atten
-            let amp = if total >= 1024 || total < 0 then 0
-                else c->gain_table[total]
+            let total = (float64) total_atten + sin_atten
+            let amp = if total >= 1023.0 || total < 0.0 then 0
+                else
+                    let ti = (int32) total
+                    let frac = total - (float64) ti
+                    let amp_lo = c->gain_table[ti]
+                    let amp_hi = c->gain_table[ti + 1]
+                    (int32) ((float64) amp_lo * (1.0 - frac) + (float64) amp_hi * frac)
             if positive then amp else 0 - amp
 
     // Produce one output sample. Advances the global counter, both
