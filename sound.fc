@@ -248,12 +248,17 @@ module digi =
 
     let src_rate = 7042.0
     let max_slots = 4
-    // Per-sample scale for 8-bit signed PCM (-128..+127) → int16 output.
-    // Chosen so center-pan peak (128 * scale * gain 1.0) ≈ ±22000, matching
-    // the OPL2 driver's `out * 22000.0` output scale. OG Sound Blaster had
-    // its PCM and FM channels roughly level-matched in the hardware mixer;
-    // we hit the same balance by tying the two scales together here.
-    let pcm_scale = 172
+    // Per-sample scale for 8-bit signed PCM (-128..+127) → mix-buffer
+    // units. Chosen so a center-panned full-amplitude digi peaks around
+    // ±16k — same neighborhood as a typical 4-channel music passage
+    // (sum ~±8000 × output_scale 2.0 in opl2.fc). The OG Sound Blaster
+    // analog-mixed PCM and FM at roughly matched levels; with the chip's
+    // internal clamp gone, matching peaks in the mix buffer is what
+    // gets us back to that balance. Was 172 historically (peaked at
+    // ±22k); that calibration was tied to the chip's old clamped
+    // ±22000 output and made digi noticeably louder than music + AdLib
+    // SFX once the chip switched to unclamped sum output.
+    let pcm_scale = 128
 
     struct slot =
         data: const uint8[]  // non-owning reference into player.cache
@@ -447,7 +452,16 @@ module mixer =
             s
         else
             let over = abs_s - knee
-            let mag = knee + (over * range) / (range + over)
+            // int64 promotion before the multiply: `over * range`
+            // overflows int32 once |s| crosses ~245k, which is
+            // reachable when a loud digi (gain>1, e.g. LEVELDONESND
+            // at 1.8×) stacks with both OPL2 chips at their peaks.
+            // The divided result is bounded by `range` (8767), so it
+            // fits int32 trivially — only the intermediate multiply
+            // needs the wider type.
+            let num = (int64) over * (int64) range
+            let den = (int64) (range + over)
+            let mag = knee + (int32) (num / den)
             if s < 0 then 0 - mag else mag
 
     // Apply the soft-clip curve elementwise, converting the int32 mix

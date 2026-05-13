@@ -77,11 +77,30 @@ module opl2 =
     // matches spec when divided through the 1024-entry phase index.
     let op_peak = 4096
 
-    // Output scaling. Sum of carriers lands in the ±~4096 range; we
-    // normalize and multiply by output_scale to give int16 audio. Set
-    // to keep AdLib SFX and music ~3 dB under the digi mixer's full
-    // scale, matching the prior implementation's mix balance.
-    let output_scale = 22000.0
+    // Output scale: per-channel sum → int32 mix-buffer units. Applied
+    // in `sample` with NO chip-internal clamping. Reasoning:
+    //
+    // Per spec each channel contributes ±op_peak (FM) or ±2·op_peak
+    // (additive). Summing 9 channels gives a peak of ±9·op_peak (FM)
+    // or ±18·op_peak (additive). Real Wolf3D music typically runs
+    // 4–6 channels at ~50% envelope, so the realistic sum sits around
+    // ±8000–±15000. Clamping the per-chip sum to a single-channel
+    // peak (the old `sum / op_peak` → clamp ±1.0 step) crushed every
+    // multi-channel passage to a flat top before the int32 mix buffer
+    // ever saw the dynamics.
+    //
+    // With output_scale = 2.0 against the spec-correct sum:
+    //   - 1 channel at peak FM  → ±8192            (AdLib-fallback SFX)
+    //   - 4 ch at ~50% env each → ±16000           (typical music)
+    //   - 9 ch at peak FM       → ±73728           (extreme; mixer soft-clip absorbs)
+    //
+    // The mixer's soft-clip knee sits at 24000 (sound.fc::mixer), so
+    // music-alone scenes stay under it and layered music+SFX engage it
+    // gracefully. Tune up for louder music + earlier soft-clipping;
+    // down for quieter music + less compression. AdLib-fallback SFX
+    // peaks ~8 dB under digi center peak (±22000) — acceptable because
+    // every gameplay sound has a digi version and AdLib is fallback.
+    let output_scale = 2.0
 
     // 2π for LFO phase math.
     let two_pi = 6.283185307179587
@@ -639,12 +658,14 @@ module opl2 =
                 let cout = wave_sample(c, c->op_phase[ci] + fm_offset,
                     c->op_wf[ci], c_total_atten)
                 sum = sum + cout
-        // Normalize summed carriers and clamp to int16 range.
-        let normalized = (float64) sum / (float64) op_peak
-        let clamped = if normalized > 1.0 then 1.0
-            else if normalized < -1.0 then -1.0
-            else normalized
-        (int16) (clamped * output_scale)
+        // Scale the per-channel sum into mix-buffer units. No per-chip
+        // clamp here: the chip is allowed to produce a wide int32 that
+        // the int32 mix buffer accumulates freely; the mixer's
+        // soft-clip (sound.fc::mixer) is the single saturation stage
+        // in the whole pipeline. Clamping here would crush every
+        // multi-channel passage to a flat top before the mix buffer
+        // ever saw the dynamics — see the output_scale comment.
+        (int32) ((float64) sum * output_scale)
 
     // ============================================================
     // Higher-level helpers for AdLib-style sound programming
@@ -698,9 +719,10 @@ module opl2 =
     // tick (register writes, note changes).
     //
     // Used by both the IMF music driver (700 Hz tick rate) and the
-    // AdLib SFX driver (140 Hz). No per-stage clipping — buf is int32
-    // so source sums can overshoot int16 freely; the mixer soft-clips
-    // at the end of the pipeline.
+    // AdLib SFX driver (140 Hz). No clipping anywhere in this path —
+    // `sample` returns the unclamped per-channel sum (see its body),
+    // and the int32 `buf` sums driver outputs freely. The mixer's
+    // soft-clip is the only saturation stage in the whole pipeline.
     let fill_ticked = (c: chip*,
                        buf: int32[], count: int32,
                        sample_rate: int32, tick_rate: int32,
