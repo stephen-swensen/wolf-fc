@@ -242,7 +242,7 @@ module opl2 =
     //   eff_rate 0..3 : frozen (no advance)
     //   eff_rate 4..47: step once every 2^shift samples, by
     //                   eg_inc_fire(eff_rate & 3, (counter >> shift) & 7).
-    //                   shift = 12 - (eff_rate >> 2), range 11..0.
+    //                   shift = 12 - (eff_rate >> 2), range 11..1.
     //   eff_rate 48..63: step every sample; the step amount doubles
     //                    per 4-rate sub-group (1, 2, 4, 8 per sample
     //                    at the slowest sub of each group).
@@ -266,11 +266,17 @@ module opl2 =
     // Attack: log-curve approach toward 0. Each step removes ~env/8
     // of the remaining attenuation; the +1 ensures we eventually reach
     // 0 instead of asymptoting just above it. inc=0 → no change.
+    //
+    // Iterated `inc` times because the chip applies one step at a time
+    // and the curve is non-linear in env — multiplying the per-step
+    // delta by inc would over-decrement for inc > 1 (the fast regime,
+    // eff_rate ≥ 52, where inc can reach 7).
     let attack_step = (env: int32, inc: int32) ->
-        if inc <= 0 || env <= 0 then env
-        else
-            let new_env = env - ((env >> 3) + 1) * inc
-            if new_env < 0 then 0 else new_env
+        let mut e = env
+        for k in 0..inc
+            if e <= 0 then break
+            e = e - ((e >> 3) + 1)
+        if e < 0 then 0 else e
 
     // Decay / release: linear add in atten units. Capped at env_max
     // (silence).
@@ -552,11 +558,14 @@ module opl2 =
             let base_freq = (float64) fnum * math.pow(2.0, (float64) (block - 1))
                 * 49716.0 / 524288.0
             // Modulator phase advance (with vibrato if enabled).
+            // floor wrap (not a single subtract) so per-sample advances
+            // > 1 cycle stay bounded — possible at block=7 / mult=15 /
+            // high fnum where mf can exceed the output sample rate.
             let m_vib_mul = if c->op_vib[mi] then vib_mul else 1.0
             let mf = base_freq * mult_val(c->op_mult[mi]) * m_vib_mul
             c->op_phase[mi] = c->op_phase[mi] + mf / c->rate
             if c->op_phase[mi] >= 1.0 then
-                c->op_phase[mi] = c->op_phase[mi] - 1.0
+                c->op_phase[mi] = c->op_phase[mi] - math.floor(c->op_phase[mi])
             let m_total_atten = c->op_env[mi] + c->op_tl[mi] * 4
                 + c->op_ksl_atten[mi]
                 + (if c->op_am[mi] then am_atten else 0)
@@ -581,12 +590,13 @@ module opl2 =
                 c->op_wf[mi], m_total_atten)
             c->ch_prev1[ch] = c->ch_prev0[ch]
             c->ch_prev0[ch] = mout
-            // Carrier phase advance (with vibrato if enabled).
+            // Carrier phase advance (with vibrato if enabled). Same
+            // floor-wrap rationale as the modulator above.
             let c_vib_mul = if c->op_vib[ci] then vib_mul else 1.0
             let cf = base_freq * mult_val(c->op_mult[ci]) * c_vib_mul
             c->op_phase[ci] = c->op_phase[ci] + cf / c->rate
             if c->op_phase[ci] >= 1.0 then
-                c->op_phase[ci] = c->op_phase[ci] - 1.0
+                c->op_phase[ci] = c->op_phase[ci] - math.floor(c->op_phase[ci])
             let c_total_atten = c->op_env[ci] + c->op_tl[ci] * 4
                 + c->op_ksl_atten[ci]
                 + (if c->op_am[ci] then am_atten else 0)
