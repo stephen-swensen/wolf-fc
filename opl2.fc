@@ -532,9 +532,15 @@ module opl2 =
         if c->lfo_am_phase >= 1.0 then c->lfo_am_phase = c->lfo_am_phase - 1.0
         c->lfo_vib_phase = c->lfo_vib_phase + 6.1 / c->rate
         if c->lfo_vib_phase >= 1.0 then c->lfo_vib_phase = c->lfo_vib_phase - 1.0
-        // Tremolo attenuation in env units. Peak 1.0 dB (DAM=0) or
-        // 4.8 dB (DAM=1) translates to ~5 or ~26 env units.
-        let am_unit = math.abs(math.sin(c->lfo_am_phase * two_pi))
+        // Tremolo as a triangle wave: 0 → peak → 0 over one LFO cycle
+        // (3.7 Hz, ~0.27 s). Peak attenuation is 1.0 dB (DAM=0) or
+        // 4.8 dB (DAM=1), which works out to ~5 or ~26 env units.
+        // The triangle is one peak per period — using |sin| instead
+        // would double the modulation frequency (because |sin| has
+        // period π) and introduce cusps at zero crossings that
+        // alias into audible buzz on AM-enabled voices.
+        let am_unit = if c->lfo_am_phase < 0.5 then c->lfo_am_phase * 2.0
+            else 2.0 - c->lfo_am_phase * 2.0
         let am_peak = if c->dam then 25.6 else 5.33
         let am_atten = (int32) (am_unit * am_peak)
         // Vibrato as a frequency multiplier (~±7 or ±14 cents).
