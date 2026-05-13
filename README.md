@@ -237,6 +237,10 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `listsaves` | Dump each save slot (`slot N: E<ep>M<lvl> diff=... score=... label=...` or `EMPTY`) |
 | `counters` | Print kills/secrets/treasures counters + par time + phase |
 | `phase` | Print current phase + timer + lives |
+| `setscale:N` | Force the supersample factor to N (2..6), reallocating dbuf/zbuf/ssaa buffers. Combine with `bench:` to measure render-pipeline cost at a specific upscale level. |
+| `bench:N` | Render N full frames at the current scale and report total / per-frame / fps. Set position+state first with the usual `fwd:`/`goto:`/`setlevel:` commands. |
+| `benchparts:N` | Per-section render profile (raycaster, billboards, weapon, SSAA downsample, HUD, composites) over N iterations. Useful for spotting which pipeline stage dominates at a given scale. |
+| `audiobench:N` | Render N seconds of WONDERIN through the OPL2 music chip and report total / per-sample / realtime-multiplier. Used to compare OPL2 emulator performance across implementations. |
 
 ### Examples
 

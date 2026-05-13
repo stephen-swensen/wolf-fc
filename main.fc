@@ -1877,6 +1877,40 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             io.write("bench scale=%d{w->rc->scale} screen=%d{w->rc->screen_w}x%d{w->rc->screen_h} frames=%d{n} total=%d{total_ms}ms per_frame=%6.3f{per_frame}ms fps=%6.1f{fps}\n", stdout)
             void()
         | none -> bad("integer frame count")
+    else if text.starts_with(arg, "audiobench:") then
+        // Render `n` seconds of WONDERIN through the OPL2 music chip
+        // and report total / per-sample wall time. Used to compare OPL2
+        // emulator perf across implementations (e.g. float vs integer
+        // gain pipeline).
+        match text.parse_int32(arg[11..arg.len]) with
+        | some(n) ->
+            // WONDERIN = music.wonderin = 14, chunk = 261 + 14 = 275.
+            let chunk = 261 + 14
+            let ms = font.music_load(w->ac->ad, chunk)
+            let sample_rate = 44100i32
+            let frames_per_batch = 1024i32
+            let total_frames = n * sample_rate
+            let batches = total_frames / frames_per_batch
+            let mix_buf = alloc(int32[2048] {})!
+            let t0 = sys.time()
+            for j in 0..batches
+                for k in 0..2048
+                    mix_buf[k] = 0i32
+                imf.fill(ms, mix_buf, frames_per_batch, sample_rate)
+            let t1 = sys.time()
+            let total_ms = t1 - t0
+            let total_samples = batches * frames_per_batch
+            let ns_per_sample = if total_samples > 0
+                then (float64) total_ms * 1000000.0 / (float64) total_samples
+                else 0.0
+            let realtime_x = if total_ms > 0
+                then (float64) n * 1000.0 / (float64) total_ms
+                else 0.0
+            io.write("audiobench n=%d{n}s samples=%d{total_samples} total=%d{total_ms}ms ns/sample=%6.1f{ns_per_sample} realtime=%6.1f{realtime_x}x\n", stdout)
+            imf.destroy(ms)
+            free(mix_buf)
+            void()
+        | none -> bad("integer seconds")
     else if text.starts_with(arg, "benchparts:") then
         // Per-section profile: time each chunk of the playing-phase
         // render path independently for `n` iterations. Skips the
