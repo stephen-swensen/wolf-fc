@@ -66,6 +66,14 @@ module doors =
     let stay_time = 4.0     // seconds before auto-close
     let max_doors = 64
 
+    // Per-sound attenuation for door open/close SFX. Wolf3D's door
+    // digi samples sit hotter than the rest of the digi catalog, so
+    // they sound disproportionately loud against music + other SFX
+    // even at our reduced global pcm_scale. 0.7 (~-3 dB) brings them
+    // into line with the rest of the mix. Divergence from OG —
+    // flagged at the trigger sites.
+    private let door_gain = 0.7
+
     // Check if a door tile is passable (fully open).
     let passable = (lv: const level*, x: int32, y: int32) ->
         if x < 0 || x >= map_size || y < 0 || y >= map_size then false
@@ -118,7 +126,12 @@ module doors =
         // through open doors. Otherwise distant enemies opening doors
         // spam the SFX channel.
         if d->area1 >= 0 && d->area1 < areas.num_areas && lv->area_by_player[d->area1] then
-            sfx.trigger(sfx.id.open_door, ac)
+            // Doors play at -3 dB vs the rest of the digi sounds. Wolf3D's
+            // door samples were recorded with hot peaks (relative to other
+            // digi cues), and at our standard digi gain they overpowered
+            // pickups, weapon fires, and music to the point of being
+            // distracting. Divergence from OG — flagged here.
+            sfx.trigger_gain(sfx.id.open_door, ac, door_gain)
 
     // `player_radius` passed in rather than imported to avoid a
     // circular module reference (player.blocked_by_map uses
@@ -159,7 +172,8 @@ module doors =
                         // area is player-reachable.
                         let a1 = lv->doors[i].area1
                         if a1 >= 0 && a1 < areas.num_areas && lv->area_by_player[a1] then
-                            sfx.trigger(sfx.id.close_door, ac)
+                            // See open_door above re: door_gain.
+                            sfx.trigger_gain(sfx.id.close_door, ac, door_gain)
             | closing ->
                 // Abort the close and reopen if the player has walked
                 // back into our tile during the close (original

@@ -545,7 +545,7 @@ module player =
                     // way it did on OG Sound Blaster hardware. ~1.8×
                     // sits just under the hard-clip threshold for
                     // the digi's typical peak.
-                    sfx.trigger_loud(sfx.id.level_done, ac, 1.8)
+                    sfx.trigger_gain(sfx.id.level_done, ac, 1.8)
                     did_anything = true
                 else
                     match doors.try_open(lv, fx, fy, g, ac) with

@@ -137,11 +137,12 @@ module adlib =
     // voice SFX sat alongside multi-voice music with no per-source
     // gain compensation, and players accepted that imbalance.
     //
-    // Our two-chip architecture makes per-source gain trivial, and 1.4×
-    // (+3 dB) keeps single-voice SFX (pickups, weapon-fires, doors-via-
-    // AdLib-fallback) audibly present without overpowering music.
-    // 1.0 would be the strictly OG-faithful value.
-    let chip_gain = 1.4
+    // Our two-chip architecture makes per-source gain trivial. 1.2×
+    // (+1.6 dB) gives single-voice SFX (pickups, weapon-fires, doors-
+    // via-AdLib-fallback) a small presence boost over the strictly-
+    // faithful 1.0, without the more aggressive +3 dB lift that 1.4×
+    // produced. 1.0 would be the strictly OG-faithful value.
+    let chip_gain = 1.2
 
     // Parsed AdLibSound header. `bytes` is a non-owning reference back
     // into the AUDIOT buffer; do not free it through this struct.
@@ -278,11 +279,14 @@ module digi =
     // neighborhood as a typical 4-channel music passage. Strict OG
     // parity would be `pcm_scale = 128`.
     //
-    // Set to 100 (~-2 dB below parity) by ear: PCM at parity felt
-    // slightly hot against music in practice. Divergence is small and
-    // tunable. Was 172 historically — calibrated against the chip's
-    // old clamped ±22000 output before the OPL2 rewrite removed the
-    // internal clamp.
+    // Set to 100 (~-2 dB below parity) by ear: PCM at strict parity
+    // (128) felt slightly hot against typical level music. Specific
+    // PCM cues that still felt too prominent at 100 — notably doors —
+    // get per-sound attenuation in sfx.fc instead of dragging this
+    // global lower (which would underweight pickups, weapon fires,
+    // and enemy deaths). Was 172 historically — calibrated against
+    // the chip's old clamped ±22000 output before the OPL2 rewrite
+    // removed the internal clamp.
     let pcm_scale = 100
 
     struct slot =
