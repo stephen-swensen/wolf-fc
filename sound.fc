@@ -123,6 +123,26 @@ module adlib =
 
     let tick_rate = 140
 
+    // Output gain applied to the AdLib SFX OPL2 chip on top of opl2's
+    // intrinsic output_scale. Divergence from the original — flagged
+    // here per the project's "OG-faithful by default" rule.
+    //
+    // Wolf3D reserved OPL channel 0 for AdLib SFX (music data writes to
+    // channels 1-8 only, verified by scanning every WL6 music chunk),
+    // and on SB Pro it boosted FM-as-a-whole via the hardware mixer's
+    // sbpmFMVol register (ID_SD.C:583-584, "Boost FM output levels to
+    // be equivilent with digitized output"). What it *could not* do
+    // was boost AdLib SFX independently of music — both shared the
+    // same OPL chip and the same mixer stage. So in the OG, a single-
+    // voice SFX sat alongside multi-voice music with no per-source
+    // gain compensation, and players accepted that imbalance.
+    //
+    // Our two-chip architecture makes per-source gain trivial, and 1.4×
+    // (+3 dB) keeps single-voice SFX (pickups, weapon-fires, doors-via-
+    // AdLib-fallback) audibly present without overpowering music.
+    // 1.0 would be the strictly OG-faithful value.
+    let chip_gain = 1.4
+
     // Parsed AdLibSound header. `bytes` is a non-owning reference back
     // into the AUDIOT buffer; do not free it through this struct.
     struct sfx_data =
@@ -227,11 +247,14 @@ module adlib =
             else opl2.note_on(st->chip, 0, st->block, b)
 
     // Mix `count` samples into `buf` from the chip while driving note
-    // data at 140 Hz. Delegates the sample/tick loop to opl2.fill_ticked.
+    // data at 140 Hz. Routes through fill_ticked_vol with chip_gain so
+    // the single-voice SFX comes through at a perceptually fair level
+    // against multi-voice music (see chip_gain comment).
     let fill = (st: sfx_state*, buf: int32[], count: int32, sample_rate: int32) ->
-        opl2.fill_ticked(st->chip, buf, count, sample_rate, tick_rate,
+        opl2.fill_ticked_vol(st->chip, buf, count, sample_rate, tick_rate,
             &st->tick_accum,
-            () -> advance_tick(st))
+            () -> advance_tick(st),
+            chip_gain)
 
 
 // ============================================================
@@ -249,16 +272,18 @@ module digi =
     let src_rate = 7042.0
     let max_slots = 4
     // Per-sample scale for 8-bit signed PCM (-128..+127) → mix-buffer
-    // units. Chosen so a center-panned full-amplitude digi peaks around
-    // ±16k — same neighborhood as a typical 4-channel music passage
-    // (sum ~±8000 × output_scale 2.0 in opl2.fc). The OG Sound Blaster
-    // analog-mixed PCM and FM at roughly matched levels; with the chip's
-    // internal clamp gone, matching peaks in the mix buffer is what
-    // gets us back to that balance. Was 172 historically (peaked at
-    // ±22k); that calibration was tied to the chip's old clamped
-    // ±22000 output and made digi noticeably louder than music + AdLib
-    // SFX once the chip switched to unclamped sum output.
-    let pcm_scale = 128
+    // units. The OG's SB Pro path boosted FM to match digi (sbpmFMVol
+    // write in ID_SD.C) — our `opl2.output_scale = 2.0` is the analog,
+    // and pcm_scale = 128 puts digi center-pan peak at ±~16k, the same
+    // neighborhood as a typical 4-channel music passage. Strict OG
+    // parity would be `pcm_scale = 128`.
+    //
+    // Set to 100 (~-2 dB below parity) by ear: PCM at parity felt
+    // slightly hot against music in practice. Divergence is small and
+    // tunable. Was 172 historically — calibrated against the chip's
+    // old clamped ±22000 output before the OPL2 rewrite removed the
+    // internal clamp.
+    let pcm_scale = 100
 
     struct slot =
         data: const uint8[]  // non-owning reference into player.cache
