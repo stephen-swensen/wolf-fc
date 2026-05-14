@@ -137,12 +137,16 @@ module adlib =
     // voice SFX sat alongside multi-voice music with no per-source
     // gain compensation, and players accepted that imbalance.
     //
-    // Our two-chip architecture makes per-source gain trivial. 1.2×
-    // (+1.6 dB) gives single-voice SFX (pickups, weapon-fires, doors-
-    // via-AdLib-fallback) a small presence boost over the strictly-
-    // faithful 1.0, without the more aggressive +3 dB lift that 1.4×
-    // produced. 1.0 would be the strictly OG-faithful value.
-    let chip_gain = 1.2
+    // Our two-chip architecture makes per-source gain trivial. Set
+    // to 1.0 (strict OG-faithful) after listening tests: even modest
+    // boosts (+1.6 dB at 1.2×, +3 dB at 1.4×) made single-voice SFX
+    // sound too prominent against the rest of the mix. The OG's
+    // single-OPL-voice-vs-multi-voice-music imbalance turns out to
+    // feel right once music and digi are calibrated; AdLib SFX
+    // sitting naturally under both reads as appropriate background-
+    // weight rather than "too quiet". Raise above 1.0 if a future
+    // change makes SFX feel buried again.
+    let chip_gain = 1.0
 
     // Parsed AdLibSound header. `bytes` is a non-owning reference back
     // into the AUDIOT buffer; do not free it through this struct.
