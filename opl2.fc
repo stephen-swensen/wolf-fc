@@ -730,11 +730,12 @@ module opl2 =
                        advance: () -> void) ->
         fill_ticked_vol(c, buf, count, sample_rate, tick_rate, tick_accum, advance, 1.0)
 
-    // Gain-scaled variant. Music passes p->volume (0..1, drives
-    // fade-outs); the AdLib SFX driver passes a >1 constant for a
-    // per-source presence boost (see adlib.chip_gain in sound.fc for
-    // the rationale and the OG-divergence flag). Floored at 0 to keep
-    // signs sane; no upper clamp.
+    // Gain-scaled variant. Both music and AdLib SFX drivers route
+    // through here with the user's Sound submenu Gain slider (linear
+    // scalar; 1.0 = default mix). The AdLib SFX driver folds in
+    // `adlib.chip_gain` on top — see that constant in sound.fc for the
+    // rationale and the OG-divergence flag. Floored at 0 to keep signs
+    // sane; no upper clamp.
     let fill_ticked_vol = (c: chip*,
                            buf: int32[], count: int32,
                            sample_rate: int32, tick_rate: int32,
