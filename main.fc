@@ -436,7 +436,7 @@ struct game =
     // intermission (transient; update_phase_transitions enters next state).
     dc_sub: int32
     dc_timer: float64               // seconds elapsed in current sub-phase
-    dc_boss_idx: int32              // index of the corpse in lv->enemies
+    dc_boss_idx: int32?             // index of the corpse in lv->enemies
     dc_kill_x: float64              // player position when the boss died
     dc_kill_y: float64              // (matches the original's killer position)
     dc_fade: float64                // 0 = viewport fully visible, 1 = fully
@@ -609,7 +609,7 @@ struct game =
 
     // Menu selection state.
     menu_sel: int32
-    menu_level: int32
+    menu_level: menu.nav
 
     // Save-slot inline name entry. While true, the savelist menu is
     // showing a typing caret on the selected slot; main-loop keydowns
@@ -837,13 +837,13 @@ struct save_menu_ctx =
 // `scores` is the 7-row table loaded once at startup (or seeded with
 // the original game's defaults on first launch) and rewritten whenever a
 // new score qualifies. Edit fields drive the inline name-entry that
-// activates on a qualifying finish. `edit_index` is -1 outside the
-// editing flow; while editing it points at the row in `scores` that
-// was just inserted (and `edit_buf` / `edit_len` mirror the typed
-// name until the player presses Enter to commit).
+// activates on a qualifying finish. `edit_index` is `none` outside the
+// editing flow; while editing it carries the row in `scores` that was
+// just inserted (and `edit_buf` / `edit_len` mirror the typed name
+// until the player presses Enter to commit).
 struct highscore_ctx =
     scores: highscore.entry[]
-    edit_index: int32
+    edit_index: int32?
     edit_active: bool
     edit_buf: uint8[]
     edit_len: int32
@@ -1217,7 +1217,7 @@ let build_highscore_ctx = () ->
     highscore.load(scores)
     alloc(highscore_ctx {
         scores       = scores,
-        edit_index   = -1,
+        edit_index   = default(int32?),
         edit_active  = false,
         edit_buf     = alloc(uint8[highscore.max_name_len + 1] {})!,
         edit_len     = 0,
@@ -1904,7 +1904,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             let frames_per_batch = 1024i32
             let total_frames = n * sample_rate
             let batches = total_frames / frames_per_batch
-            let mix_buf = alloc(int32[2048] {})!
+            let mix_buf = int32[2048] {}
             let t0 = sys.time()
             for j in 0..batches
                 for k in 0..2048
@@ -1921,7 +1921,6 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
                 else 0.0
             io.write("audiobench n=%d{n}s samples=%d{total_samples} total=%d{total_ms}ms ns/sample=%6.1f{ns_per_sample} realtime=%6.1f{realtime_x}x\n", stdout)
             imf.destroy(ms)
-            free(mix_buf)
             void()
         | none -> bad("integer seconds")
     else if text.starts_with(arg, "benchparts:") then
@@ -2355,7 +2354,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // state. Useful for verifying default content + post-insert
         // shifts.
         let edit = if w->hs->edit_active then 1 else 0
-        io.write("hs edit=%d{edit} index=%d{w->hs->edit_index}", stdout)
+        let idx_disp = match w->hs->edit_index with
+            | some(n) -> n
+            | none -> -1
+        io.write("hs edit=%d{edit} index=%d{idx_disp}", stdout)
         if w->hs->edit_active then
             let typed = (const str) w->hs->edit_buf[0..(int64) w->hs->edit_len]
             io.write(" typed='", stdout)
@@ -2664,8 +2666,8 @@ let main = (args: str[]) ->
     //                           2 (the OG-doubled raycaster density);
     //                           values below 2 are clamped up.
     let mut test_mode = false
-    let mut start_level = -1
-    let mut start_difficulty = -1
+    let mut start_level = default(int32?)
+    let mut start_difficulty = default(int32?)
     let mut start_near_boss = false
     let mut start_near_goldkey = false
     let mut start_near_silverkey = false
@@ -2687,11 +2689,11 @@ let main = (args: str[]) ->
         if a == "--cheat" then arg_cheat = true
         if text.starts_with(a, "--level=") then
             match text.parse_int32(a[8..a.len]) with
-            | some(n) -> if n >= 0 && n < 60 then start_level = n
+            | some(n) -> if n >= 0 && n < 60 then start_level = some(n)
             | none    -> void()
         if text.starts_with(a, "--difficulty=") then
             match text.parse_int32(a[13..a.len]) with
-            | some(n) -> if n >= 0 && n < 4 then start_difficulty = n
+            | some(n) -> if n >= 0 && n < 4 then start_difficulty = some(n)
             | none    -> void()
         if text.starts_with(a, "--max-scale=") then
             match text.parse_int32(a[12..a.len]) with
@@ -2812,7 +2814,7 @@ let main = (args: str[]) ->
         bj_dir = dir.nodir, bj_distance = 0.0, bj_run_tiles_left = 0,
         bj_anim_frame = 0, bj_anim_timer = 0.0,
         bj_phase = 0, bj_yelled = false,
-        dc_sub = 0, dc_timer = 0.0, dc_boss_idx = -1,
+        dc_sub = 0, dc_timer = 0.0, dc_boss_idx = default(int32?),
         dc_kill_x = 0.0, dc_kill_y = 0.0, dc_fade = 0.0,
         endart_data = alloc(uint8[0] {})!,
         endart_page_offsets = alloc(int32[0] {})!,
@@ -2916,8 +2918,9 @@ let main = (args: str[]) ->
     // --difficulty N / --level N: skip the title sequence and jump the
     // player straight into the specified map. Also respected in --test
     // mode so scripts can start on any level without a `setlevel:` prefix.
-    if start_difficulty >= 0 then
-        g->difficulty = start_difficulty
+    match start_difficulty with
+    | some(d) ->
+        g->difficulty = d
         // Rebuild enemies with the new difficulty tier. reload_level_data
         // reads g->difficulty, so it's enough to just re-run it.
         reload_level_data(w, vs)
@@ -2925,8 +2928,10 @@ let main = (args: str[]) ->
         reset_level_counters(g, w->lv)
         areas.update_player_area(w->lv, g)
         areas.connect(w->lv, g->area_number)
-    if start_level >= 0 then
-        g->level_num = start_level
+    | none -> void()
+    match start_level with
+    | some(lvl) ->
+        g->level_num = lvl
         reload_level_data(w, vs)
         spawn.find_player_start(w->lv_data, g)
         reset_level_counters(g, w->lv)
@@ -2935,6 +2940,7 @@ let main = (args: str[]) ->
         g->phase = game_phase.playing
         g->has_active_game = true
         pics.trigger_get_psyched(g)
+    | none -> void()
     if start_near_boss then
         spawn.near_boss(w->lv, w->g)
         areas.update_player_area(w->lv, g)
@@ -3302,17 +3308,16 @@ let main = (args: str[]) ->
                     //     difficulty).
                     //   • ESC              — escape cue.
                     let row_kind = menu.current_row_kind(g->menu_level, g->menu_sel)
-                    let is_toggle_change = (is_confirm || is_left_right) && row_kind == menu.option_kind_toggle
-                    let is_slider_step   = is_left_right && row_kind == menu.option_kind_slider
-                    let is_action_commit = is_confirm && row_kind == menu.option_kind_action
+                    let is_toggle_change = (is_confirm || is_left_right) && row_kind == some(menu.option_kind.toggle)
+                    let is_slider_step   = is_left_right && row_kind == some(menu.option_kind.slider)
+                    let is_action_commit = is_confirm && row_kind == some(menu.option_kind.action)
                     let setting_changed = is_toggle_change || is_slider_step || is_action_commit
                     // The drill-confirm cue only fires for drill-style
                     // menus (main / episode / difficulty / save / load
-                    // / quit confirm) — those return row_kind == -1
-                    // from current_row_kind. Skipping it for row-typed
-                    // menus keeps Enter on a slider row silent (it's a
-                    // no-op).
-                    let is_drill_confirm = is_confirm && row_kind == -1
+                    // / quit confirm) — those return `none` from
+                    // current_row_kind. Skipping it for row-typed menus
+                    // keeps Enter on a slider row silent (it's a no-op).
+                    let is_drill_confirm = is_confirm && row_kind.is_none
                     if k == sdl2.key_up || k == sdl2.key_down then
                         sfx.trigger(sfx.id.move_gun1, w->ac)
                     else if setting_changed then
@@ -3572,19 +3577,19 @@ let main = (args: str[]) ->
                         // Every commit persists the full prefs struct
                         // via config.snapshot — never partial — so
                         // other unrelated toggles round-trip cleanly.
-                        let kind = menu.option_kind(g->menu_sel)
+                        let kind = menu.row_kind(g->menu_sel)
                         if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + menu.options_len - 1) % menu.options_len
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % menu.options_len
-                        else if (is_confirm || is_left_right) && kind == menu.option_kind_toggle then
+                        else if (is_confirm || is_left_right) && kind == menu.option_kind.toggle then
                             // Toggle row 0 = No Dogs. Either Enter or
                             // ←/→ flips — matches the Sound submenu's
                             // toggle behaviour for cross-menu consistency.
                             if g->menu_sel == 0 then
                                 g->no_dogs = !g->no_dogs
                             config.save(config.snapshot(w))
-                        else if is_confirm && kind == menu.option_kind_action then
+                        else if is_confirm && kind == menu.option_kind.action then
                             // Action row = RESET. Wipe every Options
                             // field back to its default — sound
                             // toggles are deliberately untouched
@@ -3596,7 +3601,7 @@ let main = (args: str[]) ->
                             g->enemy_speed_pct = d.enemy_speed_pct
                             config.save(config.snapshot(w))
                         else if (k == sdl2.key_left || k == sdl2.key_right)
-                            && kind == menu.option_kind_slider then
+                            && kind == menu.option_kind.slider then
                             // Slider rows. Shadow Depth uses ±5% in 0..100;
                             // the BJ / Enemy Speed sliders use ±5% in
                             // 20..200 (constants live in `config`).
@@ -3923,7 +3928,9 @@ let main = (args: str[]) ->
         let want_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
         if want_chunk != current_music_chunk then
             if audio_dev > 0u32 && want_chunk < ad->num_chunks then
-                if ms.is_some then imf.destroy(ms!)
+                match ms with
+                | some(m) -> imf.destroy(m)
+                | none -> void()
                 ms = some(font.music_load(ad, want_chunk))
                 current_music_chunk = want_chunk
 

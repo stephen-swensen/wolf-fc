@@ -14,18 +14,19 @@
 
 module menu =
     // Menu navigation state. `g->menu_level` picks which list to show.
-    module nav =
-        let main       = 0
-        let difficulty = 1
-        let episode    = 2
-        let savelist   = 3
-        let loadlist   = 4
-        let sound      = 5
-        let options    = 6
-        let changeview = 7
-        // Quit-confirm modal: a sub-page rather than a separate phase
-        // since it draws over the menu chrome and only intercepts Y/N.
-        let quit       = 8
+    // `main` is the first variant so zero-initialised game state lands
+    // there by default. `quit` is a sub-page rather than a separate
+    // phase since it draws over the menu chrome and only intercepts Y/N.
+    union nav =
+        | main
+        | difficulty
+        | episode
+        | savelist
+        | loadlist
+        | sound
+        | options
+        | changeview
+        | quit
 
     // Menu-chrome palette indices, matched to the original. We
     // resolve them through `pal[]` at draw time so they always come
@@ -104,9 +105,13 @@ module menu =
     //   4 Reset         (action — restores every row to its default)
     let options_len = 5
 
-    let option_kind_toggle = 0
-    let option_kind_slider = 1
-    let option_kind_action = 2
+    // How a row reacts to input. Used by the sfx dispatch in main.fc
+    // to pick the right confirm cue for every setting-changed event.
+    union option_kind =
+        | toggle    // row flips on Enter or ←/→ (sound, options)
+        | slider    // row steps on ←/→ (sound gain, options shadow/speed
+                    // sliders, changeview multi-option cyclers)
+        | action    // row commits on Enter (options Reset)
 
     // Per-row metadata: kind (toggle / slider / action) + label.
     private let option_label = (i: int32) ->
@@ -118,33 +123,27 @@ module menu =
         | 4 -> "Reset to Defaults"
         | _ -> ""
 
-    let option_kind = (i: int32) ->
+    let row_kind = (i: int32) ->
         match i with
-        | 0 -> option_kind_toggle
-        | 1 -> option_kind_slider
-        | 2 -> option_kind_slider
-        | 3 -> option_kind_slider
-        | 4 -> option_kind_action
-        | _ -> option_kind_toggle
+        | 0 -> option_kind.toggle
+        | 1 -> option_kind.slider
+        | 2 -> option_kind.slider
+        | 3 -> option_kind.slider
+        | 4 -> option_kind.action
+        | _ -> option_kind.toggle
 
     // Classify the currently-selected row's interaction kind across all
-    // row-typed menus, so the top-level sfx dispatch in main.fc can map
-    // (key, row_kind) → a single canonical "setting changed" sound for
-    // every menu. Returns:
-    //   option_kind_toggle  — row flips on Enter or ←/→ (sound, options)
-    //   option_kind_slider  — row steps on ←/→ (sound gain, options
-    //                          shadow/speed sliders, changeview multi-
-    //                          option cyclers)
-    //   option_kind_action  — row commits on Enter (options Reset)
-    //   -1                  — drilling / navigation menus (main, episode,
-    //                          difficulty, save/load lists, quit confirm)
-    let current_row_kind = (level: int32, sel: int32) ->
-        if level == nav.sound then
-            if sound_is_toggle(sel) then option_kind_toggle
-            else option_kind_slider
-        else if level == nav.options then option_kind(sel)
-        else if level == nav.changeview then option_kind_slider
-        else -1
+    // row-typed menus. `none` means a drilling / navigation menu (main,
+    // episode, difficulty, save/load lists, quit confirm) — no
+    // setting-changed cue applies there.
+    let current_row_kind = (level: nav, sel: int32) ->
+        match level with
+        | sound ->
+            if sound_is_toggle(sel) then some(option_kind.toggle)
+            else some(option_kind.slider)
+        | options -> some(row_kind(sel))
+        | changeview -> some(option_kind.slider)
+        | _ -> default(option_kind?)
 
     private let diff_label = (i: int32) ->
         match i with
@@ -754,21 +753,13 @@ module menu =
                        f: const font.info*, g: game*, ac: audio_ctx*) ->
         draw_backdrop(rc, pal)
         let time = g->phase_timer
-        if g->menu_level == nav.main then
-            render_main_list(rc, vg, pal, f, g, time)
-        else if g->menu_level == nav.episode then
-            render_episode_list(rc, vg, pal, f, g, time)
-        else if g->menu_level == nav.difficulty then
-            render_difficulty_list(rc, vg, pal, f, g, time)
-        else if g->menu_level == nav.sound then
-            render_sound_list(rc, vg, pal, f, g, ac, time)
-        else if g->menu_level == nav.options then
-            render_options_list(rc, vg, pal, f, g, time)
-        else if g->menu_level == nav.changeview then
-            render_changeview_list(rc, vg, pal, f, g, time)
-        else if g->menu_level == nav.savelist then
-            render_slot(rc, vg, pal, f, g, sm, pics.id.c_savegame, g->menu_sel, false, time)
-        else if g->menu_level == nav.loadlist then
-            render_slot(rc, vg, pal, f, g, sm, pics.id.c_loadgame, g->menu_sel, true, time)
-        else if g->menu_level == nav.quit then
-            render_quit_modal(rc, vg, pal, f, g, ac)
+        match g->menu_level with
+        | main       -> render_main_list(rc, vg, pal, f, g, time)
+        | episode    -> render_episode_list(rc, vg, pal, f, g, time)
+        | difficulty -> render_difficulty_list(rc, vg, pal, f, g, time)
+        | sound      -> render_sound_list(rc, vg, pal, f, g, ac, time)
+        | options    -> render_options_list(rc, vg, pal, f, g, time)
+        | changeview -> render_changeview_list(rc, vg, pal, f, g, time)
+        | savelist   -> render_slot(rc, vg, pal, f, g, sm, pics.id.c_savegame, g->menu_sel, false, time)
+        | loadlist   -> render_slot(rc, vg, pal, f, g, sm, pics.id.c_loadgame, g->menu_sel, true, time)
+        | quit       -> render_quit_modal(rc, vg, pal, f, g, ac)

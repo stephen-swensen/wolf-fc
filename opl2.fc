@@ -61,12 +61,14 @@ module opl2 =
     let num_channels  = 9
     let num_operators = 18
 
-    // Envelope stages.
-    let stg_off     = 0
-    let stg_attack  = 1
-    let stg_decay   = 2
-    let stg_sustain = 3
-    let stg_release = 4
+    // Envelope stages. Tag 0 = `off`, which lets a zero-initialised
+    // chip start every operator in the silent stage automatically.
+    union envelope_stage =
+        | off
+        | attack
+        | decay
+        | sustain
+        | release
 
     // Envelope range. 9-bit counter, units of 0.1875 dB → 96 dB max.
     let env_max = 511
@@ -116,8 +118,8 @@ module opl2 =
         op_phase: float64[18]
         // Current envelope attenuation (0 = full vol, env_max = silent).
         op_env: int32[18]
-        // Envelope stage (stg_*).
-        op_stage: int32[18]
+        // Envelope stage (off / attack / decay / sustain / release).
+        op_stage: envelope_stage[18]
         // Register fields (raw nibbles/bytes).
         op_tl: int32[18]     // 0..63, 0.75 dB per step
         op_mult: int32[18]   // 0..15
@@ -196,7 +198,7 @@ module opl2 =
             c->op_tl[i] = 63
             c->op_mult[i] = 1
             c->op_env[i] = env_max
-            c->op_stage[i] = stg_off
+            c->op_stage[i] = envelope_stage.off
         let pi = 3.14159265358979323846
         // First-quadrant log-sin in 1/16 env units (0.01172 dB per
         // unit). See the field comment for the chip-precision rationale.
@@ -320,16 +322,16 @@ module opl2 =
 
     // Advance one operator's envelope by one sample.
     let env_advance = (c: chip*, idx: int32) ->
-        let stage = c->op_stage[idx]
-        if stage == stg_off || stage == stg_sustain then return
-        if stage == stg_attack then
+        match c->op_stage[idx] with
+        | off | sustain -> void()
+        | attack ->
             let inc = rate_step(c->counter, c->op_eff_ar[idx])
             let new_env = attack_step(c->op_env[idx], inc)
             c->op_env[idx] = new_env
             if new_env <= 0 then
                 c->op_env[idx] = 0
-                c->op_stage[idx] = stg_decay
-        else if stage == stg_decay then
+                c->op_stage[idx] = envelope_stage.decay
+        | decay ->
             let inc = rate_step(c->counter, c->op_eff_dr[idx])
             let new_env = linear_step(c->op_env[idx], inc)
             c->op_env[idx] = new_env
@@ -342,15 +344,15 @@ module opl2 =
                 // EGT=1 holds at sustain; EGT=0 continues releasing
                 // (percussive). This is what makes percussive AdLib SFX
                 // die away cleanly instead of hanging at sustain.
-                c->op_stage[idx] = if c->op_egt[idx] then stg_sustain else stg_release
-        else if stage == stg_release then
+                c->op_stage[idx] = if c->op_egt[idx] then envelope_stage.sustain
+                                   else envelope_stage.release
+        | release ->
             let inc = rate_step(c->counter, c->op_eff_rr[idx])
             let new_env = linear_step(c->op_env[idx], inc)
             c->op_env[idx] = new_env
             if new_env >= env_max then
                 c->op_env[idx] = env_max
-                c->op_stage[idx] = stg_off
-        return
+                c->op_stage[idx] = envelope_stage.off
 
     // ============================================================
     // KSL (key-scale level)
@@ -485,18 +487,18 @@ module opl2 =
                 // Key-on: reset phase and start attack. DON'T reset
                 // env — real OPL2 preserves it, which matters for
                 // rapid retriggers tighter than the release time.
-                c->op_stage[ci * 2] = stg_attack
+                c->op_stage[ci * 2] = envelope_stage.attack
                 c->op_phase[ci * 2] = 0.0
-                c->op_stage[ci * 2 + 1] = stg_attack
+                c->op_stage[ci * 2 + 1] = envelope_stage.attack
                 c->op_phase[ci * 2 + 1] = 0.0
                 c->ch_prev0[ci] = 0
                 c->ch_prev1[ci] = 0
             if !new_key && c->ch_key[ci] then
                 // Key-off: drop to release on any still-live op.
-                if c->op_stage[ci * 2] != stg_off then
-                    c->op_stage[ci * 2] = stg_release
-                if c->op_stage[ci * 2 + 1] != stg_off then
-                    c->op_stage[ci * 2 + 1] = stg_release
+                if c->op_stage[ci * 2] != envelope_stage.off then
+                    c->op_stage[ci * 2] = envelope_stage.release
+                if c->op_stage[ci * 2 + 1] != envelope_stage.off then
+                    c->op_stage[ci * 2 + 1] = envelope_stage.release
             c->ch_key[ci] = new_key
         // 0xC0–0xC8: Feedback / Connection
         if ch_base == 0xC0 && ci < 9 then
@@ -589,12 +591,12 @@ module opl2 =
             let mi = ch * 2
             let ci = ch * 2 + 1
             // Skip channels with both ops idle — no audible output.
-            if c->op_stage[ci] == stg_off && c->op_stage[mi] == stg_off then continue
+            if c->op_stage[ci] == envelope_stage.off && c->op_stage[mi] == envelope_stage.off then continue
             // Envelopes advance every sample for active stages.
             env_advance(c, mi)
             env_advance(c, ci)
             // If carrier is silent after this advance, skip the rest.
-            if c->op_stage[ci] == stg_off then continue
+            if c->op_stage[ci] == envelope_stage.off then continue
             let fnum = c->ch_fnum[ch]
             let block = c->ch_block[ch]
             // YM3812 frequency formula: f = fnum * 2^(block-1) * 49716 / 2^19.

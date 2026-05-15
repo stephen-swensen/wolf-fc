@@ -245,7 +245,7 @@ module death_cam =
         g->dc_sub = sub.pre_fade
         g->dc_timer = 0.0                   // hold starts once the anim reaches enemies.enemy_state.dead
         g->dc_fade = 0.0
-        g->dc_boss_idx = boss_idx
+        g->dc_boss_idx = some(boss_idx)
         g->dc_kill_x = g->pos_x
         g->dc_kill_y = g->pos_y
         // Freeze held inputs so a chord from the kill shot doesn't
@@ -312,8 +312,9 @@ module death_cam =
         g->dc_timer = g->dc_timer + dt
         let s = g->dc_sub
         if s == sub.pre_fade then
-            if g->dc_boss_idx >= 0 && g->dc_boss_idx < lv->num_enemies then
-                let e = &lv->enemies[g->dc_boss_idx]
+            match g->dc_boss_idx with
+            | some(idx) when (idx < lv->num_enemies) ->
+                let e = &lv->enemies[idx]
                 match e->state with
                 | dead ->
                     if g->dc_timer >= pre_fade_time then
@@ -322,7 +323,7 @@ module death_cam =
                         g->dc_fade = 0.0
                 | _ ->
                     g->dc_timer = 0.0
-            else
+            | _ ->
                 g->dc_sub = sub.fade_out
                 g->dc_timer = 0.0
                 g->dc_fade = 0.0
@@ -337,13 +338,15 @@ module death_cam =
             let dismissed = (g->key_ack && !g->key_ack_handled) || g->dc_timer >= taunt_timeout
             if dismissed then
                 g->key_ack_handled = true
-                if g->dc_boss_idx >= 0 && g->dc_boss_idx < lv->num_enemies then
-                    let e = &lv->enemies[g->dc_boss_idx]
+                match g->dc_boss_idx with
+                | some(idx) when (idx < lv->num_enemies) ->
+                    let e = &lv->enemies[idx]
                     teleport(lv, g, e->x, e->y)
                     e->state = enemies.enemy_state.stand
                     e->anim_frame = 0
                     e->anim_timer = enemies.walk_frame_time
                     e->dir = dir.nodir
+                | _ -> void()
                 g->dc_sub = sub.fade_in
                 g->dc_timer = 0.0
                 g->dc_fade = 1.0
@@ -355,22 +358,25 @@ module death_cam =
                 g->dc_timer = 0.0
         else if s == sub.pre_replay then
             if g->dc_timer >= pre_replay_time then
-                if g->dc_boss_idx >= 0 && g->dc_boss_idx < lv->num_enemies then
-                    let e = &lv->enemies[g->dc_boss_idx]
+                match g->dc_boss_idx with
+                | some(idx) when (idx < lv->num_enemies) ->
+                    let e = &lv->enemies[idx]
                     e->state = enemies.enemy_state.die
                     e->anim_frame = 0
                     e->anim_timer = enemies.die_frame_time
                     e->dir = dir.nodir
                     let snd = enemies.ai.death_scream_for_kind(e->kind, g)
                     if snd >= 0 then sfx.trigger_at(snd, ac, g, e->x, e->y)
+                | _ -> void()
                 g->dc_sub = sub.replay_anim
                 g->dc_timer = 0.0
         else if s == sub.replay_anim then
-            let anim_done = if g->dc_boss_idx >= 0 && g->dc_boss_idx < lv->num_enemies then
-                match lv->enemies[g->dc_boss_idx].state with
-                | dead -> true
-                | _ -> false
-            else true
+            let anim_done = match g->dc_boss_idx with
+                | some(idx) when (idx < lv->num_enemies) ->
+                    match lv->enemies[idx].state with
+                    | dead -> true
+                    | _ -> false
+                | _ -> true
             if anim_done || g->dc_timer >= replay_anim_max then
                 g->dc_sub = sub.replay_hold
                 g->dc_timer = 0.0
@@ -1437,11 +1443,13 @@ module high_scores_screen =
     // pending-save, and exit edit mode. Called on Enter (and on Esc
     // — matches the original's "name stays even on cancel" behavior).
     let commit_name = (hs: highscore_ctx*) ->
-        if hs->edit_index < 0 then return
-        let nm = (const str) hs->edit_buf[0..(int64) hs->edit_len]
-        highscore.set_name_at(hs->scores, hs->edit_index, nm)
-        hs->edit_active = false
-        hs->pending_save = true
+        match hs->edit_index with
+        | some(i) ->
+            let nm = (const str) hs->edit_buf[0..(int64) hs->edit_len]
+            highscore.set_name_at(hs->scores, i, nm)
+            hs->edit_active = false
+            hs->pending_save = true
+        | none -> void()
 
     // Clear the edit buffer (zero bytes + len=0). Called on enter
     // before any keystrokes land.
@@ -1501,13 +1509,13 @@ module high_scores_screen =
         g->key_ack = false
         g->key_ack_handled = true
         clear_edit_buf(hs)
-        hs->edit_index = -1
+        hs->edit_index = default(int32?)
         hs->edit_active = false
         hs->pending_save = false
         let n = highscore.qualifies(hs->scores, score, completed)
         if n >= 0 then
             highscore.insert_at(hs->scores, n, score, completed, episode)
-            hs->edit_index = n
+            hs->edit_index = some(n)
             hs->edit_active = true
             // Persist the inserted-but-unnamed row up front so a hard
             // crash mid-typing doesn't lose the score itself. The
@@ -1549,7 +1557,7 @@ module high_scores_screen =
             // Name — left-aligned at column 4*8 = 32. Show the typed
             // buffer instead while editing this row.
             let name_x = ox + 4 * 8
-            if hs->edit_active && hs->edit_index == i then
+            if hs->edit_active && hs->edit_index == some(i) then
                 let typed = (const str) hs->edit_buf[0..(int64) hs->edit_len]
                 font.draw_text(rc, f, name_x, row_y, typed, text_color)
                 if cursor_on(time) then

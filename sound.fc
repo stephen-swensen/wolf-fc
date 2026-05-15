@@ -527,8 +527,9 @@ module mixer =
         let samples = frames * 2
         for i in 0..samples
             mix_buf[i] = 0i32
-        if music.is_some && music_on then
-            imf.fill(music!, mix_buf, frames, sample_rate, music_gain)
+        match music with
+        | some(m) when music_on -> imf.fill(m, mix_buf, frames, sample_rate, music_gain)
+        | _ -> void()
         adlib.fill(sfx, mix_buf, frames, sample_rate, sfx_gain)
         digi.fill(dg, mix_buf, frames, sample_rate, digi_gain)
         soft_clip_to_int16(mix_buf, out_buf, samples)
