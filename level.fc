@@ -7,7 +7,7 @@
 //   pushwall   — push-wall activation + per-tick slide
 //   pickups    — item_kind union + walk-over item collection
 //   tilemap    — sprite_obj + per-tile classification + map builder
-//   areas      — wolf4sdl-style area connectivity
+//   areas      — area connectivity (matches the original)
 //   spawn      — player spawn, sprite spawn, enemy spawn, exit / push-
 //                wall markers, BJ-victory path arrows (consumes
 //                `difficulty.*` for tier gating)
@@ -18,8 +18,9 @@
 
 // ============================================================
 // Difficulty — the three spawn-tile tiers (base, +36, +72) are gated
-// per wolf4sdl ScanInfoPlane: base always spawns; +36 needs >= medium;
-// +72 needs >= hard. `g->difficulty` is set from the menu selection.
+// per the original's difficulty rules: base always spawns; +36 needs
+// >= medium; +72 needs >= hard. `g->difficulty` is set from the menu
+// selection.
 // ============================================================
 
 module difficulty =
@@ -42,7 +43,7 @@ module doors =
 
     // Outcome of a use-action on a tile in front of the player. Callers
     // pattern-match on this to decide whether the press was "handled"
-    // (in which case we skip the generic DONOTHINGSND fall-through).
+    // (in which case we skip the generic "do nothing" fall-through).
     union door_action =
         | no_door        // tile isn't a door, or is already opening/open
         | door_opened    // closed door started opening
@@ -66,12 +67,12 @@ module doors =
     let stay_time = 4.0     // seconds before auto-close
     let max_doors = 64
 
-    // Per-sound attenuation for door open/close SFX. Wolf3D's door
-    // digi samples sit hotter than the rest of the digi catalog, so
-    // they sound disproportionately loud against music + other SFX
-    // even at our reduced global pcm_scale. 0.7 (~-3 dB) brings them
-    // into line with the rest of the mix. Divergence from OG —
-    // flagged at the trigger sites.
+    // Per-sound attenuation for door open/close SFX. The original's
+    // door digi samples sit hotter than the rest of the digi catalog,
+    // so they sound disproportionately loud against music + other
+    // SFX even at our reduced global pcm_scale. 0.7 (~-3 dB) brings
+    // them into line with the rest of the mix. Divergence from the
+    // original — flagged at the trigger sites.
     private let door_gain = 0.7
 
     // Check if a door tile is passable (fully open).
@@ -83,9 +84,9 @@ module doors =
             else lv->doors[t - 128].state == door_state.open
 
     // Try to open a door at the given tile position. Returns what
-    // happened — the caller owns the NOWAYSND cue so it can edge-
-    // trigger on initial key-press rather than spamming while space
-    // is held (see player.update's space handler).
+    // happened — the caller owns the locked-door cue so it can
+    // edge-trigger on initial key-press rather than spamming while
+    // space is held (see player.update's space handler).
     let try_open = (lv: level*, x: int32, y: int32, g: game*, ac: audio_ctx*) ->
         if x < 0 || x >= map_size || y < 0 || y >= map_size then door_action.no_door
         else
@@ -157,7 +158,7 @@ module doors =
                     // the wall state and the bbox check in
                     // player_blocked_by_map rejects every subsequent
                     // move. The original avoids this because its
-                    // tilemap/actorat grid is coarser than our
+                    // tile-based collision is coarser than our
                     // per-axis bbox test.
                     let px = g->pos_x
                     let py = g->pos_y
@@ -331,8 +332,8 @@ module pickups =
         | 54 -> item_kind.bible
         | 55 -> item_kind.crown
         | 56 -> item_kind.extra_life
-        | 57 -> item_kind.gibs        // bo_gibs (statinfo[34])
-        | 61 -> item_kind.gibs        // bo_gibs (statinfo[38], "Gibs 2")
+        | 57 -> item_kind.gibs        // gibs (static-sprite index 34)
+        | 61 -> item_kind.gibs        // gibs 2 (static-sprite index 38)
         | _ -> item_kind.decoration
 
     let check = (lv: level*, g: game*, ac: audio_ctx*) ->
@@ -363,17 +364,16 @@ module pickups =
                 if g->health > 100 then g->health = 100
                 true
             // Gibs heal a single point only when the player is already
-            // hurting — `bo_gibs` in the original refuses the pickup
-            // above 10 HP so the remains stay on the floor as emergency
-            // rations.
+            // hurting — the original refuses the pickup above 10 HP so
+            // the remains stay on the floor as emergency rations.
             | gibs when (g->health > 10) -> false
             | gibs ->
                 g->health = g->health + 1
                 if g->health > 100 then g->health = 100
                 true
             | extra_life ->
-                // bo_fullheal: full heal, +25 ammo, +1 life, and
-                // counts against the intermission treasure tally.
+                // Full heal, +25 ammo, +1 life, and counts against
+                // the intermission treasure tally.
                 g->health = 100
                 g->ammo = g->ammo + 25
                 if g->ammo > 99 then g->ammo = 99
@@ -382,16 +382,15 @@ module pickups =
                 true
             | clip | clip_small when (g->ammo >= 99) -> false
             | clip ->
-                // GiveAmmo: if player was out of ammo (dropped to
-                // knife), restore their best firearm when the clip
-                // comes in.
+                // If player was out of ammo (dropped to knife),
+                // restore their best firearm when the clip comes in.
                 if g->ammo == 0 && g->weapon == 0 then g->weapon = g->best_weapon
                 g->ammo = g->ammo + 8
                 if g->ammo > 99 then g->ammo = 99
                 true
             | clip_small ->
                 // Enemy drops — half the ammo of a map-placed clip
-                // (bo_clip2 in the original).
+                // (matches the original's small-clip pickup).
                 if g->ammo == 0 && g->weapon == 0 then g->weapon = g->best_weapon
                 g->ammo = g->ammo + 4
                 if g->ammo > 99 then g->ammo = 99
@@ -437,19 +436,19 @@ module pickups =
             // Per-kind pickup SFX. Matches the original — no HUD
             // banner, just a score bump and a sound. Health pickups
             // have their own health1/health2 cue; dog_food / food and
-            // first_aid chose between them. BONUS1UPSND on extra_life
-            // already fired inside grant_extra_life above.
+            // first_aid chose between them. The bonus-1up cue on
+            // extra_life already fired inside grant_extra_life above.
             match it with
             | gold_key | silver_key -> sfx.trigger(sfx.id.get_key, ac)
             | machine_gun           -> sfx.trigger(sfx.id.get_mg, ac)
             | chain_gun             ->
-                sfx.trigger(sfx.id.get_gat, ac)   // GETGATLINGSND — digi voice line
-                // Face-slot swap: hud.render paints GOTGATLINGPIC in
-                // the BJ face cell while this timer is active. Matches
-                // the original's DrawFace (`if SD_SoundPlaying() ==
-                // GETGATLINGSND then show GOTGATLINGPIC else show
-                // face`). Gated on !test_mode so scripted pickups
-                // don't hold the pic across subsequent test commands.
+                sfx.trigger(sfx.id.get_gat, ac)   // chain-gun pickup digi voice line
+                // Face-slot swap: hud.render paints the got-gatling
+                // pic in the BJ face cell while this timer is active.
+                // Matches the original, which shows that pic while
+                // the pickup voice cue plays. Gated on !test_mode so
+                // scripted pickups don't hold the pic across
+                // subsequent test commands.
                 if !g->test_mode then
                     g->got_gatling_timer = hud.got_gatling_time
             | clip | clip_small     -> sfx.trigger(sfx.id.get_ammo, ac)
@@ -476,7 +475,7 @@ module tilemap =
         dist: float64        // squared distance to player (for sorting)
         item_type: pickups.item_kind
         alive: bool          // false after pickup (skip rendering)
-        blocks: bool         // matches the original's statinfo[].block — solid decoration
+        blocks: bool         // matches the original's per-sprite block flag — solid decoration
 
     let max_sprites = 400
 
@@ -522,11 +521,12 @@ module tilemap =
             let t = (int32) lv->tilemap[(int64) x * 64 + (int64) y]
             t >= 128
 
-    // Wolf3D static-sprite blocking flags. Mirrors the original's
-    // wl_act1.cpp statinfo[].block — barrels, tables, lamps, pillars,
-    // wells, etc. block the player and enemies; pickups, lights, gibs,
-    // and skeletons are walk-through.
-    // Tile = 23 + statinfo index (so SPR_STAT_1 "green barrel" = tile 24).
+    // Static-sprite blocking flags. Matches the original's per-sprite
+    // block-flag table — barrels, tables, lamps, pillars, wells, etc.
+    // block the player and enemies; pickups, lights, gibs, and
+    // skeletons are walk-through.
+    // Tile = 23 + sprite index (so the first static "green barrel" =
+    // tile 24).
     let tile_blocks_player = (tile: int32) ->
         match tile with
         | 24 -> true   // green barrel
@@ -554,11 +554,11 @@ module tilemap =
 
 
 // ============================================================
-// Area connectivity (wolf4sdl-style)
+// Area connectivity (matches the original)
 // ============================================================
 
 module areas =
-    // Per-tile area numbering (wolf4sdl wl_def.h AREATILE / NUMAREAS).
+    // Per-tile area numbering (matches the original's area tiles).
     // Plane-0 floor tiles 107..(107+num_areas-1) name an area; doors
     // inherit their neighbor's area on spawn; everything else (walls,
     // push-walls, ambush tiles) gets the no_area sentinel and is
@@ -580,12 +580,11 @@ module areas =
 
     // Bake plane-0 area numbers into lv->tile_areas, and fill each
     // door's (area1, area2) by reading its two flank-floor neighbors.
-    // Mirrors SetupGameLevel + SpawnDoor in the original: walls and
-    // other non-area tiles get the no_area sentinel; doors inherit
-    // one area from the perpendicular-axis neighbor (so
-    // PlaySoundLocTile-style "is the door audible to the player"
-    // checks have a number to use); areaconnect is touched only when
-    // a door actually opens.
+    // Matches the original's level setup: walls and other non-area
+    // tiles get the no_area sentinel; doors inherit one area from the
+    // perpendicular-axis neighbor (so "is the door audible to the
+    // player" checks have a number to use); area-connect counters
+    // are touched only when a door actually opens.
     let build = (lv: level*, lv_data: maps.level*) ->
         for y in 0..map_size
             for x in 0..map_size
@@ -598,8 +597,7 @@ module areas =
                     // Door tile in plane 0: inherit from a single
                     // adjacent floor. Vertical door (raw even) takes
                     // its area from x-1 (matching the original's
-                    // SpawnDoor `*map = *(map-1)`); horizontal from
-                    // y-1.
+                    // door-spawn rule); horizontal from y-1.
                     let inherit = if raw % 2 == 0 then raw_at(lv_data, x - 1, y)
                                   else raw_at(lv_data, x, y - 1)
                     lv->tile_areas[idx] = if inherit >= 0 then (uint8) inherit
@@ -618,10 +616,9 @@ module areas =
             d->area1 = a1
             d->area2 = a2
 
-    // Player area lookup — mirrors the original's Thrust per-frame
-    // `player->areanumber = *(mapsegs[0]+offset) - AREATILE`. Returns
-    // the area of the tile the player is standing on, or -1 if
-    // outside the area system.
+    // Player area lookup — matches the original's per-frame player-
+    // area refresh. Returns the area of the tile the player is
+    // standing on, or -1 if outside the area system.
     let update_player_area = (lv: level*, g: game*) ->
         let tx = (int32) g->pos_x
         let ty = (int32) g->pos_y
@@ -632,11 +629,11 @@ module areas =
             g->area_number = if a >= num_areas then -1 else a
 
     // Recompute area_by_player from area_connect via fixed-point
-    // flood from the player's current area. Mirrors the original's
-    // ConnectAreas / RecursiveConnect but done iteratively (37×37
-    // worst-case) so we don't take a stack-depth bet on FC's calling
-    // convention. Called whenever a door opens or fully closes — not
-    // on every frame, since unchanged door state means an unchanged
+    // flood from the player's current area. Matches the original's
+    // area-connect logic but done iteratively (37×37 worst-case) so
+    // we don't take a stack-depth bet on FC's calling convention.
+    // Called whenever a door opens or fully closes — not on every
+    // frame, since unchanged door state means an unchanged
     // reachability set (matches the original, which never re-floods
     // on bare player movement).
     let connect = (lv: level*, player_area: int32) ->
@@ -672,12 +669,12 @@ module spawn =
         dead: bool         // spawn as pre-killed corpse (tile 124)
         tier: int32        // difficulty gate: 0=base (always), 1=medium+, 2=hard+
 
-    // AMBUSHTILE: a plane-0 marker (raw value 106) that gives the
-    // enemy standing on it FL_AMBUSH and a borrowed area number.
+    // Ambush marker: a plane-0 tile (raw value 106) that promotes the
+    // enemy standing on it to ambush mode and borrows an area number.
     // Ambush enemies wait in dead silence until they actually see the
-    // player — noise won't wake them. SpawnNewObj in the original also
-    // rewrites the ambush tile to one of the four neighbor area tiles
-    // so connectivity / sound checks have a real area to use.
+    // player — noise won't wake them. The original also rewrites the
+    // ambush tile to one of the four neighbor area tiles so
+    // connectivity / sound checks have a real area to use.
     private let ambush_tile = 106
 
     // Find player start position and facing from level plane 1.
@@ -855,7 +852,7 @@ module spawn =
     // Map a plane-1 tile value to (kind, is_patrol, dir, dead, tier)
     // for enemy spawning. Returns none for tiles that don't encode an
     // enemy.
-    // Tile encoding (ScanInfoPlane in the original's wl_game.cpp):
+    // Tile encoding (matches the original's spawn-tile classification):
     //   108..111 guard stand E/N/W/S, +36 per difficulty step (medium, hard)
     //   112..115 guard patrol E/N/W/S, +36 per difficulty step
     //   124      dead guard (corpse only)
@@ -935,7 +932,7 @@ module spawn =
             some(enemy_spawn_info { kind = enemies.enemy_kind.mutant, patrol = true, dir4 = tile - 238, dead = false, tier = 1 })
         else if tile >= 256 && tile <= 259 then
             some(enemy_spawn_info { kind = enemies.enemy_kind.mutant, patrol = true, dir4 = tile - 256, dead = false, tier = 2 })
-        // Bosses — ScanInfoPlane tile constants in the original. All
+        // Bosses — single-tile spawn markers from the original. All
         // single-tile spawns (no facing variants), tier 0 (always
         // spawn regardless of difficulty).
         else if tile == 214 then
@@ -969,13 +966,13 @@ module spawn =
 
     // Allocate one enemy entry from plane-1 data. dir4 0..3 is
     // east/north/west/south; multiplied by 2 to land on the cardinal
-    // dirs of the 8-dir `dirtype` encoding.
+    // dirs of the 8-dir direction encoding.
     private let one_enemy = (lv: level*, tx: int32, ty: int32, info: enemy_spawn_info, difficulty: int32) ->
         if lv->num_enemies >= enemies.max_enemies then return
         let dir8 = info.dir4 * 2   // 0,2,4,6
         let is_ghost = enemies.kind_is_ghost(info.kind)
         // Pacman ghosts (E1M10) start in chase, never sleep — matches
-        // the original's SpawnGhosts which goes straight to s_*chase1.
+        // the original's ghost spawn, which goes straight to chase.
         let initial_state = if info.dead then enemies.enemy_state.dead
             else if is_ghost then enemies.enemy_state.chase
             else if info.patrol then enemies.enemy_state.path
@@ -984,13 +981,12 @@ module spawn =
         let anim_frame = if info.dead then
             enemies.sprites_for_kind(info.kind).num_die_frames - 1
         else 0
-        // Bosses spawn with dir=nodir and FL_AMBUSH in the original
-        // (SpawnBoss / SpawnSchabbs / SpawnGift / SpawnFat /
-        // SpawnFakeHitler / SpawnHitler). Without AMBUSH they'd be
-        // auto-woken by any noise in the connected area set the moment
-        // their door opens; without nodir their forward-cone check in
-        // enemies.ai.sees_player can leave them blind to the
-        // player standing in the doorway.
+        // Bosses spawn with dir=nodir and the ambush flag set
+        // (matches the original's boss spawn routines). Without the
+        // ambush flag they'd be auto-woken by any noise in the
+        // connected area set the moment their door opens; without
+        // nodir their forward-cone check in enemies.ai.sees_player
+        // can leave them blind to the player standing in the doorway.
         // Ghosts spawn with dir=nodir so advance_move picks a chase
         // direction on the first step rather than blindly stepping
         // into whatever cardinal `dir4` happened to encode.
@@ -1021,8 +1017,8 @@ module spawn =
         }
         lv->num_enemies = lv->num_enemies + 1
 
-    // ScanInfoPlane in the original gates spawns by tier: base always;
-    // +36 at >= medium; +72 at >= hard. Mirror the same check here so
+    // The original's spawn rules gate by tier: base always; +36 at
+    // >= medium; +72 at >= hard. Mirror the same check here so
     // lowering difficulty actually thins the roster. Pre-killed
     // corpses (tier 0, tile 124) spawn unconditionally.
     private let tier_allowed = (tier: int32, diff: int32) ->
@@ -1048,11 +1044,11 @@ module spawn =
                         one_enemy(lv, x, y, info, difficulty)
                         if lv->num_enemies > before then
                             // Promote the just-spawned enemy to
-                            // FL_AMBUSH if its tile is the AMBUSHTILE
+                            // ambush if its tile is the ambush
                             // marker, and patch tile_areas to the
                             // first cardinal neighbor with a real
                             // area (matches the east/north/south/west
-                            // scan in the original's SpawnNewObj).
+                            // scan in the original's spawn routine).
                             let raw = (int32) lv_data->walls[(int64) y * 64 + (int64) x]
                             if raw == ambush_tile then
                                 lv->enemies[before].ambush = true
@@ -1078,21 +1074,21 @@ module spawn =
                 let obj = (int32) lv_data->objects[(int64) y * 64 + (int64) x]
                 lv->pushwall_tiles[(int64) x * 64 + (int64) y] = obj == 98
 
-    // Mark EXITTILE markers from plane-1 data. Plane-1 tile 99 is the
-    // floor-level "step on me to end the level" marker that sits past
-    // the gold-key door on boss maps; stepping onto one triggers the
-    // BJ-victory cutscene (mirrors the original's VictoryTile ->
-    // SpawnBJVictory).
+    // Mark exit-tile markers from plane-1 data. Plane-1 tile 99 is
+    // the floor-level "step on me to end the level" marker that sits
+    // past the gold-key door on boss maps; stepping onto one triggers
+    // the BJ-victory cutscene (matches the original's victory-tile
+    // → BJ-victory spawn).
     let mark_exit_tiles = (lv: level*, lv_data: maps.level*) ->
         for y in 0..map_size
             for x in 0..map_size
                 let obj = (int32) lv_data->objects[(int64) y * 64 + (int64) x]
                 lv->exit_tiles[(int64) x * 64 + (int64) y] = obj == 99
 
-    // Plane-1 tiles 90..97 are ICONARROWS markers. When a patrolling
-    // enemy crosses a tile carrying one, the original's SelectPathDir
-    // snaps its dir to (tile - 90), giving authored back-and-forth
-    // routes. Anywhere else stores dir.nodir (8) so
+    // Plane-1 tiles 90..97 are path-arrow markers. When a patrolling
+    // enemy crosses a tile carrying one, the original's patrol-dir
+    // pick snaps its dir to (tile - 90), giving authored back-and-
+    // forth routes. Anywhere else stores dir.nodir (8) so
     // enemies.ai.select_path_dir leaves the enemy's heading alone.
     let mark_path_arrows = (lv: level*, lv_data: maps.level*) ->
         for y in 0..map_size

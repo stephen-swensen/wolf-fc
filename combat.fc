@@ -4,8 +4,8 @@
 // path-follow) and level spawn code as well, not just enemies.
 
 // ============================================================
-// Direction encoding — matches wolf4sdl dirtype (east=0, NE=1, N=2, ...
-// SE=7). Dir 8 = "nodir" (stationary / blocked-in).
+// Direction encoding — matches the original's 8-direction enum
+// (east=0, NE=1, N=2, ... SE=7). Dir 8 = "nodir" (stationary / blocked-in).
 // ============================================================
 
 module dir =
@@ -98,7 +98,7 @@ module enemies =
         | bite       // dog melee
         | rocket     // Gift / Fat missile
         | flame      // Fake Hitler flamethrower
-        | needle     // Schabbs syringe — only source that swaps BJ's dying face for MUTANTBJPIC
+        | needle     // Schabbs syringe — only source that swaps BJ's dying face for the mutant-BJ pic
         | ghost      // pacman-ghost body contact
 
     // One animate actor. State, position, direction, HP all mutate in
@@ -120,9 +120,9 @@ module enemies =
         dist_flat: float64        // tile-grid distance, used for some AI decisions
         ambush: bool              // tile 106 (AMBUSH) — don't wake on sound, only LOS
         notified: bool            // has entered active pursuit at least once (suppresses re-alert sound)
-        reaction_timer: float64   // seconds left between first detection and actual wake; 0 when not yet detected (mirrors wolf4sdl SightPlayer's temp2)
-        last_visible: bool        // set by build_billboards when the enemy was drawn in the previous frame (mirrors wolf4sdl FL_VISABLE); read by fire_at_player to pick the steeper hitchance falloff
-        touch_cooldown: float64   // ghost-only: refractory window after a bite. The original's T_Ghosts steps the ghost physically back out of the player's MINACTORDIST bbox after a hit; our advance_move is grid-based, so we emulate the gap with a short timer.
+        reaction_timer: float64   // seconds left between first detection and actual wake; 0 when not yet detected (mirrors the original's sight-delay)
+        last_visible: bool        // set by build_billboards when the enemy was drawn in the previous frame (mirrors the original's visible flag); read by fire_at_player to pick the steeper hitchance falloff
+        touch_cooldown: float64   // ghost-only: refractory window after a bite. The original steps the ghost physically back out of the player's contact bbox after a hit; our advance_move is grid-based, so we emulate the gap with a short timer.
 
     // Tunables — see ai.update_enemies for how each is used.
     let max_enemies = 150
@@ -158,9 +158,8 @@ module enemies =
         (float64) g->enemy_speed_pct / 100.0
 
     // Per-kind sprite-page offsets relative to VSWAP sprite_start. Derived
-    // from the original's sprite enum (wl_def.h): SPR_GRD_S_1..
-    // SPR_GRD_SHOOT3 block at 50, DOG block at 99 (no stand), SS at 138,
-    // MUT at 187, OFC at 238.
+    // from the original's enemy sprite blocks: guard at 50, dog at 99 (no
+    // stand), SS at 138, mutant at 187, officer at 238.
     //   stand_base : 8 angles at +0..+7 (standing/idle frame)
     //   walk_base  : 32 frames = 4 walk phases × 8 angles
     //   pain / die / dead / shoot : single-view pages (no angle variants)
@@ -173,9 +172,8 @@ module enemies =
         num_die_frames: int32
         dead_frame: int32
         // 9 slots: SS and Fake Hitler have 9-frame shoot cycles in the
-        // original (s_ssshoot1..9, s_fakeshoot1..9). Shorter cycles
-        // leave the trailing entries unused — `num_shoot_frames` bounds
-        // the iteration.
+        // original. Shorter cycles leave the trailing entries unused —
+        // `num_shoot_frames` bounds the iteration.
         shoot_frames: int32[9]
         // Per-frame hold time in seconds. Mirrors the original's state
         // tables, where each frame's `tictime` varies (typically 6, 8,
@@ -196,9 +194,9 @@ module enemies =
         | _ -> true
 
     // Per-kind starting HP, indexed by difficulty. Mirrors the original's
-    // `starthitpoints[4][NUMENEMIES]` (wl_act2.cpp). Mutants, fake
-    // Hitler, and every boss scale up from baby → death incarnate;
-    // grunts and dogs are constant across difficulties.
+    // per-difficulty starting-HP table. Mutants, fake Hitler, and every
+    // boss scale up from baby → death incarnate; grunts and dogs are
+    // constant across difficulties.
     let hp_for_kind = (k: enemy_kind, d: int32) ->
         let diff_pick = (baby: int32, easy: int32, med: int32, hard: int32) ->
             if d == 0 then baby else if d == 1 then easy
@@ -216,13 +214,13 @@ module enemies =
         | fat          -> diff_pick(850, 950, 1050, 1200)
         | hitler_fake  -> diff_pick(200, 300, 400, 500)
         | mecha_hitler -> diff_pick(800, 950, 1050, 1200)
-        // Real Hitler tiers match A_HitlerMorph in the original —
+        // Real Hitler tiers match the original's morph HP table —
         // he's softer than the mech because the fight has already
         // burned through most of the player's ammo.
         | hitler       -> diff_pick(500, 700, 800, 900)
         | blinky | pinky | clyde | inky -> 1000  // unkillable-ish
 
-    // Score granted to the player on kill. Wolf3D values.
+    // Score granted to the player on kill. Original-game values.
     private let score_for_kind = (k: enemy_kind) ->
         match k with
         | guard        -> 100
@@ -240,8 +238,8 @@ module enemies =
         | hitler       -> 5000
         | blinky | pinky | clyde | inky -> 0
 
-    // Movement speed while chasing (tiles/sec). Mirrors FirstSighting
-    // in the original: each kind multiplies its patrol speed by a
+    // Movement speed while chasing (tiles/sec). Matches the original's
+    // chase-speed scaling: each kind multiplies its patrol speed by a
     // per-kind factor (3 / 4 / 5 / 2) when it transitions into chase.
     private let chase_speed_for_kind = (k: enemy_kind) ->
         match k with
@@ -259,11 +257,11 @@ module enemies =
         | _ -> false
 
     // True iff this kind ends the episode on death via the death-cam
-    // cutscene (A_StartDeathCam in the original). Hans and Gretel
-    // instead drop a gold key so the player walks onto the EXITTILE —
-    // they're bosses but not death-cam bosses. Fake Hitler and Mecha
-    // Hitler die without ending the episode (Mecha morphs into the
-    // real Hitler; fake is just a mini-boss).
+    // cutscene (matches the original's boss death-cam triggers). Hans
+    // and Gretel instead drop a gold key so the player walks onto the
+    // exit tile — they're bosses but not death-cam bosses. Fake Hitler
+    // and Mecha Hitler die without ending the episode (Mecha morphs
+    // into the real Hitler; fake is just a mini-boss).
     private let kind_has_death_cam = (k: enemy_kind) ->
         match k with
         | schabbs | giftmacher | fat | hitler -> true
@@ -278,9 +276,8 @@ module enemies =
         | _ -> false
 
     // True iff the kind opens doors on walk. In the original, dogs,
-    // fake-Hitlers, and ghosts/spectres use CHECKDIAG on all sides
-    // (doors block them); only humans and mutants/real-bosses use
-    // CHECKSIDE and trigger OpenDoor.
+    // fake-Hitlers, and ghosts/spectres treat doors as solid; only
+    // humans, mutants, and real bosses open them on contact.
     private let kind_opens_doors = (k: enemy_kind) ->
         match k with
         | dog | hitler_fake | blinky | pinky | clyde | inky -> false
@@ -288,24 +285,24 @@ module enemies =
 
     // Bitmask: bit N set = fire (or bite) on entering shoot-frame N.
     // Each kind's frame table now matches the original's full state
-    // sequence (s_*shoot1..N), so masks line up bit-for-bit with which
-    // frames carry T_Shoot / T_Bite / T_GiftThrow / T_FakeFire / etc.
-    // in wl_act2.cpp. Defaults are explicit per kind — no fallthrough,
-    // since the right value is wholly a function of the OG state table.
+    // sequence, so masks line up bit-for-bit with which frames carry
+    // the attack action in the original. Defaults are explicit per
+    // kind — no fallthrough, since the right value is wholly a function
+    // of the original's state table.
     private let shoot_fire_mask_for_kind = (k: enemy_kind) ->
         match k with
-        | guard         -> 2     // 0b0000_0010 — fire on s_grdshoot2 (frame 1)
-        | officer       -> 2     // 0b0000_0010 — fire on s_ofcshoot2
-        | dog           -> 2     // 0b0000_0010 — bite on s_dogjump2
-        | mutant        -> 5     // 0b0000_0101 — fire on s_mutshoot1 + s_mutshoot3 (no windup)
-        | ss            -> 170   // 0b1010_1010 — fire on s_ssshoot2/4/6/8 (frames 1/3/5/7)
-        | hans | gretel -> 126   // 0b0111_1110 — chain-gun: fire on frames 1..6 (s_*shoot2..7)
-        | schabbs       -> 2     // 0b0000_0010 — single needle on s_schabbshoot2
-        | giftmacher    -> 2     // 0b0000_0010 — single rocket on s_giftshoot2
+        | guard         -> 2     // 0b0000_0010 — fire on frame 1 (muzzle flash)
+        | officer       -> 2     // 0b0000_0010 — fire on frame 1
+        | dog           -> 2     // 0b0000_0010 — bite on frame 1
+        | mutant        -> 5     // 0b0000_0101 — fire on frames 0 + 2 (no windup)
+        | ss            -> 170   // 0b1010_1010 — fire on frames 1/3/5/7 (chain-gun)
+        | hans | gretel -> 126   // 0b0111_1110 — chain-gun: fire on frames 1..6
+        | schabbs       -> 2     // 0b0000_0010 — single needle on frame 1
+        | giftmacher    -> 2     // 0b0000_0010 — single rocket on frame 1
         | fat           -> 62    // 0b0011_1110 — frame 1 (rocket) + frames 2..5 (bullets)
-        | hitler_fake   -> 255   // 0b1111_1111 — flame on every s_fakeshoot1..8 (frame 8 idle)
-        | mecha_hitler  -> 62    // 0b0011_1110 — fire on frames 1..5 (s_mechashoot2..6)
-        | hitler        -> 62    // 0b0011_1110 — same as mecha (s_hitlershoot2..6)
+        | hitler_fake   -> 255   // 0b1111_1111 — flame on every frame 0..7 (frame 8 idle)
+        | mecha_hitler  -> 62    // 0b0011_1110 — fire on frames 1..5
+        | hitler        -> 62    // 0b0011_1110 — same as mecha
         | blinky | pinky | clyde | inky -> 0  // ghosts never enter shoot state
 
     // Pickup item to drop on death (pickups.item_kind.decoration =
@@ -321,7 +318,7 @@ module enemies =
         | dog     -> pickups.item_kind.decoration
         | mutant  -> pickups.item_kind.clip_small
         // Hans and Gretel drop gold keys so the player can unlock the
-        // gold-key door and step onto the EXITTILE behind it. The four
+        // gold-key door and step onto the exit tile behind it. The four
         // death-cam bosses (Schabbs, Giftmacher, Fat, real Hitler) end
         // the episode directly via the death-cam cutscene — no key
         // needed. Fake Hitler and Mecha Hitler die without ending the
@@ -345,7 +342,7 @@ module enemies =
     // Per-kind sprite tables — one per enemy_kind variant, keyed by
     // the kind → table lookup in `sprites_for_kind` below.
     // SHOOT1 windup → SHOOT2 muzzle flash → SHOOT3 recoil. Frame
-    // durations 20/20/20 tics from s_grdshoot1..3 in the original.
+    // durations 20/20/20 tics, matching the original's guard shoot cycle.
     private let sprites_guard = sprite_table {
         stand_base = 50, walk_base = 58,
         pain1 = 90, pain2 = 94,
@@ -355,8 +352,8 @@ module enemies =
         shoot_times  = float64[9] { 20.0/70.0, 20.0/70.0, 20.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 3
     }
-    // Dog jump-bite: JUMP1 → JUMP2 (T_Bite) → JUMP3 → JUMP1 → W1_1.
-    // 5 frames at 10 tics each, mirroring s_dogjump1..5.
+    // Dog jump-bite: JUMP1 → JUMP2 (bite) → JUMP3 → JUMP1 → idle.
+    // 5 frames at 10 tics each, matching the original's dog jump cycle.
     private let sprites_dog = sprite_table {
         stand_base = 99, walk_base = 99,
         pain1 = 99, pain2 = 99,  // dogs don't show pain
@@ -367,8 +364,8 @@ module enemies =
         num_shoot_frames = 5
     }
     // SS bounces between SHOOT2/SHOOT3 four times after the initial
-    // SHOOT1 windup; mirrors s_ssshoot1..9 (20/20/10×7 tics, fires on
-    // s_ssshoot2/4/6/8 = frames 1/3/5/7).
+    // SHOOT1 windup; matches the original (20/20/10×7 tics, fires on
+    // frames 1/3/5/7).
     private let sprites_ss = sprite_table {
         stand_base = 138, walk_base = 146,
         pain1 = 178, pain2 = 182,
@@ -379,8 +376,8 @@ module enemies =
         num_shoot_frames = 9
     }
     // Mutant fires twice per cycle with no real windup — SHOOT1 (6t)
-    // already carries T_Shoot, then SHOOT2 (20t) settles, SHOOT3 (10t)
-    // fires the second round, SHOOT4 (20t) recovers.
+    // already fires, then SHOOT2 (20t) settles, SHOOT3 (10t) fires the
+    // second round, SHOOT4 (20t) recovers.
     private let sprites_mut = sprite_table {
         stand_base = 187, walk_base = 195,
         pain1 = 227, pain2 = 231,
@@ -391,7 +388,7 @@ module enemies =
         num_shoot_frames = 4
     }
     // Officer: short SHOOT1 (6t) windup, long SHOOT2 (20t) fire frame,
-    // SHOOT3 (10t) recovery — s_ofcshoot1..3.
+    // SHOOT3 (10t) recovery — matches the original's officer shoot cycle.
     private let sprites_ofc = sprite_table {
         stand_base = 238, walk_base = 246,
         pain1 = 278, pain2 = 282,
@@ -402,8 +399,8 @@ module enemies =
         num_shoot_frames = 3
     }
     // Hans Grosse — chain-gun boss. SHOOT1 windup (30t) then six
-    // alternating SHOOT2/SHOOT3 fires (10t each) then SHOOT1 recovery,
-    // matching s_bossshoot1..8.
+    // alternating SHOOT2/SHOOT3 fires (10t each) then SHOOT1 recovery
+    // (matches the original's 8-frame boss shoot cycle).
     private let sprites_hans = sprite_table {
         stand_base = 296, walk_base = 296,
         pain1 = 300, pain2 = 300,
@@ -425,7 +422,8 @@ module enemies =
     }
     // Fake Hitler: only one SHOOT pose (325); FIRE1/FIRE2 are projectile
     // sprites, not character animation frames. Eight flame projectiles
-    // each at 8 tics, then one trailing 8t hold (s_fakeshoot1..9).
+    // each at 8 tics, then one trailing 8t hold (matches the original's
+    // 9-frame fake-Hitler shoot cycle).
     private let sprites_hitler_fake = sprite_table {
         stand_base = 321, walk_base = 321,
         pain1 = 325, pain2 = 325,
@@ -436,8 +434,9 @@ module enemies =
         num_shoot_frames = 9
     }
     // Mecha Hitler — the armored mech suit. SHOOT1 (30t windup) then
-    // five alternating SHOOT2/SHOOT3 fires at 10t each, mirroring
-    // s_mechashoot1..6. No dedicated pain pose so pain reuses SHOOT1.
+    // five alternating SHOOT2/SHOOT3 fires at 10t each (matches the
+    // original's mecha shoot cycle). No dedicated pain pose so pain
+    // reuses SHOOT1.
     private let sprites_mecha_hitler = sprite_table {
         stand_base = 334, walk_base = 334,
         pain1 = 338, pain2 = 338,
@@ -468,9 +467,8 @@ module enemies =
         shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 2
     }
-    // Gretel: same chain-gun cadence as Hans (s_gretelshoot1..8). Sprite
-    // block is placed after the rocket/smoke/boom region (370..384) in
-    // the non-SPEAR build.
+    // Gretel: same chain-gun cadence as Hans. Sprite block is placed
+    // after the rocket/smoke/boom region (370..384) in the WL6 build.
     private let sprites_gretel = sprite_table {
         stand_base = 385, walk_base = 385,
         pain1 = 389, pain2 = 389,
@@ -481,11 +479,10 @@ module enemies =
         num_shoot_frames = 8
     }
     // Fat Face (E6 boss): 4 walk, 4 shoot, 3 die, 1 dead at 396..407.
-    // Mixed attack: SHOOT1 (30t windup) → SHOOT2 (10t T_GiftThrow =
-    // rocket) → SHOOT3 (10t T_Shoot = bullet) → SHOOT4 (10t T_Shoot)
-    // → SHOOT3 (10t T_Shoot) → SHOOT4 (10t T_Shoot). The shoot
-    // dispatch routes frame 1 to projectile.spawn and frames 2-5 to
-    // fire_at_player.
+    // Mixed attack: SHOOT1 (30t windup) → SHOOT2 (10t rocket throw)
+    // → SHOOT3 (10t bullet) → SHOOT4 (10t bullet) → SHOOT3 (10t bullet)
+    // → SHOOT4 (10t bullet). The shoot dispatch routes frame 1 to
+    // projectile.spawn and frames 2-5 to fire_at_player.
     private let sprites_fat = sprite_table {
         stand_base = 396, walk_base = 396,
         pain1 = 400, pain2 = 400,
@@ -659,13 +656,12 @@ module enemies =
             ok
 
         // Is the player visible to the enemy right now? Mirrors the
-        // original's CheckSight: inside ~1.5 tiles on BOTH axes sight
-        // is automatic regardless of facing (MINSIGHT fallback);
+        // original's sight check: inside ~1.5 tiles on BOTH axes sight
+        // is automatic regardless of facing (close-range fallback);
         // otherwise apply the axis-aligned facing check (cardinals
         // only — diagonals and nodir get no facing filter, matching
-        // the original's switch fall-through), then a tilemap LOS ray.
-        // No distance cap: a clear LOS through open space wakes at
-        // any range.
+        // the original), then a tilemap LOS ray. No distance cap: a
+        // clear LOS through open space wakes at any range.
         let sees_player = (lv: const level*, g: game*, e: enemy*) ->
             let dx = g->pos_x - e->x
             let dy = g->pos_y - e->y
@@ -688,19 +684,18 @@ module enemies =
         // enemies don't walk into the camera); other live enemies
         // block. Doors of any state are routable — advance_move
         // handles the wait-for-open pause and triggers the door to
-        // open, matching the original's T_Chase. `self_idx` identifies
-        // the caller so it doesn't block itself.
+        // open, matching the original's chase logic. `self_idx`
+        // identifies the caller so it doesn't block itself.
         //
         // A path / chase enemy committed to a direction also reserves
-        // its NEXT tile here, mirroring the original's actorat[][]
-        // grid: the original updates tilex/tiley to the destination
-        // tile inside TryWalk and DoActor places the actor back on
-        // the grid at that new position before the next actor's think
-        // runs. Without this, two enemies can both pass each other's
-        // passability check (each sees the other still parked at its
-        // source tile), both commit to the same target tile, and
-        // advance_move slides them through each other into the same
-        // square.
+        // its NEXT tile here, mirroring the original's actor-occupancy
+        // grid: the original updates the actor's tile to the
+        // destination inside its walk routine before the next actor's
+        // think runs. Without this, two enemies can both pass each
+        // other's passability check (each sees the other still parked
+        // at its source tile), both commit to the same target tile,
+        // and advance_move slides them through each other into the
+        // same square.
         private let tile_passable = (lv: level*, g: game*, self_idx: int32, tx: int32, ty: int32) ->
             if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
             else
@@ -708,8 +703,8 @@ module enemies =
                 let e = &lv->enemies[self_idx]
                 if t >= 1 && t <= 63 then false
                 // Door tiles block kinds that can't open doors unless
-                // fully open (matches the original's CHECKDIAG:
-                // actorat is cleared only when open).
+                // fully open (matches the original: actor-occupancy
+                // is cleared only when the door is fully open).
                 else if t >= 128 && !kind_opens_doors(e->kind)
                         && lv->doors[t - 128].state != doors.door_state.open then false
                 else if (int32) g->pos_x == tx && (int32) g->pos_y == ty then false
@@ -739,7 +734,7 @@ module enemies =
         // Try to take a step in `d` from this enemy's current tile.
         // For diagonal moves we also insist both orthogonal neighbors
         // are open so enemies don't clip the corner of a wall (matches
-        // the original's TryWalk corner check).
+        // the original's corner-cutting check).
         private let try_enemy_walk = (lv: level*, g: game*, self_idx: int32, d: int32) ->
             if d == dir.nodir then false
             else
@@ -753,12 +748,13 @@ module enemies =
                         && tile_passable(lv, g, self_idx, e->tile_x, e->tile_y + dir.dy[d])
                 else true
 
-        // SelectChaseDir in the original, minus the dodge variant and
-        // the turn markers. Picks up to two preferred directions
-        // toward the player (the larger axis tried first), tries the
-        // current heading, then scans all four cardinals in a random
-        // starting order, and finally allows a turnaround. Leaves
-        // e->dir at dir.nodir when fully blocked in.
+        // Chase direction selector — matches the original's chase-dir
+        // pick, minus the dodge variant and the turn markers. Picks
+        // up to two preferred directions toward the player (the larger
+        // axis tried first), tries the current heading, then scans all
+        // four cardinals in a random starting order, and finally
+        // allows a turnaround. Leaves e->dir at dir.nodir when fully
+        // blocked in.
         private let select_chase_dir = (lv: level*, g: game*, self_idx: int32) ->
             let e = &lv->enemies[self_idx]
             let dxi = (int32) g->pos_x - e->tile_x
@@ -799,10 +795,10 @@ module enemies =
             e->dir = dir.nodir
 
         // Patrol: keep walking in the current heading. If the current
-        // tile carries an ICON_ARROWS marker (plane-1 90..97, pre-
+        // tile carries a path-arrow marker (plane-1 90..97, pre-
         // baked into lv->path_arrows), snap to that direction first.
         // If the resulting move is blocked, stop — no wall-bounce
-        // fallback. Matches the original's SelectPathDir.
+        // fallback. Matches the original's patrol direction logic.
         let select_path_dir = (lv: level*, g: game*, self_idx: int32) ->
             let e = &lv->enemies[self_idx]
             let arrow = (int32) lv->path_arrows[(int64) e->tile_x * 64 + (int64) e->tile_y]
@@ -817,7 +813,7 @@ module enemies =
         // noticeably at every grid crossing. If the next tile is a
         // closed or animating door, kicks it to opening (with sound)
         // and pauses at the current tile center until it's fully open
-        // — matches the original's T_Chase OpenDoor.
+        // — matches the original's chase-step door-open logic.
         let advance_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, speed: float64, dt: float64, is_chase: bool) ->
             // Enemy Speed slider — scales every patrol + chase speed.
             // Applied here (the single chokepoint for all enemy
@@ -901,15 +897,16 @@ module enemies =
             // "nothing even touched you" rather than a hit absorbed.
             if g->god_mode then return
             // "Can I Play Daddy" difficulty quarters incoming damage
-            // (TakeDamage's `points >>= 2` branch in the original).
+            // (matches the original's >>2 shift on baby difficulty).
             // After the shift a 1-3 point hit rounds to 0, same as
             // the original where health -= 0 is a silent no-op.
             let dmg = if g->difficulty == difficulty.baby then dmg_in >> 2 else dmg_in
             if dmg <= 0 then return
             // Last-attacker latch for the dying-face renderer: only
-            // the Schabbs needle swaps BJ's dead face for MUTANTBJPIC.
-            // Every other damage source clears the latch so a needle
-            // followed by a normal hit correctly reverts to FACE8APIC.
+            // the Schabbs needle swaps BJ's dead face for the mutant-BJ
+            // pic. Every other damage source clears the latch so a
+            // needle followed by a normal hit correctly reverts to the
+            // standard dead-face pic.
             g->last_hit_needle = match src with
             | needle -> true
             | _      -> false
@@ -917,9 +914,8 @@ module enemies =
             g->damage_flash_timer = player.damage_flash_time
             // Force the next face roll to fire on the next
             // hud.update_face tick so the new health row is visible
-            // immediately (the original resets facecount in
-            // TakeDamage's BJOUCHPIC branch and calls DrawFace right
-            // after).
+            // immediately (the original forces a face refresh in its
+            // ouch-face branch right after the damage hit).
             g->face_count = 256.0
             if g->health <= 0 then
                 g->health = 0
@@ -954,20 +950,20 @@ module enemies =
                 item_type = it, alive = true, blocks = false
             }
 
-        // Pool of guard death screams. A_DeathScream in the original
-        // picks one of eight at random for guard-class enemies so
-        // repeated kills don't sound identical.
+        // Pool of guard death screams. The original picks one of eight
+        // at random for guard-class enemies so repeated kills don't
+        // sound identical.
         private let guard_death_sounds = int32[8] {
             29, 30, 31, 33, 34, 36, 37, 38
-            // sfx.id.death_1..9 without #6 — DEATHSCREAM6SND is the
-            // map-9 "fart" easter egg in the original (1/256 roll,
-            // not part of the regular pool), not currently emulated
-            // here.
+            // sfx.id.death_1..9 without #6 — the original reserves #6
+            // for a map-9 easter-egg roll (1/256), not part of the
+            // regular pool; not currently emulated here.
         }
 
-        // Per-kind death vocal (A_DeathScream in the original).
-        // Mutants are silent; ghosts (pacman) are silent. Returns -1
-        // for those cases so callers can skip the sfx.trigger_at call.
+        // Per-kind death vocal (matches the original's per-kind death
+        // scream lookup). Mutants are silent; ghosts (pacman) are
+        // silent. Returns -1 for those cases so callers can skip the
+        // sfx.trigger_at call.
         let death_scream_for_kind = (k: enemy_kind, g: game*) ->
             match k with
             | dog          -> sfx.id.dog_death
@@ -991,8 +987,8 @@ module enemies =
         // test commands can invoke this without accidentally buffing
         // the player.
         // Mecha Hitler dies by cracking open — the real Hitler steps
-        // out at the same position and fights on. Mirrors the
-        // original's A_HitlerMorph action hook on s_mechadie3: reuse
+        // out at the same position and fights on. Matches the
+        // original's morph hook on the mecha's death frame: reuse
         // the actor slot, swap kind to `hitler`, reset HP to his
         // difficulty tier, and start him in chase state so there's no
         // LOS-wake delay before he opens fire. Kill counter and score
@@ -1026,8 +1022,8 @@ module enemies =
 
         // Apply damage to an enemy. Always alerts them (matches the
         // original: a shot through the wall still puts the actor into
-        // attack mode via FirstSighting). If HP would drop to 0,
-        // transition to die and award score. Score goes here so
+        // attack mode). If HP would drop to 0, transition to die and
+        // award score. Score goes here so
         // unscripted hitscans can't bypass it.
         //
         // `idx` is the enemy's position in lv->enemies — needed so the
@@ -1037,10 +1033,11 @@ module enemies =
             match e->state with
             | die | dead -> return
             | _ -> void()
-            // Damaging an enemy also raises noise (the original's
-            // DamageActor sets madenoise up front). This is what makes
-            // a knife hit wake nearby guards even though the knife
-            // itself isn't loud — the victim's pain shout is.
+            // Damaging an enemy also raises noise (the original sets
+            // its made-noise flag up front in the damage routine).
+            // This is what makes a knife hit wake nearby guards even
+            // though the knife itself isn't loud — the victim's pain
+            // shout is.
             g->made_noise = true
             e->hp = e->hp - dmg
             e->notified = true
@@ -1048,22 +1045,22 @@ module enemies =
                 add_score(g, score_for_kind(e->kind), ac)
                 g->kills = g->kills + 1
                 // Schabbs / Giftmacher / Fat / real Hitler end the
-                // episode via the death-cam cutscene (A_StartDeathCam
-                // in the original). All other kinds — including Hans
-                // and Gretel — just drop their gold key (or pickup)
-                // and leave the player to walk out.
+                // episode via the death-cam cutscene (matches the
+                // original's death-cam triggers). All other kinds —
+                // including Hans and Gretel — just drop their gold key
+                // (or pickup) and leave the player to walk out.
                 if kind_has_death_cam(e->kind) then
                     death_cam.enter(lv, g, ac, e, idx, sprite_start)
                 else
                     kill_enemy(lv, g, ac, e, sprite_start)
                 // Hans / Gretel drop the key from kill_enemy via
-                // drop_for_kind. player.update checks the EXITTILE on
+                // drop_for_kind. player.update checks the exit tile on
                 // every move and routes the BJ-runs cutscene from
                 // there.
             else
                 // Put non-active actors into combat mode before
-                // anything else (mirrors the original's DamageActor:
-                // FirstSighting is called up front regardless of
+                // anything else (matches the original: the damage
+                // routine wakes the actor up front regardless of
                 // kind). For regular enemies this chase state is about
                 // to be overridden by the pain transition below, but
                 // for bosses / dogs it's the only thing that wakes
@@ -1072,12 +1069,11 @@ module enemies =
                 | stand | path -> wake_enemy(g, e, ac)
                 | _ -> void()
                 // Pain flinch applies to guards / officers / SS /
-                // mutants only. In the original, DamageActor's switch
-                // falls through to a no-op default for bosses and dogs
-                // — they keep their current state (chase / shoot) and
-                // continue fighting through sustained damage. That's
-                // why unloading the chain gun into Hans doesn't
-                // stun-lock him there.
+                // mutants only. In the original, the damage routine
+                // is a no-op for bosses and dogs — they keep their
+                // current state (chase / shoot) and continue fighting
+                // through sustained damage. That's why unloading the
+                // chain gun into Hans doesn't stun-lock him.
                 match e->kind with
                 | guard | officer | ss | mutant ->
                     e->state = enemy_state.pain
@@ -1087,10 +1083,10 @@ module enemies =
                 | _ -> void()
 
         // Per-kind reaction delay (seconds) between first detection
-        // and actual wake. Mirrors SightPlayer's temp2 switch in the
-        // original (wl_state.cpp:1500): values are in tics (70 Hz) in
-        // the original; we convert to seconds. rnd_byte is drawn from
-        // rng_enemy so scripted tests stay deterministic.
+        // and actual wake. Matches the original's per-kind sight-delay
+        // table: values are in tics (70 Hz) in the original; we
+        // convert to seconds. rnd_byte is drawn from rng_enemy so
+        // scripted tests stay deterministic.
         private let reaction_delay_for_kind = (k: enemy_kind, g: game*) ->
             let tics = match k with
             | guard   -> 1 + rnd_byte(g) / 4    // 1..64 tics (≈0.014..0.914s)
@@ -1105,7 +1101,7 @@ module enemies =
 
         // True iff a stand / path enemy has detected the player this
         // frame. Mirrors the first-detection half of the original's
-        // SightPlayer: an enemy ignores the player unless its area is
+        // sight check: an enemy ignores the player unless its area is
         // reachable from the player by open doors (area_by_player).
         // Inside that connected zone, AMBUSH-flagged enemies still
         // need a literal LOS, but regular guards detect on either LOS
@@ -1138,10 +1134,10 @@ module enemies =
             e->dir = dir.nodir
             if !e->notified then
                 e->notified = true
-                // FirstSighting in the original: one vocal per kind
-                // played when the enemy enters combat. Mutants are
-                // silent (no vocalization). Ghosts are silent. Each
-                // boss has a signature line.
+                // First-sighting vocal (matches the original): one
+                // vocal per kind played when the enemy enters combat.
+                // Mutants are silent (no vocalization). Ghosts are
+                // silent. Each boss has a signature line.
                 let snd = match e->kind with
                 | guard        -> sfx.id.halt
                 | officer      -> sfx.id.spion       // "Spion!"
@@ -1159,23 +1155,21 @@ module enemies =
                 | blinky | pinky | clyde | inky -> -1    // silent
                 if snd >= 0 then sfx.trigger_at(snd, ac, g, e->x, e->y)
 
-        // Enemy firing an attack at the player, called from T_Shoot
-        // frames. Ports the original's T_Shoot distance-based hit
-        // chance and damage roll. Hitchance picks one of four
-        // formulas based on whether the player is running this frame
-        // and whether the enemy was drawn last frame (FL_VISABLE):
+        // Enemy firing an attack at the player, called from the shoot
+        // frames. Ports the original's distance-based hit chance and
+        // damage roll. Hitchance picks one of four formulas based on
+        // whether the player is running this frame and whether the
+        // enemy was drawn last frame (visible):
         //   still + hidden   : 256 - dist*8
         //   still + visible  : 256 - dist*16  (player can see to dodge)
         //   running + hidden : 160 - dist*8
         //   running + visible: 160 - dist*16
-        // SS and Hans (`bossobj` in the original — only Hans uses that
-        // obclass) apply a 2/3 distance discount before this lookup —
-        // they're more accurate shooters. Other bosses fire with their
-        // own obclass and do not get it.
+        // SS and Hans apply a 2/3 distance discount before this
+        // lookup — they're more accurate shooters. Other bosses fire
+        // with their own actor class and do not get it.
         private let fire_at_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
-            // Per-kind firing sound — mirrors the original's T_Shoot
-            // switch. Gretel is not listed in the original switch and
-            // falls through to NAZIFIRESND.
+            // Per-kind firing sound — matches the original's shoot
+            // switch. Gretel falls through to the default nazi-fire cue.
             let snd = match e->kind with
             | ss                      -> sfx.id.ss_fire
             | hans | mecha_hitler | hitler -> sfx.id.boss_fire
@@ -1190,10 +1184,11 @@ module enemies =
             let adx = if dxi < 0 then -dxi else dxi
             let ady = if dyi < 0 then -dyi else dyi
             let dist_tiles = if adx > ady then adx else ady
-            // Only ssobj and bossobj get the 2/3 discount in the
-            // original T_Shoot — bossobj is Hans Grosse specifically;
-            // Schabbs / Gretel / Giftmacher / Fat / Hitler(fake/real)
-            // use their own obclass and miss the shortcut.
+            // Only SS and Hans get the 2/3 discount in the original
+            // (Hans is the only enemy on the boss actor class that
+            // qualifies); Schabbs / Gretel / Giftmacher / Fat /
+            // Hitler(fake/real) use their own actor class and miss
+            // the shortcut.
             let dist_adj = match e->kind with
             | ss | hans -> dist_tiles * 2 / 3
             | _         -> dist_tiles
@@ -1235,13 +1230,13 @@ module enemies =
                     e->anim_timer = walk_frame_time
                     e->dir = dir.nodir
             | stand ->
-                // Two-phase wake (the original's SightPlayer): on
-                // first detection we seed a per-kind reaction timer
-                // and keep standing; the transition to chase only
-                // fires when the timer counts down to 0. Commits on
-                // detection — losing LOS mid-countdown doesn't abort
-                // the wake, matching the original's "once spotted,
-                // reacting" behavior.
+                // Two-phase wake (matches the original): on first
+                // detection we seed a per-kind reaction timer and keep
+                // standing; the transition to chase only fires when
+                // the timer counts down to 0. Commits on detection —
+                // losing LOS mid-countdown doesn't abort the wake,
+                // matching the original's "once spotted, reacting"
+                // behavior.
                 if e->reaction_timer > 0.0 then
                     e->reaction_timer = e->reaction_timer - dt
                     if e->reaction_timer <= 0.0 then
@@ -1266,13 +1261,14 @@ module enemies =
             | chase ->
                 match e->kind with
                 | dog ->
-                    // T_DogChase's lunge gate: |dx|-move ≤ 1 && |dy|-move ≤ 1
-                    // in tiles. `move` is the dog's distance-to-travel this
-                    // frame, so the effective range is 1 + step on each axis.
-                    // Step here mirrors the per-frame distance advance_move
-                    // would compute, so the Enemy Speed slider scales the
-                    // lunge range too — otherwise a sped-up dog would walk
-                    // further per tick than its lunge gate believes.
+                    // Dog lunge gate (matches the original): |dx|-move ≤ 1
+                    // && |dy|-move ≤ 1 in tiles. `move` is the dog's
+                    // distance-to-travel this frame, so the effective range
+                    // is 1 + step on each axis. Step here mirrors the
+                    // per-frame distance advance_move would compute, so
+                    // the Enemy Speed slider scales the lunge range too —
+                    // otherwise a sped-up dog would walk further per tick
+                    // than its lunge gate believes.
                     let step = dog_chase_speed * dt * enemy_speed_factor(g)
                     let adx = math.abs(g->pos_x - e->x)
                     let ady = math.abs(g->pos_y - e->y)
@@ -1287,12 +1283,11 @@ module enemies =
                 | blinky | pinky | clyde | inky ->
                     // Pacman ghosts — chase silently and damage on
                     // contact; no shoot animation, no projectile.
-                    // Contact is the same MINACTORDIST bbox the
-                    // original uses in ClipMove's ghost branch:
-                    // |dx| ≤ 0.25 AND |dy| ≤ 0.25. touch_cooldown
-                    // stands in for the original's literal back-off
-                    // step so a ghost can't stand inside BJ dealing
-                    // damage every frame.
+                    // Contact uses the same close-range bbox the
+                    // original applies to ghosts: |dx| ≤ 0.25 AND
+                    // |dy| ≤ 0.25. touch_cooldown stands in for the
+                    // original's literal back-off step so a ghost
+                    // can't stand inside BJ dealing damage every frame.
                     if e->touch_cooldown > 0.0 then
                         e->touch_cooldown = e->touch_cooldown - dt
                         if e->touch_cooldown < 0.0 then e->touch_cooldown = 0.0
@@ -1300,20 +1295,20 @@ module enemies =
                     let ady = math.abs(g->pos_y - e->y)
                     if adx <= 0.25 && ady <= 0.25 && e->touch_cooldown <= 0.0 then
                         // Bite roll 0-15 (rnd_byte >> 4) matches the
-                        // per-bite feel of the original's tics*2
-                        // damage: a handful of HP per approach, not
-                        // a steady drain.
+                        // per-bite feel of the original: a handful of
+                        // HP per approach, not a steady drain.
                         damage_player(g, ac, rnd_byte(g) >> 4, damage_source.ghost, e->x, e->y)
                         e->touch_cooldown = 0.25
                     advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e->kind), dt, true)
                     advance_walk_anim(e)
                 | _ ->
-                    // Shoot roll: the original uses (tics<<4)/dist against
-                    // a 256-range rnd. We approximate with a dt-scaled
-                    // chance so 35Hz and 70Hz tick rates behave
-                    // equivalently. chance ≈ dt*40 / max(dist, 1). The
-                    // Enemy Speed slider scales this rate proportionally
-                    // so faster enemies actually fire faster.
+                    // Shoot roll: the original uses (tics<<4)/dist
+                    // against a 256-range rnd. We approximate with a
+                    // dt-scaled chance so 35Hz and 70Hz tick rates
+                    // behave equivalently. chance ≈ dt*40 / max(dist, 1).
+                    // The Enemy Speed slider scales this rate
+                    // proportionally so faster enemies actually fire
+                    // faster.
                     if check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then
                         let dxi = (int32) g->pos_x - e->tile_x
                         let dyi = (int32) g->pos_y - e->tile_y
@@ -1331,9 +1326,9 @@ module enemies =
                     advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e->kind), dt, true)
                     let prev_walk_frame = e->anim_frame
                     advance_walk_anim(e)
-                    // Mech stomps: fire MECHSTEPSND on walk frames 0
-                    // and 2, matching the action-hook pattern on
-                    // s_mechachase1 / s_mechachase3 in the original.
+                    // Mech stomps: fire the mech-step cue on walk
+                    // frames 0 and 2, matching the original's
+                    // step-hook pattern on the mech's chase frames.
                     // Only on frame transitions, so we don't retrigger
                     // within a single frame's hold time.
                     match e->kind with
@@ -1409,9 +1404,8 @@ module enemies =
 
 // ============================================================
 // Enemy projectile attacks — visible dodgeable objects fired by Schabbs,
-// Giftmacher, Fat, and fake Hitler. Ports T_SchabbThrow / T_GiftThrow /
-// T_Launch / T_FakeFire (spawn) + T_Projectile (per-tic step) from the
-// original.
+// Giftmacher, Fat, and fake Hitler. Matches the original's per-boss
+// throw/launch spawn paths plus the shared per-tic projectile step.
 // ============================================================
 
 module projectiles =
@@ -1432,7 +1426,7 @@ module projectiles =
         anim_frame: int32         // cycling 0..3 for needle, 0..1 for fire, 0..2 for boom
         anim_timer: float64       // seconds until next frame
 
-    let max_projectiles = 32   // generous cap — MAXACTORS is shared pool; few projectiles actually fly at once
+    let max_projectiles = 32   // generous cap — the original shares actor slots; few projectiles actually fly at once
 
     // Projectile speeds in tiles/sec, derived from the original's
     // fixed-point 0x2000 (needle/rocket) and 0x1200 (flame) per-tic
@@ -1440,16 +1434,14 @@ module projectiles =
     private let needle_speed = 8.75   // 0x2000 * 70 / 0x10000
     private let rocket_speed = 8.75
     let fire_speed   = 4.92   // 0x1200 * 70 / 0x10000
-    let hit_radius   = 0.75   // PROJECTILESIZE / TILEGLOBAL — per-axis player hit box
-    let wall_radius  = 0.125  // PROJSIZE / TILEGLOBAL — wall collision half-extent
+    let hit_radius   = 0.75   // per-axis player hit box (tile units)
+    let wall_radius  = 0.125  // wall collision half-extent (tile units)
     let anim_time    = 0.10   // seconds per needle/fire animation frame
     let boom_time    = 0.12   // seconds per explosion frame
 
     // Sprite-page offsets into VSWAP (relative to `sprite_start`).
-    // Derived from the original's sprite enum (wl_def.h): HYPO follows
-    // SCHABB_DEAD at 317, FIRE follows FAKE_SHOOT at 326,
-    // ROCKET/SMOKE/BOOM are a block right after Giftmacher at
-    // 370/378/382.
+    // Derived from the original's sprite layout: needle at 317, fire
+    // at 326, rocket/smoke/boom block at 370/378/382.
     let hypo_base   = 317
     let fire_base   = 326
     private let rocket_base = 370
@@ -1485,8 +1477,8 @@ module projectiles =
             sprite_start + boom_base + f
 
     // Find a free projectile slot, or -1 if the array is saturated.
-    // Callers silently drop the spawn when full (mirrors the
-    // original's MAXACTORS guard in T_FakeFire).
+    // Callers silently drop the spawn when full (matches the
+    // original's actor-cap guard).
     private let alloc_slot = (lv: level*) ->
         let mut slot = -1
         for i in 0..max_projectiles
@@ -1520,10 +1512,9 @@ module projectiles =
         if snd >= 0 then sfx.trigger_at(snd, ac, g, e->x, e->y)
 
     // Wall / closed-door collision for a projectile point at (x, y).
-    // Mirrors ProjectileTryMove's 3x3 tile scan within ±PROJSIZE in
-    // the original (wl_act2.cpp:206). Returns true if any tile in the
-    // scanned range blocks — walls (1..63) and door tiles that aren't
-    // fully open.
+    // Matches the original's 3x3 tile scan within the projectile
+    // radius. Returns true if any tile in the scanned range blocks —
+    // walls (1..63) and door tiles that aren't fully open.
     private let hits_wall = (lv: level*, x: float64, y: float64) ->
         let xl = (int32) math.floor(x - wall_radius)
         let yl = (int32) math.floor(y - wall_radius)
@@ -1543,8 +1534,8 @@ module projectiles =
                             && lv->door_pos[door_idx] < 0.95 then hit = true
         hit
 
-    // Damage per projectile kind — T_Projectile's per-class rolls in
-    // the original.
+    // Damage per projectile kind — matches the original's per-class
+    // damage rolls.
     private let damage_of = (k: projectile_kind, g: game*) ->
         let roll = enemies.rnd_byte(g)
         match k with
@@ -1610,8 +1601,7 @@ module projectiles =
             update(lv, g, ac, &lv->projectiles[i], dt)
 
     // True iff this enemy kind fires a visible, dodgeable projectile
-    // instead of using T_Shoot's hitscan. Checked in the shoot
-    // dispatch.
+    // instead of using hitscan. Checked in the shoot dispatch.
     private let kind_uses_projectile = (k: enemies.enemy_kind) ->
         match k with
         | schabbs | giftmacher | fat | hitler_fake -> true
@@ -1629,24 +1619,23 @@ module projectiles =
 
     // Dog melee bite — called from the jump-frame of `shoot` for dog.
     // Damage is a flat ~0..16 roll inside melee range. The bark/snarl
-    // plays unconditionally at the top of the frame (mirrors T_Bite
-    // in the original) so the lunge is audible even when the dog
-    // misses.
+    // plays unconditionally at the top of the frame (matches the
+    // original) so the lunge is audible even when the dog misses.
     let enemy_bite_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemies.enemy*) ->
         sfx.trigger_at(sfx.id.dog_attack, ac, g, e->x, e->y)
         let dx = g->pos_x - e->x
         let dy = g->pos_y - e->y
-        // Per-axis box matching T_Bite in the original: each axis
+        // Per-axis box matching the original's bite check: each axis
         // must be within 2 tiles of the player center (|dx|-1 ≤ 1
-        // after the TILEGLOBAL/MINACTORDIST subtraction in the
-        // original). This is more permissive on diagonals than a
-        // euclidean check — a dog centered on the tile-corner
-        // opposite the player at (1.9, 1.9) still lands a bite.
+        // after the original's tile-unit subtraction). This is more
+        // permissive on diagonals than a euclidean check — a dog
+        // centered on the tile-corner opposite the player at (1.9, 1.9)
+        // still lands a bite.
         if math.abs(dx) > 2.0 || math.abs(dy) > 2.0 then return
         if !enemies.ai.check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then return
         if enemies.rnd_byte(g) < 180 then
-            // Matches T_Bite in the original: US_RndT() >> 4 → 0-15
-            // (can graze for 0).
+            // Matches the original's bite roll: random byte >> 4
+            // → 0-15 (can graze for 0).
             let dmg = enemies.rnd_byte(g) >> 4
             enemies.ai.damage_player(g, ac, dmg, enemies.damage_source.bite, e->x, e->y)
 
@@ -1685,12 +1674,13 @@ module hitscan =
             best_dist = proj
         best_idx
 
-    // Per-weapon damage. Matches the original game's KnifeAttack /
-    // GunAttack rolls, using our PCG `rnd_byte` (0-255) in place of
-    // US_RndT. `euclid_dist` is the raw distance from player to enemy
-    // (used only for the knife range gate — knife reach is ~1.5 tiles).
-    // `tile_dist` is the Chebyshev (max-axis) distance in tile units,
-    // which is what the gun damage bands key off.
+    // Per-weapon damage. Matches the original game's knife/gun
+    // damage rolls, using our PCG `rnd_byte` (0-255) in place of the
+    // original's random source. `euclid_dist` is the raw distance
+    // from player to enemy (used only for the knife range gate —
+    // knife reach is ~1.5 tiles). `tile_dist` is the Chebyshev
+    // (max-axis) distance in tile units, which is what the gun
+    // damage bands key off.
     private let weapon_damage_roll = (g: game*, weapon: int32, euclid_dist: float64, tile_dist: int32) ->
         if weapon == 0 then
             // Knife — flat roll within melee reach, zero beyond.
@@ -1705,7 +1695,7 @@ module hitscan =
                 // Miss roll first, then damage. The miss check scales
                 // with distance so farther targets eat more shots to
                 // drop. Two separate byte rolls here mirror the two
-                // US_RndT calls in the original's else-branch.
+                // random-byte draws in the original's long-range branch.
                 if (enemies.rnd_byte(g) / 12) < tile_dist then 0
                 else enemies.rnd_byte(g) / 6                      // 0-42
 
@@ -1717,9 +1707,9 @@ module hitscan =
         let lv = w->lv
         let g = w->g
         let ac = w->ac
-        // The original's GunAttack sets madenoise=true at the top
-        // regardless of hit; KnifeAttack does NOT — knife is a
-        // stealth weapon, only registering as noise (via
+        // The original's gun attack sets the made-noise flag at the
+        // top regardless of hit; the knife attack does NOT — knife is
+        // a stealth weapon, only registering as noise (via
         // ai.damage_enemy below) when it actually connects. So gate
         // on weapon > 0 here, and let ai.damage_enemy cover the
         // knife-hit case.

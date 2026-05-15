@@ -212,30 +212,29 @@ union game_phase =
     | dying
     | intermission
     | bj_victory    // BJ runs forward + jumps + yells after the player
-                    // steps on a boss-map EXITTILE (ports the original's
-                    // VictoryTile → SpawnBJVictory → ex_victorious path).
+                    // steps on a boss-map exit tile, matching the original
+                    // boss-victory → episode-end sequence.
     | death_cam     // boss-death cutscene for the four auto-victory bosses
                     // (Schabbs / Gift / Fat / real Hitler). Pause on final
                     // death frame, fizzle to black, taunt card, teleport
                     // camera to frame the corpse, fade in, replay death
-                    // animation, hand off to intermission. Ports the
-                    // original's A_StartDeathCam.
+                    // animation, hand off to intermission. Matches the
+                    // original's death-cam sequence.
     | episode_end   // per-episode victory screen (after boss level 8)
     | endart        // per-episode story-text page(s) shown after the
                     // episode-end stats screen — VGAGRAPH chunks 143..148
                     // hold article-markup data (^P pages, ^Cnn colors,
                     // ^Gx,y,p inline graphics, word-wrapped text). Forward
                     // keys page through; Esc or forward-past-last → main
-                    // menu (matches the OG, where Victory()'s embedded
-                    // ShowArticle ends GameLoop and pops to the control
-                    // panel — no auto-advance to the next episode).
-    | high_scores   // top-7 score table; shown after death (replaces the
-                    // OG's CheckHighScore call from `ex_died`), after
-                    // the per-episode endart article (`ex_victorious`),
-                    // and from the View Scores main-menu entry. If the
-                    // ending game qualified, the new row enters an
-                    // inline name-edit mode (mirrors US_LineInput);
-                    // otherwise any ack key dismisses → title screen.
+                    // menu (matches the original, where the article reader
+                    // pops back to the control panel — no auto-advance to
+                    // the next episode).
+    | high_scores   // top-7 score table; shown after death, after the
+                    // per-episode endart article, and from the View Scores
+                    // main-menu entry — matching the original game's
+                    // entry points to the score table. If the ending game
+                    // qualified, the new row enters an inline name-edit
+                    // mode; otherwise any ack key dismisses → title screen.
 
 // Menu navigation state. `menu_level` picks which list to show:
 //   main        (NEW GAME / SOUND / LOAD GAME / SAVE GAME / RESUME / QUIT)
@@ -316,7 +315,7 @@ struct game =
     // raycasting or enemy LOS, so visuals / AI behave normally.
     key_tab_held: bool
     noclip: bool
-    // Wall-scrape sound cooldown (seconds). Prevents HITWALLSND from firing
+    // Wall-scrape sound cooldown (seconds). Prevents the wall-bump cue from firing
     // every frame while the player grinds along a wall. Counts down in
     // player.update; a new bump is only announced when it hits 0.
     wall_hit_cooldown: float64
@@ -329,12 +328,12 @@ struct game =
     // transition (in `advance_next_level`, after the just-completed
     // level's intermission bonus has been added) and consumed by
     // `restart_current_level` to rewind on death-with-lives-left.
-    // Mirrors the original game's `gamestate.oldscore` — every
+    // Mirrors the original game's "old score" snapshot — every
     // failed run of a level forfeits the points earned within that
     // run. The high-scores screen still uses the un-rewound `score`
     // at time of final death (we never reach restart_current_level
-    // on the lethal life), matching the original's CheckHighScore
-    // call from the `ex_died` lives==-1 branch.
+    // on the lethal life), matching the original's handling of the
+    // final lethal life.
     oldscore: int32
     lives: int32
     level_num: int32
@@ -342,13 +341,13 @@ struct game =
     has_silver_key: bool
     next_level: bool
     // Counts down in playing while `next_level` is latched; when it reaches
-    // 0 the intermission phase is entered. Gives LEVELDONESND ("elevator
-    // ding") time to play in the world before the tally screen pops.
+    // 0 the intermission phase is entered. Gives the level-done sound
+    // ("elevator ding") time to play in the world before the tally screen pops.
     next_level_delay: float64
     weapon: int32          // 0=knife, 1=pistol, 2=machine gun, 3=chain gun
     best_weapon: int32     // highest-tier firearm owned (pistol..chain). When
                            // ammo runs out we drop to knife; picking ammo up
-                           // again restores this weapon (wolf4sdl's chosenweapon).
+                           // again restores this weapon (matches the original).
     // Latched when the player uses the alt-elevator switch (plane-0 raw tile
     // 107 underfoot at the moment of activation). advance_next_level reads it
     // to route to the secret level (ep*10+9) instead of the normal next map.
@@ -356,28 +355,29 @@ struct game =
     went_secret: bool
     fire_timer: float64    // cooldown timer (>0 means firing animation)
     weapon_frame: int32    // animation frame (0=idle, 1-3=firing)
-    // BJ-face HUD animation (wolf4sdl UpdateFace). face_frame picks the
+    // BJ-face HUD animation (matches the original). face_frame picks the
     // A/B/C variant (0..2) of the current health-driven expression row;
-    // face_count accumulates ~2 units per 35Hz tick (matching wolf4sdl
-    // `facecount += tics` at 70Hz), and when it exceeds a random 0..255
-    // threshold a new variant is rolled (0=25%, 1=50%, 2=25%, like the
-    // `US_RndT()>>6` clamp). Reset to 0 on damage so the new expression
-    // appears immediately.
+    // face_count accumulates ~2 units per 35Hz tick (matching the original's
+    // 70Hz tic accumulation), and when it exceeds a random 0..255
+    // threshold a new variant is rolled (0=25%, 1=50%, 2=25%, the same
+    // weighted clamp as the original). Reset to 0 on damage so the new
+    // expression appears immediately.
     face_frame: int32
     face_count: float64
-    // Wolf4sdl player->areanumber: index into level->tile_areas for the tile
+    // Player area index: index into level->tile_areas for the tile
     // the player is currently standing on. Used to anchor areas.connect's
     // flood. Refreshed each tick by areas.update_player_area.
     area_number: int32
-    // Wolf4sdl `madenoise`: latched true when the player fires a non-knife
-    // weapon or damages an enemy; consumed by enemies.ai.update_enemies to wake stand /
-    // path enemies in the player-connected area set without needing LOS.
+    // Latched true when the player fires a non-knife weapon or damages an
+    // enemy; consumed by enemies.ai.update_enemies to wake stand / path
+    // enemies in the player-connected area set without needing LOS.
     // Reset at the top of each tick so it only fires for one frame.
+    // Matches the original's "made noise" flag.
     made_noise: bool
-    // Wolf4sdl `thrustspeed >= RUNSPEED`: set in player.update to mark a
-    // frame in which the player was actively moving (run modifier held +
-    // any movement key). Enemy T_Shoot reads this to pick the lower
-    // base-160 hitchance — player-can-dodge branch.
+    // Player-running flag: set in player.update to mark a frame in which
+    // the player was actively moving (run modifier held + any movement key).
+    // Enemy fire-at-player reads this to pick the lower base-160 hitchance —
+    // player-can-dodge branch, as in the original.
     player_running: bool
     // Latched by the BOSS FIGHT menu entry (and the --near-boss CLI flag,
     // on entry). Consumed by `start_new_game_here` to call
@@ -400,8 +400,8 @@ struct game =
     bj_phase: int32      // 0 = running, 1 = jumping, 2 = holding final frame
     bj_yelled: bool      // YEAHSND latch (fires on entering jump frame 1)
 
-    // Per-episode running totals for the Victory() screen at
-    // episode_end. Each completed level adds its kill / secret /
+    // Per-episode running totals for the episode-end victory screen.
+    // Each completed level adds its kill / secret /
     // treasure percent + level time to these. ep_levels_played is
     // the divisor for averages. ep_recorded_current is a dedup latch
     // — set when the just-finished level was already recorded, so
@@ -438,7 +438,7 @@ struct game =
     dc_timer: float64               // seconds elapsed in current sub-phase
     dc_boss_idx: int32              // index of the corpse in lv->enemies
     dc_kill_x: float64              // player position when the boss died
-    dc_kill_y: float64              // (matches wolf4sdl gamestate.killx/y)
+    dc_kill_y: float64              // (matches the original's killer position)
     dc_fade: float64                // 0 = viewport fully visible, 1 = fully
                                     // black; feeds overlay.dissolve_stipple during
                                     // fade-out / taunt / fade-in sub-phases
@@ -451,12 +451,12 @@ struct game =
     // Latch set whenever the player's most recent damage came from a
     // Schabbs needle projectile. Cleared by any other damage source
     // and on respawn / new game. Read by hud.render to pick
-    // MUTANTBJPIC over FACE8APIC on the dying-face slot (original's
-    // DrawFace `LastAttacker->obclass == needleobj` branch).
+    // the mutant-BJ pic over the dead-face pic on the dying-face slot — matches
+    // the original's needle-attacker face swap.
     last_hit_needle: bool
     // Death-cam swing target: the killer's world position at the moment
-    // the lethal hit landed. Mirrors the original's `killerobj` latch in
-    // TakeDamage — the `Died` routine swings the player to face this
+    // the lethal hit landed. Mirrors the original game's killer-latch:
+    // the death routine swings the player to face this
     // point at a fixed angular rate during the dying phase.
     // `killer_active` is true between the lethal hit and the moment the
     // swing finishes; cleared on respawn / new game and on the synthetic
@@ -474,14 +474,14 @@ struct game =
     get_psyched_timer: float64
 
     // Chain-gun pickup face-slot swap. While > 0, hud.render paints
-    // GOTGATLINGPIC in the BJ-face cell instead of the normal face frame
-    // (matches wolf4sdl DrawFace's "SD_SoundPlaying() == GETGATLINGSND"
-    // check). Does NOT freeze gameplay.
+    // the got-gatling pic in the BJ-face cell instead of the normal face frame
+    // (matches the original's face swap while the pickup voice cue plays).
+    // Does NOT freeze gameplay.
     got_gatling_timer: float64
 
     // Per-level counters. Totals come from build_level; current values
     // increment during play. All three are displayed on the intermission
-    // screen as percentages (wolf4sdl bonus calculations).
+    // screen as percentages (matches the original's bonus calculations).
     kills: int32
     total_kills: int32
     secrets: int32
@@ -494,8 +494,9 @@ struct game =
     level_time: float64
 
     // Intermission screen animation state. Only meaningful during
-    // intermission. Mirrors wolf4sdl LevelCompleted's count-up sequence:
-    // time bonus ticks up first, then kill / secret / treasure ratios.
+    // intermission. Mirrors the original's count-up sequence on the
+    // level-complete tally: time bonus ticks up first, then kill /
+    // secret / treasure ratios.
     //   stage: 0=time, 1=kill, 2=secret, 3=treasure, 4=done (awaiting space)
     //   counter: current value rendered in the active stage
     //   progress: fractional accumulator that drives counter at a fixed rate
@@ -513,22 +514,22 @@ struct game =
     inter_pause_timer: float64     // post-stage pause: holds the just-finished
                                    // counter's final value on-screen with its
                                    // end-of-stage sound audible before the
-                                   // next counter starts zipping up. Mirrors
-                                   // wolf4sdl's VBLWAIT(30) + SD_SoundPlaying
-                                   // gap between the three ratio rounds.
+                                   // next counter starts zipping up. Matches
+                                   // the original's brief gap between the
+                                   // three ratio rounds.
     inter_end_sound_delay: float64 // time left until the queued end-of-stage
                                    // sound actually fires. Gives the final
-                                   // ENDBONUS1SND tick a moment to clear so
-                                   // it doesn't collide with the ring sound.
-                                   // wolf4sdl's `while (SD_SoundPlaying)` wait
-                                   // served the same purpose.
+                                   // bonus-end tick a moment to clear so
+                                   // it doesn't collide with the ring sound —
+                                   // the original used a sound-busy wait for
+                                   // the same purpose.
 
     // Difficulty: 0=Daddy, 1=Don't Hurt Me, 2=Bring 'em On, 3=Death Incarnate.
-    // Controls which tile blocks spawn enemies (base/+36/+72 per
-    // ScanInfoPlane). Initialised to `difficulty.medium` to match the
-    // OG difficulty-picker default (`NewItems.curpos = 2` in wl_menu.cpp).
-    // The picker remembers the last pick within a session via
-    // `menu_sel = g->difficulty`; `setdifficulty` dials it externally.
+    // Controls which tile blocks spawn enemies (base/+36/+72 difficulty
+    // tiers). Initialised to `difficulty.medium` to match the original's
+    // difficulty-picker default. The picker remembers the last pick within
+    // a session via `menu_sel = g->difficulty`; `setdifficulty` dials it
+    // externally.
     difficulty: int32
 
     // Camera plane length. Combined with `dir_x/dir_y` it sets the
@@ -614,7 +615,7 @@ struct game =
     // showing a typing caret on the selected slot; main-loop keydowns
     // mutate `save_menu_ctx.edit_buf` instead of moving the cursor.
     // Enter commits + writes the slot, Esc cancels back to the slot
-    // list. Mirrors the original's `US_LineInput` flow.
+    // list. Mirrors the original's inline-line-input flow.
     save_edit_active: bool
 
     // User requested quit (main menu's QUIT entry). Main loop reads this
@@ -663,13 +664,14 @@ struct level =
     tilemap: uint8[]
     // Bitmap: which wall tiles are pushable (marker 98 in plane 1).
     pushwall_tiles: bool[]
-    // Bitmap: which tiles are EXITTILE markers (plane-1 tile 99). Stepping
-    // onto one triggers the BJ-victory cutscene (wolf4sdl VictoryTile).
-    // Boss-level maps place these behind the gold-key door so the player
-    // must kill the boss + pick up the dropped key first.
+    // Bitmap: which tiles are exit markers (plane-1 tile 99). Stepping
+    // onto one triggers the BJ-victory cutscene (matches the original's
+    // victory-tile behavior). Boss-level maps place these behind the
+    // gold-key door so the player must kill the boss + pick up the
+    // dropped key first.
     exit_tiles: bool[]
     // Per-tile path-arrow override for patrolling enemies (plane-1 tiles
-    // 90..97 = ICONARROWS + dir). 0..7 redirects a passing patroller to that
+    // 90..97 = path-arrow marker + dir). 0..7 redirects a passing patroller to that
     // dir; dir.nodir (8) means "no arrow at this tile".
     path_arrows: uint8[]
     // Static sprite objects spawned from plane-1 tiles 23..72.
@@ -689,10 +691,11 @@ struct level =
     // fixed-size array; `alive = false` means free. No separate count — the
     // array is scanned on every update / billboards.build pass.
     projectiles: projectiles.projectile[]
-    // Wolf4sdl area system: per-tile area index (areas.no_area for walls / other
-    // non-area tiles); a areas.num_areas² counter of how many open doors connect
-    // each pair (>0 means connected); a per-area "reachable from player by
-    // open doors" flag refreshed by areas.connect on each door transition.
+    // Area system (matches the original): per-tile area index (areas.no_area
+    // for walls / other non-area tiles); a areas.num_areas² counter of how
+    // many open doors connect each pair (>0 means connected); a per-area
+    // "reachable from player by open doors" flag refreshed by areas.connect
+    // on each door transition.
     tile_areas: uint8[]
     area_connect: uint8[]
     area_by_player: bool[]
@@ -772,7 +775,7 @@ struct render_ctx =
     num_billboards: int32
     // Cache of the title screen, pre-decoded and palette-applied at startup.
     // Used as the backdrop for both title and main_menu — without this
-    // cache, every menu frame re-Huffman-decompresses TITLEPIC (~64KB of
+    // cache, every menu frame re-Huffman-decompresses the title pic (~64KB of
     // per-bit tree-walk) and re-palettizes 64,000 pixels, which dropped the
     // frame rate enough to underrun the audio queue and kill the music.
     title_bg: uint32[]
@@ -826,13 +829,13 @@ struct save_menu_ctx =
     hex_scratch: uint8[]       // 1-byte buffer for per-nibble save-file writes
     // In-progress slot name during inline save edit. NUL-terminated;
     // `edit_len` holds the byte length without the terminator. Capacity
-    // is 32 (matches the original's MaxString in US_LineInput).
+    // is 32 (matches the original's max input string length).
     edit_buf: uint8[]
     edit_len: int32
 
 // High-scores screen state — process-wide, persists across games.
 // `scores` is the 7-row table loaded once at startup (or seeded with
-// id Software's defaults on first launch) and rewritten whenever a
+// the original game's defaults on first launch) and rewritten whenever a
 // new score qualifies. Edit fields drive the inline name-entry that
 // activates on a qualifying finish. `edit_index` is -1 outside the
 // editing flow; while editing it points at the row in `scores` that
@@ -879,13 +882,13 @@ struct world =
 // forcing new cross-module edges.
 // ============================================================
 
-// Extra-life milestone. Matches wolf4sdl's EXTRAPOINTS: the player
-// gets one extra life each time the score crosses 40000, 80000, etc.
+// Extra-life milestone. Matches the original: the player gets one
+// extra life each time the score crosses 40000, 80000, etc.
 let extra_life_score = 40000
 
-// Grant one extra life with BONUS1UPSND. Matches wolf4sdl
-// GiveExtraMan: the `lives` counter caps at 9. Called from add_score
-// on each score-milestone crossing and from the 1UP pickup branch in
+// Grant one extra life with the bonus-1up cue. The `lives` counter
+// caps at 9 (matches the original). Called from add_score on each
+// score-milestone crossing and from the 1UP pickup branch in
 // pickups.check.
 let grant_extra_life = (g: game*, ac: audio_ctx*) ->
     if g->lives < 9 then g->lives = g->lives + 1
@@ -895,11 +898,11 @@ let grant_extra_life = (g: game*, ac: audio_ctx*) ->
 // chokepoint so the lock covers pickups, enemy kills, and intermission
 // bonuses uniformly. Also grants the 40k-score extra-life milestone,
 // looping for huge single adds (an intermission bonus can easily cross
-// multiple milestones at once — matches wolf4sdl's while-loop on
-// nextextra). Score caps at 999 999 (the 6-digit HUD cell width); the
-// original would happily wrap / overflow past that. The extra-life
-// milestone count uses the capped score so once you're maxed, no more
-// free lives come from further scoring.
+// multiple milestones at once — the original loops on its own next-extra
+// counter to handle the same case). Score caps at 999 999 (the 6-digit
+// HUD cell width); the original would happily wrap / overflow past that.
+// The extra-life milestone count uses the capped score so once you're
+// maxed, no more free lives come from further scoring.
 let score_max = 999999
 let add_score = (g: game*, amount: int32, ac: audio_ctx*) ->
     if g->idkfa_mode then return
@@ -928,8 +931,8 @@ let give_full_kit = (g: game*) ->
 // Map an SDL keysym + modifier mask to the ASCII byte the user
 // intended to type, or 0 if the key has no printable mapping.
 // Used by every inline name editor (high-scores, save-game) so they
-// accept the same character set the original game's `US_LineInput`
-// did (`isprint(c)` — letters, digits, punctuation). SDL keysym
+// accept the same character set the original game's line-input did
+// (the printable-ASCII range — letters, digits, punctuation). SDL keysym
 // values for printable-ASCII keys are the ASCII byte itself
 // (e.g. SDLK_PERIOD == 46 == '.'), so we compare the keysym
 // directly against ASCII codepoints rather than chaining named-
@@ -1364,8 +1367,7 @@ let advance_next_level = (w: world*, vs: const vswap.vswap_file*) ->
     // `oldscore = score` snapshots "score at the moment you walked
     // into the next level". A subsequent death on the new level
     // will rewind here in `restart_current_level`. Mirrors the
-    // original game's `gamestate.oldscore = gamestate.score` set
-    // in the ex_completed branch.
+    // original's "snapshot score at level completion" behavior.
     g->oldscore = g->score
     g->level_num = episode.next_level_num(g->level_num, g->went_secret)
     g->went_secret = false
@@ -1389,8 +1391,8 @@ let advance_next_level = (w: world*, vs: const vswap.vswap_file*) ->
     player.clear_input_keys(g)
     pics.trigger_get_psyched(g)
 
-// End-of-episode → main menu. The OG GameLoop returns from
-// ex_victorious back to the control panel; players replay individual
+// End-of-episode → main menu. The original returns to the control
+// panel after a victorious episode; players replay individual
 // episodes from the menu, with no auto-advance to the next one.
 // Used by the endart phase exit + by the test-mode `advance` command
 // when leaving episode_end / endart.
@@ -1481,7 +1483,7 @@ let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
         g->next_level = false
         // Boss-map exits route through BJ victory; everything else goes
         // through the regular intermission → advance flow. In normal
-        // play boss maps fire BJ via the EXITTILE check in player.update
+        // play boss maps fire BJ via the exit-tile check in player.update
         // (which doesn't set next_level), so this branch is reached only
         // by the synthetic `endepisode` test command on a boss map.
         if g->level_num % episode.levels_per == 8 then
@@ -1495,8 +1497,8 @@ let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
             level_changed = true
         else
             // Out of lives: route through the high-scores screen,
-            // matching the OG's `case ex_died: ... CheckHighScore;
-            // return;` flow. The screen handles the score insertion +
+            // matching the original's lives-exhausted → high-scores
+            // flow. The screen handles the score insertion +
             // optional name entry; on dismiss it routes back to the
             // title (see the high_scores keydown handler in the main
             // loop). The level is intentionally NOT reloaded — the
@@ -1505,10 +1507,10 @@ let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
                 g->score, g->level_num + 1, g->level_num / episode.levels_per)
             g->has_active_game = false
     // Death-cam cutscene has finished its replay hold; hand off
-    // straight to the episode-end Victory screen — the OG GameLoop's
-    // `ex_victorious` case skips `LevelCompleted()` (the per-level
-    // tally), so the boss kill jumps directly from cutscene to
-    // Victory(). Mirror the bj_victory finalisation: award the
+    // straight to the episode-end Victory screen — the original
+    // skips the per-level tally on a victorious episode end, so
+    // the boss kill jumps directly from cutscene to the victory
+    // screen. Mirror the bj_victory finalisation: award the
     // level-completion bonus and record the boss level into the
     // per-episode totals so it shows up in the averages.
     if g->phase == game_phase.death_cam && g->dc_sub == death_cam.sub.done then
@@ -1539,8 +1541,8 @@ let tick = (w: world*, dt: float64) ->
         g->msg_timer = g->msg_timer - dt
         if g->msg_timer < 0.0 then g->msg_timer = 0.0
     // "Got Gatling!" face swap decays regardless of phase — the face cell
-    // keeps refreshing even during frozen phases, and the original's
-    // SD_SoundPlaying check is timer-based here.
+    // keeps refreshing even during frozen phases; the original gated on
+    // its sound-busy check, which we approximate with this timer.
     if g->got_gatling_timer > 0.0 then
         g->got_gatling_timer = g->got_gatling_timer - dt
         if g->got_gatling_timer < 0.0 then g->got_gatling_timer = 0.0
@@ -1558,8 +1560,8 @@ let tick = (w: world*, dt: float64) ->
             g->get_psyched_timer = g->get_psyched_timer - dt
             if g->get_psyched_timer < 0.0 then g->get_psyched_timer = 0.0
         // Elevator-switch pre-intermission wait: freeze all gameplay for
-        // `next_level_delay` seconds so LEVELDONESND plays out in the world
-        // before the tally screen takes over. update_phase_transitions
+        // `next_level_delay` seconds so the level-done sound plays out in
+        // the world before the tally screen takes over. update_phase_transitions
         // won't enter the intermission phase until the delay has elapsed.
         // We keep gameplay frozen for the whole `next_level` window (even
         // on the tick where delay reaches 0) so the phase transition fires
@@ -1574,7 +1576,7 @@ let tick = (w: world*, dt: float64) ->
             // finishes its death cascade before the tally screen.
             enemies.ai.update_dying_enemies(w->lv, w->g, dt)
         else
-            // The original's PlayLoop resets madenoise at the top of each
+            // The original resets its "made noise" flag at the top of each
             // frame; we follow suit so noise from one tick only wakes
             // enemies on the same tick. update_weapon raises it again when
             // the player fires a gun, and enemies.ai.damage_enemy raises
@@ -1702,12 +1704,12 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
     hud.render(w->rc, w->vg, pal, w->g)
     hud.render_message(w->rc, w->font, w->g)
     // "GET PSYCHED!" level-entry overlay. The original fills the 3D
-    // viewport with VIEWCOLOR (palette 0x7f), draws the pic centered, and
-    // paints a progress bar across the bottom of the pic frame. We
-    // replicate the same layout and animate the bar 0→100% over the hold
-    // duration so the static "always-full" look of wolf4sdl's simplified
-    // port still reads as genuine progress. Drawn AFTER hud.render so the
-    // status bar stays visible underneath, matching the original.
+    // viewport with the standard background grey (palette 0x7f), draws
+    // the pic centered, and paints a progress bar across the bottom of
+    // the pic frame. We replicate the same layout and animate the bar
+    // 0→100% over the hold duration so it reads as genuine progress
+    // rather than a static always-full bar. Drawn AFTER hud.render so
+    // the status bar stays visible underneath, matching the original.
     if w->g->get_psyched_timer > 0.0 then
         pics.render_get_psyched_overlay(w->rc, w->vg, pal,
             w->g->get_psyched_timer, pics.get_psyched_time)
@@ -1828,7 +1830,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // in pics.trigger_get_psyched.
         g->get_psyched_timer = pics.get_psyched_time
     else if arg == "gotgatling" then
-        // Force the GOTGATLINGPIC face-cell swap so ss: can capture it.
+        // Force the got-gatling face-cell swap so ss: can capture it.
         // Bypasses test_mode. The pic replaces the BJ face in hud.render
         // while the timer is active.
         g->got_gatling_timer = hud.got_gatling_time
@@ -2076,8 +2078,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         else if g->phase == game_phase.death_cam then
             // Death-cam collapses straight to the episode-end screen,
             // mirroring the natural death_cam.sub.done transition (which
-            // skips intermission for boss kills, matching the OG
-            // GameLoop's `ex_victorious` case).
+            // skips intermission for boss kills, matching the original's
+            // victorious-episode handling).
             add_score(g, intermission.compute_level_bonus(g), w->ac)
             record_level_for_episode(g)
             episode_end.enter(g)
@@ -2090,15 +2092,15 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         else if g->phase == game_phase.endart then
             // Test-mode advance from endart → high-scores screen,
             // matching the interactive Esc / past-last-page flow
-            // (which routes through CheckHighScore in the OG's
-            // Victory() before returning to the menu).
+            // (which routes through the high-scores check on the
+            // way back to the menu in the original).
             let ep = g->level_num / episode.levels_per
             high_scores_screen.enter(g, w->hs, high_scores_screen.from_endart,
                 g->score, g->level_num + 1, ep)
         else if g->phase == game_phase.high_scores then
             // Test-mode advance from high-scores → its source's
             // dismissal target. Death / endart flows return to the
-            // title screen (matching the OG's DemoLoop cycle); the
+            // title screen (matching the original's title/demo cycle); the
             // View Scores menu entry returns to the main menu.
             // Commits any pending name buffer first so a script that
             // types into hs_name + advance behaves the same as the
@@ -2399,7 +2401,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         io.write("prefs music=%d{m} sfx=%d{s} digi=%d{d} sfx_gain=%d{w->ac->sfx_gain_pct} digi_gain=%d{w->ac->digi_gain_pct} music_gain=%d{w->ac->music_gain_pct} no_dogs=%d{nd} shadow_depth=%d{g->shadow_depth} bj_speed_pct=%d{g->bj_speed_pct} enemy_speed_pct=%d{g->enemy_speed_pct}\n", stdout)
         void()
     else if arg == "digi_slots" then
-        // Dump the digi-mixer slot table. Verifies wolf4sdl-style dedup:
+        // Dump the digi-mixer slot table. Verifies dedup behavior:
         // retriggers of a sound already playing should reuse the same
         // slot rather than fan out across all four mixer voices.
         let mut active = 0
@@ -2410,7 +2412,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         io.write("active=%d{active}\n", stdout)
         void()
     else if arg == "dcsprite" then
-        // Dump the SPR_DEATHCAM sprite layout that death_cam.render_sprite
+        // Dump the death-cam sprite layout that death_cam.render_sprite
         // would use. Layout is in dbuf-cell units; a regression that
         // re-introduces the fb-vs-dbuf coordinate mixup (small sprite in
         // the upper-left corner) shifts these values.
@@ -2478,7 +2480,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
                 io.write("  sprite[%d{i}] tile(%d{(int32) s.x},%d{(int32) s.y}) page=%d{s.shape_page} %s{bs} d=%5.3f{d}\n", stdout)
         void()
     else if arg == "arrows" then
-        // Dump every ICON_ARROWS path-marker tile baked into the level. Lets a
+        // Dump every path-arrow marker tile baked into the level. Lets a
         // test author find a tile to walk a patrolling enemy through to verify
         // that enemies.ai.select_path_dir applies the override.
         for y in 0..map_size
@@ -2558,7 +2560,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         io.write("pickups: count=%d{count}\n", stdout)
         void()
     else if arg == "exittiles" then
-        // List every EXITTILE marker (plane-1 tile 99) on the current map.
+        // List every exit-tile marker (plane-1 tile 99) on the current map.
         // Boss-level maps place exactly one of these behind the gold-key
         // door; stepping onto it triggers the BJ-victory cutscene.
         let mut count = 0
@@ -2836,9 +2838,9 @@ let main = (args: str[]) ->
         inter_pause_timer = 0.0,
         inter_end_sound_delay = 0.0,
         // Initial difficulty: gd_medium for interactive launches (matches
-        // the OG difficulty-picker default — `NewItems.curpos = 2` /
-        // "Bring 'Em On!" — so the first menu visit pre-selects the
-        // right row); gd_hard for `--test` mode so the existing
+        // the original's difficulty-picker default — "Bring 'Em On!" — so
+        // the first menu visit pre-selects the right row); gd_hard for
+        // `--test` mode so the existing
         // regression suite keeps spawning the full enemy roster (medium
         // filters out +72-tier tiles, which would invalidate hundreds
         // of enemy-index assertions).
@@ -2896,9 +2898,9 @@ let main = (args: str[]) ->
     g->total_secrets = w->lv->total_pushwalls
     g->total_treasures = w->lv->total_treasures
     // Now that both player position and level areas exist, anchor the
-    // player's area + the area_by_player set. wolf4sdl SpawnPlayer / InitAreas
-    // do this on level load: only the player's starting area is initially
-    // marked reachable, since all doors begin closed and area_connect is 0.
+    // player's area + the area_by_player set. The original does this on
+    // level load: only the player's starting area is initially marked
+    // reachable, since all doors begin closed and area_connect is 0.
     areas.update_player_area(w->lv, g)
     areas.connect(w->lv, g->area_number)
 
@@ -3214,13 +3216,12 @@ let main = (args: str[]) ->
                         g->phase = game_phase.title
                         g->phase_timer = 0.0
                 | endart ->
-                    // Per-page navigation, faithful to the original
-                    // ShowArticle loop. The OG GameLoop's ex_victorious
-                    // case calls `Victory()` (stats + EndText article)
-                    // and then `return`s back to the control panel —
-                    // there is no auto-advance to the next episode.
-                    // Players replay each episode by re-picking it from
-                    // the main menu.
+                    // Per-page navigation, faithful to the original's
+                    // article reader. After a victorious episode the
+                    // original returns to the control panel — there is
+                    // no auto-advance to the next episode. Players
+                    // replay each episode by re-picking it from the main
+                    // menu.
                     //
                     //   Left / Up / PageUp           → previous page
                     //   Right / Down / PageDown      → next page
@@ -3232,10 +3233,7 @@ let main = (args: str[]) ->
                     //                                  the article;
                     //                                  matches the on-
                     //                                  screen "ESC EXITS"
-                    //                                  hint and the OG
-                    //                                  `do { ... } while
-                    //                                  (LastScan != Esc
-                    //                                  && !ci.button1)`)
+                    //                                  hint)
                     //   Forward past the last page   → no-op (stays on
                     //                                  the final page;
                     //                                  player still has
@@ -3248,10 +3246,10 @@ let main = (args: str[]) ->
                                 || k == sdl2.key_pageup then
                             endart_screen.prev_page(g)
                         else if k == sdl2.key_escape then
-                            // Esc routes through CheckHighScore — the
-                            // OG's Victory() / GameLoop ex_victorious
-                            // calls CheckHighScore before returning to
-                            // the control panel.
+                            // Esc routes through the high-scores screen,
+                            // matching the original which qualifies the
+                            // final score before returning to the
+                            // control panel.
                             let ep = g->level_num / episode.levels_per
                             high_scores_screen.enter(g, w->hs,
                                 high_scores_screen.from_endart,
@@ -3271,47 +3269,49 @@ let main = (args: str[]) ->
                     if is_ack_key_intro then
                         g->phase = game_phase.main_menu
                         g->menu_level = menu.nav.main
-                        g->menu_sel = 0     // NEW GAME row in OG layout
+                        g->menu_sel = 0     // NEW GAME row in original layout
                         g->phase_timer = 0.0
                 | main_menu ->
-                    // Classic menu-cursor feedback: MOVEGUN1SND on up/down
-                    // nav, SHOOTSND on confirm into a submenu, MOVEGUN2SND
-                    // on commit-a-setting (sound toggles), ESCPRESSEDSND on
-                    // cancel. The submenu-confirm vs setting-commit split
-                    // matches the original: SHOOTSND drilling-in,
-                    // MOVEGUN2SND finalising a config change. Plays on
-                    // every menu level — the dispatch below just mutates
-                    // menu_sel / menu_level, so a single site up here
-                    // covers all sub-menus without sprinkling calls per
-                    // branch.
+                    // Classic menu-cursor feedback: cursor-move cue on
+                    // up/down nav, drill-confirm cue on confirm into a
+                    // submenu, commit cue on commit-a-setting (sound
+                    // toggles), escape cue on cancel. The submenu-confirm
+                    // vs setting-commit split matches the original:
+                    // drill-confirm for drilling in, commit cue for
+                    // finalising a config change. Plays on every menu
+                    // level — the dispatch below just mutates menu_sel
+                    // / menu_level, so a single site up here covers all
+                    // sub-menus without sprinkling calls per branch.
                     let is_confirm = k == sdl2.key_return || k == sdl2.key_space
                     let is_left_right = k == sdl2.key_left || k == sdl2.key_right
                     // The episode picker's hidden number shortcut (0..9)
                     // counts as a confirm too — same drilling-into-a-
-                    // submenu effect, so it deserves the same SHOOTSND.
+                    // submenu effect, so it deserves the same drill cue.
                     let is_episode_floor_key = g->menu_level == menu.nav.episode
                         && (k == sdl2.key_0 || (k >= sdl2.key_1 && k <= sdl2.key_9))
                     // Single-source-of-truth dispatch for menu cues:
-                    //   • UP/DOWN          — MOVEGUN1SND (cursor move)
-                    //   • Setting changed  — MOVEGUN2SND (toggle flip,
+                    //   • UP/DOWN          — cursor-move cue
+                    //   • Setting changed  — commit cue (toggle flip,
                     //     slider step, action commit). Same cue whether
                     //     fired by Enter on a toggle, ←/→ on a slider, or
-                    //     Enter on an action row — mirrors how the
-                    //     original game played MOVEGUN2SND for every
+                    //     Enter on an action row — matches how the
+                    //     original played the commit cue for every
                     //     setting-changed event across submenus.
-                    //   • Other confirm    — SHOOTSND (drilling into a
-                    //     submenu / picker; main / episode / difficulty).
-                    //   • ESC              — ESCPRESSEDSND.
+                    //   • Other confirm    — drill-confirm cue (drilling
+                    //     into a submenu / picker; main / episode /
+                    //     difficulty).
+                    //   • ESC              — escape cue.
                     let row_kind = menu.current_row_kind(g->menu_level, g->menu_sel)
                     let is_toggle_change = (is_confirm || is_left_right) && row_kind == menu.option_kind_toggle
                     let is_slider_step   = is_left_right && row_kind == menu.option_kind_slider
                     let is_action_commit = is_confirm && row_kind == menu.option_kind_action
                     let setting_changed = is_toggle_change || is_slider_step || is_action_commit
-                    // SHOOTSND only fires for drill-style menus (main /
-                    // episode / difficulty / save / load / quit confirm)
-                    // — those return row_kind == -1 from current_row_kind.
-                    // Skipping it for row-typed menus keeps Enter on a
-                    // slider row silent (it's a no-op).
+                    // The drill-confirm cue only fires for drill-style
+                    // menus (main / episode / difficulty / save / load
+                    // / quit confirm) — those return row_kind == -1
+                    // from current_row_kind. Skipping it for row-typed
+                    // menus keeps Enter on a slider row silent (it's a
+                    // no-op).
                     let is_drill_confirm = is_confirm && row_kind == -1
                     if k == sdl2.key_up || k == sdl2.key_down then
                         sfx.trigger(sfx.id.move_gun1, w->ac)
@@ -3379,8 +3379,8 @@ let main = (args: str[]) ->
                                 // track has_active_game. With a running
                                 // game this resumes gameplay; without
                                 // one it bounces to the title screen
-                                // (the OG's BACK TO DEMO returns to
-                                // DemoLoop, which lands on the title pic).
+                                // (matches the original, where BACK TO DEMO
+                                // returns to the title/demo cycle).
                                 if g->has_active_game then
                                     g->phase = game_phase.playing
                                 else
@@ -3626,7 +3626,7 @@ let main = (args: str[]) ->
                         // Inline save-name entry: while editing, every
                         // keydown mutates `sm->edit_buf` instead of
                         // navigating slots. Mirrors the original's
-                        // `US_LineInput` flow on each save row.
+                        // line-input flow on each save row.
                         if g->save_edit_active then
                             if k == sdl2.key_return then
                                 // Commit — write the slot using the
@@ -3655,10 +3655,9 @@ let main = (args: str[]) ->
                             else
                                 // Printable-ASCII char → append. Same
                                 // shift-aware mapping as the high-
-                                // scores name editor (the OG used
-                                // US_LineInput's `isprint(c)` filter
-                                // for both screens). Capacity is 32
-                                // (MaxString); reserve 1 for NUL.
+                                // scores name editor (the original
+                                // filtered to printable ASCII for both
+                                // screens). Capacity is 32; reserve 1 for NUL.
                                 let cap = (int32) w->sm->edit_buf.len - 1
                                 if w->sm->edit_len < cap then
                                     let ch = keysym_to_ascii(k, event.key.keysym.mod)
@@ -3719,16 +3718,16 @@ let main = (args: str[]) ->
                     // Direct dispatch (not via the IN_Ack latch) so the
                     // typing keys during edit don't double as ack
                     // presses, and so Enter / Esc both commit-and-
-                    // dismiss in one keystroke — matches the OG, where
-                    // CheckHighScore returns to its caller the moment
-                    // US_LineInput returns. Without this we'd need the
-                    // player to press Enter twice (first to commit name,
-                    // again to leave the screen).
+                    // dismiss in one keystroke — matches the original,
+                    // where the high-scores screen exits the moment the
+                    // line input is dismissed. Without this we'd need
+                    // the player to press Enter twice (first to commit
+                    // name, again to leave the screen).
                     if !is_key_repeat then
                         let mods = event.key.keysym.mod
                         if w->hs->edit_active then
                             if k == sdl2.key_return || k == sdl2.key_escape then
-                                // Commit + dismiss. The OG copies the
+                                // Commit + dismiss. The original copies the
                                 // buffer regardless of whether Enter or
                                 // Esc dismissed the line input.
                                 high_scores_screen.commit_name(w->hs)
@@ -3901,9 +3900,9 @@ let main = (args: str[]) ->
             else
                 advance_next_level(w, vs)
         // Episode-end → per-episode ending text article. The article's
-        // last page (or Esc) returns to the main menu — the OG GameLoop
-        // returns from ex_victorious back to the control panel; players
-        // replay episodes individually from the menu.
+        // last page (or Esc) returns to the main menu — the original
+        // returns from a victorious episode back to the control panel;
+        // players replay episodes individually from the menu.
         if g->phase == game_phase.episode_end && g->phase_timer > 0.0
            && g->key_ack && !g->key_ack_handled then
             g->key_ack_handled = true

@@ -9,26 +9,24 @@ module player =
     // Player collision radius in tiles. Prevents the player from
     // sliding exactly onto a tile boundary, which would produce a
     // degenerate raycast and cause columns to be skipped (visible as
-    // "seeing through walls"). Classic Wolf3D uses PLAYERSIZE ≈ 0.35
-    // tiles for the same reason.
+    // "seeing through walls"). The original uses ≈ 0.35 tiles for
+    // the same reason.
     let radius = 0.35
 
     // Movement speeds, matched to the original game.
-    //   walk = BASEMOVE * MOVESCALE * 70 / TILEGLOBAL
-    //        = 35 * 150 * 70 / 65536 ≈ 5.6076 tiles/sec
-    //   run  = walk × (RUNMOVE/BASEMOVE) = walk × 2
-    //   back = walk × (BACKMOVESCALE/MOVESCALE) = walk × 100/150
+    //   walk   ≈ 5.6076 tiles/sec (derived from the original's
+    //            fixed-point per-tic speed × 70Hz / tile units)
+    //   run    = walk × 2
+    //   back   = walk × 2/3
     //   strafe = walk (no scaling in the original)
     private let move_speed  = 5.6076
     private let run_mult    = 2.0
     private let back_mult   = 0.6667
     private let strafe_mult = 1.0
 
-    // Camera yaw rate (rad/sec at walk), matched to the original.
-    //   BASETURN(35) * 70 tics/sec / ANGLESCALE(20) = 122.5°/sec
-    //   ≈ 2.13803 rad/sec
-    // Scaled by `run_mult` when shift is held — same factor as
-    // move_speed (RUNTURN/BASETURN = 70/35 = 2.0).
+    // Camera yaw rate (rad/sec at walk), matched to the original
+    // (≈ 122.5°/sec ≈ 2.13803 rad/sec). Scaled by `run_mult` when
+    // shift is held — same 2× factor as move_speed.
     private let turn_speed  = 2.138
 
     // Static-decoration half-width (tiles). Blocking sprites
@@ -37,7 +35,7 @@ module player =
     // can approach a barrel until your bbox edge is
     // ~(radius + sprite_block_half) from its center. Tuned down from
     // a full tile because the art typically occupies only the middle
-    // half and the original's tile-grain blocking feels too
+    // half and the original's full-tile blocking feels too
     // intrusive at our scale.
     private let sprite_block_half = 0.25
 
@@ -50,9 +48,9 @@ module player =
     // Seconds to hold gameplay frozen after the player pulls the
     // elevator switch before the intermission screen appears. Stands
     // in for the original's fade-out/fade-in between the use action
-    // and LevelCompleted — lets LEVELDONESND play out in the world
-    // before the score tally takes over. player.update arms the
-    // timer; render_frame draws the fade overlay.
+    // and the level-complete screen — lets the level-done sound play
+    // out in the world before the score tally takes over. player.update
+    // arms the timer; render_frame draws the fade overlay.
     let elevator_wait_time = 1.0
 
     // Death collapse timing. The red stipple ramps up over
@@ -79,7 +77,7 @@ module player =
     // Reset per-life player state for a death restart. Score, lives
     // (already decremented), and weapon inventory are preserved;
     // health / ammo / weapon reset to pistol with starter ammo —
-    // matches the original's SpawnPlayer on death.
+    // matches the original's player respawn on death.
     let reset_for_life = (g: game*) ->
         g->health = 100
         g->ammo = 8
@@ -116,7 +114,7 @@ module player =
     // that dismissed the screen doesn't also count as a held
     // movement / fire key on the next map. Also resets the weapon
     // cooldown so a fire_timer left mid-cycle by the last shot
-    // before the elevator switch (or EXITTILE step) doesn't survive
+    // before the elevator switch (or exit-tile step) doesn't survive
     // the next_level_delay → intermission → next-level freeze and
     // leak a phantom gatling burst into the new map's first frames.
     let clear_input_keys = (g: game*) ->
@@ -405,7 +403,7 @@ module player =
         // the secret floor) it arms the elevator-switch path so the
         // intermission tally fires; on a boss floor (level % 10 == 8)
         // we'd normally route through bj_victory, but BJ needs the
-        // map's path arrows to walk (set up only on the EXITTILE
+        // map's path arrows to walk (set up only on the exit-tile
         // approach after a real boss kill), so a debug-skip lands him
         // on dir.nodir and the cutscene stalls forever. We skip that
         // and call episode_end directly — TAB+E is a level-done
@@ -457,21 +455,20 @@ module player =
         let spd = move_speed * dt * bj_mult * (if g->key_shift then run_mult else 1.0)
         let rot = turn_speed * dt * bj_mult * (if g->key_shift then run_mult else 1.0)
 
-        // thrustspeed-vs-RUNSPEED check (from the original's T_Shoot)
-        // that picks the base-160 "player can dodge" hitchance. True
-        // this frame iff shift is held AND the player is actually
-        // attempting a move (fwd/back, or alt+left/right strafe).
-        // Turning in place doesn't count — neither does holding
-        // shift without a direction.
+        // Player-running check (matches the original's enemy-fire
+        // dodge gate): picks the base-160 "player can dodge"
+        // hitchance. True this frame iff shift is held AND the player
+        // is actually attempting a move (fwd/back, or alt+left/right
+        // strafe). Turning in place doesn't count — neither does
+        // holding shift without a direction.
         g->player_running = g->key_shift && (
             g->key_up || g->key_down ||
             (g->key_alt && (g->key_left || g->key_right)))
 
         // Track whether any attempted move was fully blocked — if so
         // and the AdLib SFX chip is idle, play the wall-bump sound
-        // (matches the original's
-        // `if (!SD_SoundPlaying()) SD_PlaySound(HITWALLSND)` in
-        // T_Player).
+        // (matches the original's wall-bump cue, gated on the SFX
+        // chip not already playing something).
         let back_spd   = spd * back_mult
         let strafe_spd = spd * strafe_mult
         let mut wall_hit = false
@@ -491,7 +488,7 @@ module player =
             sfx.trigger(sfx.id.hit_wall, ac)
             g->wall_hit_cooldown = 0.4   // ~400 ms before we'll re-announce
 
-        // Use-action dispatch — mirrors the original's Cmd_Use.
+        // Use-action dispatch — mirrors the original's use-key handler.
         //   • Push-wall runs every frame while space is held;
         //     pushwall.try_push is idempotent (early-returns if one
         //     is already sliding or the tile isn't a push-wall
@@ -499,15 +496,16 @@ module player =
         //     along a row of walls to find secrets" — the hallmark
         //     Wolf3D use-key ergonomic.
         //   • Elevator and door are edge-triggered on the press
-        //     itself, exactly like the original's `!buttonheld[bt_use]`
-        //     gate. NOWAYSND (locked door) rides along inside the
-        //     edge branch so it can't stutter.
-        //   • DONOTHINGSND fires on the press edge AND each time the
-        //     previous chunk has finished, giving the natural "do-do-
-        //     do" rhythm when space is held against a wall — paced by
-        //     the chunk's ~300 ms length, not the frame rate. The
-        //     priority field on the sound (sfx.fc) keeps it from
-        //     trampling pickups or other deliberate events.
+        //     itself, matching the original's "use held" gate. The
+        //     locked-door cue rides along inside the edge branch so
+        //     it can't stutter.
+        //   • The "no action" cue fires on the press edge AND each
+        //     time the previous chunk has finished, giving the
+        //     natural "do-do-do" rhythm when space is held against a
+        //     wall — paced by the chunk's ~300 ms length, not the
+        //     frame rate. The priority field on the sound (sfx.fc)
+        //     keeps it from trampling pickups or other deliberate
+        //     events.
         if g->key_space then
             let edge = !g->key_space_handled
             g->key_space_handled = true
@@ -525,13 +523,13 @@ module player =
                     sfx.trigger(sfx.id.push_wall, ac)
                     g->secrets = g->secrets + 1
                     did_anything = true
-            // Elevator + door fire once per press. Tile 21 ==
-            // ELEVATORTILE; standing on ALTELEVATORTILE (area 0) at
-            // switch-flip routes to the secret level (mirrors the
-            // original's ex_secretlevel). The !g->next_level guard
-            // is belt-and-braces so a fresh press during the
-            // elevator-wait window doesn't restack the LEVELDONESND
-            // cue.
+            // Elevator + door fire once per press. Tile 21 is the
+            // elevator switch; standing on the alt-elevator tile
+            // (area 0) at switch-flip routes to the secret level
+            // (matches the original's secret-level branch). The
+            // !g->next_level guard is belt-and-braces so a fresh
+            // press during the elevator-wait window doesn't restack
+            // the level-done cue.
             if edge && fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
                 let face_tile = (int32) lv->tilemap[(int64) fx * 64 + (int64) fy]
                 if face_tile == 21 && !g->next_level then
@@ -540,11 +538,11 @@ module player =
                     if stand_area == 0 then g->went_secret = true
                     g->next_level = true
                     g->next_level_delay = elevator_wait_time
-                    // Boost LEVELDONESND into the mixer's soft-clip
-                    // region so the elevator-switch "bam!" lands the
-                    // way it did on OG Sound Blaster hardware. ~1.8×
-                    // sits just under the hard-clip threshold for
-                    // the digi's typical peak.
+                    // Boost the level-done cue into the mixer's
+                    // soft-clip region so the elevator-switch "bam!"
+                    // lands the way it did on original Sound Blaster
+                    // hardware. ~1.8× sits just under the hard-clip
+                    // threshold for the digi's typical peak.
                     sfx.trigger_gain(sfx.id.level_done, ac, 1.8)
                     did_anything = true
                 else
@@ -557,19 +555,18 @@ module player =
             if !did_anything && (edge || !sfx.adlib_busy(ac)) then
                 sfx.trigger(sfx.id.no_action, ac)
         // Refresh g->area_number from whatever tile the player is now
-        // standing on. The original's Thrust does this every frame;
-        // we follow suit so any door event next frame floods from
-        // the player's current area, not the area they were in when
-        // the level loaded.
+        // standing on. The original refreshes this every frame; we
+        // follow suit so any door event next frame floods from the
+        // player's current area, not the area they were in when the
+        // level loaded.
         areas.update_player_area(lv, g)
-        // EXITTILE check (the original's Thrust
-        // `if (mapsegs[1] == EXITTILE)` tail). Stepping onto a
-        // plane-1 tile-99 marker fires the BJ-victory cutscene
-        // immediately — no elevator-wait freeze, no fade. Boss-level
-        // maps gate this tile behind the gold-key door so you have
-        // to kill the boss + grab the dropped key first. Skipped
-        // while next_level is already latched to avoid double-
-        // triggering on the same step.
+        // Exit-tile check (matches the original's per-frame exit-
+        // tile test). Stepping onto a plane-1 tile-99 marker fires
+        // the BJ-victory cutscene immediately — no elevator-wait
+        // freeze, no fade. Boss-level maps gate this tile behind the
+        // gold-key door so you have to kill the boss + grab the
+        // dropped key first. Skipped while next_level is already
+        // latched to avoid double-triggering on the same step.
         if !g->next_level then
             let ptx = (int32) g->pos_x
             let pty = (int32) g->pos_y
@@ -582,8 +579,8 @@ module player =
     // ============================================================
 
     // Weapon fire rates (seconds per shot cycle). Index by
-    // g->weapon. Derived from the original's `attackinfo[4][14]`
-    // (wl_agent.cpp:56) with 6-tic frames at the 70Hz tic rate.
+    // g->weapon. Derived from the original's per-weapon attack-frame
+    // table with 6-tic frames at the 70Hz tic rate.
     // Knife/pistol: 4 full frames = 24 tics ≈ 0.343s per swing/shot.
     // MG: frames 2↔3 loop while held = 12 tics ≈ 0.171s/shot.
     // Chaingun: fires on both frame 2 and 3 of the 2-frame loop =
@@ -597,8 +594,8 @@ module player =
 
     // Base sprite index in VSWAP for each weapon's "ready" pose. The
     // 4 attack frames follow sequentially (ready, atk1..atk4).
-    // Derived from wl_def.h's player-attack-frames enum:
-    // SPR_KNIFEREADY=416, etc.
+    // Derived from the original's per-weapon attack-frame layout:
+    // knife ready at 416, pistol at 421, MG at 426, chain at 431.
     private let weapon_sprite_base = int32[4] { 416, 421, 426, 431 }
 
     // Per-frame weapon-animation pump.
@@ -612,9 +609,8 @@ module player =
             if g->fire_timer <= 0.0 then
                 g->weapon_frame = 0
                 g->fire_timer = 0.0
-                // Wolf3D auto-switches to the knife at the end of an
-                // attack if ammo ran out (wl_agent.cpp T_Attack, the
-                // !ammo branch).
+                // The original auto-switches to the knife at the end
+                // of an attack if ammo ran out.
                 if g->weapon > 0 && g->ammo == 0 then g->weapon = 0
             else
                 let total = fire_rate[g->weapon]

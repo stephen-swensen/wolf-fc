@@ -409,7 +409,7 @@ module vgagraph =
         pic_dims: const pic_dim[]   // indexed by (chunk - start_pics)
         num_pics: int32
 
-    // Huffman expand. Mirrors wolf4sdl CAL_HuffExpand exactly:
+    // Huffman expand for the original's VGAGRAPH compression scheme:
     // tree is a flat array of 255 {bit0, bit1} nodes, root at index 254.
     // Values < 256 are literal bytes; values ≥ 256 are node indices
     // (tree_index = value - 256). Each input bit picks bit0 (0) or bit1

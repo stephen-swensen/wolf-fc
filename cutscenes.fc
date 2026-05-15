@@ -11,12 +11,12 @@
 //                      treasure counters)
 //   episode_end      — per-episode victory (after boss level 8)
 //   bj_victory       — BJ actor runs + jumps + yells after the player
-//                      steps on a boss-level EXITTILE
+//                      steps on a boss-level exit tile
 //   death_cam        — boss auto-victory cutscene for Schabbs / Giftmacher
 //                      / Fat / real Hitler
 
 // ============================================================
-// BJ victory cutscene — triggered by stepping on EXITTILE on a boss map
+// BJ victory cutscene — triggered by stepping on an exit tile on a boss map
 // ============================================================
 
 module bj_victory =
@@ -28,8 +28,8 @@ module bj_victory =
 
     // Can BJ step onto (tx, ty)? Off-map and wall tiles block; doors
     // block only when not fully open; any other tile is free (floors
-    // / floor-tagged markers / dead actors). Mirrors the original's
-    // TryWalk for the bjobj class.
+    // / floor-tagged markers / dead actors). Matches the original's
+    // BJ-victory walk check.
     private let tile_passable = (lv: level*, tx: int32, ty: int32) ->
         if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
         else
@@ -40,10 +40,9 @@ module bj_victory =
 
     // Read the path arrow at BJ's current tile (if any) and snap his
     // heading to it; then probe the new tile in that direction and
-    // stop if it's blocked. Exactly the original's SelectPathDir for
-    // the bjobj actor class. Distance is reset to 1 tile so the
-    // running loop advances one tile before consulting the arrow
-    // table again.
+    // stop if it's blocked. Matches the original's BJ-victory path-
+    // direction pick. Distance is reset to 1 tile so the running
+    // loop advances one tile before consulting the arrow table again.
     private let select_path_dir = (lv: level*, g: game*) ->
         let arrow = (int32) lv->path_arrows[(int64) g->bj_tile_x * 64 + (int64) g->bj_tile_y]
         if arrow != dir.nodir then g->bj_dir = arrow
@@ -54,14 +53,14 @@ module bj_victory =
         if !tile_passable(lv, nx, ny) then g->bj_dir = dir.nodir
 
     // Begin the BJ victory cutscene. Invoked from player.update when
-    // the player steps onto an EXITTILE (plane-1 tile 99) on a boss
+    // the player steps onto an exit tile (plane-1 tile 99) on a boss
     // map; also triggered synthetically by the `endepisode` test
     // command. BJ spawns at the player's world position but with his
-    // tile coordinates set one south, matching the original's
-    // SpawnBJVictory quirk — the first bj_victory.tick iteration
-    // snaps him to that south-tile center and reads the path arrow
-    // there to pick his heading. Applies the level-completion bonus
-    // up front so the episode-end total still reflects the map clear.
+    // tile coordinates set one south, matching the original's BJ-
+    // victory spawn quirk — the first bj_victory.tick iteration snaps
+    // him to that south-tile center and reads the path arrow there
+    // to pick his heading. Applies the level-completion bonus up
+    // front so the episode-end total still reflects the map clear.
     let enter = (g: game*, ac: audio_ctx*) ->
         g->phase = game_phase.bj_victory
         g->phase_timer = 0.0
@@ -81,7 +80,7 @@ module bj_victory =
         g->bj_phase = 0
         g->bj_yelled = false
         // Clear latched pre-transition flags and pre-handle space so
-        // the EXITTILE step (or a held elevator press on a synthetic
+        // the exit-tile step (or a held elevator press on a synthetic
         // endepisode) doesn't race an early episode-end transition.
         g->next_level = false
         g->next_level_delay = 0.0
@@ -95,7 +94,7 @@ module bj_victory =
 
     // Advance the BJ actor one tick. Called from update_world while
     // in bj_victory. During the run phase the step loop matches
-    // the original's T_BJRun: consume `move` fixed-budget, crossing
+    // the original's BJ-run logic: consume `move` fixed-budget, crossing
     // tile centers along the current heading and re-running
     // select_path_dir at each center to pick up the next authored
     // arrow. After bj_run_tiles_left reaches 0 BJ jumps in whatever
@@ -164,7 +163,7 @@ module bj_victory =
 // ============================================================
 //
 // The four "auto-victory" bosses end the episode via a multi-beat
-// cutscene rather than dropping a key for an EXITTILE walk: hold on
+// cutscene rather than dropping a key for an exit-tile walk: hold on
 // the final death frame, dissolve the viewport to black, show a
 // taunt line ("Let's see you in hell!"), wait for the player to
 // acknowledge, teleport the camera to frame the corpse, dissolve
@@ -195,8 +194,8 @@ module death_cam =
 
     // Timing (seconds). The pre-replay and post-replay holds keep
     // the scene from feeling clipped; the post-replay fade-to-black
-    // covers the original's VW_FadeOut() that runs between
-    // ex_victorious and the victory/intermission screen.
+    // covers the original's fade-out between the victorious episode
+    // and the victory/intermission screen.
     let pre_fade_time     = 1.43
     let fade_time         = 1.00
     let taunt_timeout     = 4.30
@@ -207,23 +206,22 @@ module death_cam =
 
     // Backdrop color behind the taunt card — palette index 0x7F
     // (6-bit VGA (0, 16, 16) → 8-bit ARGB (0, 64, 64)). In the
-    // original this is `bordercol = VIEWCOLOR`, the dark teal that
-    // the status-bar frame also uses; dissolving to pure black looks
-    // too abrupt compared to the OG.
+    // original this is the standard viewport border color (the dark
+    // teal that the status-bar frame also uses); dissolving to pure
+    // black looks too abrupt compared to the original.
     let backdrop_color = 0xFF004040u32
 
-    // SPR_DEATHCAM in the original's sprite enum is offset 1 from
-    // sprite base (SPR_DEMO=0, SPR_DEATHCAM=1). Flashes on/off every
-    // ~0.46s while the death cam is active — bit 5 of the 70Hz tic
-    // count toggles every 32 tics, matching the original's
-    // `GetTimeCount() & 32` gate.
+    // The death-cam sprite sits at offset 1 from the sprite base in
+    // the original. Flashes on/off every ~0.46s while the death cam
+    // is active — bit 5 of the 70Hz tic count toggles every 32 tics
+    // (matches the original's flash gate).
     let sprite_offset = 1
 
     // True during the sub-phases that show the death-cam's zoomed-in
-    // view (after the camera teleport). Drives both the SPR_DEATHCAM
-    // flash and the suppression of the normal weapon sprite, which
-    // the original replaces with the DEATH CAM graphic during this
-    // window.
+    // view (after the camera teleport). Drives both the death-cam
+    // sprite flash and the suppression of the normal weapon sprite,
+    // which the original replaces with the "DEATH CAM" graphic during
+    // this window.
     private let is_replay_view = (s: int32) ->
         s == sub.fade_in || s == sub.pre_replay
             || s == sub.replay_anim || s == sub.replay_hold
@@ -266,9 +264,9 @@ module death_cam =
         g->key_ack_handled = true
 
     // Place the camera so it's looking at the boss corpse from the
-    // same side the player killed it from. Ports A_StartDeathCam's
-    // position loop: start at ~1.25 tiles back along the kill-
-    // direction ray, step outward by 1/16 of a tile until the camera
+    // same side the player killed it from. Matches the original's
+    // death-cam position loop: start at ~1.25 tiles back along the
+    // kill-direction ray, step outward by 1/16 of a tile until the camera
     // bbox clears walls. Sets pos + dir vectors; the raycaster picks
     // up the new view automatically.
     private let teleport = (lv: level*, g: game*, boss_x: float64, boss_y: float64) ->
@@ -387,7 +385,7 @@ module death_cam =
                 g->dc_fade = 1.0
                 g->dc_sub = sub.done
 
-    // Layout for the SPR_DEATHCAM sprite within the vbuf-cell grid.
+    // Layout for the "DEATH CAM" sprite within the vbuf-cell grid.
     // Same sizing as the player gun (square, vbuf_h on each side,
     // centered horizontally, top-aligned in the viewport so the
     // letters appear high). Coordinates are in vbuf-cell units, NOT
@@ -413,7 +411,7 @@ module death_cam =
             dh = dh
         }
 
-    // Draw the SPR_DEATHCAM sprite at the bottom-center of the
+    // Draw the "DEATH CAM" sprite at the bottom-center of the
     // viewport, sized the same way player.render_weapon sizes the gun.
     // Flashes on/off per phase_timer; caller is expected to gate on
     // is_replay_view.
@@ -471,7 +469,7 @@ module intermission =
     // Count-up rates for the intermission animation (units per
     // second). Tuned to match the original's "cash-register zip"
     // feel: counter races to its target in well under a second while
-    // ENDBONUS1SND fires per chunk.
+    // the bonus-tick cue fires per chunk.
     //
     // Time bonus counter unit = seconds beaten par (max ~510 on the
     // longest E6M8 par); $500 per unit. At 400 units/sec a 90s bonus
@@ -484,31 +482,30 @@ module intermission =
 
     // Per-stage pause inserted after the end-of-stage sound fires,
     // before the next counter starts zipping. Holds the finished
-    // counter at its final value so the player can read it. Mirrors
-    // the original's VBLWAIT(30 VBLs / ~0.43s @ 70Hz) +
-    // SD_SoundPlaying wait; we round down a touch since the player
-    // can still mash a key to skip.
+    // counter at its final value so the player can read it. Matches
+    // the original's ~0.43s pause + sound-busy wait; we round down
+    // a touch since the player can still mash a key to skip.
     private let stage_gap = 0.35
 
-    // Small gap between the last ENDBONUS1SND tick and the
-    // end-of-stage ring sound (ENDBONUS2 / PERCENT100 / NOBONUS).
-    // Without this, the tail of the final tick sits on top of the
-    // ring — the original avoided that with its
-    // `while (SD_SoundPlaying ())` wait after each loop iteration.
+    // Small gap between the last counter tick and the end-of-stage
+    // ring sound. Without this, the tail of the final tick sits on
+    // top of the ring — the original avoided that with a sound-busy
+    // wait after each loop iteration.
     private let end_sound_wait = 0.18
 
     // Short breath before the counter starts, just enough for the
-    // screen swap to feel deliberate. LEVELDONESND (the elevator
+    // screen swap to feel deliberate. The level-done sound (elevator
     // "ding") already played out during the pre-intermission freeze
     // (elevator_wait_time), so we don't need the longer gap the
-    // original inserted between Cmd_Use and LevelCompleted.
+    // original inserted between the use action and the level-complete
+    // screen.
     private let lead_in = 0.25
 
-    // Par time in seconds for each of the 60 levels. Derived from the
-    // minute-fraction values in the original's ParTimes[] (fractions
-    // of hours × 3600, rounded to whole seconds). Used both for the
-    // bonus computation (beat par → time bonus) and the "PAR: M:SS"
-    // display on the intermission screen.
+    // Par time in seconds for each of the 60 levels. Derived from
+    // the original's par-time table (fractions of hours × 3600,
+    // rounded to whole seconds). Used both for the bonus computation
+    // (beat par → time bonus) and the "PAR: M:SS" display on the
+    // intermission screen.
     let par_times = int32[60] {
          90, 120, 120, 150,  90, 240, 150, 180, 420,   0,
          90, 180, 270, 360, 120, 270, 330, 420, 360,   0,
@@ -564,8 +561,8 @@ module intermission =
         // Secret-level intermissions short-circuit the whole ticker:
         // a flat 15000-point bonus, the stage counter parked at 4
         // (animation done), and a static "SECRET FLOOR / COMPLETED!"
-        // screen (see render). Matches the original's LevelCompleted
-        // else-branch.
+        // screen (see render). Matches the original's secret-level
+        // intermission branch.
         if is_secret_level(g->level_num) then
             add_score(g, secret_floor_bonus, ac)
             g->inter_stage = 4
@@ -627,18 +624,18 @@ module intermission =
 
     // Advance the intermission count-up animation one frame.
     //
-    // Sequencing per stage, matching the original's LevelCompleted:
-    //   1. Counter "zips" from 0 to target at a fast rate. ENDBONUS1
-    //      fires on each chunk boundary — /50 for the time bonus
-    //      and /10 for ratios.
+    // Sequencing per stage, matching the original's level-complete
+    // screen:
+    //   1. Counter "zips" from 0 to target at a fast rate. A bonus-
+    //      tick sound fires on each chunk boundary — /50 for the
+    //      time bonus and /10 for ratios.
     //   2. When the counter hits target, the counter freezes and we
     //      arm a two-phase hold:
     //        * end_sound_delay (short — lets the last tick clear)
     //          → then fire the end-of-stage ring sound.
     //        * pause_timer (longer — total hold before advancing)
     //          → when it expires we step to the next stage.
-    //      The ring sound is one of PERCENT100SND (100%), NOBONUSSND
-    //      (0%), or ENDBONUS2SND (partial / time bonus).
+    //      The ring sound is one of the 100% / 0% / partial cues.
     let tick = (g: game*, ac: audio_ctx*, dt: float64) ->
         g->inter_breathe_timer = g->inter_breathe_timer + dt
         if g->inter_stage >= 4 then return
@@ -698,11 +695,11 @@ module intermission =
                 g->inter_end_sound_delay = end_sound_wait
                 g->inter_pause_timer = end_sound_wait + stage_gap
 
-    // Draw a single character from the LEVELEND_LUMP pic set.
+    // Draw a single character from the level-end glyph pic set.
     // Returns the pixel advance after the glyph. Matches the
-    // original's Write() dispatch: letters, digits, and '%' advance
-    // 16 px (the pics are drawn inside 16-wide cells); ':', '!', "'"
-    // advance 8 px; ' ' just advances 16.
+    // original's per-character dispatch: letters, digits, and '%'
+    // advance 16 px (the pics are drawn inside 16-wide cells); ':',
+    // '!', "'" advance 8 px; ' ' just advances 16.
     private let write_lpic_char = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                            x: int32, y: int32, ch: int32) ->
         let mut c = ch
@@ -730,9 +727,8 @@ module intermission =
         else
             16
 
-    // Draw a string using the LEVELEND_LUMP letter/digit pics,
-    // starting at pixel (x, y). `\n` resets x and advances y by 16
-    // px (one row).
+    // Draw a string using the level-end letter/digit pics, starting
+    // at pixel (x, y). `\n` resets x and advances y by 16 px (one row).
     let write_lpic_text = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                            x: int32, y: int32, s: const str) ->
         let mut nx = x
@@ -745,7 +741,7 @@ module intermission =
             else
                 nx = nx + write_lpic_char(rc, vg, pal, nx, ny, ch)
 
-    // Write a number using the big L_NUM pics. `align_right` = true
+    // Write a number using the big-number pics. `align_right` = true
     // right-aligns the last digit at pixel column `x`; false starts
     // the first digit at x.
     let write_lpic_number = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
@@ -768,11 +764,11 @@ module intermission =
             let d = digits[count - 1 - i]
             pics.draw(rc, vg, pal, pics.id.l_num0 + d, start_x + i * 16, y)
 
-    // Classic Wolf3D intermission: faithful recreation of
-    // LevelCompleted(). Background is a mid-grey fill (palette 0x7F
-    // VIEWCOLOR), BJ portrait on the left (breathing), "floor N
-    // completed" caption, bonus / time / par lines, and live kill /
-    // secret / treasure ratios animated via tick.
+    // Classic intermission: faithful recreation of the original's
+    // level-complete screen. Background is a mid-grey fill (palette
+    // 0x7F), BJ portrait on the left (breathing), "floor N completed"
+    // caption, bonus / time / par lines, and live kill / secret /
+    // treasure ratios animated via tick.
     let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                   g: game*) ->
         let ox = rc->ui_offset_x
@@ -882,37 +878,37 @@ module episode_end =
         g->has_gold_key = false
         g->has_silver_key = false
 
-    // Per-episode victory screen — the OG `Victory()` layout. The 3D
-    // viewport area is filled with VIEWCOLOR (palette 0x7F), the BJ-
-    // wins art (L_BJWINSPIC) goes top-left, the LEVELEND big-font
-    // pics carry every label and digit. Numbers use the same per-
-    // tile placement the original reaches via `Write(x, y, "...")`.
-    // The HUD status bar at the bottom of the screen stays untouched
-    // so the player's score / lives / face still show during the
-    // tally — matches the OG split-screen layout.
+    // Per-episode victory screen — matches the original's layout.
+    // The 3D viewport area is filled with the standard background
+    // grey (palette 0x7F), the BJ-wins art goes top-left, the level-
+    // end big-font pics carry every label and digit. Numbers use the
+    // same per-tile placement as the original. The HUD status bar at
+    // the bottom of the screen stays untouched so the player's score
+    // / lives / face still show during the tally — matches the
+    // original split-screen layout.
     //
-    // Layout coordinates (in 8-px tiles, OG TIMEX/TIMEY/RATIOX/RATIOY):
+    // Layout coordinates (in 8-px tiles, matching the original):
     //   "you win!"          (18, 2)
-    //   L_BJWINSPIC         pixel (8, 4)
-    //   "total time"        (14, 6)         (TIMEX, TIMEY-2)
-    //   MM:SS digits        pixel (TIMEX*8+1, TIMEY*8) = (113, 64)
-    //   "averages"          (12, 12)        (RATIOY-2)
-    //   "kill    %"         (14, 14)        (RATIOX+8, RATIOY)
-    //   "secret    %"       (10, 16)        (RATIOX+4, RATIOY+2)
-    //   "treasure    %"     (6,  18)        (RATIOX,   RATIOY+4)
-    //   ratio percentages right-aligned at column (RATIOX+24)*8 = 240
+    //   BJ-wins art         pixel (8, 4)
+    //   "total time"        (14, 6)
+    //   MM:SS digits        pixel (113, 64)
+    //   "averages"          (12, 12)
+    //   "kill    %"         (14, 14)
+    //   "secret    %"       (10, 16)
+    //   "treasure    %"     (6,  18)
+    //   ratio percentages right-aligned at column 240
     let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                   pal: const uint32[], f: const font.info*, g: game*) ->
         let ox = rc->ui_offset_x
-        // VIEWCOLOR fill on the 3D viewport area only — leave the HUD
-        // strip below alone. Spans the whole framebuffer so widescreen
-        // side panels are the same neutral grey as the centre.
+        // Neutral-grey fill on the 3D viewport area only — leave the
+        // HUD strip below alone. Spans the whole framebuffer so
+        // widescreen side panels are the same neutral grey as the centre.
         let bg = pal[0x7F]
         for y in 0..view_h
             let base = y * rc->fb_w
             for x in 0..rc->fb_w
                 rc->fb[base + x] = bg
-        // BJ-wins art on the left (L_BJWINSPIC).
+        // BJ-wins art on the left.
         pics.draw(rc, vg, pal, pics.id.l_bjwins, ox + 8, 4)
         // Big-font headers + labels.
         intermission.write_lpic_text(rc, vg, pal, ox + 18 * 8,  2 * 8, "you win!")
@@ -930,15 +926,15 @@ module episode_end =
         if min > 99 then
             min = 99
             sec = 99
-        let time_x = ox + 14 * 8 + 1   // OG: TIMEX*8 + 1
-        let time_y = 8 * 8             // OG: TIMEY*8
+        let time_x = ox + 14 * 8 + 1   // matches the original
+        let time_y = 8 * 8             // matches the original
         pics.draw(rc, vg, pal, pics.id.l_num0 + min / 10, time_x,      time_y)
         pics.draw(rc, vg, pal, pics.id.l_num0 + min % 10, time_x + 16, time_y)
         pics.draw(rc, vg, pal, pics.id.l_colon,           time_x + 32, time_y)
         pics.draw(rc, vg, pal, pics.id.l_num0 + sec / 10, time_x + 40, time_y)
         pics.draw(rc, vg, pal, pics.id.l_num0 + sec % 10, time_x + 56, time_y)
         // Average kill / secret / treasure percentages. Right-edge
-        // column is RATIOX+24 = 30 → pixel x = 240.
+        // column at pixel x = 240 (matches the original).
         let div = if g->ep_levels_played > 0 then g->ep_levels_played else 1
         let kr = g->ep_kr_total / div
         let sr = g->ep_sr_total / div
@@ -965,8 +961,8 @@ module episode_end =
 //   ^Tx,y,p,t       (timed pic) — we draw the pic and ignore the timer
 //   ^;              comment to end of line
 // Pages are word-wrapped between an outer four-piece window-frame
-// border (HELP_LUMP chunks 6..9). Layout constants below mirror the
-// original game's text layout.
+// border (the original's help-frame pic chunks). Layout constants
+// below mirror the original game's text layout.
 // ============================================================
 
 module endart_screen =
@@ -980,8 +976,9 @@ module endart_screen =
     private let pic_margin   = 8
     private let screen_mid   = 160
     let max_pages = 8
-    // OG's TEXTROWS = (200 - 16 - 32) / 10 = 15. Hardcoded so it can
-    // sit at module scope (game_h isn't a constant here).
+    // Text row count = (200 - 16 - 32) / 10 = 15 (matches the
+    // original). Hardcoded so it can sit at module scope (game_h
+    // isn't a constant here).
     private let text_rows    = 15
 
     private let is_caret = (b: uint8) -> b == 0x5Eu8           // '^'
@@ -999,7 +996,7 @@ module endart_screen =
     // Read a base-10 number starting at offset `i`, skipping any
     // leading non-digits. Returns the parsed value plus the byte
     // offset of the first character past the number — matches the
-    // shape of the original article parser's `ParseNumber`.
+    // shape of the original article parser's number reader.
     private struct num_at =
         value: int32
         next:  int32
@@ -1084,9 +1081,9 @@ module endart_screen =
         g->key_ack_handled = false
 
     // Advance to the next page; clamps at the last page (a no-op
-    // there, matching the OG ShowArticle loop where forward keys on
-    // the final page just don't do anything — the player has to press
-    // Esc to leave).
+    // there, matching the original's article reader where forward
+    // keys on the final page just don't do anything — the player
+    // has to press Esc to leave).
     let next_page = (g: game*) ->
         if g->endart_page + 1 < g->endart_total_pages then
             g->endart_page = g->endart_page + 1
@@ -1320,21 +1317,21 @@ module endart_screen =
         // hint text is needed.
 
 
-// (No `victory_screen` module — the OG WL6 doesn't have an all-six-
-// episodes-cleared screen. Each episode-end's article exits to the
-// main menu, regardless of which episode was just completed.)
+// (No `victory_screen` module — the original WL6 doesn't have an
+// all-six-episodes-cleared screen. Each episode-end's article exits
+// to the main menu, regardless of which episode was just completed.)
 
 
 module title_screen =
-    // Attract cycle: TITLE → CREDITS → HIGHSCORES → loop, with a brief
-    // black fade between each phase. Hold times match the original
-    // (`wl_main.cpp:1590-1610`, `TickBase=70Hz`): TITLEPIC for 15 s,
-    // CREDITSPIC for 10 s, high-scores for 10 s. The OG also plays a
-    // demo at the tail of every cycle; wolf-fc skips the demo (no
-    // recorder) and loops straight back to TITLEPIC. Any key at any
-    // sub-phase drops into the main menu (handled in main.fc); on
-    // re-entry the cycle restarts from TITLEPIC because phase_timer
-    // resets on phase change.
+    // Attract cycle: TITLE → CREDITS → HIGHSCORES → loop, with a
+    // brief black fade between each phase. Hold times match the
+    // original at the 70Hz tic rate: title for 15 s, credits for
+    // 10 s, high-scores for 10 s. The original also plays a demo at
+    // the tail of every cycle; wolf-fc skips the demo (no recorder)
+    // and loops straight back to the title. Any key at any sub-phase
+    // drops into the main menu (handled in main.fc); on re-entry
+    // the cycle restarts from the title because phase_timer resets
+    // on phase change.
     let title_hold      = 15.0
     let credits_hold    = 10.0
     let highscores_hold = 10.0
@@ -1342,8 +1339,8 @@ module title_screen =
     let cycle_total     = title_hold + credits_hold + highscores_hold
 
     // Local-time fade-in at the start of a sub-phase + fade-out at
-    // the end. Black tint, sequential (not cross-fade) — same shape
-    // as the OG's `VW_FadeOut(); ...; VW_FadeIn()` pattern.
+    // the end. Black tint, sequential (not cross-fade) — matches
+    // the original's fade-out/fade-in pattern between attract phases.
     private let apply_fade = (rc: render_ctx*, local_t: float64, hold: float64) ->
         let alpha =
             if local_t < fade_time then 1.0 - local_t / fade_time
@@ -1358,7 +1355,7 @@ module title_screen =
             pics.blit_title_bg(rc)
             apply_fade(rc, time, title_hold)
         else if time < title_hold + credits_hold then
-            // Black fill behind CREDITSPIC so widescreen letterboxes
+            // Black fill behind the credits pic so widescreen letterboxes
             // cleanly. `pics.draw` clips silently if the fb is wider
             // than the 320x200 pic.
             for i in 0..(rc->fb_w * rc->fb_h)
@@ -1405,26 +1402,24 @@ module pg13_screen =
 // ============================================================
 //
 // Triggered from three sites:
-//   1. Death with no lives left (the OG's `ex_died` → CheckHighScore)
-//   2. Endart article exit (the OG's `ex_victorious` → CheckHighScore
-//      embedded in Victory())
-//   3. View Scores main-menu entry (the OG's CP_ViewScores)
+//   1. Death with no lives left
+//   2. Endart article exit (post-victory)
+//   3. View Scores main-menu entry
 //
-// Layout mirrors the original's DrawHighScores: BORDCOLOR backdrop +
-// black title stripe at y=10, HIGHSCORESPIC banner at (48, 0),
-// C_NAME / C_LEVEL / C_SCORE column headers at y=68, and 7 rows
-// (16 px apart) at y=76+ for the data. Names are left-aligned at
-// x=32; level "E?/L?" sits right-edged around x=170; scores are
-// right-aligned at x=264. ROSTER_MUS plays underneath (the OG's
-// CheckHighScore + CP_ViewScores both call StartCPMusic(ROSTER_MUS)).
+// Layout mirrors the original's high-scores screen: red backdrop +
+// black title stripe at y=10, high-scores banner at (48, 0), name /
+// level / score column headers at y=68, and 7 rows (16 px apart) at
+// y=76+ for the data. Names are left-aligned at x=32; level "E?/L?"
+// sits right-edged around x=170; scores are right-aligned at x=264.
+// The roster music plays underneath (matching the original).
 //
 // When the just-ended game qualifies, the new row enters an inline
 // edit: a typing caret blinks at the end of the name buffer, the
 // player types A..Z / 0..9 / Space, Backspace deletes, Enter commits.
 // Esc on a non-editing screen routes back to wherever it came from
 // (title after death, main menu when shown via the menu); Esc during
-// editing commits the current buffer (matching how the OG's
-// US_LineInput on a high-score row treats Escape as "skip but keep").
+// editing commits the current buffer (matching the original's "name
+// stays even on cancel" behavior for the high-score row editor).
 module high_scores_screen =
     // Source the screen was entered from — drives where Esc / ack
     // routes after the player dismisses the table.
@@ -1440,7 +1435,7 @@ module high_scores_screen =
 
     // Commit the typed name to the qualifying row, mark the table as
     // pending-save, and exit edit mode. Called on Enter (and on Esc
-    // — matching US_LineInput's "name stays even on cancel" path).
+    // — matches the original's "name stays even on cancel" behavior).
     let commit_name = (hs: highscore_ctx*) ->
         if hs->edit_index < 0 then return
         let nm = (const str) hs->edit_buf[0..(int64) hs->edit_len]
@@ -1472,10 +1467,11 @@ module high_scores_screen =
 
     // Leave the high-scores screen. Persists any pending name edit
     // first, then routes back to the source's natural exit target —
-    // title screen for the death / endart paths (matches the OG's
-    // DemoLoop cycle), main menu for the View Scores entry. The
-    // active-game flag clears on the title path so a subsequent menu
-    // visit doesn't offer BACK TO GAME for a finished run.
+    // title screen for the death / endart paths (matches the
+    // original's title/demo cycle), main menu for the View Scores
+    // entry. The active-game flag clears on the title path so a
+    // subsequent menu visit doesn't offer BACK TO GAME for a
+    // finished run.
     let dismiss = (g: game*, hs: highscore_ctx*) ->
         if hs->pending_save then
             highscore.save(hs->scores)
@@ -1493,7 +1489,7 @@ module high_scores_screen =
     // index returned by `highscore.qualifies`), insert at that row
     // and arm the inline name editor; otherwise the screen is purely
     // informational. `completed` is the level the player finished
-    // (1-indexed — `level_num + 1` to match the OG's `mapon + 1`).
+    // (1-indexed, matching the original).
     let enter = (g: game*, hs: highscore_ctx*, source: int32,
                  score: int32, completed: int32, episode: int32) ->
         g->phase = game_phase.high_scores
@@ -1529,23 +1525,23 @@ module high_scores_screen =
                   pal: const uint32[], f: const font.info*,
                   hs: highscore_ctx*, time: float64) ->
         let ox = rc->ui_offset_x
-        // BORDCOLOR full-screen fill (matches the menu backdrop) +
-        // black stripe + HIGHSCORESPIC banner. Same shared helper the
+        // Red border-color full-screen fill (matches the menu backdrop)
+        // + black stripe + high-scores banner. Same shared helper the
         // menu screens use, so all title pics sit on a consistent
         // full-width black strip.
         let bg = pal[0x29]
         for i in 0..(rc->fb_w * rc->fb_h)
             rc->fb[i] = bg
         menu.draw_stripes(rc, pal, 10)
-        // HIGHSCORESPIC at OG (48, 0). Some WL6 rips ship a smaller
+        // High-scores banner at (48, 0). Some WL6 rips ship a smaller
         // pic — `pics.draw` clips silently if so.
         pics.draw(rc, vg, pal, pics.id.highscores, ox + 48, 0)
-        // Column headers — C_NAME / C_LEVEL / C_SCORE pics at y=68.
+        // Column headers — name / level / score pics at y=68.
         pics.draw(rc, vg, pal, pics.id.c_name,  ox + 4 * 8,  68)
         pics.draw(rc, vg, pal, pics.id.c_level, ox + 20 * 8, 68)
         pics.draw(rc, vg, pal, pics.id.c_score, ox + 28 * 8, 68)
-        // Row data. White text (palette 15) on the BORDCOLOR
-        // background, matching the OG's SETFONTCOLOR(15, BORDCOLOR).
+        // Row data. White text (palette 15) on the red border-color
+        // background, matching the original.
         let text_color = pal[15]
         for i in 0..highscore.max_scores
             let row_y = 76 + 16 * i

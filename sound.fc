@@ -300,9 +300,9 @@ module digi =
         pos: float64         // current source-sample position
         playing: bool
         sound_num: int32     // VSWAP digi index — used to dedup retriggers
-                             // of the same sound (mirrors wolf4sdl's
-                             // DigiChannel[which] = same-channel reuse).
-                             // -1 means "slot has never held a sound."
+                             // of the same sound (matches the original's
+                             // same-channel reuse policy). -1 means
+                             // "slot has never held a sound."
         gain_l: float64      // per-channel multiplier computed from pan
         gain_r: float64
 
@@ -334,8 +334,9 @@ module digi =
 
     // Load a digitized sound from VSWAP using the digi info table on the
     // last VSWAP page. Returns a newly heap-allocated PCM buffer (caller
-    // owns). `sound_num` is the digi-pack index (0..45 in Wolf3D), NOT
-    // the sound-enum value — see wolf4sdl's wolfdigimap[] for the mapping.
+    // owns). `sound_num` is the digi-pack index (0..45 in the original),
+    // NOT the sound-enum value — see the digi-mapping table in sfx.fc
+    // for the conversion.
     let load_sound = (vs: const vswap.vswap_file*, sound_num: int32) ->
         let info_page = vs->num_chunks - 1
         let info_off = vswap.page_offset(vs, info_page)
@@ -357,14 +358,15 @@ module digi =
             pg = pg + 1
         buf
 
-    // Start playing `sound_num` on a slot. Mirrors wolf4sdl's DigiChannel
-    // dedup: if `sound_num` is already playing in any slot, that slot is
-    // reused (rewound to the start, gains updated for the new pan) — no
-    // alloc, no overlap, no stacking. Holding the use button at a wall
-    // therefore retriggers DONOTHINGSND in-place every frame instead of
-    // burning through all four mix slots in a few hundred ms (which used
-    // to overwhelm the SDL audio queue and disconnect the music stream
-    // entirely on PulseAudio backends).
+    // Start playing `sound_num` on a slot. Matches the original's digi
+    // channel-dedup: if `sound_num` is already playing in any slot,
+    // that slot is reused (rewound to the start, gains updated for
+    // the new pan) — no alloc, no overlap, no stacking. Holding the
+    // use button at a wall therefore retriggers the do-nothing cue
+    // in-place every frame instead of burning through all four mix
+    // slots in a few hundred ms (which used to overwhelm the SDL
+    // audio queue and disconnect the music stream entirely on
+    // PulseAudio backends).
     //
     // Slot selection priority:
     //   1. Slot already playing this sound_num -> rewind in place
@@ -373,13 +375,13 @@ module digi =
     //
     // `pan` is [-1, +1]; 0 = centered. Center plays at full scale on both
     // channels; panning taper only attenuates the off-side (no equal-power
-    // -3dB dip at center). This matches the OG Sound Blaster loudness —
-    // classic digi SFX like LEVELDONESND need the full int16 headroom to
-    // hit with the "bang" players remember.
+    // -3dB dip at center). This matches the original Sound Blaster
+    // loudness — classic digi SFX like the level-done cue need the full
+    // int16 headroom to hit with the "bang" players remember.
     // Primary entry: pan + a per-call gain multiplier. gain > 1.0 boosts the
     // slot into the mixer's soft-clip region (see mixer.soft_clip_sample) so
-    // one-off "bam!" sounds like LEVELDONESND can punch harder than the
-    // ambient SB-mixer loudness without hard-clipping.
+    // one-off "bam!" sounds can punch harder than the ambient mixer
+    // loudness without hard-clipping.
     let play_with_gain = (p: player*, sound_num: int32, pan: float64, gain: float64) ->
         let mut pp = pan
         if pp < -1.0 then pp = -1.0
@@ -493,8 +495,8 @@ module mixer =
             let over = abs_s - knee
             // int64 promotion before the multiply: `over * range`
             // overflows int32 once |s| crosses ~245k, which is
-            // reachable when a loud digi (gain>1, e.g. LEVELDONESND
-            // at 1.8×) stacks with both OPL2 chips at their peaks.
+            // reachable when a loud digi (gain>1, e.g. the level-done
+            // cue at 1.8×) stacks with both OPL2 chips at their peaks.
             // The divided result is bounded by `range` (8767), so it
             // fits int32 trivially — only the intermediate multiply
             // needs the wider type.

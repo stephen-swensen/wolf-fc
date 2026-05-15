@@ -3,11 +3,11 @@
 // navigation logic (cursor movement, selection) lives in main.fc's
 // event loop since it has to observe every phase of the game.
 //
-// Visual style mirrors the original Wolf3D control panel: solid red
-// BORDCOLOR backdrop, black title stripe at y=10, header pic above
-// the box, dark-olive BKGDCOLOR menu window with a thin two-tone
-// border, gun-cursor pic at the left of the selected row, row text
-// in TEXTCOLOR (white) normally and HIGHLIGHT (cyan) when selected.
+// Visual style mirrors the original's control panel: solid red
+// border backdrop, black title stripe at y=10, header pic above
+// the box, dark-olive menu window with a thin two-tone border,
+// gun-cursor pic at the left of the selected row, row text in
+// white normally and cyan when selected.
 // Submenus the original ships that this port doesn't support
 // (Control / Customize / Change View / Read This! / View Scores)
 // are not present at all rather than greyed out.
@@ -27,10 +27,10 @@ module menu =
         // since it draws over the menu chrome and only intercepts Y/N.
         let quit       = 8
 
-    // Original Wolf3D palette indices for menu chrome (from
-    // `wl_menu.h`). We resolve them through `pal[]` at draw time so
-    // they always come back as the right ARGB value for the current
-    // palette, including any gamma/fade applied upstream.
+    // Menu-chrome palette indices, matched to the original. We
+    // resolve them through `pal[]` at draw time so they always come
+    // back as the right ARGB value for the current palette,
+    // including any gamma/fade applied upstream.
     private let pal_bordcolor  = 0x29   // outer red bg fill
     private let pal_bord2      = 0x23   // bottom-right bevel
     private let pal_deactive   = 0x2b   // top-left bevel + locked text
@@ -41,7 +41,7 @@ module menu =
     private let pal_read       = 0x4a   // BACK TO GAME normal — orange
     private let pal_readh      = 0x47   // section titles + BACK TO GAME
                                         //   selected — bright yellow,
-                                        //   matches OG's `READHCOLOR`
+                                        //   matches the original's highlight
     private let pal_help       = 0x37   // bottom hint line
 
     // Main menu — original Wolf3D ordering with the unsupported rows
@@ -58,12 +58,12 @@ module menu =
     //   8 Quit
     let main_len = 9
 
-    // Row 7's label tracks `has_active_game`, mirroring the OG's
-    // `BACK TO DEMO/GAME` entry: with a running game it resumes
+    // Row 7's label tracks `has_active_game`, matching the original's
+    // BACK TO DEMO/GAME entry: with a running game it resumes
     // gameplay ("Back to Game"); without one it bounces back to the
     // title screen ("Back to Demo" — we don't ship an attract-mode
-    // demo, but the OG's DemoLoop landed on the title pic between
-    // demo plays anyway, so the title is the correct destination).
+    // demo, but the original's attract cycle landed on the title pic
+    // between demo plays anyway, so the title is the correct destination).
     let main_label = (i: int32, has_active_game: bool) ->
         match i with
         | 0 -> "New Game"
@@ -200,7 +200,7 @@ module menu =
                     xx = xx + 1
             yy = yy + 1
 
-    // OG `DrawWindow`: solid fill plus a two-tone outline (top + left
+    // Menu window: solid fill plus a two-tone outline (top + left
     // in `c_top`, bottom + right in `c_bot`) — gives the box the
     // beveled look the original menus have.
     private let draw_window = (rc: render_ctx*, pal: const uint32[],
@@ -225,16 +225,16 @@ module menu =
         fill_rect(rc, 0, y, rc->fb_w, y + 24, pal[0x00])
         fill_rect(rc, 0, y + 22, rc->fb_w, y + 23, pal[pal_stripe])
 
-    // Background common to every menu screen: full-screen BORDCOLOR
-    // fill (spans the entire framebuffer including widescreen side
-    // panels). The black title stripe (`draw_stripes`) is added
-    // per-menu because the OG only draws it on the main and load/save
-    // screens (where a header pic floats over it); the episode /
-    // difficulty / sound menus skip it.
+    // Background common to every menu screen: full-screen red
+    // border-color fill (spans the entire framebuffer including
+    // widescreen side panels). The black title stripe (`draw_stripes`)
+    // is added per-menu because the original only draws it on the
+    // main and load/save screens (where a header pic floats over it);
+    // the episode / difficulty / sound menus skip it.
     private let draw_backdrop = (rc: render_ctx*, pal: const uint32[]) ->
         fill_rect(rc, 0, 0, rc->fb_w, rc->fb_h, pal[pal_bordcolor])
 
-    // Cursor blink at ~3.5 Hz alternating C_CURSOR1PIC / C_CURSOR2PIC.
+    // Cursor blink at ~3.5 Hz alternating two cursor pics.
     private let cursor_chunk = (time: float64) ->
         let on = ((int32) (time * 3.5)) % 2 == 0
         if on then pics.id.c_cursor1 else pics.id.c_cursor2
@@ -243,27 +243,27 @@ module menu =
                                pal: const uint32[], x: int32, y: int32, time: float64) ->
         pics.draw(rc, vg, pal, cursor_chunk(time), x, y)
 
-    // Bottom-of-screen help art. The original draws C_MOUSELBACKPIC
-    // at (112, 184) on every menu screen — a small graphic showing
-    // the mouse / keyboard hint banner. We re-anchor with ui_offset_x
-    // so it stays centred over the 320-wide UI grid in widescreen.
-    // The pic ships with 8 rows of BORDCOLOR padding above its frame;
-    // we skip the top 3 so it stops overwriting the menu window's
-    // bottom bevel (the visible glyphs stay at the same screen y).
+    // Bottom-of-screen help art. The original draws the mouse-hint
+    // banner at (112, 184) on every menu screen. We re-anchor with
+    // ui_offset_x so it stays centred over the 320-wide UI grid in
+    // widescreen. The pic ships with 8 rows of border-color padding
+    // above its frame; we skip the top 3 so it stops overwriting
+    // the menu window's bottom bevel (the visible glyphs stay at
+    // the same screen y).
     private let draw_help_pic = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                  pal: const uint32[]) ->
         pics.draw_clipped_top(rc, vg, pal, pics.id.c_mouselback,
             rc->ui_offset_x + 112, 187, 3)
 
-    // Pick a row's text colour given selected / locked flags. Mirrors
-    // the OG's `color_norml` / `color_hlite` arrays.
+    // Pick a row's text colour given selected / locked flags. Matches
+    // the original's normal / highlight color tables.
     private let row_color = (pal: const uint32[], is_sel: bool, is_locked: bool) ->
         if is_locked then pal[pal_deactive]
         else if is_sel then pal[pal_highlight]
         else pal[pal_text]
 
     // ============================================================
-    // Main menu — MENU_X / MENU_Y / MENU_W from wl_menu.h
+    // Main menu — geometry matches the original
     // ============================================================
 
     private let menu_x      = 76
@@ -277,14 +277,14 @@ module menu =
                                     g: game*, time: float64) ->
         let ox = rc->ui_offset_x
         // Full-width stripe + native-size header pic centered on top
-        // (the OG main menu reuses C_OPTIONSPIC since the main menu
-        // and "options" are the same screen in the original). The
+        // (the original's main menu reuses the options-header pic
+        // since the main menu and "options" share a screen). The
         // stripe extends across the whole framebuffer so the pic
         // sits on a continuous strip in widescreen instead of
         // appearing on a 320-wide island.
         draw_stripes(rc, pal, 10)
         pics.draw(rc, vg, pal, pics.id.c_options, ox + 84, 0)
-        // DrawWindow at (menu_x - 8, menu_y - 3) sized for our 6 rows.
+        // Draw window at (menu_x - 8, menu_y - 3) sized for our 6 rows.
         let win_h = main_len * row_h + 6
         draw_window(rc, pal, ox + menu_x - 8, menu_y - 3, menu_w, win_h)
         for i in 0..main_len
@@ -293,12 +293,12 @@ module menu =
             let is_locked = main_is_locked(i, g->has_active_game)
             if is_sel then
                 draw_cursor(rc, vg, pal, ox + menu_x, row_y - 2, time)
-            // Row 7 only gets the OG's read-this-style colors
-            // (READCOLOR / READHCOLOR — orange / yellow) while it
-            // reads "Back to Game" — i.e. when there's a game to
-            // resume. The "Back to Demo" variant uses regular row
-            // colors since it's a passive return-to-title nav, not
-            // a "you have unfinished business" jump.
+            // Row 7 only gets the orange / yellow "read this"-style
+            // colors (matches the original) while it reads "Back to
+            // Game" — i.e. when there's a game to resume. The "Back
+            // to Demo" variant uses regular row colors since it's a
+            // passive return-to-title nav, not a "you have unfinished
+            // business" jump.
             let is_resume_game = i == 7 && g->has_active_game
             let color = if is_locked then pal[pal_deactive]
                 else if is_resume_game && is_sel then pal[pal_readh]
@@ -310,24 +310,24 @@ module menu =
         draw_help_pic(rc, vg, pal)
 
     // ============================================================
-    // Episode picker — NE_X / NE_Y / NE_W from wl_menu.h
+    // Episode picker — geometry matches the original
     // ============================================================
 
     private let render_episode_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                         pal: const uint32[], f: const font.info*,
                                         g: game*, time: float64) ->
-        // Episode picker geometry from wl_menu.h: NE_X=10, NE_Y=23,
-        // NE_W=300, NE_H≈154. Cards drawn at NE_X+32 + i*26.
-        // ui_offset_x recentres the OG-relative coords inside a wider
+        // Episode picker geometry (matches the original): x=10, y=23,
+        // width=300, height≈154. Cards drawn at x+32 + i*26.
+        // ui_offset_x recentres the 320-grid coords inside a wider
         // framebuffer for Hor+ widescreen.
         let ne_x = rc->ui_offset_x + 10
         let ne_y = 23
         let ne_w = 300
         let ne_h = 6 * 26 + 4
         draw_window(rc, pal, ne_x - 4, ne_y - 4, ne_w + 8, ne_h + 8)
-        // Header text inside the frame at the top (OG places it at
-        // PrintY=2 with WindowX/WindowY zeroed — effectively centered
-        // above the box; we tuck it just inside the frame's top edge).
+        // Header text inside the frame at the top (the original
+        // centers it above the box; we tuck it just inside the
+        // frame's top edge).
         font.draw_centered(rc, f, ne_y - 14, "Which episode to play?",
             pal[pal_readh])
         let row_step = 26
@@ -348,16 +348,16 @@ module menu =
         draw_help_pic(rc, vg, pal)
 
     // ============================================================
-    // Difficulty picker — NM_X / NM_Y from wl_menu.h
+    // Difficulty picker — geometry matches the original
     // ============================================================
 
     private let render_difficulty_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                            pal: const uint32[], f: const font.info*,
                                            g: game*, time: float64) ->
-        // OG geometry: NM_X=50, NM_Y=100, NM_W=225, NM_H=67 (4 text
-        // rows at row_h=13). The selected difficulty's face card
-        // (24x32) is drawn separately at (NM_X+185, NM_Y+7) — only
-        // the chosen row's card shows. ui_offset_x recentres for
+        // Original-matching geometry: x=50, y=100, w=225, h=67 (4
+        // text rows at row_h=13). The selected difficulty's face card
+        // (24x32) is drawn separately at (x+185, y+7) — only the
+        // chosen row's card shows. ui_offset_x recentres for
         // widescreen.
         let nm_x = rc->ui_offset_x + 50
         let nm_y = 100
@@ -382,7 +382,7 @@ module menu =
         draw_help_pic(rc, vg, pal)
 
     // ============================================================
-    // Sound submenu — SM_X from wl_menu.h
+    // Sound submenu — geometry matches the original
     // ============================================================
 
     // Three stacked sub-windows: SOUND EFFECTS / DIGITIZED SOUND / MUSIC.
@@ -601,18 +601,18 @@ module menu =
         fill_rect(rc, rc->fb_w - 1, 0, rc->fb_w, rc->fb_h, blue)
 
     // ============================================================
-    // Save / Load slot list — LSM_X / LSM_Y / LSM_W from wl_menu.h
+    // Save / Load slot list — geometry matches the original
     // ============================================================
 
     private let lsm_x      = 85
     private let lsm_y      = 55
     private let lsm_w      = 175
     private let lsm_indent = 24
-    // OG used 6 slots @ row_h=13 (window ≈ 88 tall, plenty of room
-    // above the y=184 mouselback pic). We bumped to 10 slots, which
-    // would push the window to 140 tall and overlap the pic — so
-    // shave 1 px off each row (and match the inset box) to claw back
-    // the 10 px we need.
+    // Original used 6 slots @ row_h=13 (window ≈ 88 tall, plenty of
+    // room above the y=184 mouselback pic). We bumped to 10 slots,
+    // which would push the window to 140 tall and overlap the pic —
+    // so shave 1 px off each row (and match the inset box) to claw
+    // back the 10 px we need.
     private let lsm_row_h  = 12
     private let lsm_box_h  = 10
 
@@ -731,23 +731,20 @@ module menu =
         let box_h = 2 * line_h + 2 * pad
         let box_x = (rc->fb_w - box_w) / 2
         let box_y = (game_h - box_h) / 2
-        // Fill (TEXTCOLOR) — the OG's `wcolor` on `Message`'s
-        // `DrawWindow(..., TEXTCOLOR)`. pal_text already maps to the
-        // same palette index 0x17.
+        // Fill — matches the original's message-box fill color
+        // (pal_text already maps to the same palette index 0x17).
         fill_rect(rc, box_x, box_y, box_x + box_w, box_y + box_h, pal[pal_text])
-        // Outline. The OG draws a beveled outline first (DEACTIVE
-        // top-left, BORD2COLOR bottom-right) and then immediately
-        // overdraws it with `DrawOutline(..., 0, HIGHLIGHT)` —
-        // HIGHLIGHT (cyan) top+left, black bottom+right — so only
-        // the second pass is visible. We just draw the second pass.
+        // Outline. The original draws a beveled outline first and
+        // then immediately overdraws it with cyan top+left, black
+        // bottom+right — so only the second pass is visible. We just
+        // draw the second pass.
         let c_tl = pal[pal_highlight]
         let c_br = pal[0]
         fill_rect(rc, box_x, box_y, box_x + box_w, box_y + 1, c_tl)
         fill_rect(rc, box_x, box_y, box_x + 1, box_y + box_h, c_tl)
         fill_rect(rc, box_x, box_y + box_h - 1, box_x + box_w, box_y + box_h, c_br)
         fill_rect(rc, box_x + box_w - 1, box_y, box_x + box_w, box_y + box_h, c_br)
-        // Black text on the off-white fill — the OG's
-        // `SETFONTCOLOR(0, TEXTCOLOR)`.
+        // Black text on the off-white fill (matches the original).
         let text_color = pal[0]
         font.draw_centered(rc, f, box_y + pad,             prompt, text_color)
         font.draw_centered(rc, f, box_y + pad + line_h,    hint,   text_color)

@@ -5,47 +5,47 @@
 // that hud is only one of the many consumers.
 
 // ============================================================
-// Wolf3D music enum (leaf module — AUDIOT chunk number relative to
-// STARTMUSIC=261; chunk = 261 + music.X). Full inventory from
-// audiowl6.h. The per-level `songs[]` table below picks from these by
-// index (using raw integers, not these names), and
-// font.music_chunk_for_phase below names the specific tracks that
-// play outside the gameplay phases (title / menu / intermission /
-// episode-end / victory). Entries annotated "(unused)" are kept for
-// future wiring (demos, boss cut-ins, high-score roll, etc.).
+// Music enum (leaf module — AUDIOT chunk number relative to the
+// music-block base 261; chunk = 261 + music.X). Full inventory
+// matches the original game. The per-level `songs[]` table below
+// picks from these by index (using raw integers, not these names),
+// and font.music_chunk_for_phase below names the specific tracks
+// that play outside the gameplay phases (title / menu / intermission
+// / episode-end / victory). Entries annotated "(unused)" are kept
+// for future wiring (demos, boss cut-ins, high-score roll, etc.).
 // ============================================================
 
 module music =
-    let corner   =  0    // CORNER_MUS    (per level — E1L10 Pac-Man secret ambient)
-    let dungeon  =  1    // DUNGEON_MUS   (per level — E2L10 secret floor)
-    let warmarch =  2    // WARMARCH_MUS  (per level — boss levels)
-    let getthem  =  3    // GETTHEM_MUS   (per level — E1L1 etc.)
-    let headache =  4    // HEADACHE_MUS  (per level — E2 tracks)
-    let hitlwltz =  5    // HITLWLTZ_MUS  (unused — Hitler waltz; not referenced)
-    let introcw3 =  6    // INTROCW3_MUS  (per level — E3 opener)
-    let nazi_nor =  7    // NAZI_NOR_MUS  (phase: title — INTROSONG)
-    let nazi_omi =  8    // NAZI_OMI_MUS  (per level — E2 ominous track)
-    let pow      =  9    // POW_MUS       (per level — E1 tracks)
-    let salute   = 10    // SALUTE_MUS    (unused — marching salute fanfare)
-    let searchn  = 11    // SEARCHN_MUS   (per level — E1 search theme)
-    let suspense = 12    // SUSPENSE_MUS  (per level — E1 suspense)
-    let victors  = 13    // VICTORS_MUS   (unused — alt victory theme)
-    let wonderin = 14    // WONDERIN_MUS  (phase: pg13 splash + main menu)
-    let funkyou  = 15    // FUNKYOU_MUS   (unused — funky outro)
-    let endlevel = 16    // ENDLEVEL_MUS  (phase: intermission)
-    let goingaft = 17    // GOINGAFT_MUS  (per level — E2 chase)
-    let pregnant = 18    // PREGNANT_MUS  (per level — E2 tracks)
-    let ultimate = 19    // ULTIMATE_MUS  (per level — E3L9 secret)
-    let nazi_rap = 20    // NAZI_RAP_MUS  (per level — E3 tracks)
-    let zerohour = 21    // ZEROHOUR_MUS  (per level — E3 tracks)
-    let twelfth  = 22    // TWELFTH_MUS   (per level — E3 tracks)
-    let roster   = 23    // ROSTER_MUS    (phase: high_scores — table screen)
-    let urahero  = 24    // URAHERO_MUS   (phase: per-episode victory)
-    let vicmarch = 25    // VICMARCH_MUS  (unused — wolf-fc has no all-six-
-                         //                episodes-cleared screen; OG WL6
-                         //                doesn't either, so this only fired
-                         //                in the SoD ending we don't ship)
-    let pacman   = 26    // PACMAN_MUS    (per level — Pac-Man secret rooms)
+    let corner   =  0    // per level — E1L10 Pac-Man secret ambient
+    let dungeon  =  1    // per level — E2L10 secret floor
+    let warmarch =  2    // per level — boss levels
+    let getthem  =  3    // per level — E1L1 etc.
+    let headache =  4    // per level — E2 tracks
+    let hitlwltz =  5    // (unused — Hitler waltz; not referenced)
+    let introcw3 =  6    // per level — E3 opener
+    let nazi_nor =  7    // phase: title — intro song
+    let nazi_omi =  8    // per level — E2 ominous track
+    let pow      =  9    // per level — E1 tracks
+    let salute   = 10    // (unused — marching salute fanfare)
+    let searchn  = 11    // per level — E1 search theme
+    let suspense = 12    // per level — E1 suspense
+    let victors  = 13    // (unused — alt victory theme)
+    let wonderin = 14    // phase: pg13 splash + main menu
+    let funkyou  = 15    // (unused — funky outro)
+    let endlevel = 16    // phase: intermission
+    let goingaft = 17    // per level — E2 chase
+    let pregnant = 18    // per level — E2 tracks
+    let ultimate = 19    // per level — E3L9 secret
+    let nazi_rap = 20    // per level — E3 tracks
+    let zerohour = 21    // per level — E3 tracks
+    let twelfth  = 22    // per level — E3 tracks
+    let roster   = 23    // phase: high_scores — table screen
+    let urahero  = 24    // phase: per-episode victory
+    let vicmarch = 25    // (unused — wolf-fc has no all-six-episodes-
+                         //  cleared screen; the original WL6 doesn't
+                         //  either, so this only fired in the SoD
+                         //  ending we don't ship)
+    let pacman   = 26    // per level — Pac-Man secret rooms
 
     // Per-level music: songs[episode * 10 + level] = music track id.
     // Indexed by the running `g->level_num` (0..59). Used by
@@ -61,22 +61,22 @@ module music =
 
 
 module pics =
-    // VGAGRAPH chunk IDs (Wolf3D WL6). Full inventory of all 149 chunks
-    // from gfxv_wl6.h, grouped by lump. Constants annotated "(unused)"
-    // are not drawn by any current code path — they exist for
-    // documentation / future features (see TODO.md "VGAGRAPH art not
-    // yet surfaced").
+    // VGAGRAPH chunk IDs (matches the original WL6 layout). Full
+    // inventory of all 149 chunks, grouped by lump. Constants
+    // annotated "(unused)" are not drawn by any current code path —
+    // they exist for documentation / future features (see TODO.md
+    // "VGAGRAPH art not yet surfaced").
     module id =
-        // --- STARTFONT (chunks 1..2). NUMFONT=2. Chunk 0 is the
-        // STRUCTPIC directory, not a pic. Font 1 is the small variable-
-        // width menu / HUD font used for all our text rendering. Font
-        // 2 is a larger fixed-width status-bar font the original uses
-        // for floor-complete headings — we render those with
-        // LEVELEND_LUMP art instead, so font 2 is unused.
+        // --- Font block (chunks 1..2). Chunk 0 is the chunk-table
+        // directory, not a pic. Font 1 is the small variable-width
+        // menu / HUD font used for all our text rendering. Font 2
+        // is a larger fixed-width status-bar font the original uses
+        // for floor-complete headings — we render those with the
+        // level-end art block instead, so font 2 is unused.
         let font_small = 1
         let font_big   = 2        // (unused) larger secondary font
 
-        // --- README_LUMP (chunks 3..9). Backdrop art for the original's
+        // --- Readme block (chunks 3..9). Backdrop art for the original's
         // in-game "Read This!" help screen (IN_Help). The help screen
         // itself isn't implemented.
         let h_bj          = 3     // BJ holding the castle keys (article ^G art)
@@ -126,14 +126,15 @@ module pics =
         let c_joy1         = 41   // (unused) joystick option A
         let c_joy2         = 42   // (unused) joystick option B
 
-        // --- LEVELEND_LUMP (chunks 43..85). Intermission-screen BJ
-        // portrait and the large-font alphabet / digits / punctuation
-        // used by the intermission draw path (see pics.draw calls).
+        // --- Level-end art block (chunks 43..85). Intermission-screen
+        // BJ portrait and the large-font alphabet / digits /
+        // punctuation used by the intermission draw path (see
+        // pics.draw calls).
         let l_guy         = 43    // BJ portrait (breathing frame A)
         let l_colon       = 44
-        let l_num0        = 45    // L_NUM0PIC..L_NUM9PIC = 45..54
+        let l_num0        = 45    // digit pics 0..9 = chunks 45..54
         let l_percent     = 55
-        let l_a           = 56    // L_APIC..L_ZPIC = 56..81
+        let l_a           = 56    // letter pics A..Z = chunks 56..81
         let l_expoint     = 82
         let l_apostrophe  = 83
         let l_guy2        = 84    // BJ portrait (breathing frame B)
@@ -141,37 +142,38 @@ module pics =
 
         // --- Title lump (chunks 86..90). One-off full-screen / banner art.
         let statusbar  = 86       // 320x40 in-game status bar
-        let title      = 87       // title screen (TITLEPIC)
+        let title      = 87       // title screen
         let pg13       = 88       // parental-advisory splash (gp_pg13 phase)
-        let credits    = 89       // CREDITSPIC — shown in the title attract cycle
+        let credits    = 89       // credits screen — shown in the title attract cycle
         let highscores = 90       // high-scores screen header banner
 
-        // --- LATCHPICS_LUMP (chunks 91..134). HUD, pickup pop-ups,
-        // pause / level-load overlays. Anything blitted on top of
-        // gameplay.
-        let knife       = 91      // weapon icon — KNIFEPIC
-        let pistol      = 92      // weapon icon — GUNPIC
-        let mg          = 93      // weapon icon — MACHINEGUNPIC
-        let chain       = 94      // weapon icon — GATLINGGUNPIC
-        let no_key      = 95      // empty key slot (NOKEYPIC, part of statusbar)
+        // --- HUD / overlay block (chunks 91..134). HUD, pickup pop-
+        // ups, pause / level-load overlays. Anything blitted on top
+        // of gameplay.
+        let knife       = 91      // weapon icon — knife
+        let pistol      = 92      // weapon icon — pistol
+        let mg          = 93      // weapon icon — machine gun
+        let chain       = 94      // weapon icon — chain gun
+        let no_key      = 95      // empty key slot (part of statusbar)
         let gold_key    = 96
         let silver_key  = 97
         let n_blank     = 98      // blank digit (clears a leading digit cell)
-        let n_0         = 99      // digits N_0PIC..N_9PIC = 99..108
+        let n_0         = 99      // digit pics 0..9 = chunks 99..108
         let n_9         = 108
-        let face_base   = 109     // FACE1APIC..FACE7CPIC; 7 living expressions
-                                  //   × 3 A/B/C variants = 21 chunks.
+        let face_base   = 109     // BJ face: 7 living expressions × 3
+                                  //   A/B/C variants = 21 chunks.
                                   //   chunk = base + expr*3 + var.
                                   //   expr 0 = 100% health grin,
-                                  //   expr 6 = "FACE7A" severely wounded.
-        let face_dead   = 130     // FACE8APIC — single dead-face pic, no
-                                  //   A/B/C variants. Shown when the player
-                                  //   dies from any attacker that isn't a
+                                  //   expr 6 = severely wounded.
+        let face_dead   = 130     // dead-face pic, no A/B/C variants.
+                                  //   Shown when the player dies from
+                                  //   any attacker that isn't a
                                   //   Schabbs needle.
         let got_gatling = 131     // "YOU GOT THE GATLING GUN!" pickup
-        let mutant_bj   = 132     // MUTANTBJPIC — shown on the dying-face
-                                  //   slot when the killing blow was a
-                                  //   Schabbs needle projectile.
+        let mutant_bj   = 132     // mutant-BJ dying-face pic — shown
+                                  //   on the dying-face slot when the
+                                  //   killing blow was a Schabbs needle
+                                  //   projectile.
         let paused      = 133     // (unused) "PAUSED" overlay (wolf-fc
                                   //  removed the pause phase; still here
                                   //  for parity)
@@ -195,8 +197,9 @@ module pics =
         let t_endart6   = 148     // episode-6 ending article
 
     // GET PSYCHED overlay config. Background fill palette index
-    // (VIEWCOLOR: a mid-grey) and fallback pic dimensions used if the
-    // VGAGRAPH header ever reports 0×0 (the shipped WL6 pic is 224×48).
+    // (the standard viewport grey) and fallback pic dimensions used
+    // if the VGAGRAPH header ever reports 0×0 (the shipped WL6 pic
+    // is 224×48).
     private let get_psyched_bg_index = 0x7f
     private let get_psyched_pic_w    = 224
     private let get_psyched_pic_h    = 48
@@ -228,8 +231,8 @@ module pics =
 
     // Same as draw, but skips the first `src_top_skip` rows of the source
     // pic. Used by the bottom-of-menu hint art whose top rows are pure
-    // BORDCOLOR padding that would otherwise overwrite the menu window's
-    // bottom bevel.
+    // border-color padding that would otherwise overwrite the menu
+    // window's bottom bevel.
     let draw_clipped_top = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                             pal: const uint32[], chunk: int32,
                             dst_x: int32, dst_y: int32, src_top_skip: int32) ->
@@ -258,13 +261,14 @@ module pics =
                 rc->fb[(int64) dy * (int64) rc->fb_w + (int64) dx] = buf[(int64) y * (int64) w + (int64) x]
 
     // "GET PSYCHED!" level-load overlay. Matches the original's
-    // PreloadGraphics: fill the 3D view area with VIEWCOLOR (palette
-    // 0x7f), draw GETPSYCHEDPIC centered horizontally at y =
-    // (view_h - pic_h) / 2, then paint a two-tone progress bar
-    // (colors 0x37 / 0x32 over a BLACK trough) across the bottom of
-    // the pic frame. Our progress animates 0→100% as the timer counts
-    // down, which is a tiny embellishment on top of the original
-    // (which pins the bar at 100% the whole second).
+    // preload-graphics screen: fill the 3D view area with the
+    // standard viewport grey (palette 0x7f), draw the GET PSYCHED
+    // pic centered horizontally at y = (view_h - pic_h) / 2, then
+    // paint a two-tone progress bar (colors 0x37 / 0x32 over a
+    // black trough) across the bottom of the pic frame. Our progress
+    // animates 0→100% as the timer counts down, which is a tiny
+    // embellishment on top of the original (which pins the bar at
+    // 100% the whole second).
     let render_get_psyched_overlay = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                        pal: const uint32[],
                                        timer_remaining: float64,
@@ -277,7 +281,7 @@ module pics =
             for x in 0..rc->fb_w
                 rc->fb[base + x] = bg
         // Center the pic within the viewport. Use the VGAGRAPH-reported
-        // size in case the pic is ever re-packed; wolf3d's is 224x48.
+        // size in case the pic is ever re-packed; the original's is 224x48.
         let pw = vgagraph.pic_width(vg, id.get_psyched)
         let ph = vgagraph.pic_height(vg, id.get_psyched)
         let pic_w = if pw > 0 then pw else get_psyched_pic_w
@@ -285,9 +289,9 @@ module pics =
         let pic_x = (rc->fb_w - pic_w) / 2
         let pic_y = (view_h - pic_h) / 2
         draw(rc, vg, pal, id.get_psyched, pic_x, pic_y)
-        // Progress bar: the original offsets it to (WindowX+5,
-        // WindowY+WindowH-3) with width WindowW-10. We use the pic
-        // bounds as the window.
+        // Progress bar: the original offsets it inside the pic frame
+        // with a 5-px left/right inset and a 3-px bottom margin. We
+        // use the pic bounds as the window.
         let bar_x = pic_x + 5
         let bar_y = pic_y + pic_h - 3
         let bar_full_w = pic_w - 10
@@ -315,7 +319,7 @@ module pics =
             for bx in 0..fill_w
                 rc->fb[row + bar_x + bx] = col
 
-    // One-time decode of TITLEPIC into an `fb_w × fb_h` ARGB buffer.
+    // One-time decode of the title pic into an `fb_w × fb_h` ARGB buffer.
     // Letterboxed at native size (320×200) and centred; side panels
     // in widescreen are plain black. Returns a heap slice the caller
     // must hold for the process lifetime.
@@ -576,26 +580,26 @@ module font =
         imf.init_from_chunk(ad->raw, off, (int64) len, (float64) sfx.sample_rate)
 
     // Pick the AUDIOT chunk number that should be playing for the
-    // current phase. INTROSONG (NAZI_NOR) plays continuously through
-    // the PG-13 splash and the title screen — the two phases share
-    // the chunk so the swap logic no-ops on the transition and the
-    // music plays unbroken. The main menu switches to MENUSONG
-    // (WONDERIN). Intermission uses ENDLEVEL. Per-episode and final
-    // victory screens get URAHERO and VICMARCH. All other phases
-    // (playing, dying) use the per-level song table.
+    // current phase. The intro song plays continuously through the
+    // PG-13 splash and the title screen — the two phases share the
+    // chunk so the swap logic no-ops on the transition and the music
+    // plays unbroken. The main menu switches to its menu track.
+    // Intermission uses the end-level track. Per-episode victory
+    // screens get the victory track. All other phases (playing,
+    // dying) use the per-level song table.
     let music_chunk_for_phase = (phase: game_phase, level_num: int32) ->
         let mus = match phase with
-        | pg13 | title         -> music.nazi_nor      // INTROSONG
-        | main_menu            -> music.wonderin      // MENUSONG
+        | pg13 | title         -> music.nazi_nor      // intro song
+        | main_menu            -> music.wonderin      // menu music
         | intermission         -> music.endlevel
         | bj_victory           -> music.urahero   // same cue as the episode-end screen
         // Death-cam: keep the level track playing so the fizzle-out /
         // taunt card / fade-in all happen under the boss-level music
-        // (matches the original — A_StartDeathCam doesn't switch tracks).
+        // (matches the original — the death-cam doesn't switch tracks).
         | death_cam            -> if level_num >= 0 && level_num < 60 then music.songs[level_num] else 0
         | episode_end          -> music.urahero
         | endart               -> music.urahero    // continues from episode_end
-        | high_scores          -> music.roster     // OG's CheckHighScore + CP_ViewScores both StartCPMusic(ROSTER_MUS)
+        | high_scores          -> music.roster     // matches the original's high-scores music
         | _ -> if level_num >= 0 && level_num < 60 then music.songs[level_num] else 0
         261 + mus
 
@@ -722,9 +726,10 @@ module hud =
     // Pick the BJ face chunk from health + animation frame. The
     // original picks the expression row from `(100-health)/16`
     // (clamped 0..6 for the living-face rows) and the A/B/C variant
-    // from `gamestate.faceframe` (0..2). Health=0 is handled separately
-    // by the caller, which swaps in FACE8APIC (or MUTANTBJPIC on
-    // needle-death). `frame` is clamped to 0..2 by the caller.
+    // from the face-frame counter (0..2). Health=0 is handled
+    // separately by the caller, which swaps in the dead-face pic
+    // (or the mutant-BJ pic on needle-death). `frame` is clamped to
+    // 0..2 by the caller.
     private let face_chunk_for = (health: int32, frame: int32) ->
         let mut h = health
         if h > 100 then h = 100
@@ -740,21 +745,21 @@ module hud =
     private let face_rnd_byte = (g: game*) ->
         (int32) (random.pcg_random.next_uint32(&g->rng_face) & 0xFFu32)
 
-    // UpdateFace: accumulate `tics` into facecount; when it exceeds
-    // a random 0..255 threshold, roll a new faceframe. The roll is
-    // `US_RndT()>>6` (giving 0..3) with 3 mapped down to 1, so the
-    // distribution is 0=25% / 1=50% / 2=25% — the centre variant is
-    // most common, which gives the face a natural "look forward"
-    // bias with occasional glances. dt*70 yields the original's
-    // tics-since-last-frame at the 70Hz tic rate.
+    // Face update: accumulate tics into the face counter; when it
+    // exceeds a random 0..255 threshold, roll a new face frame. The
+    // roll is a random byte >> 6 (giving 0..3) with 3 mapped down to
+    // 1, so the distribution is 0=25% / 1=50% / 2=25% — the centre
+    // variant is most common, which gives the face a natural "look
+    // forward" bias with occasional glances. dt*70 yields the
+    // original's tics-since-last-frame at the 70Hz tic rate.
     //
-    // Important: the original locks its frame loop to a max of 70Hz
-    // (CalcTics sleeps when tics == 0), so the threshold reroll runs
-    // at most 70 times per second. wolf-fc's render rate floats with
-    // the monitor — at 144Hz a naive once-per-frame check would get
-    // ~2x the OG's reroll chances and cycle the face visibly faster.
-    // Gate the reroll on the accumulator crossing a new integer-tic
-    // boundary, so the check rate is ≤ 70Hz no matter the refresh.
+    // Important: the original locks its frame loop to a max of 70Hz,
+    // so the threshold reroll runs at most 70 times per second.
+    // wolf-fc's render rate floats with the monitor — at 144Hz a
+    // naive once-per-frame check would get ~2x the original's reroll
+    // chances and cycle the face visibly faster. Gate the reroll on
+    // the accumulator crossing a new integer-tic boundary, so the
+    // check rate is ≤ 70Hz no matter the refresh.
     let update_face = (g: game*, dt: float64) ->
         let old_count = g->face_count
         g->face_count = g->face_count + dt * 70.0
@@ -798,9 +803,9 @@ module hud =
         // (0..fb_w), but the status-bar graphic is 320 wide and we
         // centre it. Side panels below view_h would otherwise show
         // last-frame leftovers, so paint them with palette[0x7f]
-        // (VIEWCOLOR — the same neutral grey the level intermission
-        // uses; reads as a continuation of the floor without the
-        // attention-grabbing red of BORDCOLOR).
+        // (the standard viewport grey — same neutral fill the level
+        // intermission uses; reads as a continuation of the floor
+        // without the attention-grabbing menu red).
         let ox = rc->ui_offset_x
         if ox > 0 then
             let fill = pal[0x7f]
@@ -830,11 +835,11 @@ module hud =
         draw_vg_number(rc, vg, pal, ox + 216, num_y, 2, g->ammo)
         // BJ face — chosen by health + the rolling A/B/C variant
         // from update_face. On death, the face swaps to the single
-        // FACE8APIC dead pic (or MUTANTBJPIC when the killing hit
+        // dead-face pic (or the mutant-BJ pic when the killing hit
         // was a Schabbs needle projectile). got_gatling_timer
         // overrides everything while active, matching the original's
-        // DrawFace check against SD_SoundPlaying(GETGATLINGSND).
-        // God mode blits the pre-built FACE1A-with-gold-eyes pic
+        // face swap during the chain-gun pickup cue.
+        // God mode blits the pre-built BJ-face-with-gold-eyes pic
         // (rc->god_face) — the symmetric eyes-forward variant with
         // its blue irises pre-recolored, baked once at startup so
         // there's no per-frame scan.

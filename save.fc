@@ -975,13 +975,12 @@ module save =
 // format as the save / config files; the file lives at
 // `~/.wolf-fc/highscores`.
 //
-// Insertion + display rules ported from the original game's
-// CheckHighScore + DrawHighScores: a new (score, completed) is
-// strictly compared against each row top-down; the first row it
-// beats is the insert point, with everything from there shifting
-// down (the bottom entry is dropped). Score ties break on the
-// higher `completed` (level reached) — losing the tie-break still
-// counts as not qualifying.
+// Insertion + display rules match the original game: a new
+// (score, completed) is strictly compared against each row top-down;
+// the first row it beats is the insert point, with everything from
+// there shifting down (the bottom entry is dropped). Score ties
+// break on the higher `completed` (level reached) — losing the
+// tie-break still counts as not qualifying.
 // ============================================================
 
 module highscore =
@@ -990,7 +989,7 @@ module highscore =
 
     private let version = 1
 
-    // Original Wolf3D's MaxHighName is 57; we cap entry names at 28
+    // The original's name cap is 57 chars; we cap entry names at 28
     // characters so the row text fits inside the 320-wide screen
     // alongside the level + score columns. `entry.name`'s array
     // capacity is one byte longer than this for the NUL terminator
@@ -1008,7 +1007,7 @@ module highscore =
         name: uint8[29]        // = max_name_len + 1; literal required for FC struct fields
         name_len: int32
         score: int32
-        completed: int32       // 1..10 (the original stored mapon+1)
+        completed: int32       // 1..10 (matches the original's level+1 convention)
         episode: int32         // 0..5
 
     // Copy `src` (a const str) into the entry's inline name buffer,
@@ -1023,9 +1022,9 @@ module highscore =
             e->name[i] = 0u8
         e->name_len = n
 
-    // Original id Software defaults — same names / scores / level the
-    // OG ships with, in the same top-to-bottom order. Used as the
-    // initial table on first launch and on the RESET-to-defaults
+    // Original-game defaults — same names / scores / level the
+    // original ships with, in the same top-to-bottom order. Used as
+    // the initial table on first launch and on the RESET-to-defaults
     // helper.
     let reset_to_defaults = (scores: entry[]) ->
         copy_name(&scores[0], "id software-'92")
