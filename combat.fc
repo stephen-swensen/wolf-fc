@@ -690,6 +690,17 @@ module enemies =
         // handles the wait-for-open pause and triggers the door to
         // open, matching the original's T_Chase. `self_idx` identifies
         // the caller so it doesn't block itself.
+        //
+        // A path / chase enemy committed to a direction also reserves
+        // its NEXT tile here, mirroring the original's actorat[][]
+        // grid: the original updates tilex/tiley to the destination
+        // tile inside TryWalk and DoActor places the actor back on
+        // the grid at that new position before the next actor's think
+        // runs. Without this, two enemies can both pass each other's
+        // passability check (each sees the other still parked at its
+        // source tile), both commit to the same target tile, and
+        // advance_move slides them through each other into the same
+        // square.
         private let tile_passable = (lv: level*, g: game*, self_idx: int32, tx: int32, ty: int32) ->
             if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
             else
@@ -711,6 +722,14 @@ module enemies =
                         | dead -> void()     // corpses don't block
                         | _ ->
                             if oe->tile_x == tx && oe->tile_y == ty then blocked = true
+                            else
+                                let claims_next = match oe->state with
+                                    | path | chase -> oe->dir != dir.nodir
+                                    | _ -> false
+                                if claims_next
+                                        && oe->tile_x + dir.dx[oe->dir] == tx
+                                        && oe->tile_y + dir.dy[oe->dir] == ty then
+                                    blocked = true
                     for i in 0..lv->num_sprites
                         let s = &lv->sprites[i]
                         if s->alive && s->blocks
