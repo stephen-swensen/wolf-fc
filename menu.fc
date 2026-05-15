@@ -83,11 +83,15 @@ module menu =
     let main_is_locked = (i: int32, has_active_game: bool) ->
         i == 4 && !has_active_game
 
-    // Sound submenu — two toggle rows. The OG's three driver dropdowns
-    // (SOUND EFFECTS / DIGITIZED SOUND / MUSIC) collapse here because
-    // every driver routes through the same AdLib + digi mixer in
-    // wolf-fc.
-    let sound_len = 2
+    // Sound submenu — three sections (SOUND EFFECTS / DIGITIZED SOUND
+    // / MUSIC), each with two navigable rows: On/Off (row 0) and Gain
+    // (row 1). Even row indices are toggles, odd rows are gain sliders;
+    // `section = row / 2` (0=SFX, 1=Digi, 2=Music). Header pics live
+    // above each sub-window for the original-game visual frame; the
+    // toggle behaviour is wolf-fc's simpler ←/→ or Enter cycle.
+    let sound_len = 6
+    let sound_section = (row: int32) -> row / 2
+    let sound_is_toggle = (row: int32) -> (row % 2) == 0
 
     // Options submenu — wolf-fc mods. Grow this list as new toggles /
     // sliders land; matched by `render_options_list` and by main.fc's
@@ -362,40 +366,69 @@ module menu =
     // Sound submenu — SM_X from wl_menu.h
     // ============================================================
 
+    // Three stacked sub-windows: SOUND EFFECTS / DIGITIZED SOUND / MUSIC.
+    // Each header pic floats centred over the top bevel of its window
+    // (matches the original visual frame). Inside each window: two rows
+    // — On/Off then Gain (10..200% slider, ±5% step). Tasteful divergence
+    // from the original's per-driver radio buttons: we only have one
+    // path per source so a toggle suffices, and the Gain selector is a
+    // wolf-fc-only addition.
     private let render_sound_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                       pal: const uint32[], f: const font.info*,
                                       g: game*, ac: audio_ctx*, time: float64) ->
-        font.draw_centered(rc, f, 38, "Sound", pal[pal_readh])
-        // A single window (the OG stacks three driver-dropdown windows
-        // here; we only have on/off so one box is enough). SM_X=48,
-        // SM_W=250 in the OG.
-        let sm_x = rc->ui_offset_x + 40
-        let sm_y = 60
-        let sm_w = 240
-        let sm_h = sound_len * 36 + 8
-        draw_window(rc, pal, sm_x, sm_y, sm_w, sm_h)
-        let row_top  = sm_y + 8
-        let row_step = 36
-        let x_cursor = sm_x + 8
-        let x_label  = sm_x + 40
-        let label_pic = (i: int32) ->
-            match i with
-            | 0 -> pics.id.c_fx_title    // "SOUND EFFECTS" 136x16
-            | 1 -> pics.id.c_music_title // "MUSIC" 136x16
+        let ox       = rc->ui_offset_x
+        let sect_x   = ox + 40
+        let sect_w   = 240
+        let sect_h   = 38
+        let first_top = 30
+        let sect_step = 54
+        let row_step  = 16
+        let x_cursor  = sect_x + 8
+        let x_label   = sect_x + 32
+        let x_value   = sect_x + sect_w - 56
+        let section_pic = (s: int32) ->
+            match s with
+            | 0 -> pics.id.c_fx_title
+            | 1 -> pics.id.c_digi_title
+            | 2 -> pics.id.c_music_title
             | _ -> -1
-        let is_on = (i: int32) ->
-            if i == 0 then ac->sfx_on else g->music_on
-        for i in 0..sound_len
-            let row_y = row_top + i * row_step
-            let is_sel = g->menu_sel == i
-            if is_sel then
-                draw_cursor(rc, vg, pal, x_cursor, row_y, time)
-            pics.draw(rc, vg, pal, label_pic(i), x_label, row_y)
-            let value = if is_on(i) then "On" else "Off"
-            let color = row_color(pal, is_sel, false)
-            let vw = font.text_width(f, value)
-            font.draw_text(rc, f, sm_x + sm_w - 16 - vw,
-                row_y + 4, value, color)
+        for s in 0..3
+            let box_y = first_top + s * sect_step
+            draw_window(rc, pal, sect_x, box_y, sect_w, sect_h)
+            // Header pic centred horizontally on the window. Sits just
+            // above the top bevel so the pic reads as a name-plate
+            // tabbed over the window (matches the original frame).
+            let pic = section_pic(s)
+            let pw  = vgagraph.pic_width(vg, pic)
+            let ph  = vgagraph.pic_height(vg, pic)
+            let pic_x = sect_x + (sect_w - pw) / 2
+            let pic_y = box_y - ph + 2
+            pics.draw(rc, vg, pal, pic, pic_x, pic_y)
+            // Inner rows.
+            let row_top = box_y + 6
+            for k in 0..2
+                let row_i = s * 2 + k
+                let row_y = row_top + k * row_step
+                let is_sel = g->menu_sel == row_i
+                if is_sel then
+                    draw_cursor(rc, vg, pal, x_cursor, row_y - 2, time)
+                let color = row_color(pal, is_sel, false)
+                let label = if k == 0 then "On/Off" else "Gain"
+                font.draw_text(rc, f, x_label, row_y, label, color)
+                if k == 0 then
+                    let on = if s == 0 then ac->sfx_on
+                             else if s == 1 then ac->digi_on
+                             else ac->music_on
+                    let v = if on then "On" else "Off"
+                    let vw = font.text_width(f, v)
+                    font.draw_text(rc, f, sect_x + sect_w - 16 - vw,
+                        row_y, v, color)
+                else
+                    let pct = if s == 0 then ac->sfx_gain_pct
+                              else if s == 1 then ac->digi_gain_pct
+                              else ac->music_gain_pct
+                    font.draw_text(rc, f, x_value, row_y,
+                        "%d{pct}%", color)
         draw_help_pic(rc, vg, pal)
 
     // ============================================================

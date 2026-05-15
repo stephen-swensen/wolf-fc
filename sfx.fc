@@ -397,34 +397,39 @@ module sfx =
     let adlib_busy = (ac: audio_ctx*) ->
         ac->sfx->active
 
-    // Play a sound by sfx.id.*. Prefers the digitized version (richer
-    // audio, matches the original Sound Blaster mode) and falls back to
-    // the AdLib version loaded from AUDIOT on demand. `pan` is [-1, +1];
-    // 0 = centered. `gain` is a linear multiplier — 1.0 plays at the
-    // OG Sound Blaster level, <1 attenuates, >1 pushes into the mixer's
-    // soft-clip region. Only the digi path honours pan/gain; the AdLib
-    // fallback routes through the OPL2 chip, which has no cheap per-note
-    // attenuation knob (in practice enemy/pickup sounds all have digi
-    // versions, so the fall-through is silent for spatial callers).
+    // Play a sound by sfx.id.*. The Sound submenu has two independent
+    // toggles relevant here: DIGITIZED SOUND (gates the digi PCM path)
+    // and SOUND EFFECTS (gates the AdLib SFX fallback). When DIGITIZED
+    // SOUND is on and a digi sample exists, it plays — that's the
+    // richer "Sound Blaster" path. Otherwise, when SOUND EFFECTS is
+    // on and an AdLib chunk exists, it plays. With both off, silent.
+    //
+    // `pan` is [-1, +1]; 0 = centered. `gain` is a linear multiplier
+    // — 1.0 plays at the default-mix level, <1 attenuates, >1 pushes
+    // into the mixer's soft-clip region. Only the digi path honours
+    // pan/gain; the AdLib fallback routes through the OPL2 chip, which
+    // has no cheap per-note attenuation knob (in practice enemy/pickup
+    // sounds all have digi versions, so the fall-through is silent
+    // for spatial callers when digi is on).
     private let trigger_panned_gain = (sound_id: int32, ac: audio_ctx*,
                                 pan: float64, gain: float64) ->
         if sound_id < 0 || sound_id >= count then return
-        // Honour the Sound submenu's "Sound Effects: OFF" toggle. Music
-        // has its own gate at the mixer (see main loop's `music_on`).
-        if !ac->sfx_on then return
         let digi_idx = digi_slot[sound_id]
-        if digi_idx >= 0 then
+        if digi_idx >= 0 && ac->digi_on then
             digi.play_with_gain(ac->digi, digi_idx, pan, gain)
-        else
-            let enum_val = adlib_chunk[sound_id]
-            if enum_val >= 0 then
-                let chunk = 87 + enum_val   // STARTADLIBSOUNDS = LASTSOUND = 87
-                if chunk >= 0 && chunk < ac->ad->num_chunks then
-                    let off = (int64) audio.chunk_offset(ac->ad, chunk)
-                    let len = audio.chunk_length(ac->ad, chunk)
-                    if len >= 23 then
-                        adlib.play(ac->sfx, adlib.parse(ac->ad->raw, off),
-                                   priority[sound_id])
+            return
+        // No digi (off, or no sample) — fall through to AdLib if the
+        // SFX toggle is on and an AdLib chunk exists.
+        if !ac->sfx_on then return
+        let enum_val = adlib_chunk[sound_id]
+        if enum_val >= 0 then
+            let chunk = 87 + enum_val   // STARTADLIBSOUNDS = LASTSOUND = 87
+            if chunk >= 0 && chunk < ac->ad->num_chunks then
+                let off = (int64) audio.chunk_offset(ac->ad, chunk)
+                let len = audio.chunk_length(ac->ad, chunk)
+                if len >= 23 then
+                    adlib.play(ac->sfx, adlib.parse(ac->ad->raw, off),
+                               priority[sound_id])
 
     private let trigger_panned = (sound_id: int32, ac: audio_ctx*, pan: float64) ->
         trigger_panned_gain(sound_id, ac, pan, 1.0)

@@ -64,6 +64,17 @@ module config =
     struct prefs =
         music_on: bool
         sfx_on: bool
+        digi_on: bool
+        // Per-source level scalars as integer percentages. 100 = the
+        // default mix (parity with the original game's balance, give
+        // or take the AdLib boost we've tuned by ear). 200 doubles a
+        // source; 10 attenuates it to a whisper. The Sound submenu's
+        // On/Off toggle is the way to silence a source — the slider
+        // floors at 10 so a tiny nudge doesn't dial the audio to zero
+        // unintentionally.
+        sfx_gain_pct: int32
+        digi_gain_pct: int32
+        music_gain_pct: int32
         no_dogs: bool
         // Shadow depth as 0..100 percent. 0 = no shading, 100 = full
         // black at distance, 55 = original Wolf3D feel.
@@ -100,6 +111,14 @@ module config =
     let speed_pct_max  = 200
     let speed_pct_step = 5
 
+    // Per-source audio gain percentage bounds. 10% floor matches the
+    // shadow_depth idiom (clamped, step-cycled). 200% ceiling lets a
+    // player push a source into the mixer's soft-clip region for a
+    // crunchier mix without going fully untamed.
+    let gain_pct_min  = 10
+    let gain_pct_max  = 200
+    let gain_pct_step = 5
+
     // View-mode constants. Match the integers serialised to the
     // config file; reorder only if you bump the version.
     let view_mode_auto       = 0
@@ -135,6 +154,10 @@ module config =
         prefs {
             music_on = true,
             sfx_on = true,
+            digi_on = true,
+            sfx_gain_pct = 100,
+            digi_gain_pct = 100,
+            music_gain_pct = 100,
             no_dogs = false,
             // 0% disables distance fading entirely (floor=1.0) — the
             // OG-faithful default. The original game has no distance
@@ -163,8 +186,12 @@ module config =
     // construction.
     let snapshot = (w: world*) ->
         prefs {
-            music_on = w->g->music_on,
+            music_on = w->ac->music_on,
             sfx_on = w->ac->sfx_on,
+            digi_on = w->ac->digi_on,
+            sfx_gain_pct = w->ac->sfx_gain_pct,
+            digi_gain_pct = w->ac->digi_gain_pct,
+            music_gain_pct = w->ac->music_gain_pct,
             no_dogs = w->g->no_dogs,
             shadow_depth = w->g->shadow_depth,
             view_mode = w->g->view_mode,
@@ -209,6 +236,31 @@ module config =
                     else if text.starts_with(line, "sfx ") then
                         match text.parse_int32(line[4..line.len]) with
                         | some(v) -> p.sfx_on = v != 0
+                        | none -> void()
+                    else if text.starts_with(line, "digi ") then
+                        match text.parse_int32(line[5..line.len]) with
+                        | some(v) -> p.digi_on = v != 0
+                        | none -> void()
+                    else if text.starts_with(line, "sfx_gain_pct ") then
+                        match text.parse_int32(line[13..line.len]) with
+                        | some(v) ->
+                            p.sfx_gain_pct = if v < gain_pct_min then gain_pct_min
+                                else if v > gain_pct_max then gain_pct_max
+                                else v
+                        | none -> void()
+                    else if text.starts_with(line, "digi_gain_pct ") then
+                        match text.parse_int32(line[14..line.len]) with
+                        | some(v) ->
+                            p.digi_gain_pct = if v < gain_pct_min then gain_pct_min
+                                else if v > gain_pct_max then gain_pct_max
+                                else v
+                        | none -> void()
+                    else if text.starts_with(line, "music_gain_pct ") then
+                        match text.parse_int32(line[15..line.len]) with
+                        | some(v) ->
+                            p.music_gain_pct = if v < gain_pct_min then gain_pct_min
+                                else if v > gain_pct_max then gain_pct_max
+                                else v
                         | none -> void()
                     else if text.starts_with(line, "no_dogs ") then
                         match text.parse_int32(line[8..line.len]) with
@@ -276,6 +328,10 @@ module config =
                 io.write("WLFC_CONFIG %d{version}\n", f)
                 io.write("music %d{if p.music_on then 1 else 0}\n", f)
                 io.write("sfx %d{if p.sfx_on then 1 else 0}\n", f)
+                io.write("digi %d{if p.digi_on then 1 else 0}\n", f)
+                io.write("sfx_gain_pct %d{p.sfx_gain_pct}\n", f)
+                io.write("digi_gain_pct %d{p.digi_gain_pct}\n", f)
+                io.write("music_gain_pct %d{p.music_gain_pct}\n", f)
                 io.write("no_dogs %d{if p.no_dogs then 1 else 0}\n", f)
                 io.write("shadow_depth %d{p.shadow_depth}\n", f)
                 io.write("view_mode %d{p.view_mode}\n", f)

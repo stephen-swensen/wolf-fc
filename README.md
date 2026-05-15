@@ -317,7 +317,7 @@ All project modules are declared at the top level (no namespaces), so they're re
 **I/O and host**
 
 - **`data.fc`** — Wolf3D asset loading: `bytes` (little-endian readers), `palette` (256-entry VGA), `vswap` (wall textures, sprites, PCM), `maps` (Carmack + RLEW map decompression), `vgagraph` (Huffman-coded UI graphics), `audio` (AUDIOHED / AUDIOT chunk index).
-- **`save.fc`** — Save / load slots and the on-disk encoding, `~/.wolf-fc/config` persistence (music / SFX / no-dogs / shadow-depth / view-mode / scale-factor / SSAA / speeds), and a leaf `paths` module that resolves `~/.wolf-fc/` directory locations.
+- **`save.fc`** — Save / load slots and the on-disk encoding, `~/.wolf-fc/config` persistence (music / SFX / digi toggles, per-source gain percentages, no-dogs, shadow-depth, view-mode, scale-factor, SSAA, speeds), and a leaf `paths` module that resolves `~/.wolf-fc/` directory locations.
 - **`sdl2.fc`** — Flat `extern` FFI against `SDL2/SDL.h`: lifecycle, window (incl. fullscreen-desktop + high-DPI), the accelerated 2D renderer (used only as a blit primitive for one streaming ARGB8888 texture), keyboard events, and the audio device.
 - **`png.fc`** — Pure-FC PNG writer (CRC-32, Adler-32, stored deflate, optional tEXt metadata) used by the screenshot path.
 

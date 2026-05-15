@@ -617,10 +617,6 @@ struct game =
     // list. Mirrors the original's `US_LineInput` flow.
     save_edit_active: bool
 
-    // Music on/off — togglable from the main menu "SOUND" entry.
-    // Interactive loop inspects this when filling audio.
-    music_on: bool
-
     // User requested quit (main menu's QUIT entry). Main loop reads this
     // and breaks out of the game loop.
     want_quit: bool
@@ -801,10 +797,25 @@ struct audio_ctx =
     ad: audio.audio_data*      // AUDIOT — AdLib SFX chunks + music
     sfx: adlib.sfx_state*      // AdLib SFX playback (owns its own OPL2 chip)
     digi: digi.player*         // 8-bit PCM playback (up to 4 slots)
-    // Sound submenu's "Sound Effects: ON/OFF" toggle. Read by sfx.trigger_*
-    // — when false, every sfx call no-ops. Music has its own gate
-    // (`music_on` on `game`, consulted in the main-loop mixer).
+    // Sound submenu toggles. `sfx_on` gates the AdLib SFX fallback path
+    // (synthesized FM hits — see sfx.trigger_*). `digi_on` gates the
+    // digitized PCM path (Sound Blaster samples). `music_on` gates the
+    // IMF music stream in the main-loop mixer. Each runs independently:
+    // a sound with both an AdLib chunk and a digi sample prefers digi
+    // when `digi_on`, falling through to AdLib when digi is off but
+    // `sfx_on` is still on.
     sfx_on: bool
+    digi_on: bool
+    music_on: bool
+    // Per-source level scalars, as integer percentages 10..200. The
+    // mixer multiplies its per-frame source gain by `pct / 100.0`. 100
+    // is the default mix; 200 pushes a source toward the soft-clip
+    // region in `mixer.soft_clip_to_int16`; 10 attenuates a source to
+    // a whisper without silencing it (use the on/off toggle for true
+    // silence).
+    sfx_gain_pct: int32
+    digi_gain_pct: int32
+    music_gain_pct: int32
 
 // Save/load menu scratch. One instance per process — only one menu is open
 // at a time, so sharing is fine. `slots` is refreshed by save.refresh_slots
@@ -1896,7 +1907,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             for j in 0..batches
                 for k in 0..2048
                     mix_buf[k] = 0i32
-                imf.fill(ms, mix_buf, frames_per_batch, sample_rate)
+                imf.fill(ms, mix_buf, frames_per_batch, sample_rate, 1.0)
             let t1 = sys.time()
             let total_ms = t1 - t0
             let total_samples = batches * frames_per_batch
@@ -2381,10 +2392,11 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
     else if arg == "prefs" then
         // Dump the current persistent preferences (loaded from
         // `$WOLF_FC_HOME/config` at startup, defaults when missing).
-        let m = if g->music_on then 1 else 0
+        let m = if w->ac->music_on then 1 else 0
         let s = if w->ac->sfx_on then 1 else 0
+        let d = if w->ac->digi_on then 1 else 0
         let nd = if g->no_dogs then 1 else 0
-        io.write("prefs music=%d{m} sfx=%d{s} no_dogs=%d{nd} shadow_depth=%d{g->shadow_depth} bj_speed_pct=%d{g->bj_speed_pct} enemy_speed_pct=%d{g->enemy_speed_pct}\n", stdout)
+        io.write("prefs music=%d{m} sfx=%d{s} digi=%d{d} sfx_gain=%d{w->ac->sfx_gain_pct} digi_gain=%d{w->ac->digi_gain_pct} music_gain=%d{w->ac->music_gain_pct} no_dogs=%d{nd} shadow_depth=%d{g->shadow_depth} bj_speed_pct=%d{g->bj_speed_pct} enemy_speed_pct=%d{g->enemy_speed_pct}\n", stdout)
         void()
     else if arg == "digi_slots" then
         // Dump the digi-mixer slot table. Verifies wolf4sdl-style dedup:
@@ -2842,7 +2854,7 @@ let main = (args: str[]) ->
         data_dir = data_dir,
         test_mode = test_mode,
         menu_sel = 0, menu_level = menu.nav.main, save_edit_active = false,
-        music_on = cfg.music_on, want_quit = false,
+        want_quit = false,
         quit_prompt_idx = 0,
         quit_prompts_override = quit_prompts.load_override(),
         has_active_game = false,
@@ -2867,7 +2879,12 @@ let main = (args: str[]) ->
             ad = ad,
             sfx = adlib.init((float64) sfx.sample_rate),
             digi = digi.init(vs),
-            sfx_on = cfg.sfx_on
+            sfx_on = cfg.sfx_on,
+            digi_on = cfg.digi_on,
+            music_on = cfg.music_on,
+            sfx_gain_pct = cfg.sfx_gain_pct,
+            digi_gain_pct = cfg.digi_gain_pct,
+            music_gain_pct = cfg.music_gain_pct
         })!,
         sm = build_save_menu_ctx(),
         hs = build_highscore_ctx(),
@@ -3091,11 +3108,6 @@ let main = (args: str[]) ->
     // queued to SDL (2048 int16 = 4096 bytes).
     let mix_buf = alloc(int32[2048] {})!
     let out_buf = alloc(int16[2048] {})!
-    // Honour the persisted music preference: even if the IMF player
-    // loaded successfully, start the mixer with music silenced when
-    // the user has toggled music off in a previous session.
-    let mut music_on = ms.is_some && g->music_on
-
     // Fresh screenshot directory each session — user copies any they want to keep.
     overlay.clear_screenshots()
 
@@ -3427,23 +3439,49 @@ let main = (args: str[]) ->
                             g->menu_sel = (g->menu_sel + menu.sound_len - 1) % menu.sound_len
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % menu.sound_len
-                        else if is_confirm then
-                            // Toggle the row's setting in place, then
-                            // persist both toggles to ~/.wolf-fc/config
-                            // so the choice survives across launches.
-                            //   row 0 = SOUND EFFECTS → ac->sfx_on
-                            //   row 1 = MUSIC         → g->music_on
-                            if g->menu_sel == 0 then
-                                w->ac->sfx_on = !w->ac->sfx_on
-                            else
-                                g->music_on = !g->music_on
-                                music_on = g->music_on
-                                if !music_on && audio_dev > 0u32 then
-                                    sdl2.clear_audio(audio_dev)
-                            config.save(config.snapshot(w))
                         else if k == sdl2.key_escape then
                             g->menu_level = menu.nav.main
                             g->menu_sel = 1     // back to SOUND row
+                        else
+                            // Six rows: 3 (toggle, gain) section pairs.
+                            // section = row/2 (0=SFX, 1=Digi, 2=Music);
+                            // even rows are toggles (Enter or ←/→ flips),
+                            // odd rows are gain sliders (←/→ steps ±5%).
+                            let row = g->menu_sel
+                            let section = menu.sound_section(row)
+                            let is_toggle = menu.sound_is_toggle(row)
+                            let mut changed = false
+                            if is_toggle then
+                                if is_confirm || k == sdl2.key_left || k == sdl2.key_right then
+                                    if section == 0 then
+                                        w->ac->sfx_on = !w->ac->sfx_on
+                                    else if section == 1 then
+                                        w->ac->digi_on = !w->ac->digi_on
+                                    else
+                                        w->ac->music_on = !w->ac->music_on
+                                        // Drop whatever music is mid-flight
+                                        // so a toggle-off silences instantly
+                                        // (the IMF chip keeps decoding into
+                                        // the queue otherwise).
+                                        if !w->ac->music_on && audio_dev > 0u32 then
+                                            sdl2.clear_audio(audio_dev)
+                                    changed = true
+                            else if k == sdl2.key_left || k == sdl2.key_right then
+                                let delta = if k == sdl2.key_left
+                                    then 0 - config.gain_pct_step
+                                    else config.gain_pct_step
+                                let mut cur = if section == 0 then w->ac->sfx_gain_pct
+                                              else if section == 1 then w->ac->digi_gain_pct
+                                              else w->ac->music_gain_pct
+                                cur = cur + delta
+                                if cur < config.gain_pct_min then cur = config.gain_pct_min
+                                if cur > config.gain_pct_max then cur = config.gain_pct_max
+                                if section == 0 then w->ac->sfx_gain_pct = cur
+                                else if section == 1 then w->ac->digi_gain_pct = cur
+                                else w->ac->music_gain_pct = cur
+                                changed = true
+                            if changed then
+                                config.save(config.snapshot(w))
                     else if g->menu_level == menu.nav.changeview then
                         // Two left/right pickers: Aspect Ratio (row 0)
                         // and Scale Factor (row 1). Up/Down moves between
@@ -3884,8 +3922,12 @@ let main = (args: str[]) ->
         let skip_audio = audio_dev == 0u32 ||
             sdl2.queued_audio_size(audio_dev) >= queue_hi_water
         if !skip_audio then
-            mixer.fill_frame(mix_buf, out_buf, ms, music_on,
-                w->ac->sfx, w->ac->digi, 1024, sfx.sample_rate)
+            mixer.fill_frame(mix_buf, out_buf,
+                ms, ms.is_some && w->ac->music_on,
+                (float64) w->ac->music_gain_pct / 100.0,
+                w->ac->sfx,  (float64) w->ac->sfx_gain_pct  / 100.0,
+                w->ac->digi, (float64) w->ac->digi_gain_pct / 100.0,
+                1024, sfx.sample_rate)
             sdl2.queue_audio(audio_dev, (any*) out_buf.ptr, 4096u32)
             void()
 
