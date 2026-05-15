@@ -1,22 +1,10 @@
 # Wolf-FC TODO
 
-## Open work
-
-### Distribution
-
-- **Version tagging.** Bake a version string into the binary (shown in
-  the startup banner and `--version`), driven by `git describe`
-  (`vX.Y.Z` tags + commit count + short SHA + `-dirty`) at build time
-  with a fallback when not in a git checkout. Decide on the initial tag
-  scheme before cutting `v0.1.0`.
-
-### Fidelity
-
-Survey passes happen ad-hoc, not on a schedule. The 2026-04-23 sweep
-against `GunAttack` / `TakeDamage` / pickup handling / `UpdateFace` /
-pacman-ghost chase closed eight divergences. When something feels off
-in play, audit the relevant subsystem against id's source / wolf4sdl,
-log a finding here, and fix.
+Nothing scheduled. The Makefile bakes a `yy.mm.dd.SS` version derived
+from the latest commit (see `print-version`), and fidelity sweeps
+happen ad-hoc when something feels off in play — audit the relevant
+subsystem against id's source / wolf4sdl, log a finding here if it
+turns into more than a one-off fix, and patch.
 
 ## Decisions / retirements
 
