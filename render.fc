@@ -80,6 +80,18 @@ module raycaster =
         let view_render_h = rc->vbuf_h
         let half = view_render_h / 2
         let sw = (int64) rc->vbuf_w
+        // Perspective-correct vertical scale. The OG's projection ties
+        // wall pixel height to the *horizontal* viewport: at d=1 tile a
+        // 1-tile wall projects to `viewwidth · facedist` ≈ 320·0.6836 ≈
+        // 218.75 logical pixels — taller than the 144/160-row 3D
+        // viewport, so close-up walls fill the screen. Using
+        // `view_render_h / perp_dist` here instead flattened the
+        // world's vertical aspect to ~73% of the OG's, making walls,
+        // doors, and sprites look squat-and-wide on the display.
+        // focal_px = vbuf_w / (2·plane_factor) is the matching
+        // pixel-units focal length (invariant to widescreen fb_w since
+        // plane_factor scales with fb_w).
+        let focal_px = (float64) rc->vbuf_w / (2.0 * g->plane_factor)
         // Flat fill via the slice's raw pointer. The bounds-checked
         // `vbuf[i] = c` form keeps gcc to a single store-per-iter
         // because the cold-path `fc_oob` branch makes the body look
@@ -278,7 +290,7 @@ module raycaster =
                 if perp_dist <= 0.001 then continue
                 rc->vzbuf[(int64) col] = perp_dist
 
-                let line_h = (int32) ((float64) view_render_h / perp_dist)
+                let line_h = (int32) (focal_px / perp_dist)
                 let mut draw_start = view_render_h / 2 - line_h / 2
                 let mut draw_end = draw_start + line_h
                 if draw_start < 0 then draw_start = 0
@@ -587,6 +599,14 @@ module billboards =
         // grid so sprite columns line up with wall columns regardless
         // of whether SSAA is on or off.
         let view_render_h = rc->vbuf_h
+        // Same perspective focal length as the raycaster — world
+        // sprites use heightnumerator/(z>>8) in the OG, which works
+        // out to the same vbuf_w/(2·plane_factor) projection scale.
+        // A 1-tile sprite at ty=1 projects to focal_px square (≈ 220
+        // vbuf cells in test mode); the display's 1.2× vertical
+        // stretch then matches the OG's square-on-screen-plane,
+        // tall-on-display look.
+        let focal_px = (float64) rc->vbuf_w / (2.0 * g->plane_factor)
         for i in 0..rc->num_billboards
             let bb = rc->billboards[i]
             let sx = bb.x - g->pos_x
@@ -594,16 +614,9 @@ module billboards =
             let tx = inv_det * (g->dir_y * sx - g->dir_x * sy)
             let ty = inv_det * (g->plane_x * sy - g->plane_y * sx)
             if ty <= 0.1 then continue
-            // scr_x, spr_w are in vbuf-col units (vbuf_w-wide grid),
-            // matching the raycaster's per-column ray density. spr_h
-            // stays in vbuf-row units (vbuf_h). At ty=1 a sprite spans
-            // view_render_h dbuf-cols × view_render_h dbuf-rows after
-            // SSAA downsample; after the display's 4:3 vertical
-            // stretch this matches the original's 160×160 sprite in
-            // its 320×160 viewport.
             let scr_x = (int32) ((float64) (rc->vbuf_w / 2) * (1.0 + tx / ty))
-            let spr_w = (int32) ((float64) view_render_h / ty)
-            let spr_h = (int32) ((float64) view_render_h / ty)
+            let spr_w = (int32) (focal_px / ty)
+            let spr_h = (int32) (focal_px / ty)
             if spr_w < 1 || spr_h < 1 then continue
             let half_w = spr_w / 2
             let draw_x0 = scr_x - half_w
