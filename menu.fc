@@ -380,8 +380,8 @@ module menu =
         let sect_x   = ox + 40
         let sect_w   = 240
         let sect_h   = 38
-        let first_top = 30
-        let sect_step = 54
+        let first_top = 28
+        let sect_step = 56
         let row_step  = 16
         let x_cursor  = sect_x + 8
         let x_label   = sect_x + 32
@@ -402,7 +402,9 @@ module menu =
             let pw  = vgagraph.pic_width(vg, pic)
             let ph  = vgagraph.pic_height(vg, pic)
             let pic_x = sect_x + (sect_w - pw) / 2
-            let pic_y = box_y - ph + 2
+            // Pic floats fully above the window with a 1-px breath so
+            // its red border doesn't bleed into the dark-red interior.
+            let pic_y = box_y - ph - 1
             pics.draw(rc, vg, pal, pic, pic_x, pic_y)
             // Inner rows.
             let row_top = box_y + 6
