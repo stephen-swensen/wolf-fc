@@ -127,6 +127,25 @@ module menu =
         | 4 -> option_kind_action
         | _ -> option_kind_toggle
 
+    // Classify the currently-selected row's interaction kind across all
+    // row-typed menus, so the top-level sfx dispatch in main.fc can map
+    // (key, row_kind) → a single canonical "setting changed" sound for
+    // every menu. Returns:
+    //   option_kind_toggle  — row flips on Enter or ←/→ (sound, options)
+    //   option_kind_slider  — row steps on ←/→ (sound gain, options
+    //                          shadow/speed sliders, changeview multi-
+    //                          option cyclers)
+    //   option_kind_action  — row commits on Enter (options Reset)
+    //   -1                  — drilling / navigation menus (main, episode,
+    //                          difficulty, save/load lists, quit confirm)
+    let current_row_kind = (level: int32, sel: int32) ->
+        if level == nav.sound then
+            if sound_is_toggle(sel) then option_kind_toggle
+            else option_kind_slider
+        else if level == nav.options then option_kind(sel)
+        else if level == nav.changeview then option_kind_slider
+        else -1
+
     private let diff_label = (i: int32) ->
         match i with
         | 0 -> "Can I play, Daddy?"
@@ -422,9 +441,7 @@ module menu =
                              else if s == 1 then ac->digi_on
                              else ac->music_on
                     let v = if on then "On" else "Off"
-                    let vw = font.text_width(f, v)
-                    font.draw_text(rc, f, sect_x + sect_w - 16 - vw,
-                        row_y, v, color)
+                    font.draw_text(rc, f, x_value, row_y, v, color)
                 else
                     let pct = if s == 0 then ac->sfx_gain_pct
                               else if s == 1 then ac->digi_gain_pct

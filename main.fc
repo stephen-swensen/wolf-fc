@@ -3285,17 +3285,39 @@ let main = (args: str[]) ->
                     // covers all sub-menus without sprinkling calls per
                     // branch.
                     let is_confirm = k == sdl2.key_return || k == sdl2.key_space
-                    let is_commit  = is_confirm && g->menu_level == menu.nav.sound
+                    let is_left_right = k == sdl2.key_left || k == sdl2.key_right
                     // The episode picker's hidden number shortcut (0..9)
                     // counts as a confirm too — same drilling-into-a-
                     // submenu effect, so it deserves the same SHOOTSND.
                     let is_episode_floor_key = g->menu_level == menu.nav.episode
                         && (k == sdl2.key_0 || (k >= sdl2.key_1 && k <= sdl2.key_9))
+                    // Single-source-of-truth dispatch for menu cues:
+                    //   • UP/DOWN          — MOVEGUN1SND (cursor move)
+                    //   • Setting changed  — MOVEGUN2SND (toggle flip,
+                    //     slider step, action commit). Same cue whether
+                    //     fired by Enter on a toggle, ←/→ on a slider, or
+                    //     Enter on an action row — mirrors how the
+                    //     original game played MOVEGUN2SND for every
+                    //     setting-changed event across submenus.
+                    //   • Other confirm    — SHOOTSND (drilling into a
+                    //     submenu / picker; main / episode / difficulty).
+                    //   • ESC              — ESCPRESSEDSND.
+                    let row_kind = menu.current_row_kind(g->menu_level, g->menu_sel)
+                    let is_toggle_change = (is_confirm || is_left_right) && row_kind == menu.option_kind_toggle
+                    let is_slider_step   = is_left_right && row_kind == menu.option_kind_slider
+                    let is_action_commit = is_confirm && row_kind == menu.option_kind_action
+                    let setting_changed = is_toggle_change || is_slider_step || is_action_commit
+                    // SHOOTSND only fires for drill-style menus (main /
+                    // episode / difficulty / save / load / quit confirm)
+                    // — those return row_kind == -1 from current_row_kind.
+                    // Skipping it for row-typed menus keeps Enter on a
+                    // slider row silent (it's a no-op).
+                    let is_drill_confirm = is_confirm && row_kind == -1
                     if k == sdl2.key_up || k == sdl2.key_down then
                         sfx.trigger(sfx.id.move_gun1, w->ac)
-                    else if is_commit then
+                    else if setting_changed then
                         sfx.trigger(sfx.id.move_gun2, w->ac)
-                    else if is_confirm || is_episode_floor_key then
+                    else if is_drill_confirm || is_episode_floor_key then
                         sfx.trigger(sfx.id.shoot, w->ac)
                     else if k == sdl2.key_escape then
                         sfx.trigger(sfx.id.esc_pressed, w->ac)
@@ -3555,8 +3577,10 @@ let main = (args: str[]) ->
                             g->menu_sel = (g->menu_sel + menu.options_len - 1) % menu.options_len
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % menu.options_len
-                        else if is_confirm && kind == menu.option_kind_toggle then
-                            // Toggle row 0 = No Dogs.
+                        else if (is_confirm || is_left_right) && kind == menu.option_kind_toggle then
+                            // Toggle row 0 = No Dogs. Either Enter or
+                            // ←/→ flips — matches the Sound submenu's
+                            // toggle behaviour for cross-menu consistency.
                             if g->menu_sel == 0 then
                                 g->no_dogs = !g->no_dogs
                             config.save(config.snapshot(w))
