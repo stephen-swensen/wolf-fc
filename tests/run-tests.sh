@@ -233,7 +233,7 @@ assert_contains "ai:dog-bites-on-contact" \
     "health=85"
 assert_contains "ai:guard-wakes-on-sight" \
     "goto:28,60 turnl:90 wait:40 enemies" \
-    "chase=1"
+    "chase=2"
 assert_contains "ai:sustained-fire-kills-player" \
     "goto:28,60 wait:600 state" \
     "lives=2"
@@ -470,7 +470,7 @@ assert_contains "ghost:four-ghosts-on-pacman-level" \
     "ghost=4"
 assert_contains "ghost:blinky-is-present" \
     "setlevel:29 enemylist" \
-    "kind=blinky state=stand"
+    "kind=blinky state=chase"
 # Every boss tile spawns the right kind on its level.
 # E2M9 = level 18 (Dr. Schabbs). E3M9 = level 28 (Hitler).
 # E4M9 = level 38 (Giftmacher). E5M9 = level 48 (Gretel).

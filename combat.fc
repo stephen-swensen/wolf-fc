@@ -144,7 +144,6 @@ module enemies =
     let walk_frame_time     = 0.12  // seconds per W1/W2/W3/W4 cycle frame
     private let pain_time           = 0.143 // pain flinch duration (10 tics @ 70Hz)
     let die_frame_time      = 15.0 / 70.0  // 15 tics per frame during death animation
-    private let sight_range         = 16.0  // tiles — max LOS distance for sight check
 
     // Enemy Speed slider as a unit-free multiplier. Scales every
     // patrol + chase speed (in advance_move + the dog lunge gate)
@@ -270,8 +269,10 @@ module enemies =
         | schabbs | giftmacher | fat | hitler -> true
         | _ -> false
 
-    // True iff the kind is a pacman ghost (non-hostile chaser).
-    private let kind_is_ghost = (k: enemy_kind) ->
+    // True iff the kind is a Pacman ghost (E1M10). Ghosts spawn
+    // directly into chase in the original and never use the stand /
+    // path detection cycle — level.fc reads this to skip the wake.
+    let kind_is_ghost = (k: enemy_kind) ->
         match k with
         | blinky | pinky | clyde | inky -> true
         | _ -> false
@@ -657,27 +658,29 @@ module enemies =
                         break
             ok
 
-        // Is the player visible to the enemy right now? Combines a
-        // forward-cone check (player roughly in front of enemy) with a
-        // tilemap LOS ray. Inside ~1.5 tiles, sight is automatic
-        // regardless of facing (matches the original's MINSIGHT
-        // fallback). An enemy with `dir == dir.nodir` (stationary /
-        // blocked-in) skips the cone check and falls through to the
-        // raw LOS — the original's stand actor wakes the same way.
-        // (Indexing dir.vx with dir.nodir == 8 would also be a slice
-        // OOB and abort the process.)
+        // Is the player visible to the enemy right now? Mirrors the
+        // original's CheckSight: inside ~1.5 tiles on BOTH axes sight
+        // is automatic regardless of facing (MINSIGHT fallback);
+        // otherwise apply the axis-aligned facing check (cardinals
+        // only — diagonals and nodir get no facing filter, matching
+        // the original's switch fall-through), then a tilemap LOS ray.
+        // No distance cap: a clear LOS through open space wakes at
+        // any range.
         let sees_player = (lv: const level*, g: game*, e: enemy*) ->
             let dx = g->pos_x - e->x
             let dy = g->pos_y - e->y
-            let dist = math.sqrt(dx * dx + dy * dy)
-            if dist > sight_range then false
-            else if dist < 1.5 || e->dir == dir.nodir then
+            let adx = if dx < 0.0 then -dx else dx
+            let ady = if dy < 0.0 then -dy else dy
+            if adx < 1.5 && ady < 1.5 then
                 check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y)
             else
-                let fx = dir.vx[e->dir]
-                let fy = dir.vy[e->dir]
-                let dot = dx * fx + dy * fy
-                if dot <= 0.0 then false      // player is behind the enemy
+                let facing_ok =
+                    if e->dir == dir.east  then dx >= 0.0
+                    else if e->dir == dir.north then dy <= 0.0
+                    else if e->dir == dir.south then dy >= 0.0
+                    else if e->dir == dir.west  then dx <= 0.0
+                    else true
+                if !facing_ok then false
                 else check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y)
 
         // True iff the tile at (tx, ty) is passable for an enemy trying
@@ -1083,21 +1086,26 @@ module enemies =
 
         // True iff a stand / path enemy has detected the player this
         // frame. Mirrors the first-detection half of the original's
-        // SightPlayer (wl_state.cpp): an enemy ignores the player
-        // unless its area is reachable from the player by open doors
-        // (area_by_player). Inside that connected zone, AMBUSH-
-        // flagged enemies still need a literal LOS, but regular
-        // guards detect on either LOS *or* a noise event (gun shot or
-        // pain scream) anywhere in the connected zone — that's how
-        // firing in one room pulls everyone in connected rooms toward
-        // you. Detection starts a reaction-delay countdown in
-        // update_enemy; the actual transition-to-chase doesn't happen
-        // until the timer elapses.
+        // SightPlayer: an enemy ignores the player unless its area is
+        // reachable from the player by open doors (area_by_player).
+        // Inside that connected zone, AMBUSH-flagged enemies still
+        // need a literal LOS, but regular guards detect on either LOS
+        // *or* a noise event (gun shot or pain scream) anywhere in
+        // the connected zone — that's how firing in one room pulls
+        // everyone in connected rooms toward you. Detection starts a
+        // reaction-delay countdown in update_enemy; the actual
+        // transition-to-chase doesn't happen until the timer elapses.
+        // First sight clears the AMBUSH flag (matches the original):
+        // once spotted by an ambusher, repeat detections behave like
+        // a normal guard (sound or sight).
         private let should_wake = (lv: level*, g: game*, e: enemy*) ->
             let area = (int32) lv->tile_areas[(int64) e->tile_x * 64 + (int64) e->tile_y]
             if area >= areas.num_areas then false
             else if !lv->area_by_player[area] then false
-            else if e->ambush then sees_player(lv, g, e)
+            else if e->ambush then
+                let seen = sees_player(lv, g, e)
+                if seen then e->ambush = false
+                seen
             else g->made_noise || sees_player(lv, g, e)
 
         // Wake up a sleeping (stand/path) enemy. Plays the per-kind

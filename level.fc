@@ -973,7 +973,11 @@ module spawn =
     private let one_enemy = (lv: level*, tx: int32, ty: int32, info: enemy_spawn_info, difficulty: int32) ->
         if lv->num_enemies >= enemies.max_enemies then return
         let dir8 = info.dir4 * 2   // 0,2,4,6
+        let is_ghost = enemies.kind_is_ghost(info.kind)
+        // Pacman ghosts (E1M10) start in chase, never sleep — matches
+        // the original's SpawnGhosts which goes straight to s_*chase1.
         let initial_state = if info.dead then enemies.enemy_state.dead
+            else if is_ghost then enemies.enemy_state.chase
             else if info.patrol then enemies.enemy_state.path
             else enemies.enemy_state.stand
         let hp = if info.dead then 0 else enemies.hp_for_kind(info.kind, difficulty)
@@ -987,9 +991,13 @@ module spawn =
         // their door opens; without nodir their forward-cone check in
         // enemies.ai.sees_player can leave them blind to the
         // player standing in the doorway.
+        // Ghosts spawn with dir=nodir so advance_move picks a chase
+        // direction on the first step rather than blindly stepping
+        // into whatever cardinal `dir4` happened to encode.
         let is_boss = enemies.kind_is_boss(info.kind)
         let spawn_dir = if info.dead then dir.nodir
             else if is_boss then dir.nodir
+            else if is_ghost then dir.nodir
             else dir8
         lv->enemies[lv->num_enemies] = enemies.enemy {
             x = (float64) tx + 0.5,
