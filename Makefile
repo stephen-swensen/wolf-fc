@@ -131,7 +131,9 @@ ifneq ($(IS_WINDOWS),)
 # $(WIN_ICO) is an order-only prerequisite: existence-checked, not
 # mtime-checked. The .ico is committed to the repo and the regular build
 # path must not pull in rsvg-convert / ImageMagick; only `make icon`
-# regenerates it. Fresh-clone mtime skew would otherwise trigger a regen.
+# regenerates it. (See the MAKECMDGOALS gate around the icon rules below
+# — that's what keeps make from chasing the inner SVG→PNG→ICO chain when
+# fresh-clone mtime skew makes a prereq look newer than the .ico.)
 $(WIN_RES): $(WIN_RC) | $(BUILD_DIR) $(WIN_ICO)
 	windres -I "$$(cygpath -am packaging)" \
 	        "$$(cygpath -am $(WIN_RC))" \
@@ -219,6 +221,17 @@ ICON_PNGS       := $(ICON_DIR)/wolf-fc-16.png  $(ICON_DIR)/wolf-fc-32.png \
                    $(ICON_DIR)/wolf-fc-48.png  $(ICON_DIR)/wolf-fc-64.png \
                    $(ICON_DIR)/wolf-fc-128.png $(ICON_DIR)/wolf-fc-256.png
 
+# The icon-generation rules are defined ONLY when `make icon` is explicitly
+# requested. The .ico and PNGs are committed to the repo; the regular build
+# path and `make installer` reference $(ICON_ICO) as an order-only
+# prerequisite, but order-only blocks only the *outer* mtime comparison —
+# if the .ico's own rule (and the PNGs' own rules) exist, make still walks
+# them and re-runs imagemagick/rsvg-convert whenever a fresh clone's mtime
+# skew makes a prereq look "newer". Hiding the rules behind MAKECMDGOALS
+# means the regular build sees the .ico as a static checked-in file with
+# no recipe, exactly as intended.
+ifneq ($(filter icon,$(MAKECMDGOALS)),)
+
 icon: icon-check-deps $(ICON_ICO)
 
 icon-check-deps:
@@ -246,6 +259,8 @@ $(ICON_DIR)/wolf-fc-256.png: $(ICON_SVG)
 
 $(ICON_ICO): $(ICON_PNGS)
 	$(if $(shell command -v magick 2>/dev/null),magick,convert) $(ICON_PNGS) $@
+
+endif
 
 # ----------------------------------------------------------------------------
 # Windows installer build (MSYS2 UCRT64 only).
