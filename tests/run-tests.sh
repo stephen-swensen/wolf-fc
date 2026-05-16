@@ -231,6 +231,16 @@ section "combat:enemies-attack"
 assert_contains "ai:dog-bites-on-contact" \
     "goto:45,34 turnr:90 wait:120 state" \
     "health=85"
+# Player pressed against the west wall of the (44,34) corridor — pos_x lands
+# at ~44.39, so the dog at (45,34) starts adx ≈ 1.11, just outside the
+# lunge gate at its tile center. Dog must close the gap and bite. With the
+# OG-faithful CHECKDIAG behaviour (contact-attack kinds may step onto the
+# player's tile), the dog walks west directly; without it the dog detours
+# north through (45,33) and back, which still gets there in this open
+# geometry but stalls in tighter corridors where N/S detour is also walled.
+assert_contains "ai:dog-closes-against-wall" \
+    "goto:44,34 back:1 wait:60 enemylist" \
+    "[19] (45,34) kind=dog state=shoot"
 assert_contains "ai:guard-wakes-on-sight" \
     "goto:28,60 turnl:90 wait:40 enemies" \
     "chase=2"

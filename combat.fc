@@ -283,6 +283,24 @@ module enemies =
         | dog | hitler_fake | blinky | pinky | clyde | inky -> false
         | _ -> true
 
+    // True iff the kind may walk onto the player's tile during chase.
+    // Contact-attack kinds (lunge bite, touch damage) need this: their
+    // attack gate is world-coord and only fires when the actor is very
+    // close. If a corridor's walls don't leave a detour around the
+    // player's tile and the player is offset far enough from tile center
+    // that the attack gate hasn't yet passed, blocking the player's tile
+    // strands the actor — it would oscillate against the wall instead
+    // of closing. In the original this is implicit: CHECKDIAG only
+    // refuses an actor at the destination tile if that actor is
+    // FL_SHOOTABLE, and the player object is FL_NEVERMARK with no
+    // FL_SHOOTABLE flag. Ranged kinds keep the standard "player tile
+    // blocks" rule so a fleeing guard doesn't end up clipped inside
+    // the camera.
+    private let kind_walks_onto_player = (k: enemy_kind) ->
+        match k with
+        | dog | blinky | pinky | clyde | inky -> true
+        | _ -> false
+
     // Bitmask: bit N set = fire (or bite) on entering shoot-frame N.
     // Each kind's frame table now matches the original's full state
     // sequence, so masks line up bit-for-bit with which frames carry
@@ -729,12 +747,14 @@ module enemies =
                 else check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y)
 
         // True iff the tile at (tx, ty) is passable for an enemy trying
-        // to move INTO it. Walls block; the player's tile blocks (so
-        // enemies don't walk into the camera); other live enemies
-        // block. Doors of any state are routable — advance_move
-        // handles the wait-for-open pause and triggers the door to
-        // open, matching the original's chase logic. `self_idx`
-        // identifies the caller so it doesn't block itself.
+        // to move INTO it. Walls block; the player's tile blocks for
+        // ranged kinds (so enemies don't walk into the camera) but is
+        // open to dogs and ghosts so their contact attacks can close —
+        // see kind_walks_onto_player. Other live enemies block. Doors
+        // of any state are routable — advance_move handles the
+        // wait-for-open pause and triggers the door to open, matching
+        // the original's chase logic. `self_idx` identifies the caller
+        // so it doesn't block itself.
         //
         // A path / chase enemy committed to a direction also reserves
         // its NEXT tile here, mirroring the original's actor-occupancy
@@ -756,7 +776,8 @@ module enemies =
                 // is cleared only when the door is fully open).
                 else if t >= 128 && !kind_opens_doors(e->kind)
                         && lv->doors[t - 128].state != doors.door_state.open then false
-                else if (int32) g->pos_x == tx && (int32) g->pos_y == ty then false
+                else if (int32) g->pos_x == tx && (int32) g->pos_y == ty
+                        && !kind_walks_onto_player(e->kind) then false
                 else
                     let mut blocked = false
                     for j in 0..lv->num_enemies
