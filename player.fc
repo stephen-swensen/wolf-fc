@@ -9,9 +9,9 @@ module player =
     // Player collision radius in tiles. Prevents the player from
     // sliding exactly onto a tile boundary, which would produce a
     // degenerate raycast and cause columns to be skipped (visible as
-    // "seeing through walls"). The original uses ≈ 0.35 tiles for
-    // the same reason.
-    let radius = 0.35
+    // "seeing through walls"). Matches the original exactly:
+    // 0x5800 in 16.16 fixed-point = 22528 / 65536 = 0.34375.
+    let radius = 0.34375
 
     // Movement speeds, matched to the original game.
     //   walk   ≈ 5.6076 tiles/sec (derived from the original's
@@ -39,11 +39,13 @@ module player =
     // intrusive at our scale.
     private let sprite_block_half = 0.25
 
-    // Enemy exclusion radius (tiles) — squared. Roughly radius (0.35)
-    // + enemy body half-width (~0.25). Smaller than the full bbox so
-    // the player can squeeze past an adjacent enemy without being
-    // locked out of corridors.
-    private let enemy_block_r2 = 0.55 * 0.55
+    // Enemy exclusion radius squared (tiles²). 1.0 matches the
+    // original's actor spacing — the player can't approach within
+    // one tile of a live enemy. The block is directional (see
+    // move_blocked_by_enemy): only moves that decrease the distance
+    // are rejected, so an enemy that ends up pressed against the
+    // player can always be backed away from.
+    private let enemy_block_r2 = 1.0
 
     // Seconds to hold gameplay frozen after the player pulls the
     // elevator switch before the intermission screen appears. Stands

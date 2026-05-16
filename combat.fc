@@ -617,42 +617,91 @@ module enemies =
 
         // Step through the tilemap along (x1,y1) → (x2,y2). Returns
         // true if the ray passes without hitting a solid wall or a
-        // not-fully-open door. Used for enemy sight checks and
-        // player-fire hit-validation. Samples 8× per tile, which is
-        // dense enough for 64-tile maps without being a bottleneck.
+        // door that's still closed enough to block. Used for enemy
+        // sight checks and player-fire hit-validation.
+        //
+        // Tile-stepping DDA matching the original's sight algorithm:
+        // one pass for each axis, sampling the tile crossed at each
+        // perpendicular boundary. A door blocks iff the ray's
+        // perpendicular intercept at the door tile's midline lies
+        // beyond the door's open amount — partial-open semantics.
+        // The original compares a 16-bit fixed-point intercept (in
+        // 1/256-tile units, with the tile coord in its high byte)
+        // against the door's open amount (0..0xFFFF for closed..open).
+        // Equivalent in float tile units: blocked iff
+        // `intercept > pos * 256.0`. A side effect of that encoding:
+        // doors at low tile coords become see-through almost as soon
+        // as they crack open, while doors at high tile coords stay
+        // opaque longer (~25% open at tile 63). That's the original's
+        // quirk, not a bug.
         let check_line_clear = (lv: const level*, x1: float64, y1: float64, x2: float64, y2: float64) ->
-            let dx = x2 - x1
-            let dy = y2 - y1
-            let dist = math.sqrt(dx * dx + dy * dy)
-            if dist <= 1e-4 then return true
-            let steps = (int32) (dist * 8.0) + 1
-            let rx = dx / (float64) steps
-            let ry = dy / (float64) steps
-            let tx_end = (int32) x2
-            let ty_end = (int32) y2
-            let mut cx = x1
-            let mut cy = y1
+            let xt1 = (int32) x1
+            let yt1 = (int32) y1
+            let xt2 = (int32) x2
+            let yt2 = (int32) y2
             let mut ok = true
-            for i in 1..steps
-                cx = cx + rx
-                cy = cy + ry
-                let tx = (int32) cx
-                let ty = (int32) cy
-                // Reached the destination tile — the rest of the line
-                // is inside it, so clear.
-                if tx == tx_end && ty == ty_end then break
-                if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then
-                    ok = false
-                    break
-                let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
-                if t >= 1 && t <= 63 then
-                    ok = false
-                    break
-                if t >= 128 then
-                    // Pass only through fully-open doors.
-                    if lv->doors[t - 128].state != doors.door_state.open then
+
+            // X-stepping pass: walk tile boundaries in x, sampling the
+            // tile we're about to leave at its midline in y.
+            let xdist = if xt2 > xt1 then xt2 - xt1 else xt1 - xt2
+            if xdist > 0 then
+                let xstep = if xt2 > xt1 then 1 else -1
+                let partial_x = if xt2 > xt1 then 1.0 - (x1 - (float64) xt1)
+                                             else x1 - (float64) xt1
+                let dx_abs = if x2 > x1 then x2 - x1 else x1 - x2
+                let ystep = (y2 - y1) / dx_abs
+                let mut yfrac = y1 + ystep * partial_x
+                let mut x = xt1 + xstep
+                let xt2_end = xt2 + xstep
+                loop
+                    if x == xt2_end then break
+                    let y = (int32) yfrac
+                    yfrac = yfrac + ystep
+                    if x < 0 || x >= map_size || y < 0 || y >= map_size then
                         ok = false
                         break
+                    let t = (int32) lv->tilemap[(int64) x * 64 + (int64) y]
+                    x = x + xstep
+                    if t >= 1 && t <= 63 then
+                        ok = false
+                        break
+                    if t >= 128 then
+                        let intercept = yfrac - ystep * 0.5
+                        if intercept > lv->door_pos[t - 128] * 256.0 then
+                            ok = false
+                            break
+
+            if !ok then return false
+
+            // Y-stepping pass: same idea, swapped.
+            let ydist = if yt2 > yt1 then yt2 - yt1 else yt1 - yt2
+            if ydist > 0 then
+                let ystep_dir = if yt2 > yt1 then 1 else -1
+                let partial_y = if yt2 > yt1 then 1.0 - (y1 - (float64) yt1)
+                                             else y1 - (float64) yt1
+                let dy_abs = if y2 > y1 then y2 - y1 else y1 - y2
+                let xstep = (x2 - x1) / dy_abs
+                let mut xfrac = x1 + xstep * partial_y
+                let mut y = yt1 + ystep_dir
+                let yt2_end = yt2 + ystep_dir
+                loop
+                    if y == yt2_end then break
+                    let x = (int32) xfrac
+                    xfrac = xfrac + xstep
+                    if x < 0 || x >= map_size || y < 0 || y >= map_size then
+                        ok = false
+                        break
+                    let t = (int32) lv->tilemap[(int64) x * 64 + (int64) y]
+                    y = y + ystep_dir
+                    if t >= 1 && t <= 63 then
+                        ok = false
+                        break
+                    if t >= 128 then
+                        let intercept = xfrac - xstep * 0.5
+                        if intercept > lv->door_pos[t - 128] * 256.0 then
+                            ok = false
+                            break
+
             ok
 
         // Is the player visible to the enemy right now? Mirrors the
