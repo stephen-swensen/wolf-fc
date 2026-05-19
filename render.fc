@@ -978,6 +978,9 @@ module overlay =
             let slot = w->rc->screenshot_slot
             w->rc->screenshot_slot = (w->rc->screenshot_slot + 1) % screenshot_max_slots
             let path = "%s{dir}/screenshots/ss_%03d{slot}.png"
+            // Force a full HUD redraw so the snapshot is full-fidelity
+            // regardless of the main loop's frame-skip cadence.
+            w->rc->force_redraw = true
             render_frame(w, vs, pal)
             save_png(w, path)
             io.write("[screenshot] saved %s{path} (+ -raw.png, -display.png)\n", stdout)

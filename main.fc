@@ -793,6 +793,15 @@ struct render_ctx =
     pic_cache: uint32[][]
     // Rotating screenshot slot counter (wraps at overlay.screenshot_max_slots).
     screenshot_slot: int32
+    // Per-iteration counter for the main loop's frame-skip optimization
+    // (see the should_render predicate in the game loop). Wraps freely.
+    frame_counter: uint64
+    // One-shot "the next render_frame must paint the full HUD strip"
+    // signal. Set by resize_render_ctx after dbuf realloc (zero-init'd
+    // memory) and by the screenshot paths (to guarantee full-fidelity
+    // captures regardless of skip cadence). Consumed + cleared at the
+    // top of render_frame.
+    force_redraw: bool
 
 // Sound system handle: loaded-asset refs + SFX playback state.
 struct audio_ctx =
@@ -1041,7 +1050,9 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
         title_bg = pics.build_title_bg_cache(vg, pal, fb_w, fb_h),
         god_face = pics.build_god_face_cache(vg, pal),
         pic_cache = alloc(uint32[][vg->num_chunks] {})!,
-        screenshot_slot = 0
+        screenshot_slot = 0,
+        frame_counter = 0u64,
+        force_redraw = true
     })!
     rc
 
@@ -1130,6 +1141,10 @@ let resize_render_ctx = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
             rc->ssaa_buf = alloc(uint32[(2 * rc->screen_w) * (2 * rc->view_render_h)] {})!
             rc->ssaa_zbuf = alloc(float64[2 * rc->screen_w] {})!
         rebind_vbuf(rc)
+        // Newly-allocated dbuf is zero-initialized — the HUD strip would
+        // be black for one frame under the frame-skip optimization
+        // without forcing a full repaint on the next render_frame.
+        rc->force_redraw = true
         true
 
 // Apply a view-mode change on the fly. Picks the new fb_w from the
@@ -1624,6 +1639,25 @@ let tick = (w: world*, dt: float64) ->
 
 // Render the full game frame to fb (used before saving a screenshot).
 let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[]) ->
+    // HUD-skip predicate for 3D phases (playing / dying / bj_victory /
+    // death_cam). The HUD strip in dbuf carries across frames since the
+    // 3D pipeline only writes rows 0..view_render_h, so on odd frames we
+    // skip hud.render / hud.render_message / composite_hud and the prior
+    // frame's HUD pixels remain visible. Bypassed when (a) force_redraw
+    // is set — the dbuf was just reallocated and the HUD strip is zero
+    // — or (b) the elevator fade is active, since dbuf_tint_full would
+    // otherwise compound onto already-tinted HUD pixels.
+    //
+    // Invariant: only paths that write to dbuf[view_render_h..screen_h]
+    // (the HUD strip) belong inside the !skip_hud branch. Writes into
+    // fb's viewport region (rows < view_h) must run every frame because
+    // composite_view_overlay always runs and would otherwise miss them
+    // — e.g. hud.render_message stays outside the skip.
+    let force = w->rc->force_redraw
+    w->rc->force_redraw = false
+    let skip_hud = (w->rc->frame_counter & 1u64) != 0u64
+                   && !force
+                   && !w->g->next_level
     match w->g->phase with
     | pg13 ->
         pg13_screen.render(w->rc, w->vg, pal)
@@ -1660,9 +1694,9 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
         // content shows through everywhere else.
         overlay.clear_view_sentinel(w->rc)
         death_cam.render(w, vs, pal, w->vg)
-        hud.render(w->rc, w->vg, pal, w->g)
+        if !skip_hud then hud.render(w->rc, w->vg, pal, w->g)
         overlay.composite_view_overlay(w->rc)
-        overlay.composite_hud(w->rc)
+        if !skip_hud then overlay.composite_hud(w->rc)
         return
     | _ -> void()
     // 3D phases (playing / dying / bj_victory): raycaster and
@@ -1701,7 +1735,10 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
             w->g->respawn_fade_timer / player.respawn_fade_time
         else 0.0
     overlay.dissolve_stipple(w->rc, red_tint, stipple_progress)
-    hud.render(w->rc, w->vg, pal, w->g)
+    if !skip_hud then hud.render(w->rc, w->vg, pal, w->g)
+    // hud.render_message writes to fb's viewport region, not the HUD
+    // strip — it's composited via composite_view_overlay (always runs),
+    // so it must paint every frame or the banner blinks.
     hud.render_message(w->rc, w->font, w->g)
     // "GET PSYCHED!" level-entry overlay. The original fills the 3D
     // viewport with the standard background grey (palette 0x7f), draws
@@ -1714,7 +1751,7 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
         pics.render_get_psyched_overlay(w->rc, w->vg, pal,
             w->g->get_psyched_timer, pics.get_psyched_time)
     overlay.composite_view_overlay(w->rc)
-    overlay.composite_hud(w->rc)
+    if !skip_hud then overlay.composite_hud(w->rc)
     // Pre-intermission fade-to-black: while `next_level` is latched and
     // gameplay is frozen, darken the entire frame linearly as next_level_delay
     // ticks down. Gives the player immediate visual feedback that the
@@ -1847,6 +1884,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
                 tick(w, dt)
         | none -> bad("integer tick count")
     else if text.starts_with(arg, "ss:") then
+        w->rc->force_redraw = true
         render_frame(w, w->ac->vs, pal)
         overlay.save_png(w, arg[3..arg.len])
         io.write("Saved %s{arg[3..arg.len]}\n", stdout)
@@ -3134,6 +3172,12 @@ let main = (args: str[]) ->
         last_ticks = now
         if dt > 0.1 then dt = 0.1    // clamp large spikes
 
+        w->rc->frame_counter = w->rc->frame_counter + 1u64
+        // Tracks "user did something this iteration" — used by the
+        // should_render predicate below to keep menu / static-phase
+        // input response crisp even when the half-rate skip is active.
+        let mut event_seen = false
+
         // Poll events
         loop
             if sdl2.poll_event(&event) == 0 then break
@@ -3165,6 +3209,7 @@ let main = (args: str[]) ->
                         sdl2.tex_streaming, runtime_screen_w, runtime_screen_h)
                     sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
             if t == sdl2.keydown_event then
+                event_seen = true
                 let k = event.key.keysym.sym
                 // OS key-autorepeat fires SDL_KEYDOWN every ~30 ms while a key
                 // is held; `repeat != 0` flags the duplicates. We want repeats
@@ -3934,8 +3979,27 @@ let main = (args: str[]) ->
                 ms = some(font.music_load(ad, want_chunk))
                 current_music_chunk = want_chunk
 
+        // Frame-skip predicate. 3D phases (playing / dying / bj_victory /
+        // death_cam) render every iteration — HUD-skip handled inside
+        // render_frame. Static phases render every other frame, except
+        // any keydown this iteration forces a full render so menu /
+        // name-entry / page-advance input stays crisp. force_redraw
+        // (set by resize_render_ctx / screenshot paths) always wins.
+        let phase = w->g->phase
+        let is_3d_phase = match phase with
+        | playing -> true
+        | dying -> true
+        | bj_victory -> true
+        | death_cam -> true
+        | _ -> false
+        let should_render = (
+            w->rc->force_redraw ||
+            is_3d_phase ||
+            event_seen ||
+            (w->rc->frame_counter & 1u64) == 0u64)
+
         // Render
-        render_frame(w, vs, pal)
+        if should_render then render_frame(w, vs, pal)
 
         // Generate and queue audio: music -> AdLib SFX -> digi SFX -> SDL.
         // Buffer is 1024 STEREO frames (2048 int16 values = 4096 bytes);
@@ -3965,7 +4029,12 @@ let main = (args: str[]) ->
         // produces a fully-composited dbuf (screen_w × screen_h) for
         // every phase — 3D phases skip the fb intermediate for the
         // viewport region; non-3D phases call upscale_nx internally.
-        sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
+        // On a skipped frame, dbuf was not rewritten and the existing
+        // GPU texture contents are still correct — re-present them.
+        // render_copy + present stay unconditional so vsync timing and
+        // letterbox painting are preserved.
+        if should_render then
+            sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
         // Only clear the backbuffer when SDL's logical-size step will
         // letterbox/pillarbox into the drawable. With FLIP_DISCARD swap
         // chains (D3D11) the backbuffer is undefined each frame, so the
