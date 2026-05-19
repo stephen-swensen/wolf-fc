@@ -594,6 +594,10 @@ struct game =
     // in ~/.wolf-fc/config alongside shadow_depth / view_mode.
     bj_speed_pct: int32
     enemy_speed_pct: int32
+    // Top-left automap overlay toggle. Off by default; flipped from
+    // the Options menu (persisted in ~/.wolf-fc/config). Read every
+    // frame by `render_map_overlay` in the 3D phases of render_frame.
+    show_map: bool
     // --test CLI flag: suppresses UX-only flourishes that would otherwise
     // freeze gameplay by a fixed duration (GET PSYCHED overlay, pickup
     // overlay). Tests advance the world `dt = 1/35` per tick, so a 0.7s
@@ -1695,6 +1699,7 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
         overlay.clear_view_sentinel(w->rc)
         death_cam.render(w, vs, pal, w->vg)
         if !skip_hud then hud.render(w->rc, w->vg, pal, w->g)
+        overlay.render_map(w->rc, w->lv, w->g)
         overlay.composite_view_overlay(w->rc)
         if !skip_hud then overlay.composite_hud(w->rc)
         return
@@ -1740,6 +1745,7 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
     // strip — it's composited via composite_view_overlay (always runs),
     // so it must paint every frame or the banner blinks.
     hud.render_message(w->rc, w->font, w->g)
+    overlay.render_map(w->rc, w->lv, w->g)
     // "GET PSYCHED!" level-entry overlay. The original fills the 3D
     // viewport with the standard background grey (palette 0x7f), draws
     // the pic centered, and paints a progress bar across the bottom of
@@ -2438,7 +2444,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         let s = if w->ac->sfx_on then 1 else 0
         let d = if w->ac->digi_on then 1 else 0
         let nd = if g->no_dogs then 1 else 0
-        io.write("prefs music=%d{m} sfx=%d{s} digi=%d{d} sfx_gain=%d{w->ac->sfx_gain_pct} digi_gain=%d{w->ac->digi_gain_pct} music_gain=%d{w->ac->music_gain_pct} no_dogs=%d{nd} shadow_depth=%d{g->shadow_depth} bj_speed_pct=%d{g->bj_speed_pct} enemy_speed_pct=%d{g->enemy_speed_pct}\n", stdout)
+        let sm = if g->show_map then 1 else 0
+        io.write("prefs music=%d{m} sfx=%d{s} digi=%d{d} sfx_gain=%d{w->ac->sfx_gain_pct} digi_gain=%d{w->ac->digi_gain_pct} music_gain=%d{w->ac->music_gain_pct} no_dogs=%d{nd} shadow_depth=%d{g->shadow_depth} bj_speed_pct=%d{g->bj_speed_pct} enemy_speed_pct=%d{g->enemy_speed_pct} show_map=%d{sm}\n", stdout)
         void()
     else if arg == "digi_slots" then
         // Dump the digi-mixer slot table. Verifies dedup behavior:
@@ -2893,6 +2900,7 @@ let main = (args: str[]) ->
         shadow_depth = cfg.shadow_depth,
         bj_speed_pct = cfg.bj_speed_pct,
         enemy_speed_pct = cfg.enemy_speed_pct,
+        show_map = cfg.show_map,
         data_dir = data_dir,
         test_mode = test_mode,
         menu_sel = 0, menu_level = menu.nav.main, save_edit_active = false,
@@ -3628,11 +3636,14 @@ let main = (args: str[]) ->
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % menu.options_len
                         else if (is_confirm || is_left_right) && kind == menu.option_kind.toggle then
-                            // Toggle row 0 = No Dogs. Either Enter or
-                            // ←/→ flips — matches the Sound submenu's
-                            // toggle behaviour for cross-menu consistency.
+                            // Toggle rows: 0 = No Dogs, 4 = Map.
+                            // Either Enter or ←/→ flips — matches the
+                            // Sound submenu's toggle behaviour for
+                            // cross-menu consistency.
                             if g->menu_sel == 0 then
                                 g->no_dogs = !g->no_dogs
+                            else if g->menu_sel == 4 then
+                                g->show_map = !g->show_map
                             config.save(config.snapshot(w))
                         else if is_confirm && kind == menu.option_kind.action then
                             // Action row = RESET. Wipe every Options
@@ -3644,6 +3655,7 @@ let main = (args: str[]) ->
                             g->shadow_depth = d.shadow_depth
                             g->bj_speed_pct = d.bj_speed_pct
                             g->enemy_speed_pct = d.enemy_speed_pct
+                            g->show_map = d.show_map
                             config.save(config.snapshot(w))
                         else if (k == sdl2.key_left || k == sdl2.key_right)
                             && kind == menu.option_kind.slider then

@@ -105,6 +105,9 @@ module config =
         // to fail interactions with auto-closing doors.
         bj_speed_pct: int32
         enemy_speed_pct: int32
+        // Top-left automap overlay. Off by default — purely a UX
+        // affordance for navigation, not part of OG-faithful play.
+        show_map: bool
 
     // Slider bounds shared by load/clamp + the menu's left/right step.
     let speed_pct_min  = 20
@@ -176,7 +179,8 @@ module config =
             scale_factor = scale_factor_auto,
             ssaa = false,
             bj_speed_pct = 100,
-            enemy_speed_pct = 100
+            enemy_speed_pct = 100,
+            show_map = false
         }
 
     // Snapshot the live preference state into a `prefs` value for
@@ -198,7 +202,8 @@ module config =
             scale_factor = w->g->scale_factor,
             ssaa = w->g->ssaa,
             bj_speed_pct = w->g->bj_speed_pct,
-            enemy_speed_pct = w->g->enemy_speed_pct
+            enemy_speed_pct = w->g->enemy_speed_pct,
+            show_map = w->g->show_map
         }
 
     private let config_path = () ->
@@ -310,6 +315,10 @@ module config =
                                 else if v > speed_pct_max then speed_pct_max
                                 else v
                         | none -> void()
+                    else if text.starts_with(line, "show_map ") then
+                        match text.parse_int32(line[9..line.len]) with
+                        | some(v) -> p.show_map = v != 0
+                        | none -> void()
                 p
 
     // Write the current prefs to disk. Fire-and-forget — failures
@@ -339,6 +348,7 @@ module config =
                 io.write("ssaa %d{if p.ssaa then 1 else 0}\n", f)
                 io.write("bj_speed_pct %d{p.bj_speed_pct}\n", f)
                 io.write("enemy_speed_pct %d{p.enemy_speed_pct}\n", f)
+                io.write("show_map %d{if p.show_map then 1 else 0}\n", f)
                 void()
 
 

@@ -102,8 +102,9 @@ module menu =
     //   1 Shadow Depth  (0..100% slider, ±5%, Left/Right adjusts)
     //   2 BJ Speed      (20..200% slider, ±5%, Left/Right adjusts)
     //   3 Enemy Speed   (20..200% slider, ±5%, Left/Right adjusts)
-    //   4 Reset         (action — restores every row to its default)
-    let options_len = 5
+    //   4 Map           (toggle — top-left automap overlay)
+    //   5 Reset         (action — restores every row to its default)
+    let options_len = 6
 
     // How a row reacts to input. Used by the sfx dispatch in main.fc
     // to pick the right confirm cue for every setting-changed event.
@@ -120,7 +121,8 @@ module menu =
         | 1 -> "Shadow Depth"
         | 2 -> "BJ Speed"
         | 3 -> "Enemy Speed"
-        | 4 -> "Reset to Defaults"
+        | 4 -> "Map"
+        | 5 -> "Reset to Defaults"
         | _ -> ""
 
     let row_kind = (i: int32) ->
@@ -129,7 +131,8 @@ module menu =
         | 1 -> option_kind.slider
         | 2 -> option_kind.slider
         | 3 -> option_kind.slider
-        | 4 -> option_kind.action
+        | 4 -> option_kind.toggle
+        | 5 -> option_kind.action
         | _ -> option_kind.toggle
 
     // Classify the currently-selected row's interaction kind across all
@@ -456,11 +459,9 @@ module menu =
     private let render_options_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                         pal: const uint32[], f: const font.info*,
                                         g: game*, time: float64) ->
-        font.draw_centered(rc, f, 38, "Options", pal[pal_readh])
-        // Generously sized box (the row count grows over time as more
-        // mods land — the current 2-row setup leaves headroom).
+        font.draw_centered(rc, f, 28, "Options", pal[pal_readh])
         let op_x = rc->ui_offset_x + 40
-        let op_y = 60
+        let op_y = 48
         let op_w = 240
         let op_h = options_len * 20 + 16
         draw_window(rc, pal, op_x, op_y, op_w, op_h)
@@ -491,6 +492,9 @@ module menu =
             else if i == 3 then
                 font.draw_text(rc, f, x_value, row_y,
                     "%d{g->enemy_speed_pct}%", color)
+            else if i == 4 then
+                let v = if g->show_map then "On" else "Off"
+                font.draw_text(rc, f, x_value, row_y, v, color)
         draw_help_pic(rc, vg, pal)
 
     // ============================================================

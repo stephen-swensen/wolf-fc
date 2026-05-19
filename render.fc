@@ -827,6 +827,59 @@ module overlay =
                     for kx in 0..s
                         rc->dbuf[row + (int64) kx] = c
 
+    // Top-left automap overlay (opt-in via Options → Map). One fb
+    // pixel per map tile, 4-px padding from the framebuffer's top-left
+    // corner, with a 1-px white border. Pixels are written to fb's
+    // viewport region (rows 0..view_h) at alpha 0xFF so the regular
+    // composite_view_overlay step scales them up to screen resolution
+    // alongside the rest of the UI — same path used by the message
+    // banner. Wolf-fc divergence: the original game has no automap.
+    let render_map = (rc: render_ctx*, lv: level*, g: game*) ->
+        if !g->show_map then return
+        let pad = 4
+        let inner = map_size            // 64 tiles → 64 fb px
+        let border = 1
+        let x0 = pad
+        let y0 = pad
+        let x1 = x0 + inner + 2 * border
+        let y1 = y0 + inner + 2 * border
+        let fbw = (int64) rc->fb_w
+        let border_col = 0xFFFFFFFFu32
+        let wall_col   = 0xFF888888u32
+        let door_col   = 0xFFAA8855u32
+        let empty_col  = 0xFF202020u32
+        let player_col = 0xFFFF2828u32
+        // Top + bottom border rows.
+        for x in x0..x1
+            if x >= 0 && x < rc->fb_w then
+                rc->fb[(int64) y0 * fbw + (int64) x] = border_col
+                rc->fb[(int64) (y1 - 1) * fbw + (int64) x] = border_col
+        // Left + right border columns.
+        for y in y0..y1
+            if y >= 0 && y < view_h then
+                rc->fb[(int64) y * fbw + (int64) x0] = border_col
+                rc->fb[(int64) y * fbw + (int64) (x1 - 1)] = border_col
+        // Tiles. Tilemap is column-major: tilemap[tx*64 + ty]. Door
+        // values are 128+ (index = value - 128); 1..63 are walls.
+        for ty in 0..map_size
+            let py = y0 + border + ty
+            if py < 0 || py >= view_h then continue
+            for tx in 0..map_size
+                let px = x0 + border + tx
+                if px < 0 || px >= rc->fb_w then continue
+                let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+                let col = if t == 0 then empty_col
+                    else if t >= 128 then door_col
+                    else wall_col
+                rc->fb[(int64) py * fbw + (int64) px] = col
+        // Player marker — one bright pixel at the player's tile.
+        let pxi = x0 + border + (int32) g->pos_x
+        let pyi = y0 + border + (int32) g->pos_y
+        if pxi >= x0 + border && pxi < x1 - border
+            && pyi >= y0 + border && pyi < y1 - border
+            && pxi < rc->fb_w && pyi < view_h then
+            rc->fb[(int64) pyi * fbw + (int64) pxi] = player_col
+
     // Tint the entire dbuf (full final frame, viewport + HUD) toward
     // `tint` at `alpha`. Used after compositing for fades that must
     // cover everything as one unit (e.g. the elevator next-level
