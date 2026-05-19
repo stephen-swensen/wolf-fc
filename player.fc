@@ -30,22 +30,24 @@ module player =
     private let turn_speed  = 2.138
 
     // Static-decoration half-width (tiles). Blocking sprites
-    // (barrels, lamps, tables, etc.) block the player as a half-tile
-    // AABB centered on the tile instead of the whole 1×1 cell — you
-    // can approach a barrel until your bbox edge is
-    // ~(radius + sprite_block_half) from its center. Tuned down from
-    // a full tile because the art typically occupies only the middle
-    // half and the original's full-tile blocking feels too
-    // intrusive at our scale.
-    private let sprite_block_half = 0.25
+    // (barrels, lamps, tables, etc.) block the player as an AABB
+    // centered on the tile — you can approach a barrel until your
+    // bbox edge is ~(radius + sprite_block_half) from its center.
+    // 0.28125 puts the per-axis reject at radius + 0.28125 = 0.625,
+    // chosen to match enemy_block_r2 below. The original blocks the
+    // full 1×1 tile, which feels too intrusive at our scale.
+    private let sprite_block_half = 0.28125
 
-    // Enemy exclusion radius squared (tiles²). 1.0 matches the
-    // original's actor spacing — the player can't approach within
-    // one tile of a live enemy. The block is directional (see
-    // move_blocked_by_enemy): only moves that decrease the distance
-    // are rejected, so an enemy that ends up pressed against the
-    // player can always be backed away from.
-    private let enemy_block_r2 = 1.0
+    // Enemy exclusion radius squared (tiles²). 0.390625 = 0.625²,
+    // so the player can't approach within 0.625 tiles of a live
+    // enemy center. Tuned down from the original's 1.0-tile actor
+    // spacing because that distance reads as "stuck on nothing" at
+    // our scale. Chosen to match the sprite per-axis reject so the
+    // two obstacle types feel the same. The block is directional
+    // (see move_blocked_by_enemy): only moves that decrease the
+    // distance are rejected, so an enemy that ends up pressed
+    // against the player can always be backed away from.
+    private let enemy_block_r2 = 0.390625
 
     // Seconds to hold gameplay frozen after the player pulls the
     // elevator switch before the intermission screen appears. Stands
