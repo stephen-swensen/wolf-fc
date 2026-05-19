@@ -103,7 +103,7 @@ make uninstall                      # remove the binary + share/wolf-fc/ tree
 
 | Flag | Effect |
 |------|--------|
-| `--no-dogs` | Skip spawning all dog enemies (for sensitive players). Works in both interactive and `--test` modes; may appear before or after `--test`. |
+| `--mommy-mode` | Skip spawning all dog enemies AND replace every enemy death animation with a fade-to-invisible on the last live sprite (for sensitive players). Works in both interactive and `--test` modes; may appear before or after `--test`. |
 | `--level=N` | Skip the title / menu and drop straight into map N in playing phase. `N` is `0..59` (six episodes of ten maps). Handy for jumping to a specific boss fight — see table below. |
 | `--difficulty=N` | Override the starting difficulty: `0` = Can I play Daddy, `1` = Don't Hurt Me, `2` = Bring 'Em On, `3` = I Am Death Incarnate (default). Combines with `--level`. |
 | `--near-boss` | After the level loads, teleport the player to an open tile adjacent to the first boss enemy on the map, facing the boss. No-op on maps without a boss. Combine with `--level=N` to start a specific boss fight immediately. |
@@ -317,7 +317,7 @@ All project modules are declared at the top level (no namespaces), so they're re
 **I/O and host**
 
 - **`data.fc`** — Wolf3D asset loading: `bytes` (little-endian readers), `palette` (256-entry VGA), `vswap` (wall textures, sprites, PCM), `maps` (Carmack + RLEW map decompression), `vgagraph` (Huffman-coded UI graphics), `audio` (AUDIOHED / AUDIOT chunk index).
-- **`save.fc`** — Save / load slots and the on-disk encoding, `~/.wolf-fc/config` persistence (music / SFX / digi toggles, per-source gain percentages, no-dogs, shadow-depth, view-mode, scale-factor, SSAA, speeds), and a leaf `paths` module that resolves `~/.wolf-fc/` directory locations.
+- **`save.fc`** — Save / load slots and the on-disk encoding, `~/.wolf-fc/config` persistence (music / SFX / digi toggles, per-source gain percentages, mommy-mode, shadow-depth, view-mode, scale-factor, SSAA, speeds), and a leaf `paths` module that resolves `~/.wolf-fc/` directory locations.
 - **`sdl2.fc`** — Flat `extern` FFI against `SDL2/SDL.h`: lifecycle, window (incl. fullscreen-desktop + high-DPI), the accelerated 2D renderer (used only as a blit primitive for one streaming ARGB8888 texture), keyboard events, and the audio device.
 - **`png.fc`** — Pure-FC PNG writer (CRC-32, Adler-32, stored deflate, optional tEXt metadata) used by the screenshot path.
 

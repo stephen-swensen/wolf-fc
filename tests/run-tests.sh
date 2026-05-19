@@ -929,11 +929,11 @@ assert_contains "save:oldscore-rewinds-after-load" \
     "score=0 lives=2"
 
 section "config / preferences"
-# Default prefs (no config file): toggles ON, no_dogs OFF, shadow_depth 55.
+# Default prefs (no config file): toggles ON, mommy_mode OFF, shadow_depth 55.
 # WOLF_FC_HOME is per-test fresh, so on a clean run no config has been written.
 assert_contains "config:defaults-music-on"        "prefs"   "music=1"
 assert_contains "config:defaults-sfx-on"          "prefs"   "sfx=1"
-assert_contains "config:defaults-no-dogs-off"     "prefs"   "no_dogs=0"
+assert_contains "config:defaults-mommy-mode-off"  "prefs"   "mommy_mode=0"
 assert_contains "config:defaults-shadow-default"  "prefs"   "shadow_depth=0"
 # Config file pre-seeded by the harness: the binary should pick it up and
 # the first `prefs` dump should reflect it.
@@ -945,10 +945,10 @@ assert_contains "config:loads-sfx-off"            "prefs"   "sfx=0"
 printf 'WLFC_CONFIG 1\nmusic 1\nsfx 0\n' > "$WOLF_FC_TEST_HOME/config"
 assert_contains "config:mixed-music-on"           "prefs"   "music=1"
 assert_contains "config:mixed-sfx-off"            "prefs"   "sfx=0"
-# Options-section prefs round-trip too: a config with no_dogs=1 +
+# Options-section prefs round-trip too: a config with mommy_mode=1 +
 # shadow_depth=80 should be reflected on the next launch.
-printf 'WLFC_CONFIG 1\nmusic 1\nsfx 1\nno_dogs 1\nshadow_depth 80\n' > "$WOLF_FC_TEST_HOME/config"
-assert_contains "config:loads-no-dogs-on"         "prefs"   "no_dogs=1"
+printf 'WLFC_CONFIG 1\nmusic 1\nsfx 1\nmommy_mode 1\nshadow_depth 80\n' > "$WOLF_FC_TEST_HOME/config"
+assert_contains "config:loads-mommy-mode-on"      "prefs"   "mommy_mode=1"
 assert_contains "config:loads-shadow-80"          "prefs"   "shadow_depth=80"
 # Out-of-range shadow_depth is clamped to 0..100 on load.
 printf 'WLFC_CONFIG 1\nshadow_depth 500\n' > "$WOLF_FC_TEST_HOME/config"
@@ -967,9 +967,9 @@ assert_contains "config:loads-enemy-speed-60"     "prefs"   "enemy_speed_pct=60"
 printf 'WLFC_CONFIG 1\nbj_speed_pct 500\nenemy_speed_pct 1\n' > "$WOLF_FC_TEST_HOME/config"
 assert_contains "config:bj-speed-clamps-high"     "prefs"   "bj_speed_pct=200"
 assert_contains "config:enemy-speed-clamps-low"   "prefs"   "enemy_speed_pct=20"
-# CLI --no-dogs forces the toggle on, even if the config has it off.
-printf 'WLFC_CONFIG 1\nno_dogs 0\n' > "$WOLF_FC_TEST_HOME/config"
-assert_contains "config:cli-no-dogs-overrides"    "--no-dogs prefs"  "no_dogs=1"
+# CLI --mommy-mode forces the toggle on, even if the config has it off.
+printf 'WLFC_CONFIG 1\nmommy_mode 0\n' > "$WOLF_FC_TEST_HOME/config"
+assert_contains "config:cli-mommy-mode-overrides" "--mommy-mode prefs"  "mommy_mode=1"
 # Reset config so subsequent runs of this script start clean.
 rm -f "$WOLF_FC_TEST_HOME/config"
 
@@ -977,6 +977,32 @@ rm -f "$WOLF_FC_TEST_HOME/config"
 assert_contains "cli:setphase-optionsmenu" \
     "setphase:optionsmenu phase" \
     "phase=menu"
+
+section "mommy mode"
+# spawn_enemies skips every dog when mommy_mode is set. Level 1 has
+# 10 dogs in the WL6 data; with --mommy-mode the dog count is zero.
+assert_contains "mommy:dogs-removed-on-level-1" \
+    "--mommy-mode setlevel:1 enemylist" \
+    "kind=guard"
+assert_not_contains "mommy:no-dogs-spawned-with-mommy-mode" \
+    "--mommy-mode setlevel:1 enemylist" \
+    "kind=dog"
+# Sanity check the default branch: without --mommy-mode level 1
+# spawns its dogs.
+assert_contains "mommy:dogs-spawn-without-mommy-mode" \
+    "setlevel:1 enemylist" \
+    "kind=dog"
+# Fade-on-death timing. Guard's natural die animation finishes around
+# tick 23 (3 die_frames × 15/70 = 0.64s at dt=1/35), so without
+# mommy-mode `wait:10` still shows state=die. With --mommy-mode the
+# fade is the same duration ballpark — mid-fade at wait:10, fully
+# faded (state=dead) by wait:30 (0.86s, past mommy_fade_duration=0.7).
+assert_contains "mommy:enemy-fading-mid-death" \
+    "--mommy-mode killenemy:0 wait:10 enemylist" \
+    "state=die"
+assert_contains "mommy:enemy-dead-after-fade" \
+    "--mommy-mode killenemy:0 wait:30 enemylist" \
+    "state=dead"
 
 section "high scores"
 # Wrap assertions so each test starts from a clean defaults table —

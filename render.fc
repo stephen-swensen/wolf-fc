@@ -486,7 +486,8 @@ module billboards =
                 x = s->x,
                 y = s->y,
                 shape_page = s->shape_page,
-                dist_sq = dx * dx + dy * dy
+                dist_sq = dx * dx + dy * dy,
+                alpha = 1.0
             }
             n = n + 1
         // Same projection the renderer uses for billboards: tx/ty in
@@ -497,17 +498,32 @@ module billboards =
         let inv_det = 1.0 / (g->plane_x * g->dir_y - g->dir_x * g->plane_y)
         for i in 0..lv->num_enemies
             let e = &lv->enemies[i]
-            let page_rel = enemies.sprite_page(e, g->pos_x, g->pos_y)
+            // Mommy Mode: dead enemies (post-fade) are gone — no corpse
+            // sprite. The original always draws the dead_frame, but the
+            // whole point of Mommy Mode is that we don't leave bodies.
+            let skip_dead = g->mommy_mode && match e->state with
+                | dead -> true
+                | _    -> false
+            if skip_dead then continue
+            let page_rel = enemies.sprite_page_with_mode(e, g->pos_x, g->pos_y, g->mommy_mode)
             let dx = e->x - g->pos_x
             let dy = e->y - g->pos_y
             let tx = inv_det * (g->dir_y * dx - g->dir_x * dy)
             let ty = inv_det * (g->plane_x * dy - g->plane_y * dx)
             e->last_visible = ty > 0.1 && math.abs(tx) <= ty * 1.2
+            // Mommy Mode fade-on-death: dying enemy renders at
+            // 1 - mommy_fade_t opacity (1 → 0 over mommy_fade_duration).
+            // Non-die states and non-mommy-mode play opaque.
+            let mommy_dying = g->mommy_mode && match e->state with
+                | die -> true
+                | _   -> false
+            let alpha = if mommy_dying then 1.0 - e->mommy_fade_t else 1.0
             rc->billboards[n] = billboard {
                 x = e->x,
                 y = e->y,
                 shape_page = sprite_start + page_rel,
-                dist_sq = dx * dx + dy * dy
+                dist_sq = dx * dx + dy * dy,
+                alpha = alpha
             }
             n = n + 1
         for i in 0..projectiles.max_projectiles
@@ -519,7 +535,8 @@ module billboards =
                 x = p->x,
                 y = p->y,
                 shape_page = projectiles.sprite_page(sprite_start, p),
-                dist_sq = dx * dx + dy * dy
+                dist_sq = dx * dx + dy * dy,
+                alpha = 1.0
             }
             n = n + 1
         if g->phase == game_phase.bj_victory then
@@ -535,7 +552,8 @@ module billboards =
                 x = g->bj_x,
                 y = g->bj_y,
                 shape_page = sprite_start + page_rel,
-                dist_sq = dx * dx + dy * dy
+                dist_sq = dx * dx + dy * dy,
+                alpha = 1.0
             }
             n = n + 1
         rc->num_billboards = n
@@ -552,10 +570,32 @@ module billboards =
 
     // Draw one sprite column from compressed VSWAP data. Iterates over
     // screen rows (not source rows) to avoid gaps when scaled up.
+    // Blend two ARGB8888 pixels: src·a + dst·(1-a) per channel. Used
+    // by Mommy Mode's fade-on-death — every other sprite column draws
+    // through `blend_argb(src, dst, 1.0)` which fast-paths to `src`
+    // and is bit-identical to the pre-alpha write. Alpha lane stays
+    // 0xFF because viewport pixels are always opaque.
+    private let blend_argb = (src: uint32, dst: uint32, a: float64) ->
+        if a >= 1.0 then src
+        else if a <= 0.0 then dst
+        else
+            let inv = 1.0 - a
+            let sr = (src >> 16) & 0xFFu32
+            let sg = (src >>  8) & 0xFFu32
+            let sb =  src        & 0xFFu32
+            let dr = (dst >> 16) & 0xFFu32
+            let dg = (dst >>  8) & 0xFFu32
+            let db =  dst        & 0xFFu32
+            let r = (uint32) ((float64) sr * a + (float64) dr * inv)
+            let g = (uint32) ((float64) sg * a + (float64) dg * inv)
+            let b = (uint32) ((float64) sb * a + (float64) db * inv)
+            0xFF000000u32 | (r << 16) | (g << 8) | b
+
     private let draw_sprite_col = (rc: render_ctx*, vs: const vswap.vswap_file*, pal: const uint32[],
                            page: int32, sprite_col: int32,
                            screen_x: int32, sprite_h: int32,
-                           shade: float64) ->
+                           shade: float64, alpha: float64) ->
+        if alpha <= 0.0 then return
         let hdr = vswap.sprite_header_at(vs, page)
         if !hdr.valid then return
         if sprite_col < hdr.left_pix || sprite_col > hdr.right_pix then return
@@ -584,7 +624,8 @@ module billboards =
                     let ey = if sy1 > view_render_h then view_render_h else sy1
                     loop
                         if sy >= ey then break
-                        rc->vbuf[(int64) sy * sw + dcol] = color
+                        let off2 = (int64) sy * sw + dcol
+                        rc->vbuf[off2] = blend_argb(color, rc->vbuf[off2], alpha)
                         sy = sy + 1
 
     // Render the sorted billboards (static sprites + enemies). Caller
@@ -610,6 +651,7 @@ module billboards =
         let focal_px = (float64) rc->vbuf_w / (2.0 * g->plane_factor)
         for i in 0..rc->num_billboards
             let bb = rc->billboards[i]
+            if bb.alpha <= 0.0 then continue
             let sx = bb.x - g->pos_x
             let sy = bb.y - g->pos_y
             let tx = inv_det * (g->dir_y * sx - g->dir_x * sy)
@@ -628,7 +670,7 @@ module billboards =
                         let tex_col = (stripe - draw_x0) * 64 / spr_w
                         let spr_shade = raycaster.dist_shade(ty, shadow_floor)
                         draw_sprite_col(rc, vs, pal, bb.shape_page,
-                            tex_col, stripe, spr_h, spr_shade)
+                            tex_col, stripe, spr_h, spr_shade, bb.alpha)
 
 
 // ============================================================

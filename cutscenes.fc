@@ -361,6 +361,14 @@ module death_cam =
                 match g->dc_boss_idx with
                 | some(idx) when (idx < lv->num_enemies) ->
                     let e = &lv->enemies[idx]
+                    // Mommy Mode: cache the boss' stand pose so the
+                    // replay fades the standing sprite instead of the
+                    // die_frames (bosses' die_frames are the most
+                    // gruesome — Hitler's exposed-skull frame, Fat's
+                    // gib explosion, Schabbs' impaled-on-needle frame).
+                    if g->mommy_mode then
+                        e->mommy_fade_page = enemies.sprite_page(e, g->pos_x, g->pos_y)
+                        e->mommy_fade_t = 0.0
                     e->state = enemies.enemy_state.die
                     e->anim_frame = 0
                     e->anim_timer = enemies.die_frame_time

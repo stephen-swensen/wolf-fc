@@ -98,7 +98,7 @@ module menu =
     // sliders land; matched by `render_options_list` and by main.fc's
     // options-nav handler. The RESET row is always the last entry —
     // bumps stay simple by keeping it at `options_len - 1`.
-    //   0 No Dogs       (toggle)
+    //   0 Mommy Mode    (toggle)
     //   1 Shadow Depth  (0..100% slider, ±5%, Left/Right adjusts)
     //   2 BJ Speed      (20..200% slider, ±5%, Left/Right adjusts)
     //   3 Enemy Speed   (20..200% slider, ±5%, Left/Right adjusts)
@@ -117,7 +117,7 @@ module menu =
     // Per-row metadata: kind (toggle / slider / action) + label.
     private let option_label = (i: int32) ->
         match i with
-        | 0 -> "No Dogs (Thanks Mom)"
+        | 0 -> "Mommy Mode"
         | 1 -> "Shadow Depth"
         | 2 -> "BJ Speed"
         | 3 -> "Enemy Speed"
@@ -453,7 +453,7 @@ module menu =
         draw_help_pic(rc, vg, pal)
 
     // ============================================================
-    // Options submenu — wolf-fc mods (No Dogs, Shadow Depth, ...)
+    // Options submenu — wolf-fc mods (Mommy Mode, Shadow Depth, ...)
     // ============================================================
 
     private let render_options_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
@@ -481,7 +481,7 @@ module menu =
             // Each row prints its own value because the match arms
             // would mix str / const str otherwise.
             if i == 0 then
-                let v = if g->no_dogs then "On" else "Off"
+                let v = if g->mommy_mode then "On" else "Off"
                 font.draw_text(rc, f, x_value, row_y, v, color)
             else if i == 1 then
                 font.draw_text(rc, f, x_value, row_y,

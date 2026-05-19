@@ -123,6 +123,17 @@ module enemies =
         reaction_timer: float64   // seconds left between first detection and actual wake; 0 when not yet detected (mirrors the original's sight-delay)
         last_visible: bool        // set by build_billboards when the enemy was drawn in the previous frame (mirrors the original's visible flag); read by fire_at_player to pick the steeper hitchance falloff
         touch_cooldown: float64   // ghost-only: refractory window after a bite. The original steps the ghost physically back out of the player's contact bbox after a hit; our advance_move is grid-based, so we emulate the gap with a short timer.
+        // Mommy Mode fade-on-death state. Set at the moment kill_enemy
+        // (or death_cam pre_replay) transitions the enemy into `die`:
+        // mommy_fade_page caches the live sprite page the enemy was
+        // showing right before death, mommy_fade_t advances 0..1 over
+        // `mommy_fade_duration` and replaces the die_frames animation.
+        // mommy_fade_page < 0 means "never captured" — sprite_page
+        // falls back to the regular per-state lookup (so an enemy
+        // loaded mid-fade from a save file simply finishes
+        // disappearing without the cached angle).
+        mommy_fade_t: float64
+        mommy_fade_page: int32
 
     // Tunables — see ai.update_enemies for how each is used.
     let max_enemies = 150
@@ -144,6 +155,12 @@ module enemies =
     let walk_frame_time     = 0.12  // seconds per W1/W2/W3/W4 cycle frame
     private let pain_time           = 0.143 // pain flinch duration (10 tics @ 70Hz)
     let die_frame_time      = 15.0 / 70.0  // 15 tics per frame during death animation
+    // Mommy Mode: how long an enemy takes to fade from fully visible to
+    // fully gone, in place of the original 3-or-4-frame die animation.
+    // Picked to sit between the kinds' natural die durations
+    // (3 frames × 15/70 ≈ 0.64s, 4 frames × 15/70 ≈ 0.86s) so the
+    // death-cam's 2-second replay_anim_max safety cap still covers it.
+    let mommy_fade_duration = 0.7
 
     // Enemy Speed slider as a unit-free multiplier. Scales every
     // patrol + chase speed (in advance_move + the dog lunge gate)
@@ -595,8 +612,9 @@ module enemies =
     // VSWAP page (relative to sprite_start) for this enemy in its
     // current state. Frame counts come from the original's states[]
     // table; animation loops for walk states and plays once for die /
-    // shoot / pain.
-    let sprite_page = (e: const enemy*, px: float64, py: float64) ->
+    // shoot / pain. Mommy Mode (driven through `mommy_mode_fade`) skips
+    // the gory die_frames in favor of the cached last-live sprite.
+    let sprite_page_with_mode = (e: const enemy*, px: float64, py: float64, mommy_mode_fade: bool) ->
         let sp = sprites_for_kind(e->kind)
         let rotating = kind_is_rotating(e->kind)
         match e->state with
@@ -618,9 +636,20 @@ module enemies =
             // Alternate pain pose if the kind has two. anim_frame 0 = pain1.
             if e->anim_frame == 0 then sp.pain1 else sp.pain2
         | die ->
-            let f = if e->anim_frame < sp.num_die_frames then e->anim_frame else sp.num_die_frames - 1
-            sp.die_frames[f]
+            if mommy_mode_fade && e->mommy_fade_page >= 0 then
+                e->mommy_fade_page
+            else
+                let f = if e->anim_frame < sp.num_die_frames then e->anim_frame else sp.num_die_frames - 1
+                sp.die_frames[f]
         | dead -> sp.dead_frame
+
+    // Backwards-compatible alias for the non-mommy-mode lookup. Used
+    // anywhere that doesn't have a `game*` handy (currently nothing
+    // outside this module — callers in `kill_enemy` need the live page
+    // captured before the state flips, and that's mommy-mode-irrelevant
+    // because the enemy is still in its live state at the call site).
+    let sprite_page = (e: const enemy*, px: float64, py: float64) ->
+        sprite_page_with_mode(e, px, py, false)
 
     // ============================================================
     // Enemy AI — per-frame state machine, pathfinding, line-of-sight,
@@ -1077,6 +1106,15 @@ module enemies =
             e->reaction_timer = 0.0
 
         let kill_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, sprite_start: int32) ->
+            // Mommy Mode: snapshot whichever live sprite the enemy was
+            // showing this tick (walk-angle, shoot-pose, pain frame —
+            // whatever sprite_page would resolve to under the current
+            // state) BEFORE we flip state to `die`, so the fade-out
+            // shows the last living pose instead of the die_frames
+            // (which are the gory ones, especially on bosses).
+            if g->mommy_mode then
+                e->mommy_fade_page = sprite_page(e, g->pos_x, g->pos_y)
+                e->mommy_fade_t = 0.0
             e->state = enemy_state.die
             e->anim_frame = 0
             e->anim_timer = die_frame_time
@@ -1281,7 +1319,19 @@ module enemies =
             match e->state with
             | dead -> void()
             | die ->
-                if e->anim_timer <= 0.0 then
+                if g->mommy_mode then
+                    // Mommy Mode: skip the gory die_frames entirely.
+                    // Hold on the cached last-live sprite and fade alpha
+                    // 0 → 1 over mommy_fade_duration. Mecha still morphs
+                    // to Real Hitler at the end so the boss fight chain
+                    // continues identically.
+                    e->mommy_fade_t = e->mommy_fade_t + dt / mommy_fade_duration
+                    if e->mommy_fade_t >= 1.0 then
+                        e->mommy_fade_t = 1.0
+                        match e->kind with
+                        | mecha_hitler -> morph_mecha_to_hitler(g, e)
+                        | _            -> e->state = enemy_state.dead
+                else if e->anim_timer <= 0.0 then
                     let sp = sprites_for_kind(e->kind)
                     e->anim_frame = e->anim_frame + 1
                     if e->anim_frame >= sp.num_die_frames then

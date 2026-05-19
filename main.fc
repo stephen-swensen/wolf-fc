@@ -562,11 +562,13 @@ struct game =
     // internal raycaster runs at 10× the fb_w grid. Default false.
     ssaa: bool
 
-    // No-dogs mod toggle. Set from the Options menu (persisted in
-    // ~/.wolf-fc/config) or from the --no-dogs CLI flag at launch.
-    // Read by spawn.spawn_enemies; takes effect on the next level
-    // build (changing it mid-level doesn't despawn live dogs).
-    no_dogs: bool
+    // Mommy Mode toggle. Set from the Options menu (persisted in
+    // ~/.wolf-fc/config) or from the --mommy-mode CLI flag at launch.
+    // Two effects: spawn.spawn_enemies skips every dog (takes effect on
+    // the next level build), and every enemy death plays as a fade-out
+    // of the last live sprite instead of the original die_frames
+    // (read every frame by enemies.update_enemy + billboards.build).
+    mommy_mode: bool
     // Upper clamp on the auto-picked supersample factor. CLI-only
     // (--max-scale=N), default 6. Read by `compute_scale_factor`
     // both at startup and on view-mode changes — stashed on game
@@ -655,7 +657,8 @@ struct game =
     rng_enemy: random.pcg_random
     rng_face: random.pcg_random
 
-// CLI flag `--no-dogs`: when true, spawn.spawn_enemies skips every enemies.enemy_kind.dog. Pre-dead
+// CLI flag `--mommy-mode`: when true, spawn.spawn_enemies skips every enemies.enemy_kind.dog
+// AND every enemy death replaces die_frames with a fade-to-invisible. Pre-dead
 // dog corpses don't exist in the data (the "dead guard" marker is tile 124,
 // a guard), so no carve-out is needed for those.
 
@@ -719,6 +722,12 @@ struct billboard =
     y: float64
     shape_page: int32
     dist_sq: float64
+    // Alpha multiplier for the sprite. 1.0 = fully opaque (default for
+    // statics, projectiles, live enemies). 0..1 = blended against the
+    // existing vbuf pixel — used by Mommy Mode to fade dying enemies
+    // out to invisible in place of the original die_frames. 0 = skip
+    // drawing entirely.
+    alpha: float64
 
 // Renderer scratch buffers. Process-wide and rewritten every frame; not
 // part of save-state. Held in its own struct so no one reaches for globals.
@@ -1246,7 +1255,7 @@ let build_highscore_ctx = () ->
 // Allocate a level from the decoded wolf3d map data. Builds tilemap,
 // spawns static sprites, and marks push-wall tiles. Caller must call
 // free_level when the level is no longer needed.
-let build_level = (lv_data: maps.level*, sprite_start: int32, difficulty: int32, no_dogs: bool) ->
+let build_level = (lv_data: maps.level*, sprite_start: int32, difficulty: int32, mommy_mode: bool) ->
     let lv = alloc(level {
         tilemap = alloc(uint8[map_size * map_size] {})!,
         pushwall_tiles = alloc(bool[map_size * map_size] {})!,
@@ -1274,7 +1283,7 @@ let build_level = (lv_data: maps.level*, sprite_start: int32, difficulty: int32,
     spawn.mark_exit_tiles(lv, lv_data)
     spawn.mark_path_arrows(lv, lv_data)
     areas.build(lv, lv_data)
-    spawn.spawn_enemies(lv, lv_data, difficulty, no_dogs)
+    spawn.spawn_enemies(lv, lv_data, difficulty, mommy_mode)
     // Tally totals for the intermission screen (enemies that are not
     // pre-dead corpses; push-wall marker tiles; treasure pickups).
     let mut enemies_live = 0
@@ -1339,7 +1348,7 @@ let reload_level_data = (w: world*, vs: const vswap.vswap_file*) ->
     let p_gamemaps = data_path.wl6(w->g->data_dir, "GAMEMAPS.WL6")
     defer free(p_gamemaps)
     w->lv_data = maps.load(p_maphead, p_gamemaps, w->g->level_num)
-    w->lv = build_level(w->lv_data, vs->sprite_start, w->g->difficulty, w->g->no_dogs)
+    w->lv = build_level(w->lv_data, vs->sprite_start, w->g->difficulty, w->g->mommy_mode)
 
 // Clear held gameplay-input flags. Called on ack-screen exits (intermission /
 // episode-end advance) so the "any key" press that dismissed the screen
@@ -2161,7 +2170,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             // only affects which plane-1 enemy tiles spawn, we can clear
             // lv->num_enemies and re-scan without rebuilding the tilemap.
             w->lv->num_enemies = 0
-            spawn.spawn_enemies(w->lv, w->lv_data, g->difficulty, g->no_dogs)
+            spawn.spawn_enemies(w->lv, w->lv_data, g->difficulty, g->mommy_mode)
             // Recount total_enemies so the counters tally correctly.
             let mut alive = 0
             for i in 0..w->lv->num_enemies
@@ -2443,9 +2452,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         let m = if w->ac->music_on then 1 else 0
         let s = if w->ac->sfx_on then 1 else 0
         let d = if w->ac->digi_on then 1 else 0
-        let nd = if g->no_dogs then 1 else 0
+        let nd = if g->mommy_mode then 1 else 0
         let sm = if g->show_map then 1 else 0
-        io.write("prefs music=%d{m} sfx=%d{s} digi=%d{d} sfx_gain=%d{w->ac->sfx_gain_pct} digi_gain=%d{w->ac->digi_gain_pct} music_gain=%d{w->ac->music_gain_pct} no_dogs=%d{nd} shadow_depth=%d{g->shadow_depth} bj_speed_pct=%d{g->bj_speed_pct} enemy_speed_pct=%d{g->enemy_speed_pct} show_map=%d{sm}\n", stdout)
+        io.write("prefs music=%d{m} sfx=%d{s} digi=%d{d} sfx_gain=%d{w->ac->sfx_gain_pct} digi_gain=%d{w->ac->digi_gain_pct} music_gain=%d{w->ac->music_gain_pct} mommy_mode=%d{nd} shadow_depth=%d{g->shadow_depth} bj_speed_pct=%d{g->bj_speed_pct} enemy_speed_pct=%d{g->enemy_speed_pct} show_map=%d{sm}\n", stdout)
         void()
     else if arg == "digi_slots" then
         // Dump the digi-mixer slot table. Verifies dedup behavior:
@@ -2677,7 +2686,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
 let main = (args: str[]) ->
     // CLI flags. Scan all args (so flags can appear before or after --test)
     // and set the relevant module-level switches before any level is built.
-    //   --no-dogs             — skip spawning enemies.enemy_kind.dog actors
+    //   --mommy-mode          — skip spawning enemies.enemy_kind.dog actors AND
+    //                           replace every enemy death animation with a
+    //                           fade-to-invisible on the last live sprite
     //   --test                — enter scripted-command mode (no SDL)
     //   --level N             — skip the title screen and start at level N
     //                           (0..59). Handy for boss testing:
@@ -2717,7 +2728,7 @@ let main = (args: str[]) ->
     let mut start_near_goldkey = false
     let mut start_near_silverkey = false
     let mut start_near_gibs = false
-    let mut arg_no_dogs = false
+    let mut arg_mommy_mode = false
     let mut arg_cheat = false
     // Default supersample cap. Hardcoded ceiling matches the original
     // pre-CLI clamp; --max-scale lets the user move it in either
@@ -2725,7 +2736,7 @@ let main = (args: str[]) ->
     let mut max_scale = 6
     for i in 1..(int32) args.len
         let a = args[(int64) i]
-        if a == "--no-dogs" then arg_no_dogs = true
+        if a == "--mommy-mode" then arg_mommy_mode = true
         if a == "--test" then test_mode = true
         if a == "--near-boss" then start_near_boss = true
         if a == "--near-goldkey" then start_near_goldkey = true
@@ -2892,10 +2903,10 @@ let main = (args: str[]) ->
         // filters out +72-tier tiles, which would invalidate hundreds
         // of enemy-index assertions).
         difficulty = if test_mode then difficulty.hard else difficulty.medium,
-        // CLI flag takes precedence over the persisted config — `--no-dogs`
+        // CLI flag takes precedence over the persisted config — `--mommy-mode`
         // is always "force on", absence falls back to whatever the user
         // last toggled in the Options menu.
-        no_dogs = if arg_no_dogs then true else cfg.no_dogs,
+        mommy_mode = if arg_mommy_mode then true else cfg.mommy_mode,
         max_scale = max_scale,
         shadow_depth = cfg.shadow_depth,
         bj_speed_pct = cfg.bj_speed_pct,
@@ -2921,7 +2932,7 @@ let main = (args: str[]) ->
     // sfx.trigger / digi.fill work over this same ctx either way).
     let w = alloc(world {
         g = g,
-        lv = build_level(lv_data, vs->sprite_start, g->difficulty, g->no_dogs),
+        lv = build_level(lv_data, vs->sprite_start, g->difficulty, g->mommy_mode),
         lv_data = lv_data,
         rc = build_render_ctx(vg, pal, fb_w, game_h, 2, cfg.ssaa),
         ac = alloc(audio_ctx {
@@ -3007,7 +3018,7 @@ let main = (args: str[]) ->
     // Test mode: process scripted commands, no SDL needed. Skip the
     // title/menu entry flow — tests start directly in playing so
     // existing regression scripts behave the same as before the UI
-    // overhaul. Flags like --no-dogs may appear before or after --test; in
+    // overhaul. Flags like --mommy-mode may appear before or after --test; in
     // the command loop, we skip anything matching a known flag so it isn't
     // reported as "Unknown test command".
     let mut test_idx = -1
@@ -3018,7 +3029,7 @@ let main = (args: str[]) ->
         g->has_active_game = true
         let test_dt = 1.0 / 35.0
         for ti in (test_idx + 1)..(int32) args.len
-            if args[(int64) ti] == "--no-dogs" then continue
+            if args[(int64) ti] == "--mommy-mode" then continue
             if args[(int64) ti] == "--cheat" then continue
             run_test_cmd(w, args[(int64) ti], pal, test_dt)
         return 0
@@ -3636,12 +3647,12 @@ let main = (args: str[]) ->
                         else if k == sdl2.key_down then
                             g->menu_sel = (g->menu_sel + 1) % menu.options_len
                         else if (is_confirm || is_left_right) && kind == menu.option_kind.toggle then
-                            // Toggle rows: 0 = No Dogs, 4 = Map.
+                            // Toggle rows: 0 = Mommy Mode, 4 = Map.
                             // Either Enter or ←/→ flips — matches the
                             // Sound submenu's toggle behaviour for
                             // cross-menu consistency.
                             if g->menu_sel == 0 then
-                                g->no_dogs = !g->no_dogs
+                                g->mommy_mode = !g->mommy_mode
                             else if g->menu_sel == 4 then
                                 g->show_map = !g->show_map
                             config.save(config.snapshot(w))
@@ -3651,7 +3662,7 @@ let main = (args: str[]) ->
                             // toggles are deliberately untouched
                             // (different submenu, different scope).
                             let d = config.defaults()
-                            g->no_dogs = d.no_dogs
+                            g->mommy_mode = d.mommy_mode
                             g->shadow_depth = d.shadow_depth
                             g->bj_speed_pct = d.bj_speed_pct
                             g->enemy_speed_pct = d.enemy_speed_pct

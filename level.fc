@@ -1035,7 +1035,9 @@ module spawn =
             notified = false,
             reaction_timer = 0.0,
             last_visible = false,
-            touch_cooldown = 0.0
+            touch_cooldown = 0.0,
+            mommy_fade_t = 0.0,
+            mommy_fade_page = -1
         }
         lv->num_enemies = lv->num_enemies + 1
 
@@ -1048,7 +1050,7 @@ module spawn =
         else if tier == 1 then diff >= difficulty.medium
         else diff >= difficulty.hard
 
-    let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: int32, no_dogs: bool) ->
+    let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: int32, mommy_mode: bool) ->
         lv->num_enemies = 0
         for y in 0..map_size
             for x in 0..map_size
@@ -1060,7 +1062,7 @@ module spawn =
                     let is_dog = match info.kind with
                         | dog -> true
                         | _   -> false
-                    if no_dogs && is_dog then continue
+                    if mommy_mode && is_dog then continue
                     if info.dead || tier_allowed(info.tier, difficulty) then
                         let before = lv->num_enemies
                         one_enemy(lv, x, y, info, difficulty)

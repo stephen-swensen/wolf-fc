@@ -75,7 +75,7 @@ module config =
         sfx_gain_pct: int32
         digi_gain_pct: int32
         music_gain_pct: int32
-        no_dogs: bool
+        mommy_mode: bool
         // Shadow depth as 0..100 percent. 0 = no shading, 100 = full
         // black at distance, 55 = original Wolf3D feel.
         shadow_depth: int32
@@ -161,7 +161,7 @@ module config =
             sfx_gain_pct = 100,
             digi_gain_pct = 100,
             music_gain_pct = 100,
-            no_dogs = false,
+            mommy_mode = false,
             // 0% disables distance fading entirely (floor=1.0) — the
             // OG-faithful default. The original game has no distance
             // shading at all; walls/sprites render at full brightness
@@ -196,7 +196,7 @@ module config =
             sfx_gain_pct = w->ac->sfx_gain_pct,
             digi_gain_pct = w->ac->digi_gain_pct,
             music_gain_pct = w->ac->music_gain_pct,
-            no_dogs = w->g->no_dogs,
+            mommy_mode = w->g->mommy_mode,
             shadow_depth = w->g->shadow_depth,
             view_mode = w->g->view_mode,
             scale_factor = w->g->scale_factor,
@@ -267,9 +267,9 @@ module config =
                                 else if v > gain_pct_max then gain_pct_max
                                 else v
                         | none -> void()
-                    else if text.starts_with(line, "no_dogs ") then
-                        match text.parse_int32(line[8..line.len]) with
-                        | some(v) -> p.no_dogs = v != 0
+                    else if text.starts_with(line, "mommy_mode ") then
+                        match text.parse_int32(line[11..line.len]) with
+                        | some(v) -> p.mommy_mode = v != 0
                         | none -> void()
                     else if text.starts_with(line, "shadow_depth ") then
                         match text.parse_int32(line[13..line.len]) with
@@ -341,7 +341,7 @@ module config =
                 io.write("sfx_gain_pct %d{p.sfx_gain_pct}\n", f)
                 io.write("digi_gain_pct %d{p.digi_gain_pct}\n", f)
                 io.write("music_gain_pct %d{p.music_gain_pct}\n", f)
-                io.write("no_dogs %d{if p.no_dogs then 1 else 0}\n", f)
+                io.write("mommy_mode %d{if p.mommy_mode then 1 else 0}\n", f)
                 io.write("shadow_depth %d{p.shadow_depth}\n", f)
                 io.write("view_mode %d{p.view_mode}\n", f)
                 io.write("scale_factor %d{p.scale_factor}\n", f)
