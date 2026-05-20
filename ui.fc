@@ -730,12 +730,13 @@ module hud =
     // separately by the caller, which swaps in the dead-face pic
     // (or the mutant-BJ pic on needle-death). `frame` is clamped to
     // 0..2 by the caller.
-    private let face_chunk_for = (health: int32, frame: int32) ->
+    private let face_chunk_for = (health: int32, frame: int32, mommy_mode: bool) ->
         let mut h = health
         if h > 100 then h = 100
         if h < 1 then h = 1
         let idx = (100 - h) / 16
-        let clamped = if idx > 6 then 6 else idx
+        let cap = if mommy_mode then 3 else 6
+        let clamped = if idx > cap then cap else idx
         let f = if frame < 0 then 0 else if frame > 2 then 2 else frame
         pics.id.face_base + clamped * 3 + f
 
@@ -851,11 +852,12 @@ module hud =
                 else pics.id.face_dead
             let face =
                 if g->got_gatling_timer > 0.0 then pics.id.got_gatling
+                else if g->mommy_mode then face_chunk_for(g->health, g->face_frame, true)
                 else if g->health <= 0 then dead_face
                 else
                     match g->phase with
                     | dying -> dead_face
-                    | _ -> face_chunk_for(g->health, g->face_frame)
+                    | _ -> face_chunk_for(g->health, g->face_frame, false)
             pics.draw(rc, vg, pal, face, ox + 136, bar_top + 4)
         // Weapon icon on the right.
         let weapon_chunk = match g->weapon with
