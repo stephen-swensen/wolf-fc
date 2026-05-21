@@ -235,7 +235,10 @@ module enemies =
         // he's softer than the mech because the fight has already
         // burned through most of the player's ammo.
         | hitler       -> diff_pick(500, 700, 800, 900)
-        | blinky | pinky | clyde | inky -> 1000  // unkillable-ish
+        // HP is unreachable — ghosts skip the player hitscan entirely
+        // (matches the original's missing FL_SHOOTABLE flag). The value
+        // is just a placeholder so the kind has an entry.
+        | blinky | pinky | clyde | inky -> 1000
 
     // Score granted to the player on kill. Original-game values.
     private let score_for_kind = (k: enemy_kind) ->
@@ -1786,6 +1789,9 @@ module hitscan =
             match e->state with
             | dead | die -> continue
             | _ -> void()
+            // Pacman ghosts have no shootable flag in the original — bullets
+            // and knife pass through them entirely.
+            if enemies.kind_is_ghost(e->kind) then continue
             let rx = e->x - g->pos_x
             let ry = e->y - g->pos_y
             let proj = rx * g->dir_x + ry * g->dir_y
