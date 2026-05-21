@@ -626,9 +626,16 @@ module enemies =
             else sp.stand_base
         | path | chase ->
             // Walk cycle: 4 phases of 8 angles. anim_frame cycles 0..3.
+            // Bosses have 4 sequential walk frames; pacman ghosts only
+            // have 2, so an unclamped `walk_base + ph` for inky would
+            // spill into Hans's sprite block (296+).
             let ph = e->anim_frame % 4
             if rotating then angle_sprite(e, px, py, sp.walk_base + ph * 8)
-            else sp.walk_base + ph
+            else
+                let phase = match e->kind with
+                    | blinky | pinky | clyde | inky -> ph % 2
+                    | _ -> ph
+                sp.walk_base + phase
         | shoot ->
             let f = if e->anim_frame < sp.num_shoot_frames then e->anim_frame else sp.num_shoot_frames - 1
             sp.shoot_frames[f]
