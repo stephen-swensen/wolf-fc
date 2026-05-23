@@ -3382,11 +3382,18 @@ let main = (args: str[]) ->
                     // current_row_kind. Skipping it for row-typed menus
                     // keeps Enter on a slider row silent (it's a no-op).
                     let is_drill_confirm = is_confirm && row_kind.is_none
+                    // View Scores drills into the high-scores screen,
+                    // which immediately swaps to the roster track. The
+                    // shoot cue stepping on top of the music start sounds
+                    // awkward, so suppress it for that one entry.
+                    let is_view_scores_entry = g->menu_level == menu.nav.main
+                        && g->menu_sel == 6 && is_confirm
                     if k == sdl2.key_up || k == sdl2.key_down then
                         sfx.trigger(sfx.id.move_gun1, w->ac)
                     else if setting_changed then
                         sfx.trigger(sfx.id.move_gun2, w->ac)
-                    else if is_drill_confirm || is_episode_floor_key then
+                    else if (is_drill_confirm || is_episode_floor_key)
+                            && !is_view_scores_entry then
                         sfx.trigger(sfx.id.shoot, w->ac)
                     else if k == sdl2.key_escape then
                         sfx.trigger(sfx.id.esc_pressed, w->ac)
@@ -3997,7 +4004,22 @@ let main = (args: str[]) ->
         if want_chunk != current_music_chunk then
             if audio_dev > 0u32 && want_chunk < ad->num_chunks then
                 match ms with
-                | some(m) -> imf.destroy(m)
+                | some(m) ->
+                    // Render and queue a brief fade-out tail from the old
+                    // chip so the already-queued music ends with a smooth
+                    // taper instead of cutting hard to silence (audible as
+                    // a click). The new track has its own fade-in baked
+                    // in, so both sides of the transition ramp through 0.
+                    // 256 stereo frames = 1024 bytes ≈ 5.8 ms @ 44.1 kHz.
+                    let tail_frames = 256i32
+                    if w->ac->music_on then
+                        imf.fill_fade_out(m, mix_buf, tail_frames,
+                            (float64) w->ac->music_gain_pct / 100.0)
+                        mixer.soft_clip_to_int16(mix_buf, out_buf, tail_frames * 2)
+                        sdl2.queue_audio(audio_dev, (any*) out_buf.ptr,
+                            (uint32) tail_frames * 4u32)
+                        void()
+                    imf.destroy(m)
                 | none -> void()
                 ms = some(font.music_load(ad, want_chunk))
                 current_music_chunk = want_chunk

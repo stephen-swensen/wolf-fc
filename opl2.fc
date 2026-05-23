@@ -710,6 +710,23 @@ module opl2 =
     let note_off = (c: chip*, channel: int32) ->
         write(c, 0xB0 + channel, 0)
 
+    // Force every voice into the silent `off` envelope stage and clear
+    // phase + feedback history. Instrument programming (TL, KSL, mult,
+    // waveform, fnum, block, etc.) is preserved so the next event-driven
+    // key-on plays cleanly without needing the track to re-program every
+    // register. Used by the IMF driver at loop wrap so a subsequent
+    // key-on-with-phase-reset against a still-sounding voice doesn't
+    // produce an audible click.
+    let silence_voices = (c: chip*) ->
+        for i in 0..18
+            c->op_env[i] = env_max
+            c->op_stage[i] = envelope_stage.off
+            c->op_phase[i] = 0.0
+        for i in 0..9
+            c->ch_key[i] = false
+            c->ch_prev0[i] = 0
+            c->ch_prev1[i] = 0
+
     // ============================================================
     // Ticked sample producer
     // ============================================================

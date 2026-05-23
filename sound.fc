@@ -29,6 +29,14 @@ module imf =
     // these ticks; Wolf3D uses 700 Hz.
     let tick_rate = 700
 
+    // Linear gain ramp length (in output samples) applied around track
+    // start and loop wrap. At 44.1 kHz, 128 samples is ~2.9 ms each
+    // side — silence_voices does the heavy lifting at the seam, so the
+    // ramps only need to cover the discontinuity from full-amplitude
+    // chip output to silence (and back). Total perceived dip at the
+    // loop point is ~5.8 ms.
+    let fade_samples = 128
+
     struct player =
         chip: opl2.chip*
         data: const uint8[]     // non-owning reference into the AUDIOT blob
@@ -39,6 +47,9 @@ module imf =
         tick_accum: float64
         time_count: int32       // current tick counter (for delay comparisons)
         hack_time: int32        // tick at which the next event fires
+        fade_in: int32          // samples remaining in start/loop fade-in ramp
+        fade_out: int32         // samples remaining in pre-loop-wrap fade-out
+        wrap_pending: bool      // set when remaining<=0; consumed when fade_out hits 0
 
     // Build a player over the AUDIOT bytes starting at `offset` with chunk
     // `length`. Some music chunks prefix the data with a uint16 length
@@ -56,18 +67,22 @@ module imf =
             chip = opl2.init(sample_rate),
             data = bytes, pos = d_off, start_pos = d_off,
             seq_len = d_len, remaining = d_len,
-            tick_accum = 0.0, time_count = 0, hack_time = 0
+            tick_accum = 0.0, time_count = 0, hack_time = 0,
+            fade_in = fade_samples, fade_out = 0, wrap_pending = false
         })!
 
     // Per-tick advance: drain every event whose scheduled fire time has
-    // arrived, then increment the event clock. Loops the track at end.
+    // arrived, then increment the event clock. When the stream runs out
+    // we arm a fade-out + chip-silence + fade-in handoff (see fill) and
+    // stop firing events until that handoff completes; this prevents a
+    // click from the abrupt cut between the old chip's last sustained
+    // sample and the new track's first key-on.
     let advance_tick = (p: player*) ->
         loop
             if p->remaining <= 0 then
-                p->pos = p->start_pos
-                p->remaining = p->seq_len
-                p->time_count = 0
-                p->hack_time = 0
+                if !p->wrap_pending then
+                    p->wrap_pending = true
+                    p->fade_out = fade_samples
                 break
             if p->hack_time > p->time_count then break
             let reg = (int32) p->data[p->pos]
@@ -82,13 +97,70 @@ module imf =
 
     // Mix `count` samples into `buf` from the music chip while stepping
     // events at 700 Hz. `user_gain` is the user's Sound submenu Gain
-    // slider as a linear scalar (1.0 = default mix).
+    // slider as a linear scalar (1.0 = default mix). Inlines the
+    // opl2.fill_ticked_vol per-sample loop (rather than calling it
+    // through) so we can apply the loop-wrap fade chain: pre-wrap
+    // fade-out (1→0) using the old chip state, then opl2.silence_voices
+    // + pos/remaining reset, then post-wrap fade-in (0→1) using the
+    // newly-silent chip. Both ramps pass through 0 so the transition
+    // is continuous in amplitude and the chip can't click from
+    // key-on-vs-sustaining-voice mid-fade-in.
     let fill = (p: player*, buf: int32[], count: int32, sample_rate: int32,
                 user_gain: float64) ->
-        opl2.fill_ticked_vol(p->chip, buf, count, sample_rate, tick_rate,
-            &p->tick_accum,
-            () -> advance_tick(p),
-            user_gain)
+        let samples_per_tick = (float64) sample_rate / (float64) tick_rate
+        let scale = if user_gain < 0.0 then 0.0 else user_gain
+        let fade_len_f = (float64) fade_samples
+        for i in 0..count
+            let s = opl2.sample(p->chip)
+            let fade_scalar = if p->fade_out > 0 then
+                (float64) p->fade_out / fade_len_f
+            else if p->fade_in > 0 then
+                (fade_len_f - (float64) p->fade_in) / fade_len_f
+            else 1.0
+            let scaled = (int32) ((float64) s * scale * fade_scalar)
+            let li = (int64) i * 2
+            let ri = li + 1
+            buf[li] = buf[li] + scaled
+            buf[ri] = buf[ri] + scaled
+            if p->fade_out > 0 then
+                p->fade_out = p->fade_out - 1
+                if p->fade_out == 0 && p->wrap_pending then
+                    // End of the pre-wrap fade-out: chip is at gain ~0,
+                    // so we can safely silence it and arm the fade-in
+                    // without an audible step.
+                    opl2.silence_voices(p->chip)
+                    p->pos = p->start_pos
+                    p->remaining = p->seq_len
+                    p->time_count = 0
+                    p->hack_time = 0
+                    p->wrap_pending = false
+                    p->fade_in = fade_samples
+            else if p->fade_in > 0 then
+                p->fade_in = p->fade_in - 1
+            p->tick_accum = p->tick_accum + 1.0
+            if p->tick_accum >= samples_per_tick then
+                p->tick_accum = p->tick_accum - samples_per_tick
+                advance_tick(p)
+
+    // Render `count` samples of fade-out tail from the chip into `buf`
+    // (overwriting, not additive) with a linear gain ramp from 1.0 → 0.0.
+    // Called once at track swap before destroying the old player so the
+    // already-queued audio ends with a smooth taper instead of a hard
+    // cut from whatever the chip happened to be producing. The chip's
+    // event clock is intentionally NOT advanced — we're discarding this
+    // player after the call, so further register writes don't matter.
+    let fill_fade_out = (p: player*, buf: int32[], count: int32,
+                         user_gain: float64) ->
+        let scale = if user_gain < 0.0 then 0.0 else user_gain
+        let count_f = (float64) count
+        for i in 0..count
+            let s = opl2.sample(p->chip)
+            let ramp = 1.0 - (float64) i / count_f
+            let scaled = (int32) ((float64) s * scale * ramp)
+            let li = (int64) i * 2
+            let ri = li + 1
+            buf[li] = scaled
+            buf[ri] = scaled
 
     // Tear down a player allocated by init_from_chunk. Frees the embedded
     // OPL2 chip too — `free(p)` alone would leak ~10 KB of chip state per
