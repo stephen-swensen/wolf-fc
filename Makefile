@@ -318,6 +318,16 @@ $(INSTALLER): $(BIN) packaging/wolf-fc.iss LICENSE README.md | $(DIST_DIR) $(ICO
 $(DIST_DIR):
 	@mkdir -p $@
 
+else
+
+# Non-Windows stub so `make installer` on Linux/macOS prints a useful
+# message instead of make's silent "Nothing to be done for 'installer'"
+# (the target is .PHONY unconditionally, but the real recipe above is
+# gated to MSYS2 UCRT64).
+installer:
+	@echo "error: 'make installer' is Windows-only — run from an MSYS2 UCRT64 shell." >&2
+	@exit 1
+
 endif
 
 help:
