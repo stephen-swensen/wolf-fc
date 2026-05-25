@@ -3045,19 +3045,30 @@ let main = (args: str[]) ->
     let on_wsl = match sys.env("WSL_DISTRO_NAME") with
         | some(_) -> true
         | none -> false
-    // Ask X11 window managers to skip composition for our window so
-    // vsync syncs with scanout instead of the compositor's blit.
-    // Ignored on Windows / Wayland. Skipped on WSL because we're not
-    // going fullscreen there anyway, and the hint can confuse Xwayland.
+    // Keep X11 window managers compositing our fullscreen window
+    // (_NET_WM_BYPASS_COMPOSITOR = 0) so the compositor's own vsync
+    // governs presentation. The intuitive setting is the opposite —
+    // bypass=1 unredirects the window for direct scanout — but once
+    // unredirected the app/driver owns vsync, and on Cinnamon/X11 with
+    // the Mesa modesetting driver that swap-interval sync is silently
+    // not honored, producing a mid-screen tear line while moving. We
+    // request PRESENTVSYNC on the renderer regardless; leaving the
+    // compositor in the loop is what actually enforces it here.
+    // Must be set before create_window. Ignored on Windows / Wayland.
+    // Skipped on WSL because we're not going fullscreen there anyway,
+    // and the hint can confuse Xwayland.
+    // (For a system-wide cure independent of this app, Intel users can
+    // also enable the modesetting DDX's Option "TearFree" "true".)
     if !on_wsl then
-        sdl2.set_hint(c"SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", c"1")
+        sdl2.set_hint(c"SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", c"0")
         void()
     sdl2.init(sdl2.init_video | sdl2.init_audio)
 
     // Window: fullscreen-desktop everywhere except WSL, where we
     // create a normal resizable window and call maximize_window
-    // immediately. Either way the X11 compositor unredirect path is
-    // exercised for the tearing fix on native Linux.
+    // immediately. On native Linux the fullscreen window stays
+    // compositor-managed (see the bypass-compositor hint above) so the
+    // compositor's vsync prevents tearing.
     // Display geometry. The framebuffer is fb_w × fb_h (set above
     // from the display aspect — see Hor+ widescreen detection). The
     // texture is `scale × scale` of the fb, where `scale` is the
