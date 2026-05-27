@@ -1,5 +1,12 @@
 # Wolf-FC
 
+<p align="center">
+  <a href="screenshots/ss_001-display.png"><img src="screenshots/ss_001-display.png" width="24%" alt="Screenshot 1"></a>
+  <a href="screenshots/ss_002-display.png"><img src="screenshots/ss_002-display.png" width="24%" alt="Screenshot 2"></a>
+  <a href="screenshots/ss_003-display.png"><img src="screenshots/ss_003-display.png" width="24%" alt="Screenshot 3"></a>
+  <a href="screenshots/ss_004-display.png"><img src="screenshots/ss_004-display.png" width="24%" alt="Screenshot 4"></a>
+</p>
+
 A feature-complete Wolfenstein 3D clone written in [FC](https://github.com/stephen-swensen/fc-lang), a modern systems programming language that transpiles to C11. Gameplay mechanics are faithful to the original — six episodes, every weapon, the original enemy AI and difficulty filtering, cheat codes, BJ-victory and per-episode endart cutscenes, the high-scores screen. Tested and running smoothly on native Linux and Windows (MSYS2 UCRT64).
 
 The engine is software-rendered and software-mixed end-to-end: a DDA raycaster paints into a CPU framebuffer in pure FC, an emulated OPL2 (YM3812) FM synth and an in-process audio mixer drive the original's IMF music and AdLib + digitized SFX, and SDL2 is reduced to a thin host shim — open a window, blit one streaming texture per frame, surface keyboard events. No GPU shaders, no per-sprite textures, no `SDL_mixer` or `SDL_image`. The project doubles as a comprehensive demo of FC's capabilities: C interop, module system, manual memory management, and real-time systems work.
