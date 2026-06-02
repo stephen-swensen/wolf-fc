@@ -421,9 +421,6 @@ module digi =
         let mut pg = vs->sound_start + start_pg
         loop
             if written >= (int64) snd_len then break
-            // Stop at the page-table edge if a corrupt info-table length
-            // would walk past the last page. Valid sounds never do.
-            if pg >= vs->num_chunks then break
             let pg_off = vswap.page_offset(vs, pg)
             let pg_len = (int64) vswap.page_length(vs, pg)
             let remain = (int64) snd_len - written
@@ -459,7 +456,6 @@ module digi =
     // one-off "bam!" sounds can punch harder than the ambient mixer
     // loudness without hard-clipping.
     let play_with_gain = (p: player*, sound_num: int32, pan: float64, gain: float64) ->
-        if sound_num < 0 || sound_num >= p->cache.len then return
         let mut pp = pan
         if pp < -1.0 then pp = -1.0
         if pp > 1.0 then pp = 1.0

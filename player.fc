@@ -537,15 +537,8 @@ module player =
             if edge && fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
                 let face_tile = (int32) lv->tilemap[(int64) fx * 64 + (int64) fy]
                 if face_tile == 21 && !g->next_level then
-                    // Bounds-check the standing tile like the face tile
-                    // above: in normal play the player is always in-range
-                    // on the switch, but noclip can park them off-grid.
-                    let stx = (int32) g->pos_x
-                    let sty = (int32) g->pos_y
-                    let stand_area =
-                        if stx >= 0 && stx < map_size && sty >= 0 && sty < map_size then
-                            (int32) lv->tile_areas[(int64) stx * 64 + (int64) sty]
-                        else -1
+                    let stand_area = (int32) lv->tile_areas[
+                        (int64) ((int32) g->pos_x) * 64 + (int64) ((int32) g->pos_y)]
                     if stand_area == 0 then g->went_secret = true
                     g->next_level = true
                     g->next_level_delay = elevator_wait_time

@@ -437,17 +437,32 @@ module save =
     // unparseable by defaulting to 0 / 0.0. Paired with the "expect at
     // least N tokens" guards in each section, this keeps a malformed
     // line from cascading.
+    // text.parse_* does a `(cstr) s` alloca of s.len+1, so a pathological
+    // single-token line (no delimiter) would blow the stack — undefined
+    // behavior, not a clean bounds-check abort. Any real numeric field is far
+    // under this bound; exceeding it means the file is corrupt, so fail hard
+    // with a message rather than risk the alloca.
+    private let max_num_field = 32
+
+    private let check_num_field = (s: const str) ->
+        if s.len > max_num_field then
+            io.write("fatal: corrupt save/config — numeric field too long\n", stderr)
+            sys.exit(1)
+
     private let unwrap_int = (s: const str) ->
+        check_num_field(s)
         match text.parse_int32(s) with
         | some(n) -> n
         | none    -> 0
 
     private let unwrap_int64 = (s: const str) ->
+        check_num_field(s)
         match text.parse_int64(s) with
         | some(n) -> n
         | none    -> 0i64
 
     private let unwrap_float = (s: const str) ->
+        check_num_field(s)
         match text.parse_float64(s) with
         | some(x) -> x
         | none    -> 0.0
@@ -788,16 +803,7 @@ module save =
                             let toks = split_ws(line)
                             defer free_split(toks)
                             if toks.len >= 2 then
-                                // Clamp to the rebuilt level's capacity so a
-                                // corrupt count can't drive an out-of-bounds
-                                // enemy index on the next tick. A valid save
-                                // round-trips the exact respawned count, so
-                                // this is a no-op on well-formed files.
-                                let n = unwrap_int(toks[1])
-                                w->lv->num_enemies =
-                                    if n < 0 then 0
-                                    else if n > enemies.max_enemies then enemies.max_enemies
-                                    else n
+                                w->lv->num_enemies = unwrap_int(toks[1])
                         else if text.starts_with(line, "enemy ") && level_loaded then
                             let toks = split_ws(line)
                             defer free_split(toks)
