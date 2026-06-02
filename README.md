@@ -481,10 +481,18 @@ These are short tables of indices and color values, not code. The U.S. copyright
 
 The **Carmack and RLEW decompressors** in [`data.fc`](data.fc) implement publicly-documented file-format algorithms (the Wolf3D map formats, described in third-party modding references). Our code was written against those descriptions and naturally has the same algorithmic structure as every other implementation — including Wolf4SDL's — because the format dictates the steps. No code was copied.
 
+### Dirty room, not clean room
+
+In the interest of full honesty about method: this is a *dirty-room* reimplementation, not a clean-room one. We read Wolf4SDL and the id source to learn *how the game behaves* — file formats, AI state machines, scoring, timing — and then wrote our own FC from that understanding. We did not copy, paraphrase line-for-line, or translate; the expression in this repo is ours. But we also did not follow the strict clean-room ritual (one team documents behavior, a separate team that has never seen the original implements it) that would let us *prove* that independence. We consulted the copyleft sources directly, in good faith, for their ideas rather than their code.
+
+We have also, from time to time, scrubbed our own comments of references to specific GPL filenames and functions — cross-checking breadcrumbs like "matches such-and-such in `wl_draw.cpp`" that accumulate during development. Since deleting those can look like covering tracks, the *why* is worth stating plainly. It is partly aesthetic: we would rather the source read as its own work than as an annotated diff against someone else's. And it is partly a wish to keep some distance from the copyleft material instead of binding ourselves more tightly to it by naming it throughout — a small hedge against being lured any further into the entanglement we are trying to avoid. The scrubbing is all in the public git history; none of it is concealed, and that openness is the point.
+
+The honest bottom line: this is an earnest, original clone, built by learning the game's design from copyleft sources without copying their code. We believe the result is clean — and we would rather acknowledge outright that the dirty-room path makes that harder to *prove* than a clean-room one would, than imply a rigor we did not practice.
+
 ### Game data files
 
 The `.WL6` data files are copyrighted by id Software and are **not** included in this repository. Users must supply their own from a legitimately-obtained copy of Wolfenstein 3D (e.g. the Steam or GOG release). The wolf-fc binary is useless without them.
 
 ### Summary
 
-The wolf-fc engine is BSD-2 and not encumbered by GPL or id's Limited Use License. The small data tables noted above are the only part of the repo that could be argued to trace back to id's original release; the rest is original FC code.
+The wolf-fc engine is BSD-2, and to the best of our understanding it carries no GPL or Limited-Use-License obligations: the small data tables noted above are the only verbatim overlap with id's original release, and the rest is original FC code. We hold that belief in good faith while acknowledging the dirty-room caveat above — we learned from the copyleft sources without copying them, but did not practice the clean-room rigor that would let us prove that independence beyond argument.
