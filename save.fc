@@ -436,33 +436,20 @@ module save =
     // Small parse helpers — saves bail gracefully if a field is
     // unparseable by defaulting to 0 / 0.0. Paired with the "expect at
     // least N tokens" guards in each section, this keeps a malformed
-    // line from cascading.
-    // text.parse_* does a `(cstr) s` alloca of s.len+1, so a pathological
-    // single-token line (no delimiter) would blow the stack — undefined
-    // behavior, not a clean bounds-check abort. Any real numeric field is far
-    // under this bound; exceeding it means the file is corrupt, so fail hard
-    // with a message rather than risk the alloca.
-    private let max_num_field = 32
-
-    private let check_num_field = (s: const str) ->
-        if s.len > max_num_field then
-            io.write("fatal: corrupt save/config — numeric field too long\n", stderr)
-            sys.exit(1)
-
+    // line from cascading. text.parse_* caps input length internally
+    // (alloca-overflow safety lives in the stdlib), so over-long tokens
+    // simply parse as none here like any other malformed field.
     private let unwrap_int = (s: const str) ->
-        check_num_field(s)
         match text.parse_int32(s) with
         | some(n) -> n
         | none    -> 0
 
     private let unwrap_int64 = (s: const str) ->
-        check_num_field(s)
         match text.parse_int64(s) with
         | some(n) -> n
         | none    -> 0i64
 
     private let unwrap_float = (s: const str) ->
-        check_num_field(s)
         match text.parse_float64(s) with
         | some(x) -> x
         | none    -> 0.0
