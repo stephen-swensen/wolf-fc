@@ -29,9 +29,8 @@ let view_h = 160       // 3D viewport height in game coords (HUD takes bottom 40
 let map_size = 64
 
 // `tan(36°)` — the OG horizontal half-FOV at the right edge of the 320-wide
-// framebuffer (derived from FOCALLENGTH=0x5700 + MINDIST=0x5800 and
-// VIEWGLOBAL=0x10000: edge tang = 160·0x10000 / 320 / 0xAF00 ≈ 0.7314, full
-// FOV ≈ 72°). `game.plane_factor` is set at startup from this scaled by
+// framebuffer (full horizontal FOV ≈ 72°). `game.plane_factor` is set at
+// startup from this scaled by
 // `fb_w / 320` so a wider framebuffer gets a proportionally wider FOV (Hor+
 // widescreen: same vertical FOV, more horizontal).
 let fov_factor = 0.7269
@@ -414,7 +413,7 @@ struct game =
     ep_levels_played: int32
     ep_recorded_current: bool
 
-    // Per-episode ending text — active only during gp_endart.
+    // Per-episode ending text — active only during the endart phase.
     // `endart_data` is the decompressed VGAGRAPH chunk for the current
     // episode (chunks 143..148 hold article-markup). Page offsets are
     // computed once on entry so the renderer can jump to any page in O(1).
@@ -1058,7 +1057,7 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
         vzbuf = if ssaa then ssaa_zbuf else zbuf,
         vbuf_w = if ssaa then 2 * screen_w else screen_w,
         vbuf_h = if ssaa then 2 * view_render_h else view_render_h,
-        billboards = alloc(billboard[tilemap.max_sprites + enemies.max_enemies + projectiles.max_projectiles] {})!,
+        billboards = alloc(billboard[tilemap.max_sprites + enemies.max_enemies + projectiles.max_projectiles + 1] {})!,
         num_billboards = 0,
         title_bg = pics.build_title_bg_cache(vg, pal, fb_w, fb_h),
         god_face = pics.build_god_face_cache(vg, pal),
@@ -2707,7 +2706,7 @@ let main = (args: str[]) ->
     //                           No-op on maps without one (E1L1).
     //   --near-silverkey      — teleport next to the first silver-key
     //                           pickup. First silver-key map is E2L3.
-    //   --near-gibs           — teleport next to the first `bo_gibs`
+    //   --near-gibs           — teleport next to the first gibs
     //                           pile. First gibs map is E1M2.
     //   --cheat               — pre-activate IDDQD + IDKFA: god mode,
     //                           both keys, chain gun, 99 ammo (non-
@@ -3087,6 +3086,9 @@ let main = (args: str[]) ->
         | sdl2.window_allow_highdpi | fullscreen_flag
     let win = sdl2.create_window(c"Wolf-FC",
         sdl2.pos_centered, sdl2.pos_centered, initial_screen_w, initial_actual_h, flags)
+    if win == (any*) 0 then
+        io.write("fatal: SDL_CreateWindow failed: %s{(const str) sdl2.get_error()}\n", stderr)
+        return 1
     if on_wsl then sdl2.maximize_window(win)
     let mut fullscreen = true
 
@@ -3106,6 +3108,9 @@ let main = (args: str[]) ->
     // stretch is the bottleneck; "direct3d" / "opengl" / etc. → GPU
     // pipeline).
     let ren = sdl2.create_renderer(win, -1, sdl2.renderer_vsync)
+    if ren == (any*) 0 then
+        io.write("fatal: SDL_CreateRenderer failed: %s{(const str) sdl2.get_error()}\n", stderr)
+        return 1
     sdl2.show_cursor(0)
     let mut rinfo = default(sdl2.renderer_info)
     sdl2.get_renderer_info(ren, &rinfo)
@@ -3160,6 +3165,9 @@ let main = (args: str[]) ->
     // Streaming texture at the chosen supersample dims.
     let mut tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
         sdl2.tex_streaming, runtime_screen_w, runtime_screen_h)
+    if tex == (any*) 0 then
+        io.write("fatal: SDL_CreateTexture failed: %s{(const str) sdl2.get_error()}\n", stderr)
+        return 1
 
     // Set up audio device and start music. Output is stereo (2 channels
     // interleaved L,R,…) so enemy SFX can pan spatially via digi.
@@ -3425,7 +3433,7 @@ let main = (args: str[]) ->
                                 if !menu.main_is_locked(s, g->has_active_game) then break
                             g->menu_sel = s
                         else if is_confirm then
-                            // Layout: NEW / SOUND / OPTIONS / LOAD / SAVE / VIEW / SCORES / BACK / QUIT
+                            // Layout: NEW / SOUND / OPTIONS / LOAD / SAVE / CHANGE VIEW / VIEW SCORES / BACK TO GAME / QUIT
                             match g->menu_sel with
                             | 0 ->
                                 // NEW GAME → episode picker

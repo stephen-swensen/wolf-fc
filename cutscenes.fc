@@ -238,7 +238,7 @@ module death_cam =
         // enemies.ai.kill_enemy plays the per-kind death scream but —
         // because enemies.drop_for_kind returns decoration for death-
         // cam kinds — skips the key drop, matching the original
-        // (Schabbs/Gift/Fat/Hitler don't place a bo_key1).
+        // (Schabbs/Gift/Fat/Hitler don't drop a gold key).
         enemies.ai.kill_enemy(lv, g, ac, e, sprite_start)
         g->phase = game_phase.death_cam
         g->phase_timer = 0.0
@@ -626,8 +626,8 @@ module intermission =
 
     // Jump the intermission animation to its final "everything
     // shown" state. Invoked when the player hits space mid-animation
-    // — mirrors the original's `if (IN_CheckAck()) goto done`
-    // behaviour inside the counter loops.
+    // to skip the per-counter tally loops, matching the original's
+    // skip-on-keypress behaviour.
     let finish_anim = (g: game*) ->
         g->inter_stage = 4
         g->inter_counter = 0
@@ -1077,8 +1077,12 @@ module endart_screen =
     // the chunk, computes page offsets, and arms key_ack so a held
     // press from the previous phase doesn't auto-advance through.
     let enter = (g: game*, vg: const vgagraph.vgagraph_file*, episode: int32) ->
-        if g->endart_data.len > 0 then free(g->endart_data)
-        if g->endart_page_offsets.len > 0 then free(g->endart_page_offsets)
+        // Both fields are always backed by a real heap slice (the
+        // build_game sentinels and decompress_chunk both return a heap
+        // allocation, empty included), so free unconditionally — the
+        // len>0 gate leaked the zero-length buffers.
+        free(g->endart_data)
+        free(g->endart_page_offsets)
         let chunk = pics.id.t_endart1 + episode
         let data = vgagraph.decompress_chunk(vg, chunk)
         let total = count_pages(data)

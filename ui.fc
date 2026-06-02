@@ -77,8 +77,8 @@ module pics =
         let font_big   = 2        // (unused) larger secondary font
 
         // --- Readme block (chunks 3..9). Backdrop art for the original's
-        // in-game "Read This!" help screen (IN_Help). The help screen
-        // itself isn't implemented.
+        // in-game "Read This!" help screen, dead in the GOODTIMES build
+        // and not implemented here.
         let h_bj          = 3     // BJ holding the castle keys (article ^G art)
         let h_castle      = 4     // blazing castle silhouette (article ^G art)
         let h_blaze       = 5     // flame ring behind the castle (article ^G art)
@@ -143,7 +143,7 @@ module pics =
         // --- Title lump (chunks 86..90). One-off full-screen / banner art.
         let statusbar  = 86       // 320x40 in-game status bar
         let title      = 87       // title screen
-        let pg13       = 88       // parental-advisory splash (gp_pg13 phase)
+        let pg13       = 88       // parental-advisory splash (pg13 phase)
         let credits    = 89       // credits screen — shown in the title attract cycle
         let highscores = 90       // high-scores screen header banner
 
@@ -189,7 +189,7 @@ module pics =
         let t_demo1     = 140     // (unused) demo slot 1
         let t_demo2     = 141     // (unused) demo slot 2
         let t_demo3     = 142     // (unused) demo slot 3
-        let t_endart1   = 143     // episode-1 ending article (gp_endart phase)
+        let t_endart1   = 143     // episode-1 ending article (endart phase)
         let t_endart2   = 144     // episode-2 ending article
         let t_endart3   = 145     // episode-3 ending article
         let t_endart4   = 146     // episode-4 ending article
@@ -506,7 +506,8 @@ module font =
 
     let load = (vg: const vgagraph.vgagraph_file*, chunk: int32) ->
         // VGAGRAPH fonts are raw (not planar). The decompressed chunk is
-        // the fontstruct followed by pixel data.
+        // the font header (height + per-char location/width tables)
+        // followed by pixel data.
         let raw = vgagraph.decompress_chunk(vg, chunk)
         if raw.len < 4 then return alloc(info {
             height = 8,
@@ -773,8 +774,9 @@ module hud =
 
     // Draw a right-aligned decimal number using the VGAGRAPH number
     // pics. `digits` is the cell count; shorter numbers get
-    // N_BLANKPIC padding on the left (matches the original's
-    // LatchNumber). `px`/`py` is the top-left of the LEFTMOST cell.
+    // blank-pic padding on the left, matching the original's
+    // right-aligned HUD number layout. `px`/`py` is the top-left
+    // of the LEFTMOST cell.
     // Each cell is 8x16.
     private let draw_vg_number = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
                           px: int32, py: int32, digits: int32, num: int32) ->
@@ -822,7 +824,7 @@ module hud =
         // over the empty cells.
         pics.draw(rc, vg, pal, pics.id.statusbar, ox, bar_top)
         // Cell x-coords (in pixels) and widths (in 8-px "cells"),
-        // from the original's LatchNumber calls:
+        // matching the original status-bar number layout:
         //   floor : x=16, 2 cells
         //   score : x=48, 6 cells
         //   lives : x=112, 1 cell
@@ -867,7 +869,7 @@ module hud =
         | _ -> pics.id.knife
         pics.draw(rc, vg, pal, weapon_chunk, ox + 256, bar_top + 8)
         // Key indicators — two slots on the right edge. Positions
-        // match the original StatusDrawPic coords (30,4) and (30,20)
+        // match the original status-bar key-slot coords (top/bottom)
         // → x=240.
         if g->has_gold_key then
             pics.draw(rc, vg, pal, pics.id.gold_key, ox + 240, bar_top + 4)
@@ -878,9 +880,9 @@ module hud =
         // ammo / chain-gun / both-keys cells.
 
     // Copy a const str into g->msg_buf and arm the message timer.
-    // The buffer caps at 63 chars (1 spare); longer messages are
-    // truncated. Duration is the original 3 seconds — long enough
-    // to read, short enough to not stack up during a fight.
+    // The buffer caps at 255 chars; longer messages are truncated.
+    // Duration is the original 3 seconds — long enough to read,
+    // short enough to not stack up during a fight.
     let show_message = (g: game*, text: const str) ->
         let mut n = (int32) text.len
         if n > 255 then n = 255

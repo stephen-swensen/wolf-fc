@@ -81,7 +81,7 @@ module palette =
     // Build and return a 256-entry ARGB8888 palette from Wolf3D's 6-bit VGA data.
     // Caller owns the returned slice.
     let init = () ->
-        // Raw 6-bit VGA palette from Wolf3D (wolfpal.inc).
+        // Raw 6-bit VGA palette from Wolf3D (id's original 6-bit VGA palette).
         // 256 entries x 3 channels = 768 values, range 0-63.
         let raw = int32[768] {
             0,0,0, 0,0,42, 0,42,0, 0,42,42, 42,0,0,
@@ -288,6 +288,12 @@ module maps =
                     let offset = (int64) src[s]
                     s = s + 1
                     let cp = d - offset
+                    // Guard malformed back-references: a negative source
+                    // index or a dest overrun would otherwise abort. Valid
+                    // copies (including overlapping RLE-style runs where
+                    // cp+count exceeds d) never trip these — offset <= d and
+                    // the expanded size is exact.
+                    if cp < 0 || d + count > dest.len then break
                     for i in 0..count
                         dest[d + i] = dest[cp + i]
                     d = d + count
@@ -302,6 +308,7 @@ module maps =
                 else
                     let cp = (int64) bytes.u16(src, s)
                     s = s + 2
+                    if cp < 0 || cp + count > dest.len || d + count > dest.len then break
                     for i in 0..count
                         dest[d + i] = dest[cp + i]
                     d = d + count
@@ -318,6 +325,7 @@ module maps =
         let mut d = 0i64
         loop
             if d >= dest.len then break
+            if s >= src.len then break
             let val = src[s]
             s = s + 1
             if val == tag then
@@ -325,7 +333,10 @@ module maps =
                 s = s + 1
                 let fill = src[s]
                 s = s + 1
-                for i in 0..count
+                // Clamp a malformed run to remaining dest space; a valid
+                // RLEW stream fills exactly dest.len words.
+                let n = if d + count > dest.len then dest.len - d else count
+                for i in 0..n
                     dest[d + i] = fill
                 d = d + count
             else
@@ -419,6 +430,7 @@ module vgagraph =
                        dest: uint8[], dest_len: int64,
                        dict: const huffnode[]) ->
         if dest_len <= 0 then return
+        if src_start < 0 || src_start >= (int64) src.len then return
         let head_idx = 254
         let mut node_idx = head_idx
         let mut si = src_start
@@ -442,6 +454,7 @@ module vgagraph =
                 node_idx = head_idx
             else
                 node_idx = (int32) (nodeval - 256u16)
+                if node_idx >= (int32) dict.len then break
 
     // Decompress a chunk by file offset. The 4 bytes at offset are the
     // expanded length (uint32 LE); the compressed data follows. Returns
@@ -461,8 +474,8 @@ module vgagraph =
         else decompress_at(vg->raw, vg->dict, vg->offsets[chunk])
 
     // Load VGADICT + VGAHEAD + VGAGRAPH and decode STRUCTPIC (the picture
-    // dimension table). Caller owns the returned pointer; free_vgagraph
-    // releases all owned buffers.
+    // dimension table). Caller owns the returned pointer and its buffers,
+    // which live for the program's lifetime.
     let load = (dict_path: const str, head_path: const str, graph_path: const str) ->
         // VGADICT — 510 bytes, 255 {bit0, bit1} huffnodes.
         let df = io.open(dict_path, "rb")!

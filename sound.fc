@@ -202,8 +202,8 @@ module adlib =
     // Wolf3D reserved OPL channel 0 for AdLib SFX (music data writes to
     // channels 1-8 only, verified by scanning every WL6 music chunk),
     // and on SB Pro it boosted FM-as-a-whole via the hardware mixer's
-    // sbpmFMVol register (ID_SD.C:583-584, "Boost FM output levels to
-    // be equivilent with digitized output"). What it *could not* do
+    // FM-output-volume control to bring FM roughly level with the
+    // digitized samples. What it *could not* do
     // was boost AdLib SFX independently of music — both shared the
     // same OPL chip and the same mixer stage. So in the OG, a single-
     // voice SFX sat alongside multi-voice music with no per-source
@@ -288,8 +288,8 @@ module adlib =
             priority = 0
         })!
 
-    // Start (or restart) playback of `s` on channel 0. Mirrors the
-    // original's SD_PlaySound priority gate: skip when the new sound is
+    // Start (or restart) playback of `s` on channel 0 with the
+    // original's priority gate: skip when the new sound is
     // strictly lower-priority than what's currently playing. Equal or
     // greater preempts — so rapid pickup retriggers (cross→cross or
     // cross→chalice) restart audibly, while incidental low-priority
@@ -351,8 +351,9 @@ module digi =
     let src_rate = 7042.0
     let max_slots = 4
     // Per-sample scale for 8-bit signed PCM (-128..+127) → mix-buffer
-    // units. The OG's SB Pro path boosted FM to match digi (sbpmFMVol
-    // write in ID_SD.C) — our `opl2.output_scale = 2.0` is the analog,
+    // units. The OG's SB Pro path boosted FM-as-a-whole at the hardware
+    // mixer to match digitized-sample loudness — our
+    // `opl2.output_scale = 2.0` is the analog,
     // and pcm_scale = 128 puts digi center-pan peak at ±~16k, the same
     // neighborhood as a typical 4-channel music passage. Strict OG
     // parity would be `pcm_scale = 128`.
@@ -420,6 +421,9 @@ module digi =
         let mut pg = vs->sound_start + start_pg
         loop
             if written >= (int64) snd_len then break
+            // Stop at the page-table edge if a corrupt info-table length
+            // would walk past the last page. Valid sounds never do.
+            if pg >= vs->num_chunks then break
             let pg_off = vswap.page_offset(vs, pg)
             let pg_len = (int64) vswap.page_length(vs, pg)
             let remain = (int64) snd_len - written
@@ -455,6 +459,7 @@ module digi =
     // one-off "bam!" sounds can punch harder than the ambient mixer
     // loudness without hard-clipping.
     let play_with_gain = (p: player*, sound_num: int32, pan: float64, gain: float64) ->
+        if sound_num < 0 || sound_num >= p->cache.len then return
         let mut pp = pan
         if pp < -1.0 then pp = -1.0
         if pp > 1.0 then pp = 1.0

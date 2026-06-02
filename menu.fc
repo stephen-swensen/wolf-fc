@@ -217,9 +217,9 @@ module menu =
         fill_rect(rc, x, y + h - 1, x + w, y + h, c_bot)
         fill_rect(rc, x + w - 1, y, x + w, y + h, c_bot)
 
-    // OG `DrawStripes`: a 24-tall black bar at the top of the screen
-    // with an accent line at y+22, used as the title-bar stripe
-    // across every menu / cutscene screen. We draw it full framebuffer
+    // Title-bar stripe: a 24-tall black bar at the top of the screen
+    // with an accent line at y+22, drawn across every menu / cutscene
+    // screen. We draw it full framebuffer
     // width (rather than the OG's 320) so the centered title pic sits
     // on a continuous strip even in widescreen — same approach the
     // high-scores screen uses. Public so high_scores_screen can share.
@@ -286,7 +286,7 @@ module menu =
         // appearing on a 320-wide island.
         draw_stripes(rc, pal, 10)
         pics.draw(rc, vg, pal, pics.id.c_options, ox + 84, 0)
-        // Draw window at (menu_x - 8, menu_y - 3) sized for our 6 rows.
+        // Draw window at (menu_x - 8, menu_y - 3), sized to the main menu rows.
         let win_h = main_len * row_h + 6
         draw_window(rc, pal, ox + menu_x - 8, menu_y - 3, menu_w, win_h)
         for i in 0..main_len
@@ -641,11 +641,9 @@ module menu =
                        sel: int32, load_mode: bool, time: float64) ->
         let ox = rc->ui_offset_x
         let lsm_x_off = ox + lsm_x   // ui-offset-aware base x
-        // Full-width stripe + native-size header pic centered on top
-        // (OG: VWB_DrawPic(60, 0, C_LOADGAMEPIC/C_SAVEGAMEPIC), 216x48
-        // pic over the 320-wide stripe). The stripe goes the whole
-        // framebuffer width so the pic doesn't sit on a 320 island in
-        // widescreen.
+        // Full-width stripe + native-size 216x48 header pic centered on
+        // top at x=60. The stripe goes the whole framebuffer width so the
+        // pic doesn't sit on a 320 island in widescreen.
         draw_stripes(rc, pal, 10)
         pics.draw(rc, vg, pal, header_pic, ox + 60, 0)
         // Menu window for the slot list.
@@ -658,7 +656,7 @@ module menu =
             let row_y = lsm_y + i * lsm_row_h
             let is_sel = sel == i
             let is_locked = load_mode && s->empty
-            // Per-slot outlined inset (DrawOutline). Selected row uses
+            // Per-slot outlined inset box. Selected row uses
             // HIGHLIGHT, others use TEXTCOLOR / DEACTIVE.
             let color = row_color(pal, is_sel, is_locked)
             let box_x = lsm_x_off + lsm_indent
@@ -707,7 +705,7 @@ module menu =
 
     // Quit Y/N confirmation modal. Renders the main menu underneath
     // (so the menu chrome stays visible) and overlays a centered
-    // popup matching the original game's `Confirm` look: a TEXTCOLOR
+    // popup matching the original's yes/no message-box look: a TEXTCOLOR
     // (off-white) fill, a HIGHLIGHT (cyan) top+left edge with a black
     // bottom+right edge, and black text on the inside. Distinct from
     // the menu's own panels — those use the dark-olive BKGDCOLOR fill

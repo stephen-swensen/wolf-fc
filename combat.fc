@@ -348,7 +348,7 @@ module enemies =
     // drop a clip. Dogs drop nothing.
     let drop_for_kind = (k: enemy_kind) ->
         match k with
-        // Enemy corpses drop the half-size clip (bo_clip2) — 4 ammo
+        // Enemy corpses drop the half-size clip — 4 ammo
         // not 8. Map-placed clips still give the full 8.
         | guard   -> pickups.item_kind.clip_small
         | officer -> pickups.item_kind.clip_small
@@ -591,9 +591,9 @@ module enemies =
         | inky         -> sprites_inky
 
     // Pick the 8-way rotating sprite for this enemy based on the angle
-    // from the enemy to (px, py) (usually the player). Mirrors the
-    // original's CalcRotate formula (`angle = atan2(e2p_y, e2p_x) -
-    // enemy_angle` quantized into 8 bins with a 22.5° offset).
+    // from the enemy to (px, py) (usually the player): the bearing
+    // atan2(e2p_y, e2p_x) minus the enemy's facing, quantized into 8
+    // bins with a 22.5° (pi/8) offset.
     private let angle_sprite = (e: const enemy*, px: float64, py: float64, base: int32) ->
         let e2p_x = px - e->x
         let e2p_y = e->y - py      // flip to std-math y-up

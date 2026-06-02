@@ -306,7 +306,7 @@ module opl2 =
     // Iterated `inc` times because the chip applies one step at a time
     // and the curve is non-linear in env — multiplying the per-step
     // delta by inc would over-decrement for inc > 1 (the fast regime,
-    // eff_rate ≥ 52, where inc can reach 7).
+    // eff_rate ≥ 52, where inc can reach 8).
     let attack_step = (env: int32, inc: int32) ->
         let mut e = env
         for k in 0..inc

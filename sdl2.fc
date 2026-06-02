@@ -122,6 +122,7 @@ module sdl2 from "SDL2/SDL.h" =
     extern SDL_GetNumVideoDisplays as num_video_displays: () -> int32
     extern SDL_GetDisplayBounds as get_display_bounds: (int32, rect*) -> int32
     extern SDL_GetDisplayUsableBounds as get_display_usable_bounds: (int32, rect*) -> int32
+    extern SDL_GetError as get_error: () -> cstr
 
     // --- Window ---
     extern SDL_CreateWindow as create_window: (const cstr, int32, int32, int32, int32, uint32) -> any*
