@@ -553,13 +553,15 @@ struct game =
     // handler, the initial scale pick, and `apply_view_mode` — when
     // non-zero the auto-pick path is skipped entirely.
     scale_factor: int32
-    // Opt-in 2× super-sample anti-aliasing (Change View menu). When
-    // true, the 3D viewport renders into a buffer sized 2·screen_w ×
-    // 2·view_render_h and is box-downsampled into dbuf's viewport
-    // region. Independent of `scale_factor` — the 2× factor stacks
-    // on top of whichever scale is in effect, so at scale=5 the
-    // internal raycaster runs at 10× the fb_w grid. Default false.
-    ssaa: bool
+    // Opt-in super-sample anti-aliasing (Change View menu). 0=off,
+    // 1=vertical-only 2× (viewport 2× tall, same width), 2=full 2×2
+    // (2× tall and wide). The 3D viewport renders into a larger buffer
+    // and is box-downsampled into dbuf's viewport region. Independent of
+    // `scale_factor` — the supersample stacks on top of whichever scale
+    // is in effect. Default 0. Vertical-only is the cheap mode: the
+    // horizontal axis is already oversampled by the scale factor, so
+    // it buys most of the edge-AA at half the cost of full 2×2.
+    ssaa_mode: int32
 
     // Mommy Mode toggle. Set from the Options menu (persisted in
     // ~/.wolf-fc/config) or from the --mommy-mode CLI flag at launch.
@@ -766,19 +768,27 @@ struct render_ctx =
     // After the 3D pipeline completes, `ssaa_downsample` blits /
     // averages the result into the viewport region of dbuf.
     //
-    // SSAA off: vbuf aliases dbuf, vzbuf aliases zbuf,
+    // ssaa_mode 0 (off): vbuf aliases dbuf, vzbuf aliases zbuf,
     //           vbuf_w == screen_w, vbuf_h == view_render_h. The 3D
     //           pipeline writes directly into dbuf's top rows and
     //           `ssaa_downsample` is a no-op.
-    // SSAA on:  vbuf aliases ssaa_buf, vzbuf aliases ssaa_zbuf,
-    //           vbuf_w == 2*screen_w, vbuf_h == 2*view_render_h.
-    //           `ssaa_downsample` 2×2 box-filters into dbuf.
+    // ssaa_mode 1 (vertical-only 2×): vbuf aliases ssaa_buf, vbuf_w ==
+    //           screen_w, vbuf_h == 2*view_render_h. `ssaa_downsample`
+    //           does a vertical 2:1 average into dbuf.
+    // ssaa_mode 2 (full 2×2): vbuf aliases ssaa_buf, vbuf_w ==
+    //           2*screen_w, vbuf_h == 2*view_render_h. `ssaa_downsample`
+    //           does a 2×2 box-filter into dbuf.
     //
-    // Slice fields are re-aliased by `rebind_vbuf` whenever dbuf /
-    // zbuf / ssaa_buf / ssaa_zbuf are reallocated.
-    ssaa: bool
-    ssaa_buf: uint32[]     // (2*screen_w) x (2*view_render_h) — only allocated when ssaa
-    ssaa_zbuf: float64[]   // 2*screen_w — only allocated when ssaa
+    // ss_h / ss_v are the per-axis supersample factors (1 or 2) derived
+    // from ssaa_mode; the 3D projection scales the *vertical* focal
+    // length by ss_v/ss_h so anisotropic (vertical-only) modes keep
+    // walls/sprites the right on-screen height. Slice fields + ss_h/ss_v
+    // are re-derived by `rebind_vbuf` whenever the buffers are realloc'd.
+    ssaa_mode: int32
+    ss_h: int32            // horizontal supersample: 1 (off/vertical) or 2 (full)
+    ss_v: int32            // vertical supersample: 1 (off) or 2 (vertical/full)
+    ssaa_buf: uint32[]     // vbuf_w x vbuf_h — only allocated when ssaa_mode != 0
+    ssaa_zbuf: float64[]   // vbuf_w — only allocated when ssaa_mode != 0
     vbuf: uint32[]
     vzbuf: float64[]
     vbuf_w: int32
@@ -1011,28 +1021,41 @@ let keysym_to_ascii = (k: int32, mods: uint16) ->
 // dbuf / zbuf / ssaa_buf / ssaa_zbuf or to the `ssaa` flag — the 3D
 // pipeline reads only vbuf / vzbuf / vbuf_w / vbuf_h, so this is the
 // single chokepoint that decides which buffer they hit.
+// SSAA viewport geometry, all derived from ssaa_mode (0=off, 1=vertical-
+// only 2×, 2=full 2×2). Width doubles only in full mode; height doubles
+// in vertical + full. These are the single source of truth for the
+// supersample buffer dimensions — build / resize / apply / rebind all go
+// through them so the sizes can never drift out of sync.
+let ssaa_vbuf_w = (mode: int32, screen_w: int32) ->
+    if mode == 2 then 2 * screen_w else screen_w
+let ssaa_vbuf_h = (mode: int32, view_render_h: int32) ->
+    if mode == 0 then view_render_h else 2 * view_render_h
+let ssaa_buf_len = (mode: int32, screen_w: int32, view_render_h: int32) ->
+    if mode == 0 then 0
+    else ssaa_vbuf_w(mode, screen_w) * ssaa_vbuf_h(mode, view_render_h)
+let ssaa_zbuf_len = (mode: int32, screen_w: int32) ->
+    if mode == 0 then 0 else ssaa_vbuf_w(mode, screen_w)
+
 let rebind_vbuf = (rc: render_ctx*) ->
-    if rc->ssaa then
-        rc->vbuf = rc->ssaa_buf
-        rc->vzbuf = rc->ssaa_zbuf
-        rc->vbuf_w = 2 * rc->screen_w
-        rc->vbuf_h = 2 * rc->view_render_h
-    else
+    if rc->ssaa_mode == 0 then
         rc->vbuf = rc->dbuf
         rc->vzbuf = rc->zbuf
-        rc->vbuf_w = rc->screen_w
-        rc->vbuf_h = rc->view_render_h
+    else
+        rc->vbuf = rc->ssaa_buf
+        rc->vzbuf = rc->ssaa_zbuf
+    rc->vbuf_w = ssaa_vbuf_w(rc->ssaa_mode, rc->screen_w)
+    rc->vbuf_h = ssaa_vbuf_h(rc->ssaa_mode, rc->view_render_h)
+    rc->ss_h = if rc->ssaa_mode == 2 then 2 else 1
+    rc->ss_v = if rc->ssaa_mode == 0 then 1 else 2
 
 let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
-                        fb_w: int32, fb_h: int32, scale: int32, ssaa: bool) ->
+                        fb_w: int32, fb_h: int32, scale: int32, ssaa_mode: int32) ->
     let screen_w = fb_w * scale
     let view_render_h = view_h * scale
-    let ssaa_buf_len = if ssaa then (2 * screen_w) * (2 * view_render_h) else 0
-    let ssaa_zbuf_len = if ssaa then 2 * screen_w else 0
     let dbuf = alloc(uint32[screen_w * (fb_h * scale)] {})!
     let zbuf = alloc(float64[screen_w] {})!
-    let ssaa_buf = alloc(uint32[ssaa_buf_len] {})!
-    let ssaa_zbuf = alloc(float64[ssaa_zbuf_len] {})!
+    let ssaa_buf = alloc(uint32[ssaa_buf_len(ssaa_mode, screen_w, view_render_h)] {})!
+    let ssaa_zbuf = alloc(float64[ssaa_zbuf_len(ssaa_mode, screen_w)] {})!
     let rc = alloc(render_ctx {
         fb_w = fb_w,
         fb_h = fb_h,
@@ -1046,17 +1069,19 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
         fb = alloc(uint32[fb_w * fb_h] {})!,
         dbuf = dbuf,
         zbuf = zbuf,
-        ssaa = ssaa,
+        ssaa_mode = ssaa_mode,
+        ss_h = if ssaa_mode == 2 then 2 else 1,
+        ss_v = if ssaa_mode == 0 then 1 else 2,
         ssaa_buf = ssaa_buf,
         ssaa_zbuf = ssaa_zbuf,
         // vbuf / vzbuf are slice aliases (not independently owned);
         // they share storage with either dbuf/zbuf or ssaa_buf/ssaa_zbuf
-        // depending on the SSAA flag. rebind_vbuf is the single
-        // chokepoint that updates this aliasing.
-        vbuf = if ssaa then ssaa_buf else dbuf,
-        vzbuf = if ssaa then ssaa_zbuf else zbuf,
-        vbuf_w = if ssaa then 2 * screen_w else screen_w,
-        vbuf_h = if ssaa then 2 * view_render_h else view_render_h,
+        // depending on ssaa_mode. rebind_vbuf is the single chokepoint
+        // that updates this aliasing.
+        vbuf = if ssaa_mode == 0 then dbuf else ssaa_buf,
+        vzbuf = if ssaa_mode == 0 then zbuf else ssaa_zbuf,
+        vbuf_w = ssaa_vbuf_w(ssaa_mode, screen_w),
+        vbuf_h = ssaa_vbuf_h(ssaa_mode, view_render_h),
         billboards = alloc(billboard[tilemap.max_sprites + enemies.max_enemies + projectiles.max_projectiles + 1] {})!,
         num_billboards = 0,
         title_bg = pics.build_title_bg_cache(vg, pal, fb_w, fb_h),
@@ -1135,7 +1160,7 @@ let resize_render_ctx = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
             free(rc->title_bg)
         free(rc->dbuf)
         free(rc->zbuf)
-        if rc->ssaa then
+        if rc->ssaa_mode != 0 then
             free(rc->ssaa_buf)
             free(rc->ssaa_zbuf)
         rc->fb_w = new_fb_w
@@ -1149,9 +1174,9 @@ let resize_render_ctx = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
             rc->title_bg = pics.build_title_bg_cache(vg, pal, new_fb_w, rc->fb_h)
         rc->dbuf = alloc(uint32[rc->screen_w * rc->screen_h] {})!
         rc->zbuf = alloc(float64[rc->screen_w] {})!
-        if rc->ssaa then
-            rc->ssaa_buf = alloc(uint32[(2 * rc->screen_w) * (2 * rc->view_render_h)] {})!
-            rc->ssaa_zbuf = alloc(float64[2 * rc->screen_w] {})!
+        if rc->ssaa_mode != 0 then
+            rc->ssaa_buf = alloc(uint32[ssaa_buf_len(rc->ssaa_mode, rc->screen_w, rc->view_render_h)] {})!
+            rc->ssaa_zbuf = alloc(float64[ssaa_zbuf_len(rc->ssaa_mode, rc->screen_w)] {})!
         rebind_vbuf(rc)
         // Newly-allocated dbuf is zero-initialized — the HUD strip would
         // be black for one frame under the frame-skip optimization
@@ -1196,28 +1221,25 @@ let apply_scale_factor = (w: world*, vg: const vgagraph.vgagraph_file*,
                           pal: const uint32[], new_scale: int32) ->
     resize_render_ctx(w->rc, vg, pal, w->rc->fb_w, new_scale)
 
-// Toggle the 2× SSAA viewport buffer on or off. Allocates / frees
-// `ssaa_buf` + `ssaa_zbuf`, re-aliases vbuf / vzbuf via rebind_vbuf
-// so the next 3D frame writes into the correct target, and updates
-// the persistent `g->ssaa` preference. dbuf / zbuf / screen_w /
-// screen_h are unaffected — only the upstream raycaster target
-// changes — so the SDL texture and logical size stay valid across
-// this toggle. Returns true on a real change.
-let apply_ssaa = (w: world*, new_ssaa: bool) ->
+// Switch the SSAA mode (0=off, 1=vertical-only 2×, 2=full 2×2). Frees
+// the old `ssaa_buf` + `ssaa_zbuf`, allocates them at the new mode's
+// size (length 0 when off), re-aliases vbuf / vzbuf + ss_h/ss_v via
+// rebind_vbuf so the next 3D frame writes into the correct target, and
+// updates the persistent `g->ssaa_mode` preference. dbuf / zbuf /
+// screen_w / screen_h are unaffected — only the upstream raycaster
+// target changes — so the SDL texture and logical size stay valid
+// across this switch. Returns true on a real change.
+let apply_ssaa_mode = (w: world*, new_mode: int32) ->
     let rc = w->rc
-    if new_ssaa == rc->ssaa then false
+    if new_mode == rc->ssaa_mode then false
     else
-        if rc->ssaa then
+        if rc->ssaa_mode != 0 then
             free(rc->ssaa_buf)
             free(rc->ssaa_zbuf)
-        rc->ssaa = new_ssaa
-        w->g->ssaa = new_ssaa
-        if new_ssaa then
-            rc->ssaa_buf = alloc(uint32[(2 * rc->screen_w) * (2 * rc->view_render_h)] {})!
-            rc->ssaa_zbuf = alloc(float64[2 * rc->screen_w] {})!
-        else
-            rc->ssaa_buf = alloc(uint32[0] {})!
-            rc->ssaa_zbuf = alloc(float64[0] {})!
+        rc->ssaa_mode = new_mode
+        w->g->ssaa_mode = new_mode
+        rc->ssaa_buf = alloc(uint32[ssaa_buf_len(new_mode, rc->screen_w, rc->view_render_h)] {})!
+        rc->ssaa_zbuf = alloc(float64[ssaa_zbuf_len(new_mode, rc->screen_w)] {})!
         rebind_vbuf(rc)
         true
 
@@ -1916,15 +1938,16 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             else bad("scale in [2,8]")
         | none -> bad("integer scale factor")
     else if text.starts_with(arg, "setssaa:") then
-        // Toggle the 2× SSAA viewport buffer. Test mode defaults to
-        // off (the regression suite expects bit-stable SSAA-off
-        // output); this command lets the perf bench probe the
-        // SSAA-on raycaster + downsample path headlessly.
+        // Set the SSAA mode (0=off, 1=vertical-only 2×, 2=full 2×2).
+        // Test mode defaults to off (the regression suite expects
+        // bit-stable SSAA-off output); this command lets the perf bench
+        // probe the supersampled raycaster + downsample paths headlessly.
         match text.parse_int32(arg[8..arg.len]) with
         | some(n) ->
-            apply_ssaa(w, n != 0)
+            let m = if n < 0 then 0 else if n > 2 then 2 else n
+            apply_ssaa_mode(w, m)
             void()
-        | none -> bad("0 or 1")
+        | none -> bad("0, 1, or 2")
     else if text.starts_with(arg, "bench:") then
         // Render `n` full frames and report total/per-frame wall time.
         // Drives the raycaster + billboards + overlay pipeline at the
@@ -2011,7 +2034,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
                 overlay.composite_hud(w->rc)
             let t8 = sys.time()
             let nf = (float64) n
-            io.write("benchparts scale=%d{w->rc->scale} ssaa=%d{if w->rc->ssaa then 1 else 0} frames=%d{n}\n", stdout)
+            io.write("benchparts scale=%d{w->rc->scale} ssaa=%d{w->rc->ssaa_mode} frames=%d{n}\n", stdout)
             io.write("  clear_view_sentinel : %7.3f{(float64) (t1 - t0) / nf}ms\n", stdout)
             io.write("  raycaster.walls     : %7.3f{(float64) (t2 - t1) / nf}ms\n", stdout)
             io.write("  billboards build+ren: %7.3f{(float64) (t3 - t2) / nf}ms\n", stdout)
@@ -2843,7 +2866,7 @@ let main = (args: str[]) ->
         plane_factor = plane_factor,
         view_mode = cfg.view_mode,
         scale_factor = cfg.scale_factor,
-        ssaa = cfg.ssaa,
+        ssaa_mode = cfg.ssaa_mode,
         key_up = false, key_down = false,
         key_left = false, key_right = false,
         key_shift = false, key_alt = false,
@@ -2933,7 +2956,7 @@ let main = (args: str[]) ->
         g = g,
         lv = build_level(lv_data, vs->sprite_start, g->difficulty, g->mommy_mode),
         lv_data = lv_data,
-        rc = build_render_ctx(vg, pal, fb_w, game_h, 2, cfg.ssaa),
+        rc = build_render_ctx(vg, pal, fb_w, game_h, 2, cfg.ssaa_mode),
         ac = alloc(audio_ctx {
             vs = vs,
             ad = ad,
@@ -3639,14 +3662,15 @@ let main = (args: str[]) ->
                                     w->rc->fb_w, w->rc->fb_h, max_scale, g->scale_factor)
                                 resized = apply_scale_factor(w, w->vg, pal, new_scale)
                             else if g->menu_sel == menu.changeview_ssaa_row then
-                                // Anti-Alias is a binary toggle —
-                                // both left and right flip it. No
-                                // texture / logical-size change (the
-                                // 2× ssaa_buf is internal to the 3D
-                                // pipeline), so `resized` stays false
-                                // and the SDL texture doesn't need
-                                // recreating.
-                                apply_ssaa(w, !g->ssaa)
+                                // Anti-Alias cycles Off → Vertical-only
+                                // 2× → Full 2×2 → Off. Left/right step
+                                // opposite directions through the 3-way
+                                // list. No texture / logical-size change
+                                // (the ssaa_buf is internal to the 3D
+                                // pipeline), so `resized` stays false and
+                                // the SDL texture doesn't need recreating.
+                                let next = (g->ssaa_mode + dir + 3) % 3
+                                apply_ssaa_mode(w, next)
                                 void()
                             config.save(config.snapshot(w))
                             if resized then

@@ -72,11 +72,12 @@ module raycaster =
         let pal_dim = uint32[256] {}
         for i in 0..256
             pal_dim[i] = shade_color(pal[i], 0.75)
-        // Render-target dims pulled from vbuf. Without SSAA this is
-        // (screen_w, view_render_h) writing into dbuf's top region;
-        // with SSAA it's (2·screen_w, 2·view_render_h) writing into
-        // a separately-allocated ssaa_buf that is later box-filtered
-        // into dbuf.
+        // Render-target dims pulled from vbuf. SSAA off → (screen_w,
+        // view_render_h) writing into dbuf's top region; vertical-only →
+        // (screen_w, 2·view_render_h); full 2×2 → (2·screen_w,
+        // 2·view_render_h). The supersampled modes write into a
+        // separately-allocated ssaa_buf that is later downsampled into
+        // dbuf.
         let view_render_h = rc->vbuf_h
         let half = view_render_h / 2
         let sw = (int64) rc->vbuf_w
@@ -91,8 +92,14 @@ module raycaster =
         // doors, and sprites look squat-and-wide on the display.
         // focal_px = vbuf_w / (2·plane_factor) is the matching
         // pixel-units focal length (invariant to widescreen fb_w since
-        // plane_factor scales with fb_w).
+        // plane_factor scales with fb_w). That's the *horizontal* focal;
+        // the *vertical* focal (driving wall pixel height) scales by
+        // ss_v/ss_h so anisotropic vertical-only SSAA (2× tall, 1× wide)
+        // renders walls 2× taller in the buffer to fill the same
+        // on-screen fraction after the vertical downsample. For off /
+        // full SSAA ss_v == ss_h, so vfocal == focal_px bit-for-bit.
         let focal_px = (float64) rc->vbuf_w / (2.0 * g->plane_factor)
+        let vfocal = focal_px * (float64) rc->ss_v / (float64) rc->ss_h
         // Flat fill via the slice's raw pointer. The bounds-checked
         // `vbuf[i] = c` form keeps gcc to a single store-per-iter
         // because the cold-path `fc_oob` branch makes the body look
@@ -291,7 +298,7 @@ module raycaster =
                 if perp_dist <= 0.001 then continue
                 rc->vzbuf[(int64) col] = perp_dist
 
-                let line_h = (int32) (focal_px / perp_dist)
+                let line_h = (int32) (vfocal / perp_dist)
                 let mut draw_start = view_render_h / 2 - line_h / 2
                 let mut draw_end = draw_start + line_h
                 if draw_start < 0 then draw_start = 0
@@ -640,7 +647,11 @@ module billboards =
         // vbuf cells in test mode); the display's 1.2× vertical
         // stretch then matches the OG's square-on-screen-plane,
         // tall-on-display look.
+        // Horizontal focal (spr_w + screen x). spr_h uses the vertical
+        // focal so vertical-only SSAA scales sprite height to match its
+        // 2×-tall buffer (off / full: vfocal == focal_px, bit-identical).
         let focal_px = (float64) rc->vbuf_w / (2.0 * g->plane_factor)
+        let vfocal = focal_px * (float64) rc->ss_v / (float64) rc->ss_h
         for i in 0..rc->num_billboards
             let bb = rc->billboards[i]
             if bb.alpha <= 0.0 then continue
@@ -651,7 +662,7 @@ module billboards =
             if ty <= 0.1 then continue
             let scr_x = (int32) ((float64) (rc->vbuf_w / 2) * (1.0 + tx / ty))
             let spr_w = (int32) (focal_px / ty)
-            let spr_h = (int32) (focal_px / ty)
+            let spr_h = (int32) (vfocal / ty)
             if spr_w < 1 || spr_h < 1 then continue
             let half_w = spr_w / 2
             let draw_x0 = scr_x - half_w
@@ -675,14 +686,13 @@ module overlay =
 
     let screenshot_max_slots = 100
 
-    // Box-filter the 2× SSAA viewport buffer down into dbuf's
-    // viewport region. No-op when SSAA is off. Each dbuf cell
-    // averages its 4 ssaa_buf neighbors (top-left, top-right,
-    // bottom-left, bottom-right) — same kernel as bilinear at
-    // integer 2× ratio, but cheaper since the weights collapse to
-    // 1/4 each. Runs after the raycaster + billboards + weapon
-    // pipeline so viewport tints / dissolves can operate on the
-    // (cheaper) dbuf resolution afterward.
+    // Resolve the SSAA viewport buffer down into dbuf's viewport
+    // region. No-op when ssaa_mode == 0. Full 2×2 averages each dbuf
+    // cell's 4 ssaa_buf neighbors; vertical-only averages the 2 rows
+    // above it (same column) — same bilinear-at-integer-ratio kernel,
+    // weights collapsed to 1/4 (full) or 1/2 (vertical). Runs after the
+    // raycaster + billboards + weapon pipeline so viewport tints /
+    // dissolves can operate on the (cheaper) dbuf resolution afterward.
     //
     // The 4-way average uses the SWAR rounding-avg pattern stacked
     // twice: `avg2(a, b) = (a|b) - (((a^b)>>1) & 0x7F7F7F7F)` runs
@@ -694,27 +704,45 @@ module overlay =
     // is biased above the exact mean by up to +1/255 per channel —
     // below visible threshold and the same trade x86 PAVGB makes.
     let ssaa_downsample = (rc: render_ctx*) ->
-        if !rc->ssaa then return
+        if rc->ssaa_mode == 0 then return
         let dst_w = rc->screen_w
         let dst_h = rc->view_render_h
-        let src_w = (int64) (2 * dst_w)
         let dst_stride = (int64) dst_w
         let src = rc->ssaa_buf.ptr
         let dst = rc->dbuf.ptr
         let mask = 0x7F7F7F7Fu32
-        for y in 0..dst_h
-            let src_row0 = (int64) (y * 2) * src_w
-            let src_row1 = src_row0 + src_w
-            let dst_row = (int64) y * dst_stride
-            for x in 0..dst_w
-                let sx = (int64) (x * 2)
-                let c00 = src[src_row0 + sx]
-                let c01 = src[src_row0 + sx + 1]
-                let c10 = src[src_row1 + sx]
-                let c11 = src[src_row1 + sx + 1]
-                let top = (c00 | c01) - (((c00 ^ c01) >> 1u32) & mask)
-                let bot = (c10 | c11) - (((c10 ^ c11) >> 1u32) & mask)
-                dst[dst_row + (int64) x] = (top | bot) - (((top ^ bot) >> 1u32) & mask)
+        if rc->ssaa_mode == 1 then
+            // Vertical-only 2:1 average. ssaa_buf is dst_w wide (no
+            // horizontal supersample) and 2·dst_h tall, so each dst
+            // pixel averages the two ssaa rows directly above it in the
+            // same column. Source + dest are both unit-stride in x, so
+            // this loop auto-vectorizes (the row pair are contiguous
+            // SWAR avg2 ops) — the whole reason vertical-only is cheap.
+            let src_w = (int64) dst_w
+            for y in 0..dst_h
+                let src_row0 = (int64) (y * 2) * src_w
+                let src_row1 = src_row0 + src_w
+                let dst_row = (int64) y * dst_stride
+                for x in 0..dst_w
+                    let a = src[src_row0 + (int64) x]
+                    let b = src[src_row1 + (int64) x]
+                    dst[dst_row + (int64) x] = (a | b) - (((a ^ b) >> 1u32) & mask)
+        else
+            // Full 2×2 box-filter. ssaa_buf is 2·dst_w × 2·dst_h.
+            let src_w = (int64) (2 * dst_w)
+            for y in 0..dst_h
+                let src_row0 = (int64) (y * 2) * src_w
+                let src_row1 = src_row0 + src_w
+                let dst_row = (int64) y * dst_stride
+                for x in 0..dst_w
+                    let sx = (int64) (x * 2)
+                    let c00 = src[src_row0 + sx]
+                    let c01 = src[src_row0 + sx + 1]
+                    let c10 = src[src_row1 + sx]
+                    let c11 = src[src_row1 + sx + 1]
+                    let top = (c00 | c01) - (((c00 ^ c01) >> 1u32) & mask)
+                    let bot = (c10 | c11) - (((c10 ^ c11) >> 1u32) & mask)
+                    dst[dst_row + (int64) x] = (top | bot) - (((top ^ bot) >> 1u32) & mask)
 
     // Overlay a color tint over the 3D viewport by blending each
     // pixel toward `tint` at `alpha` (0..1). alpha=0 is a no-op;

@@ -501,7 +501,7 @@ module menu =
     // Change View — three left/right pickers:
     //   Aspect Ratio: Auto / Original (4:3) / 16:10 / 16:9
     //   Scale Factor: Auto / 2x..12x
-    //   Anti-Alias:   OFF / ON   (2× SSAA on top of Scale Factor)
+    //   Anti-Alias:   Off / Vert 2x / Full 2x   (SSAA on top of Scale Factor)
     // Up/Down moves between rows; Left/Right cycles the value on the
     // selected row and applies the change immediately.
     // ============================================================
@@ -551,11 +551,14 @@ module menu =
                     font.draw_text(rc, f, x_value, row_y, "%d{g->scale_factor}x", color)
             else if i == changeview_ssaa_row then
                 font.draw_text(rc, f, x_label, row_y, "Anti-Alias", color)
-                // 2× SSAA on top of Scale Factor. The resolved
-                // internal buffer dimensions show up on the footer's
-                // "Anti-Alias" line when on; off → no extra row.
+                // Three-way SSAA on top of Scale Factor. The value
+                // column is narrow, so keep the labels terse ("Vert 2x")
+                // — the footer's "Anti-Alias" line below spells out the
+                // mode in full and shows the resolved buffer dimensions.
                 font.draw_text(rc, f, x_value, row_y,
-                    if g->ssaa then "ON" else "OFF", color)
+                    if g->ssaa_mode == 0 then "Off"
+                    else if g->ssaa_mode == 1 then "Vert 2x"
+                    else "Full 2x", color)
         // Footer: walk the four geometry stages of the pipeline
         // with their actual numbers, so the player can see exactly
         // how the chosen view mode + auto-picked supersample factor
@@ -579,11 +582,13 @@ module menu =
         font.draw_text(rc, f, value_x, info_y,
             "%d{rc->fb_w} x %d{rc->fb_h}", pal[pal_text])
         font.draw_text(rc, f, label_x, info_y + 9,  "Anti-Alias", pal[pal_text])
-        if rc->ssaa then
-            font.draw_text(rc, f, value_x, info_y + 9,
-                "%d{2 * rc->screen_w} x %d{2 * rc->view_render_h}   (2x SSAA, viewport)", pal[pal_text])
-        else
+        if rc->ssaa_mode == 0 then
             font.draw_text(rc, f, value_x, info_y + 9, "off", pal[pal_text])
+        else
+            // Resolved internal viewport buffer (vbuf_w × vbuf_h) plus
+            // the spelled-out mode the terse picker label abbreviates.
+            font.draw_text(rc, f, value_x, info_y + 9,
+                "%d{rc->vbuf_w} x %d{rc->vbuf_h}   (%s{if rc->ssaa_mode == 1 then "vertical-only 2x" else "full 2x"} SSAA)", pal[pal_text])
         font.draw_text(rc, f, label_x, info_y + 18,  "Texture", pal[pal_text])
         font.draw_text(rc, f, value_x, info_y + 18,
             "%d{rc->screen_w} x %d{rc->screen_h}   (%d{rc->scale}x supersample)", pal[pal_text])

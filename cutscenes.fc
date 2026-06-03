@@ -404,8 +404,8 @@ module death_cam =
     // centered horizontally, top-aligned in the viewport so the
     // letters appear high). Coordinates are in vbuf-cell units, NOT
     // fb-cell units — `draw_hud_sprite` interprets them on the
-    // vbuf_w grid (which is screen_w without SSAA or 2·screen_w with
-    // SSAA). Used by `render_sprite` and exposed for the test-mode
+    // vbuf_w grid (screen_w for off / vertical-only SSAA, 2·screen_w
+    // for full 2×2). Used by `render_sprite` and exposed for the test-mode
     // `dcsprite` probe so a layout regression is caught without
     // having to drive the whole death_cam phase.
     struct sprite_layout =
@@ -415,12 +415,15 @@ module death_cam =
         dh: int32
 
     let compute_sprite_layout = (rc: render_ctx*) ->
-        let view_render_h = rc->vbuf_h
-        let dw = view_render_h
-        let dh = view_render_h
+        // Square gun-style sizing: dh fills the viewport height
+        // (vbuf_h = view_render_h·ss_v); dw tracks ss_h so the sprite
+        // keeps its on-screen size under anisotropic vertical-only SSAA
+        // (off / full: ss_h == ss_v, so dw == dh == vbuf_h as before).
+        let dw = rc->view_render_h * rc->ss_h
+        let dh = rc->vbuf_h
         sprite_layout {
             dx = (rc->vbuf_w - dw) / 2,
-            dy = view_render_h - dh,
+            dy = rc->vbuf_h - dh,
             dw = dw,
             dh = dh
         }

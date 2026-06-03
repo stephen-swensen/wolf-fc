@@ -701,9 +701,14 @@ module player =
         // dw = vbuf_h gives a square sprite that matches the
         // original 160-fb-col wide gun after the display's vertical
         // 4:3 stretch.
-        let view_render_h = rc->vbuf_h
-        let dw = view_render_h
-        let dh = view_render_h
+        // dh fills the viewport height (vbuf_h = view_render_h·ss_v); dw
+        // tracks the *horizontal* supersample (ss_h) so the gun keeps its
+        // on-screen width across SSAA modes. Under vertical-only the
+        // buffer is 2× tall but 1× wide, so dw must NOT double — else the
+        // gun would render twice as wide. Off / full: ss_h == ss_v so
+        // dw == dh == vbuf_h, identical to the prior square sizing.
+        let dw = rc->view_render_h * rc->ss_h
+        let dh = rc->vbuf_h
         let dx = (rc->vbuf_w - dw) / 2
-        let dy = view_render_h - dh
+        let dy = rc->vbuf_h - dh
         draw_hud_sprite(rc, vs, pal, page, dx, dy, dw, dh)

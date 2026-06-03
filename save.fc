@@ -89,12 +89,15 @@ module config =
         // driven, capped by --max-scale), 2..12=explicit. When non-auto,
         // the chosen value is used verbatim and --max-scale is ignored.
         scale_factor: int32
-        // Opt-in 2× super-sample anti-aliasing applied on top of the
-        // scale factor. When on, the 3D viewport renders into a buffer
-        // sized 2·screen_w × 2·view_render_h and is box-filter
-        // downsampled into dbuf before HUD composite. Default off —
-        // costs 4× the raycaster work.
-        ssaa: bool
+        // Opt-in super-sample anti-aliasing applied on top of the scale
+        // factor. 0=off, 1=vertical-only 2× (viewport renders 2× tall,
+        // same width — halves the cost of full SSAA since the horizontal
+        // axis is already oversampled by the scale factor), 2=full 2×2
+        // (2× tall AND wide). The viewport renders into a larger buffer
+        // and is box-downsampled into dbuf before HUD composite. Default
+        // off. Older configs used a boolean `ssaa` key, which is now
+        // ignored (treated as off) — no backward compatibility.
+        ssaa_mode: int32
         // Speed multipliers as percentages (20..200, default 100).
         // bj_speed_pct scales the player's walking / strafing / turning.
         // enemy_speed_pct scales every enemy's patrol + chase speed
@@ -177,7 +180,7 @@ module config =
             // (capped by --max-scale). Users can pin an explicit
             // 2..12 from the Change View menu.
             scale_factor = scale_factor_auto,
-            ssaa = false,
+            ssaa_mode = 0,
             bj_speed_pct = 100,
             enemy_speed_pct = 100,
             show_map = false
@@ -200,7 +203,7 @@ module config =
             shadow_depth = w->g->shadow_depth,
             view_mode = w->g->view_mode,
             scale_factor = w->g->scale_factor,
-            ssaa = w->g->ssaa,
+            ssaa_mode = w->g->ssaa_mode,
             bj_speed_pct = w->g->bj_speed_pct,
             enemy_speed_pct = w->g->enemy_speed_pct,
             show_map = w->g->show_map
@@ -297,9 +300,9 @@ module config =
                                 else if v > scale_factor_max then scale_factor_max
                                 else v
                         | none -> void()
-                    else if text.starts_with(line, "ssaa ") then
-                        match text.parse_int32(line[5..line.len]) with
-                        | some(v) -> p.ssaa = v != 0
+                    else if text.starts_with(line, "ssaa_mode ") then
+                        match text.parse_int32(line[10..line.len]) with
+                        | some(v) -> p.ssaa_mode = if v < 0 || v > 2 then 0 else v
                         | none -> void()
                     else if text.starts_with(line, "bj_speed_pct ") then
                         match text.parse_int32(line[13..line.len]) with
@@ -345,7 +348,7 @@ module config =
                 io.write("shadow_depth %d{p.shadow_depth}\n", f)
                 io.write("view_mode %d{p.view_mode}\n", f)
                 io.write("scale_factor %d{p.scale_factor}\n", f)
-                io.write("ssaa %d{if p.ssaa then 1 else 0}\n", f)
+                io.write("ssaa_mode %d{p.ssaa_mode}\n", f)
                 io.write("bj_speed_pct %d{p.bj_speed_pct}\n", f)
                 io.write("enemy_speed_pct %d{p.enemy_speed_pct}\n", f)
                 io.write("show_map %d{if p.show_map then 1 else 0}\n", f)
