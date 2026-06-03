@@ -359,7 +359,6 @@ module save =
     import io from std::
     import sys from std::
     import text from std::
-    import math from std::
     import random from std::
 
     // Bumped to 2 when the per-enemy `shoot_fired` token was dropped;
@@ -919,73 +918,6 @@ module save =
                                 level_num = level_num,
                                 difficulty = difficulty, score = score
                             }
-
-    // In-game debug dump (D key): print everything we'd want to know
-    // to diagnose a "stuck" report — player pos / dir / phase /
-    // lives, and for every tile in the player's bbox, what's there
-    // (wall / door / sprite / enemy). Output goes to stderr so it
-    // doesn't interfere with stdout-based scripts.
-    let debug_dump_state = (w: world*) ->
-        let g = w->g
-        let lv = w->lv
-        let phase_s = match g->phase with
-        | pg13         -> "pg13"
-        | title        -> "title"
-        | main_menu    -> "menu"
-        | playing      -> "playing"
-        | dying        -> "dying"
-        | intermission -> "intermission"
-        | bj_victory   -> "bj_victory"
-        | death_cam    -> "death_cam"
-        | episode_end  -> "episode_end"
-        | endart       -> "endart"
-        | high_scores  -> "high_scores"
-        io.write("\n=== DEBUG DUMP ===\n", stderr)
-        io.write("phase=%s{phase_s} hp=%d{g->health} lives=%d{g->lives} level=%d{g->level_num}\n", stderr)
-        io.write("pos=(%7.4f{g->pos_x}, %7.4f{g->pos_y}) dir=(%7.4f{g->dir_x}, %7.4f{g->dir_y})\n", stderr)
-        io.write("area=%d{g->area_number} keys: gold=%d{if g->has_gold_key then 1 else 0} silver=%d{if g->has_silver_key then 1 else 0}\n", stderr)
-        let xl = (int32) (g->pos_x - player.radius)
-        let xr = (int32) (g->pos_x + player.radius)
-        let yl = (int32) (g->pos_y - player.radius)
-        let yh = (int32) (g->pos_y + player.radius)
-        io.write("bbox tiles: x[%d{xl}..%d{xr}] y[%d{yl}..%d{yh}]\n", stderr)
-        for tx in xl..(xr + 1)
-            for ty in yl..(yh + 1)
-                let ti = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
-                let door_kind = if ti >= 128 then
-                    match lv->doors[ti - 128].state with
-                    | closed  -> "DOOR:closed"
-                    | opening -> "DOOR:opening"
-                    | open    -> "DOOR:open"
-                    | closing -> "DOOR:closing"
-                else ""
-                let kind = if ti >= 1 && ti <= 63 then "WALL"
-                    else if ti >= 128 then door_kind
-                    else "open"
-                io.write("  tile (%d{tx},%d{ty}) tilemap=%d{ti} -> %s{kind}\n", stderr)
-        io.write("blocking sprites within 2 tiles:\n", stderr)
-        for i in 0..lv->num_sprites
-            let s = &lv->sprites[i]
-            if !s->alive || !s->blocks then continue
-            let dx = s->x - g->pos_x
-            let dy = s->y - g->pos_y
-            let d = math.sqrt(dx * dx + dy * dy)
-            if d < 2.0 then
-                io.write("  sprite[%d{i}] pos=(%6.3f{s->x},%6.3f{s->y}) page=%d{s->shape_page} d=%5.3f{d}\n", stderr)
-        io.write("live enemies within 2 tiles:\n", stderr)
-        for i in 0..lv->num_enemies
-            let e = &lv->enemies[i]
-            match e->state with
-            | dead | die -> void()
-            | _ ->
-                let dx = e->x - g->pos_x
-                let dy = e->y - g->pos_y
-                let d = math.sqrt(dx * dx + dy * dy)
-                if d < 2.0 then
-                    io.write("  enemy[%d{i}] pos=(%6.3f{e->x},%6.3f{e->y}) tile(%d{e->tile_x},%d{e->tile_y}) hp=%d{e->hp} d=%5.3f{d}\n", stderr)
-        io.write("=== END ===\n\n", stderr)
-        void()
-
 
 // ============================================================
 // High scores — persistent table of top-7 finishes. Read once at

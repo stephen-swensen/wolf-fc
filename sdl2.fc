@@ -172,6 +172,10 @@ module sdl2 from "SDL2/SDL.h" =
     // --- Timing ---
     extern SDL_Delay as delay: (uint32) -> void
     extern SDL_GetTicks as get_ticks: () -> uint32
+    // High-resolution monotonic counter + its tick frequency (ticks/sec),
+    // for sub-millisecond frame timing the millisecond GetTicks can't give.
+    extern SDL_GetPerformanceCounter as get_perf_counter: () -> uint64
+    extern SDL_GetPerformanceFrequency as get_perf_frequency: () -> uint64
 
     // --- Audio ---
     extern AUDIO_S16SYS as audio_s16sys: uint16

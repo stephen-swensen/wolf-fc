@@ -117,6 +117,7 @@ make uninstall                      # remove the binary + share/wolf-fc/ tree
 | `--near-goldkey` / `--near-silverkey` / `--near-gibs` | Same idea but for the first gold-key / silver-key / gibs pickup on the map. Handy for eyeballing HUD changes and the gibs-at-low-HP branch without playing through. First gibs map is `E1M2` (`--level=1 --near-gibs`). |
 | `--cheat` | Pre-activate both Doom-style cheats (`IDDQD` god mode + `IDKFA` all-keys / all-weapons / full non-depleting ammo / locked score) from the very first frame. The gifts re-apply on every death while the IDKFA latch stays on. |
 | `--max-scale=N` | Cap the auto-picked supersample factor at N (default 6, floor 2). Lower for older CPUs that stutter at the auto-pick; raise on high-end machines where 4K+ panels could put more rays to good use. See [Display pipeline](#display-pipeline) below. |
+| `--debug` | Start with the debug overlay on (also toggleable in-game with **TAB + D**). Draws a small top-right readout: FPS + frame time in ms (red while frames are out of sync), a cumulative **desync** count — frames whose period departed from the steady vsync cadence in either direction, measured with the high-res timer so it catches sub-millisecond stutter the millisecond clock can't — and the active framebuffer / screen resolution + AA mode. Drawn straight to the display, so it never lands in screenshots. |
 
 ### Jump-to-boss cheat sheet
 
@@ -175,6 +176,7 @@ And the original game's TAB-held cheats (hold TAB, press another key). The origi
 | TAB + N | Toggle no-clip (walk through walls, doors, enemies, static decorations) |
 | TAB + E | End level (skip straight to the intermission screen) |
 | TAB + H | Hurt self for 16 damage |
+| TAB + D | Toggle the debug overlay (FPS / frame time / vsync-desync count / resolution). Works in any phase. See `--debug` above. |
 
 > **Note:** On Windows, rapid Ctrl presses trigger the Sticky Keys accessibility popup. If this gets in your way during combat, turn off Sticky Keys in Settings → Accessibility → Keyboard.
 

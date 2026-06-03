@@ -889,6 +889,129 @@ module overlay =
                     for kx in 0..s
                         rc->dbuf[row + (int64) kx] = c
 
+    // ── Debug overlay (TAB+D / --debug) ─────────────────────────────
+    // Perf + state readout drawn straight into dbuf at screen resolution
+    // by the main loop, after render_frame. Kept here (not in render_frame)
+    // so it stays out of screenshots and the bit-stable --test path.
+
+    // Clear the debug perf state. Called when the view mode / scale / SSAA
+    // changes: those reallocate buffers (one-off frame spike) and may shift
+    // the steady cadence, so the EMA baseline and desync tally should start
+    // fresh rather than count the transition. dbg_ms == 0 reseeds the EMA
+    // from the next frame.
+    let debug_reset = (rc: render_ctx*) ->
+        rc->dbg_fps = 0.0
+        rc->dbg_ms = 0.0
+        rc->dbg_skipped = 0
+        rc->dbg_hitch_flash = 0.0
+
+    // Per-iteration timing accumulation; `ms` is the high-res frame period.
+    // Assumes vsync is on (renderer created with renderer_vsync): every
+    // frame that fits its work in one refresh interval blocks in present()
+    // for exactly that interval, so a perfectly smooth run clusters all
+    // frame times tightly at the cadence. Anything that misses a vblank
+    // runs ~2× (and its catch-up frame runs short) — both depart from the
+    // cadence, which is what we count.
+    let debug_update_timing = (rc: render_ctx*, ms: float64) ->
+        // Compare against the smoothed cadence from BEFORE folding in this
+        // sample, so a frame is judged against the recent steady state and
+        // not against itself. First call seeds the EMA (baseline == ms).
+        let baseline = if rc->dbg_ms > 0.0 then rc->dbg_ms else ms
+        // "desync" counts frames out of step with the cadence in EITHER
+        // direction (late = ran long, catch-up = ran short) by more than a
+        // tight tolerance. Tolerance is mostly relative (10% of the cadence,
+        // so it tracks any refresh rate) with a small absolute floor that
+        // swallows scheduler / present-jitter noise. Under clean vsync this
+        // stays at 0; it ticks up only when frames stop landing on vblank.
+        let dev = if ms > baseline then ms - baseline else baseline - ms
+        let rel = baseline * 0.1
+        let tol = if rel > 1.0 then rel else 1.0
+        if dev > tol then
+            rc->dbg_skipped = rc->dbg_skipped + 1
+            rc->dbg_hitch_flash = 0.4
+        else if rc->dbg_hitch_flash > 0.0 then
+            rc->dbg_hitch_flash = rc->dbg_hitch_flash - ms / 1000.0
+        rc->dbg_ms = baseline * 0.9 + ms * 0.1
+        rc->dbg_fps = if rc->dbg_ms > 0.0 then 1000.0 / rc->dbg_ms else 0.0
+
+    // Blit one UI-font glyph into dbuf, each source pixel expanded to an
+    // s×s block. Returns the scaled advance width. Mirrors font.draw_char
+    // but targets dbuf at screen resolution instead of fb.
+    private let dbg_glyph = (rc: render_ctx*, f: const font.info*,
+                             x: int32, y: int32, ch: int32, color: uint32, s: int32) ->
+        if ch < 0 || ch >= 256 then return 0
+        let cw = f->width[ch]
+        if cw <= 0 then return 0
+        let src_off = (int64) f->location[ch]
+        for row in 0..f->height
+            for col in 0..cw
+                let px = f->pixels[src_off + (int64) row * (int64) cw + (int64) col]
+                if px != 0u8 then
+                    let bx = x + col * s
+                    let by = y + row * s
+                    for sy in 0..s
+                        let dy = by + sy
+                        if dy >= 0 && dy < rc->screen_h then
+                            let drow = (int64) dy * (int64) rc->screen_w
+                            for sx in 0..s
+                                let dx = bx + sx
+                                if dx >= 0 && dx < rc->screen_w then
+                                    rc->dbuf[drow + (int64) dx] = color
+        cw * s
+
+    private let dbg_text = (rc: render_ctx*, f: const font.info*,
+                            x: int32, y: int32, sclstr: const str, color: uint32, s: int32) ->
+        let mut cx = x
+        for i in 0..(int32) sclstr.len
+            cx = cx + dbg_glyph(rc, f, cx, y, (int32) sclstr[(int64) i], color, s)
+
+    // Blend a dbuf rectangle toward black by `alpha` (legibility backdrop).
+    private let dbg_dim = (rc: render_ctx*, x0: int32, y0: int32, x1: int32, y1: int32, alpha: float64) ->
+        let keep = 1.0 - alpha
+        for y in y0..y1
+            if y >= 0 && y < rc->screen_h then
+                let drow = (int64) y * (int64) rc->screen_w
+                for x in x0..x1
+                    if x >= 0 && x < rc->screen_w then
+                        let c = rc->dbuf[drow + (int64) x]
+                        let r = (uint32) ((float64) ((c >> 16) & 0xFFu32) * keep)
+                        let gg = (uint32) ((float64) ((c >> 8) & 0xFFu32) * keep)
+                        let b = (uint32) ((float64) (c & 0xFFu32) * keep)
+                        rc->dbuf[drow + (int64) x] = 0xFF000000u32 | (r << 16) | (gg << 8) | b
+
+    let render_debug = (rc: render_ctx*, f: const font.info*) ->
+        // Half the UI scale (rc->scale is 2..6) so the readout stays small.
+        let s = if rc->scale / 2 < 1 then 1 else rc->scale / 2
+        let ssaa = if rc->ssaa_mode == 2 then "2x"
+                   else if rc->ssaa_mode == 1 then "2xV"
+                   else "off"
+        let fps_i = (int32) (rc->dbg_fps + 0.5)
+        let ms_i = (int32) (rc->dbg_ms + 0.5)
+        // Every line carries an interpolation so each element is `str`
+        // (a pure literal would be `const str` and break the array's
+        // inferred element type).
+        let lines = str[4] {
+            "FPS %d{fps_i}  %d{ms_i} ms",
+            "desync %d{rc->dbg_skipped}",
+            "%d{rc->fb_w}x%d{rc->fb_h} x%d{rc->scale}",
+            "%d{rc->screen_w}x%d{rc->screen_h} ss %s{ssaa}"
+        }
+        let line_h = (f->height + 1) * s
+        let margin = 3 * s
+        let mut maxw = 0
+        for i in 0..4
+            let lw = font.text_width(f, lines[i]) * s
+            if lw > maxw then maxw = lw
+        let x_right = rc->screen_w - margin
+        let y_top = margin
+        dbg_dim(rc, x_right - maxw - 2 * s, 0, rc->screen_w, y_top + line_h * 4 + s, 0.55)
+        let white = 0xFFFFFFFFu32
+        let red = 0xFFFF5555u32
+        for i in 0..4
+            let lw = font.text_width(f, lines[i]) * s
+            let color = if i == 0 && rc->dbg_hitch_flash > 0.0 then red else white
+            dbg_text(rc, f, x_right - lw, y_top + i * line_h, lines[i], color, s)
+
     // Top-left automap overlay (opt-in via Options → Map). One fb
     // pixel per map tile, 4-px padding from the framebuffer's top-left
     // corner, with a 1-px white border. Pixels are written to fb's

@@ -601,6 +601,12 @@ struct game =
     // the Options menu (persisted in ~/.wolf-fc/config). Read every
     // frame by `render_map_overlay` in the 3D phases of render_frame.
     show_map: bool
+    // Debug overlay toggle. Off by default; set on at launch by --debug
+    // and flipped in-game by TAB+D. When on, the main loop draws a
+    // top-right perf + state readout (FPS, frame time, skipped frames,
+    // player pos/angle/tile, scene counts, resolution/AA) straight into
+    // dbuf — so it stays out of screenshots and the bit-stable test path.
+    debug_overlay: bool
     // --test CLI flag: suppresses UX-only flourishes that would otherwise
     // freeze gameplay by a fixed duration (GET PSYCHED overlay, pickup
     // overlay). Tests advance the world `dt = 1/35` per tick, so a 0.7s
@@ -824,6 +830,17 @@ struct render_ctx =
     // captures regardless of skip cadence). Consumed + cleared at the
     // top of render_frame.
     force_redraw: bool
+    // Debug overlay (TAB+D / --debug) live perf state, updated once per
+    // main-loop iteration by debug_update_timing. dbg_fps / dbg_ms are
+    // EMA-smoothed for a steady readout; dbg_skipped accumulates the
+    // estimated dropped-vsync frames from hitches; dbg_hitch_flash counts
+    // down so the FPS line shows red for a moment after a hitch. Purely
+    // a display concern — never read by the simulation, so test mode
+    // (which doesn't run the main loop) leaves these at zero.
+    dbg_fps: float64
+    dbg_ms: float64
+    dbg_skipped: int32
+    dbg_hitch_flash: float64
 
 // Sound system handle: loaded-asset refs + SFX playback state.
 struct audio_ctx =
@@ -1089,7 +1106,8 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
         pic_cache = alloc(uint32[][vg->num_chunks] {})!,
         screenshot_slot = 0,
         frame_counter = 0u64,
-        force_redraw = true
+        force_redraw = true,
+        dbg_fps = 0.0, dbg_ms = 0.0, dbg_skipped = 0, dbg_hitch_flash = 0.0
     })!
     rc
 
@@ -1212,6 +1230,7 @@ let apply_view_mode = (w: world*, vg: const vgagraph.vgagraph_file*,
         g->plane_y = g->plane_y * plane_scale
         g->plane_factor = new_plane_factor
     g->view_mode = view_mode
+    overlay.debug_reset(rc)
     changed
 
 // Apply a supersample-scale change on the fly. Reallocates dbuf +
@@ -1219,7 +1238,9 @@ let apply_view_mode = (w: world*, vg: const vgagraph.vgagraph_file*,
 // Returns true on a real change.
 let apply_scale_factor = (w: world*, vg: const vgagraph.vgagraph_file*,
                           pal: const uint32[], new_scale: int32) ->
-    resize_render_ctx(w->rc, vg, pal, w->rc->fb_w, new_scale)
+    let changed = resize_render_ctx(w->rc, vg, pal, w->rc->fb_w, new_scale)
+    overlay.debug_reset(w->rc)
+    changed
 
 // Switch the SSAA mode (0=off, 1=vertical-only 2×, 2=full 2×2). Frees
 // the old `ssaa_buf` + `ssaa_zbuf`, allocates them at the new mode's
@@ -1241,6 +1262,7 @@ let apply_ssaa_mode = (w: world*, new_mode: int32) ->
         rc->ssaa_buf = alloc(uint32[ssaa_buf_len(new_mode, rc->screen_w, rc->view_render_h)] {})!
         rc->ssaa_zbuf = alloc(float64[ssaa_zbuf_len(new_mode, rc->screen_w)] {})!
         rebind_vbuf(rc)
+        overlay.debug_reset(rc)
         true
 
 // Allocate the save/load menu cache + scratch buffers. One instance per
@@ -2752,6 +2774,7 @@ let main = (args: str[]) ->
     let mut start_near_gibs = false
     let mut arg_mommy_mode = false
     let mut arg_cheat = false
+    let mut arg_debug = false
     // Default supersample cap. Hardcoded ceiling matches the original
     // pre-CLI clamp; --max-scale lets the user move it in either
     // direction. Floor stays at 2 inside compute_scale_factor.
@@ -2765,6 +2788,7 @@ let main = (args: str[]) ->
         if a == "--near-silverkey" then start_near_silverkey = true
         if a == "--near-gibs" then start_near_gibs = true
         if a == "--cheat" then arg_cheat = true
+        if a == "--debug" then arg_debug = true
         if text.starts_with(a, "--level=") then
             match text.parse_int32(a[8..a.len]) with
             | some(n) -> if n >= 0 && n < 60 then start_level = some(n)
@@ -2934,6 +2958,7 @@ let main = (args: str[]) ->
         bj_speed_pct = cfg.bj_speed_pct,
         enemy_speed_pct = cfg.enemy_speed_pct,
         show_map = cfg.show_map,
+        debug_overlay = arg_debug,
         data_dir = data_dir,
         test_mode = test_mode,
         menu_sel = 0, menu_level = menu.nav.main, save_edit_active = false,
@@ -3221,6 +3246,12 @@ let main = (args: str[]) ->
     // Game loop
     let mut running = true
     let mut last_ticks = sdl2.get_ticks()
+    // Separate high-resolution clock for the debug overlay's frame-time
+    // measurement. The millisecond GetTicks above is fine for the sim's
+    // dt but too coarse to tell a smooth-vsync frame (16.67ms, read as a
+    // jittery 16/17 by ms quantization) from a genuinely late one.
+    let perf_freq = sdl2.get_perf_frequency()
+    let mut last_perf = sdl2.get_perf_counter()
     let mut event = default(sdl2.sdl_event)
 
     loop
@@ -3232,6 +3263,18 @@ let main = (args: str[]) ->
         let mut dt = (float64) (now - last_ticks) / 1000.0
         last_ticks = now
         if dt > 0.1 then dt = 0.1    // clamp large spikes
+
+        // Debug-overlay perf accounting. Runs every iteration (even on
+        // skipped-render frames) so FPS tracks the true loop cadence;
+        // the readout itself is only drawn when the overlay is on. Uses
+        // the high-res counter — top-of-loop to top-of-loop is the full
+        // frame period, including the vsync wait in present().
+        let now_perf = sdl2.get_perf_counter()
+        let frame_ms = if perf_freq > 0u64 then
+            (float64) (now_perf - last_perf) / (float64) perf_freq * 1000.0
+        else 0.0
+        last_perf = now_perf
+        overlay.debug_update_timing(w->rc, frame_ms)
 
         w->rc->frame_counter = w->rc->frame_counter + 1u64
         // Tracks "user did something this iteration" — used by the
@@ -3946,11 +3989,12 @@ let main = (args: str[]) ->
                                 player.cheats.advance_iddqd(g, k)
                                 player.cheats.advance_idkfa(g, k)
                             if k == sdl2.key_s then overlay.take_screenshot(w, vs, pal)
-                            // Debug-state dump used to live on plain D — moved
-                            // under the TAB chord so a stray D press during
-                            // gameplay doesn't spam the console.
+                            // TAB+D toggles the on-screen debug overlay
+                            // (FPS / frame time / skipped frames / pos /
+                            // scene counts / resolution). Works in any phase
+                            // since key_tab_held is tracked globally.
                             if k == sdl2.key_d && g->key_tab_held then
-                                save.debug_dump_state(w)
+                                g->debug_overlay = !g->debug_overlay
                             // IN_Ack: a deliberate-feeling keypress (Enter,
                             // Space, Ctrl — the OG fire key, or Esc as a
                             // "get me out of here" key) during an
@@ -4088,6 +4132,14 @@ let main = (args: str[]) ->
 
         // Render
         if should_render then render_frame(w, vs, pal)
+
+        // Debug overlay — drawn straight into dbuf after render_frame so
+        // it composites over every phase yet stays out of screenshots and
+        // the bit-stable test path (which never runs this loop). Only on a
+        // rendered frame: on a skipped frame dbuf wasn't rewritten and the
+        // texture isn't re-uploaded, so last frame's overlay stays put.
+        if should_render && g->debug_overlay then
+            overlay.render_debug(w->rc, w->font)
 
         // Generate and queue audio: music -> AdLib SFX -> digi SFX -> SDL.
         // Buffer is 1024 STEREO frames (2048 int16 values = 4096 bytes);
