@@ -11,7 +11,14 @@ bindir  := $(PREFIX)/bin
 datadir := $(PREFIX)/share
 
 CC      ?= cc
-OPT     ?= -O2
+# -O3 over -O2 measures a clean +13-19% in the raycaster-bound render path
+# (the hot loop is per-pixel texture fill) and stays bit-identical — the
+# 203-test golden suite passes unchanged. Deliberately NOT -march=native /
+# -march=x86-64-v3: both measured *slower* than plain -O3 on the test CPU
+# (wider AVX codegen on the memory-bound fills doesn't pay, and FMA
+# contraction would also break the bit-stable OG render path). `make dev`
+# overrides this with -O0.
+OPT     ?= -O3
 CFLAGS   = -std=c11 -Wall -Werror -g $(OPT) $(EXTRA_DEFS)
 LIBS     = $(EXTRA_LIBS) -lSDL2 -lm
 
@@ -346,6 +353,6 @@ help:
 	@echo "Variables:"
 	@echo "  PREFIX        install root (default: /usr/local)"
 	@echo "  DESTDIR       staging root for package builds (default: empty)"
-	@echo "  OPT           optimization flags (default: -O2; 'make dev' uses -O0)"
+	@echo "  OPT           optimization flags (default: -O3; 'make dev' uses -O0)"
 	@echo "  CC            C compiler (default: cc)"
 	@echo "  FCC_STDLIB    override the FC stdlib directory (default: derived from \$$(fcc) install prefix)"
