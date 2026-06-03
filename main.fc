@@ -35,12 +35,20 @@ let map_size = 64
 // widescreen: same vertical FOV, more horizontal).
 let fov_factor = 0.7269
 
-// Audio-callback sizing. The SDL audio device is opened with a 1024-frame
-// buffer, so the callback is asked for 1024 stereo frames per call; this
-// caps the int32 mix scratch (`audio_ctx.mix_buf`) generously above that so
-// an unexpectedly large request can't overrun it. `music_xfade_samples` is
-// the length of the click-killing crossfade applied when a track is swapped
-// — 256 samples ≈ 5.8 ms at 44.1 kHz, matching the original fade-out tail.
+// Audio-callback sizing. `audio_buffer_frames` is the device buffer SDL
+// asks the callback to fill per call — it sets the playback latency floor
+// (e.g. how long after a shot the death cry is heard) at
+// `frames / 44100` per buffer, plus whatever the OS audio layer stacks
+// underneath (PulseAudio/WSLg adds more). Lower = snappier SFX; higher =
+// more cushion against the audio thread missing a deadline under load
+// (matters on WSLg, where software rendering can starve it of CPU). 512 ≈
+// 11.6 ms is a balance; drop to 256 for tighter SFX, raise to 1024 if you
+// hear underruns. `audio_cb_max_frames` caps the int32 mix scratch
+// (`audio_ctx.mix_buf`) well above any buffer the device might hand us.
+// `music_xfade_samples` is the click-killing crossfade applied when a
+// track is swapped — 256 samples ≈ 5.8 ms at 44.1 kHz, matching the
+// original fade-out tail.
+let audio_buffer_frames = 512
 let audio_cb_max_frames = 4096
 let music_xfade_samples = 256
 
@@ -3285,12 +3293,17 @@ let main = (args: str[]) ->
     // main loop holds sdl2.lock_audio around every mutation of that state.
     let mut spec = sdl2.audio_spec {
         freq = sfx.sample_rate, format = sdl2.audio_s16sys,
-        channels = 2u8, silence = 0u8, samples = 1024u16,
+        channels = 2u8, silence = 0u8, samples = (uint16) audio_buffer_frames,
         padding = 0u16, size = 0u32,
         callback = &audio_callback, userdata = (any*) w->ac
     }
     let mut obtained = default(sdl2.audio_spec)
     let audio_dev = sdl2.open_audio((any*) 0, 0, &spec, &obtained, 0)
+    if audio_dev > 0u32 then
+        let buf_ms = (float64) obtained.samples * 1000.0 / (float64) obtained.freq
+        io.write("Audio: %d{obtained.freq} Hz, %d{(int32) obtained.channels} ch, %d{(int32) obtained.samples}-frame buffer (~%4.1f{buf_ms} ms callback latency)\n", stdout)
+    else
+        io.write("Audio: device open failed (%s{(const str) sdl2.get_error()}) — running silent\n", stdout)
     // First-frame music = whatever fits the initial phase (title →
     // WONDERIN). Phase-driven swap below keeps this in sync afterward. The
     // device opens paused, so load the track before unpausing — the
