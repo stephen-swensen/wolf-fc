@@ -12,27 +12,21 @@ A multi-agent audit (2026-05-31) over the whole engine produced 76
 confirmed findings. The license-hygiene, doc-comment, leak, and
 clean-fail-hard fixes were applied (commits `38da848`, `1bf1c5c`); the
 silent-continue bounds-guards were deliberately reverted (see Decisions
-below). What remains is open work — each item is self-contained for a
-solo session, with the audit ID in brackets for traceability. Tags:
+below). **[arch-1]** (enemy `last_visible` moved from the render path into
+`ai.update_enemies`) was applied 2026-06-02 — despite its `[golden re-pin]`
+tag it needed *no* golden churn: the regression scripts never land a
+`rnd_byte` roll in the narrow hitchance gap (≤ dist·8 wide) the flag
+opens, so no hit/miss outcome flipped. The flag is now exercised directly
+via a new `vis=` column on `enemylist` and two `combat:enemy-sight`
+assertions, so the behavior can't silently regress. What remains is open
+work — each item is self-contained for a solo session, with the audit ID
+in brackets for traceability. Tags:
 **[golden re-pin]** = changes RNG draw order or pinned stats, so it must
 update `tests/run-tests.sh` golden values in the same commit;
 **[needs OG source]** = can't be settled as faithful-vs-divergent
 without restoring the `../wolf3d` / `../wolf4sdl` reference trees.
 
 ### Architecture / behavior — re-pins golden values
-
-- **[arch-1] `e->last_visible` is written in the render path, not in
-  `tick()`** (`render.fc:513`; read in `combat.fc:1314`). `billboards.build`
-  mutates enemy sim state (`last_visible`) that `fire_at_player` reads to
-  pick hit-falloff (16 vs 8 → `hitchance`). Every `build` caller is
-  render-path, and `--test` mode never builds billboards, so the AI
-  always sees the stale/false value. Fix: lift the `inv_det/tx/ty`
-  projection (`render.fc:498-513`) into `update_enemy` (`combat.fc`,
-  already has `game*`) so it runs each tick; `build` then only *reads*
-  `last_visible`. **[golden re-pin]** — on-screen enemies start hitting
-  the falloff=16 branch, shifting `hitchance` and a conditional second
-  `rnd_byte` draw. Highest-value correctness item: makes the OG sight
-  falloff actually reachable in test mode.
 
 - **[level-1] 1-UP counts in the treasure numerator but not the
   denominator** (`main.fc:1302`, `level.fc:402`). `pickups.check` bumps

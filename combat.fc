@@ -121,7 +121,7 @@ module enemies =
         ambush: bool              // tile 106 (AMBUSH) — don't wake on sound, only LOS
         notified: bool            // has entered active pursuit at least once (suppresses re-alert sound)
         reaction_timer: float64   // seconds left between first detection and actual wake; 0 when not yet detected (mirrors the original's sight-delay)
-        last_visible: bool        // set by build_billboards when the enemy was drawn in the previous frame (mirrors the original's visible flag); read by fire_at_player to pick the steeper hitchance falloff
+        last_visible: bool        // refreshed by ai.update_enemies each tick (post-move, like the original's refresh-time FL_VISABLE) when the enemy is on screen; read on the following tick by fire_at_player to pick the steeper hitchance falloff
         touch_cooldown: float64   // ghost-only: refractory window after a bite. The original steps the ghost physically back out of the player's contact bbox after a hit; our advance_move is grid-based, so we emulate the gap with a short timer.
         // Mommy Mode fade-on-death state. Set at the moment kill_enemy
         // (or death_cam pre_replay) transitions the enemy into `die`:
@@ -1507,6 +1507,24 @@ module enemies =
             let sprite_start = w->ac->vs->sprite_start
             for i in 0..w->lv->num_enemies
                 update_enemy(w->lv, w->g, w->ac, i, dt, sprite_start)
+            // Refresh on-screen visibility for next tick's fire_at_player
+            // falloff. Mirrors the original's FL_VISABLE: set during the
+            // frame's refresh — after every actor has moved — and read by
+            // the shoot logic on the following tic. This previously lived
+            // in billboards.build (render-only), so --test mode, which
+            // never renders, left every enemy permanently not-visible and
+            // the steeper sight falloff unreachable. tx/ty in [-1, 1] = on
+            // screen, 1.2 margin for partial-edge overlap; FOV-normalized
+            // so the threshold is invariant across view modes.
+            let g = w->g
+            let inv_det = 1.0 / (g->plane_x * g->dir_y - g->dir_x * g->plane_y)
+            for i in 0..w->lv->num_enemies
+                let e = &w->lv->enemies[i]
+                let dx = e->x - g->pos_x
+                let dy = e->y - g->pos_y
+                let tx = inv_det * (g->dir_y * dx - g->dir_x * dy)
+                let ty = inv_det * (g->plane_x * dy - g->plane_y * dx)
+                e->last_visible = ty > 0.1 && math.abs(tx) <= ty * 1.2
 
         // Animation-only pump for actors in die. Used during phases
         // that freeze the rest of gameplay (bj_victory, the

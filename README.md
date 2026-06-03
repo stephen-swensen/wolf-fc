@@ -222,7 +222,7 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `gotgatling` | Force the GOTGATLINGPIC face-cell swap timer (debug — paints over the BJ face slot in render_hud for the duration) |
 | `facetile` | Print the tile the player is facing and the `next_level` flag (debug) |
 | `enemies` | Print totals per enemy kind and per state |
-| `enemylist` | Print each enemy: index, tile, kind, state, direction, hp, area number |
+| `enemylist` | Print each enemy: index, tile, kind, state, direction, hp, area number, `vis` (1 = on screen this tick, the sight-falloff flag) |
 | `killenemy:N` | Overkill enemy at index N via `damage_enemy` (drops, score, kill counter all fire as if shot) |
 | `kill` | Instant-kill the player; transitions straight to the dying phase. Leaves `killer_active` false, so the death-cam swing is a no-op. |
 | `killby:X,Y` | Like `kill`, but latches `(X, Y)` as the killer's world position so the dying-phase camera swing has a target to rotate toward. |

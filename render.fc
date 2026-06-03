@@ -470,7 +470,6 @@ module raycaster =
 // ============================================================
 
 module billboards =
-    import math from std::
 
     // Collect one frame's worth of visible billboards (static sprites +
     // all enemy states including dead) and sort back-to-front. Pickup
@@ -491,12 +490,6 @@ module billboards =
                 alpha = 1.0
             }
             n = n + 1
-        // Same projection the renderer uses for billboards: tx/ty in
-        // [-1, 1] = on-screen, with margin for partial-edge overlap.
-        // Using tx/ty (FOV-normalized) keeps the threshold invariant
-        // across view modes — a raw |lateral| / forward check would
-        // tighten in widescreen because plane_factor scales with fb_w.
-        let inv_det = 1.0 / (g->plane_x * g->dir_y - g->dir_x * g->plane_y)
         for i in 0..lv->num_enemies
             let e = &lv->enemies[i]
             // Mommy Mode: dead enemies (post-fade) are gone — no corpse
@@ -509,9 +502,6 @@ module billboards =
             let page_rel = enemies.sprite_page_with_mode(e, g->pos_x, g->pos_y, g->mommy_mode)
             let dx = e->x - g->pos_x
             let dy = e->y - g->pos_y
-            let tx = inv_det * (g->dir_y * dx - g->dir_x * dy)
-            let ty = inv_det * (g->plane_x * dy - g->plane_y * dx)
-            e->last_visible = ty > 0.1 && math.abs(tx) <= ty * 1.2
             // Mommy Mode fade-on-death: dying enemy renders at
             // 1 - mommy_fade_t opacity (1 → 0 over mommy_fade_duration).
             // Non-die states and non-mommy-mode play opaque.

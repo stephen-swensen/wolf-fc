@@ -2576,7 +2576,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             | die   -> "die"
             | dead  -> "dead"
             let area = (int32) w->lv->tile_areas[(int64) e.tile_x * 64 + (int64) e.tile_y]
-            io.write("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp} area=%d{area}\n", stdout)
+            io.write("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp} area=%d{area} vis=%d{(int32) e.last_visible}\n", stdout)
         void()
     else if arg == "pickups" then
         // Per-level pickup inventory: dumps every live sprite whose

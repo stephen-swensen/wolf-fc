@@ -227,6 +227,21 @@ assert_regex "hitscan:knife-at-2-tiles-misses" \
     "goto:30,62 turnr:180 setweapon:0 fire wait:10 enemylist" \
     '\[37\] \(28,62\) kind=guard state=(chase|shoot|stand) dir=[0-9]+ hp=25'
 
+section "combat:enemy-sight"
+# last_visible — the "player can see me, so the shot is dodgeable" flag
+# that picks the steeper sight-falloff in fire_at_player — is refreshed in
+# the sim path (ai.update_enemies, post-move), not in billboards.build.
+# That keeps it live in headless --test mode, where nothing ever renders.
+# Before the fix the flag was only written from the render path, so it
+# stayed false forever under --test and the falloff=16 branch was dead.
+# Facing the guard marks it visible; facing away clears it.
+assert_regex "ai:sight-flag-set-when-player-faces-enemy" \
+    "goto:29,62 turnr:180 wait:1 enemylist" \
+    '\[37\] \(28,62\) kind=guard .* vis=1'
+assert_regex "ai:sight-flag-clear-when-player-faces-away" \
+    "goto:29,62 wait:1 enemylist" \
+    '\[37\] \(28,62\) kind=guard .* vis=0'
+
 section "combat:enemies-attack"
 assert_contains "ai:dog-bites-on-contact" \
     "goto:45,34 turnr:90 wait:120 state" \
