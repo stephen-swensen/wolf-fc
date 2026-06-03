@@ -3,7 +3,8 @@
 // Wolf-fc uses SDL2 as a thin host layer, not a rendering framework:
 // a window, a single streaming ARGB8888 texture that main.fc uploads
 // each frame via SDL_UpdateTexture + SDL_RenderCopy, keyboard events,
-// and raw-PCM audio queueing (SDL_QueueAudio). All pixel plotting,
+// and a callback-driven audio device (SDL runs the mixer on its own
+// thread, decoupled from rendering). All pixel plotting,
 // audio mixing, and input interpretation is FC code -- no GPU shaders,
 // no per-sprite textures, no SDL satellite libs (SDL_image/_mixer/_ttf).
 //
@@ -193,9 +194,11 @@ module sdl2 from "SDL2/SDL.h" =
 
     extern SDL_OpenAudioDevice as open_audio: (any*, int32, const audio_spec*, audio_spec*, int32) -> uint32
     extern SDL_PauseAudioDevice as pause_audio: (uint32, int32) -> void
-    extern SDL_QueueAudio as queue_audio: (uint32, any*, uint32) -> int32
-    extern SDL_GetQueuedAudioSize as queued_audio_size: (uint32) -> uint32
-    extern SDL_ClearQueuedAudio as clear_audio: (uint32) -> void
+    // Pause/resume the audio callback thread to mutate shared audio state
+    // from the main thread without a data race. Each lock must be matched
+    // with an unlock; the callback won't run while the device is locked.
+    extern SDL_LockAudioDevice as lock_audio: (uint32) -> void
+    extern SDL_UnlockAudioDevice as unlock_audio: (uint32) -> void
     extern SDL_CloseAudioDevice as close_audio: (uint32) -> void
 
     // --- Events ---

@@ -106,10 +106,11 @@ without restoring the `../wolf3d` / `../wolf4sdl` reference trees.
   grant silently in the loop, fire the cue once after if any granted.
   Test-safe (audio off in test mode).
 
-- **[sdl2-1] `SDL_QueueAudio`/`SDL_OpenAudioDevice` extern drops `const`
-  on pointer params** (`sdl2.fc:189, 191`). Harmless. Fix: optional
-  doc-accuracy — `const any*`; verify the spec accepts `const any*` in an
-  extern sig first. Skip if it risks churn.
+- **[sdl2-1] `SDL_OpenAudioDevice` extern drops `const` on pointer
+  params** (`sdl2.fc`). Harmless. Fix: optional doc-accuracy — `const
+  any*`; verify the spec accepts `const any*` in an extern sig first.
+  Skip if it risks churn. (The `SDL_QueueAudio` binding was removed when
+  audio moved to a callback device.)
 
 ### Minor bugs
 

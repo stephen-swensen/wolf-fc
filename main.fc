@@ -35,6 +35,15 @@ let map_size = 64
 // widescreen: same vertical FOV, more horizontal).
 let fov_factor = 0.7269
 
+// Audio-callback sizing. The SDL audio device is opened with a 1024-frame
+// buffer, so the callback is asked for 1024 stereo frames per call; this
+// caps the int32 mix scratch (`audio_ctx.mix_buf`) generously above that so
+// an unexpectedly large request can't overrun it. `music_xfade_samples` is
+// the length of the click-killing crossfade applied when a track is swapped
+// — 256 samples ≈ 5.8 ms at 44.1 kHz, matching the original fade-out tail.
+let audio_cb_max_frames = 4096
+let music_xfade_samples = 256
+
 // Episode structure (6 episodes × 10 levels each). Within an episode,
 // levels 0..7 are the normal maps, level 8 is the boss / finale, level 9
 // is the secret level (reachable via a dedicated alt-elevator switch).
@@ -848,6 +857,20 @@ struct audio_ctx =
     ad: audio.audio_data*      // AUDIOT — AdLib SFX chunks + music
     sfx: adlib.sfx_state*      // AdLib SFX playback (owns its own OPL2 chip)
     digi: digi.player*         // 8-bit PCM playback (up to 4 slots)
+    // Music + mix scratch, owned here so the SDL audio callback (which
+    // runs on its own thread, decoupled from the render loop) can reach
+    // them through its userdata pointer. The main thread guards every
+    // mutation of these with sdl2.lock_audio / unlock_audio so the two
+    // threads never touch the OPL2 chips concurrently. `music_prev` is the
+    // outgoing track during a swap and `music_xfade` counts down its
+    // crossfade-out (see the music-swap block in the main loop). `mix_buf`
+    // is the int32 accumulation buffer the callback sums sources into
+    // before soft-clipping straight to SDL's stream.
+    music: imf.player*?        // current track (none = nothing loaded)
+    music_prev: imf.player*?   // outgoing track, crossfading out
+    music_chunk: int32         // AUDIOT chunk currently loaded (-1 = none)
+    music_xfade: int32         // samples remaining in the crossfade-out
+    mix_buf: int32[]
     // Sound submenu toggles. `sfx_on` gates the AdLib SFX fallback path
     // (synthesized FM hits — see sfx.trigger_*). `digi_on` gates the
     // digitized PCM path (Sound Blaster samples). `music_on` gates the
@@ -2723,6 +2746,34 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         io.write("Unknown test command: %s{arg}\n", stdout)
         void()
 
+// SDL audio callback — runs on SDL's dedicated audio thread, so it is fully
+// decoupled from the render loop and heavy supersampling / SSAA frame
+// hitches can't stutter the sound. It reads and advances all audio state
+// (music, the crossfading-out previous track, AdLib SFX, digi) through the
+// `audio_ctx` handed in as `userdata`; the main thread guards every
+// mutation of that state with sdl2.lock_audio / unlock_audio so the two
+// threads never touch the OPL2 chips or digi slots at once. `stream` is the
+// device buffer (interleaved stereo int16) and `len` its size in bytes (4
+// bytes per stereo frame). Non-capturing (references only module-level
+// bindings), so `&audio_callback` yields a plain C function pointer.
+// `stream` is typed uint8* (not any*) so the generated C trampoline matches
+// SDL_AudioCallback's `void(*)(void*, Uint8*, int)` exactly — an any* there
+// trips -Werror=incompatible-pointer-types against the real SDL field.
+let audio_callback = (userdata: any*, stream: uint8*, len: int32) ->
+    let ac = (audio_ctx*) userdata
+    let mut frames = len / 4
+    let cap = (int32) ac->mix_buf.len / 2
+    if frames > cap then frames = cap     // safety net; never trips at 1024
+    let out = int16[] { ptr = (int16*) stream, len = (int64) (frames * 2) }
+    ac->music_xfade = mixer.fill_frame(ac->mix_buf, out,
+        ac->music, ac->music_prev, ac->music_on,
+        (float64) ac->music_gain_pct / 100.0,
+        ac->music_xfade, music_xfade_samples,
+        ac->sfx,  (float64) ac->sfx_gain_pct  / 100.0,
+        ac->digi, (float64) ac->digi_gain_pct / 100.0,
+        frames, sfx.sample_rate)
+    void()
+
 // ============================================================
 // Entry point
 // ============================================================
@@ -2987,6 +3038,14 @@ let main = (args: str[]) ->
             ad = ad,
             sfx = adlib.init((float64) sfx.sample_rate),
             digi = digi.init(vs),
+            music = default(imf.player*?),
+            music_prev = default(imf.player*?),
+            music_chunk = -1,
+            music_xfade = 0,
+            // Sized for the largest plausible SDL callback request (stereo
+            // int32, audio_cb_max_frames per call); the device asks for
+            // 1024 frames, so this never fills.
+            mix_buf = alloc(int32[audio_cb_max_frames * 2] {})!,
             sfx_on = cfg.sfx_on,
             digi_on = cfg.digi_on,
             music_on = cfg.music_on,
@@ -3218,28 +3277,30 @@ let main = (args: str[]) ->
         return 1
 
     // Set up audio device and start music. Output is stereo (2 channels
-    // interleaved L,R,…) so enemy SFX can pan spatially via digi.
+    // interleaved L,R,…) so enemy SFX can pan spatially via digi. We run a
+    // callback (not the push/SDL_QueueAudio model): SDL drives audio
+    // generation on its own thread at the sound-card's rate, so a slow
+    // render frame (heavy supersampling / SSAA) can never starve it. The
+    // callback reaches all mutable audio state through `userdata = ac`; the
+    // main loop holds sdl2.lock_audio around every mutation of that state.
     let mut spec = sdl2.audio_spec {
         freq = sfx.sample_rate, format = sdl2.audio_s16sys,
         channels = 2u8, silence = 0u8, samples = 1024u16,
-        padding = 0u16, size = 0u32, callback = (any*) 0, userdata = (any*) 0
+        padding = 0u16, size = 0u32,
+        callback = &audio_callback, userdata = (any*) w->ac
     }
     let mut obtained = default(sdl2.audio_spec)
     let audio_dev = sdl2.open_audio((any*) 0, 0, &spec, &obtained, 0)
     // First-frame music = whatever fits the initial phase (title →
-    // WONDERIN). Phase-driven swap below keeps this in sync afterward.
-    let mut current_music_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
-    let mut ms = if audio_dev > 0u32 && current_music_chunk < ad->num_chunks then
+    // WONDERIN). Phase-driven swap below keeps this in sync afterward. The
+    // device opens paused, so load the track before unpausing — the
+    // callback can't fire (and read ac->music) until pause_audio(…, 0).
+    if audio_dev > 0u32 then
+        let init_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
+        if init_chunk < ad->num_chunks then
+            w->ac->music = some(font.music_load(ad, init_chunk))
+            w->ac->music_chunk = init_chunk
         sdl2.pause_audio(audio_dev, 0)
-        some(font.music_load(ad, current_music_chunk))
-    else default(imf.player*?)
-    // 1024 stereo frames per audio batch. `mix_buf` is int32 so the three
-    // source fills (music, AdLib SFX, digi PCM) can sum without the per-
-    // stage clipping that would otherwise starve later stages of headroom.
-    // `out_buf` receives the soft-clipped int16 samples that actually get
-    // queued to SDL (2048 int16 = 4096 bytes).
-    let mix_buf = alloc(int32[2048] {})!
-    let out_buf = alloc(int16[2048] {})!
     // Fresh screenshot directory each session — user copies any they want to keep.
     overlay.clear_screenshots()
 
@@ -3281,6 +3342,16 @@ let main = (args: str[]) ->
         // should_render predicate below to keep menu / static-phase
         // input response crisp even when the half-rate skip is active.
         let mut event_seen = false
+
+        // Hold the audio lock across everything that mutates audio state
+        // this iteration — input handling (menu cues), tick (gameplay SFX),
+        // and the music swap below — so the callback thread never reads the
+        // OPL2 chips / digi slots mid-write. Released before render_frame so
+        // the expensive 3D pass (and its vsync wait) runs fully concurrent
+        // with audio generation. In steady state this region is well under
+        // a millisecond; the only long holds are rare (a level build during
+        // a transition), where a brief audio hiccup is masked anyway.
+        if audio_dev > 0u32 then sdl2.lock_audio(audio_dev)
 
         // Poll events
         loop
@@ -3641,13 +3712,11 @@ let main = (args: str[]) ->
                                     else if section == 1 then
                                         w->ac->digi_on = !w->ac->digi_on
                                     else
+                                        // The callback gates music on this
+                                        // flag, so toggling off silences it
+                                        // within one buffer (~23 ms) — no
+                                        // queue to flush.
                                         w->ac->music_on = !w->ac->music_on
-                                        // Drop whatever music is mid-flight
-                                        // so a toggle-off silences instantly
-                                        // (the IMF chip keeps decoding into
-                                        // the queue otherwise).
-                                        if !w->ac->music_on && audio_dev > 0u32 then
-                                            sdl2.clear_audio(audio_dev)
                                     changed = true
                             else if k == sdl2.key_left || k == sdl2.key_right then
                                 let delta = if k == sdl2.key_left
@@ -4083,33 +4152,25 @@ let main = (args: str[]) ->
         // distinct from ack keys; see the high_scores arm above).
         // Sync the active music to whatever phase we're now in. Only swap
         // when the chunk actually changed, so we don't restart the IMF
-        // player every frame. Don't call `sdl2.clear_audio` here — the
-        // already-queued ~46 ms of old music drains naturally while the
-        // new chunk's samples take over, which sounds cleaner than the
-        // audible underrun a hard flush causes.
+        // player every frame. The outgoing track becomes `music_prev` and
+        // crossfades out (in the callback) while the new track fades in, so
+        // the swap doesn't click. Still under the audio lock taken above.
         let want_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
-        if want_chunk != current_music_chunk then
+        if want_chunk != w->ac->music_chunk then
             if audio_dev > 0u32 && want_chunk < ad->num_chunks then
-                match ms with
-                | some(m) ->
-                    // Render and queue a brief fade-out tail from the old
-                    // chip so the already-queued music ends with a smooth
-                    // taper instead of cutting hard to silence (audible as
-                    // a click). The new track has its own fade-in baked
-                    // in, so both sides of the transition ramp through 0.
-                    // 256 stereo frames = 1024 bytes ≈ 5.8 ms @ 44.1 kHz.
-                    let tail_frames = 256i32
-                    if w->ac->music_on then
-                        imf.fill_fade_out(m, mix_buf, tail_frames,
-                            (float64) w->ac->music_gain_pct / 100.0)
-                        mixer.soft_clip_to_int16(mix_buf, out_buf, tail_frames * 2)
-                        sdl2.queue_audio(audio_dev, (any*) out_buf.ptr,
-                            (uint32) tail_frames * 4u32)
-                        void()
-                    imf.destroy(m)
+                // Free the previous swap's outgoing player — its crossfade
+                // finished long ago and we hold the lock, so this is safe.
+                match w->ac->music_prev with
+                | some(pm) -> imf.destroy(pm)
                 | none -> void()
-                ms = some(font.music_load(ad, want_chunk))
-                current_music_chunk = want_chunk
+                w->ac->music_prev = w->ac->music
+                w->ac->music_xfade = if w->ac->music.is_some then music_xfade_samples else 0
+                w->ac->music = some(font.music_load(ad, want_chunk))
+                w->ac->music_chunk = want_chunk
+
+        // Audio state is now settled for this iteration — release the lock
+        // before the (possibly slow) render so the callback keeps running.
+        if audio_dev > 0u32 then sdl2.unlock_audio(audio_dev)
 
         // Frame-skip predicate. 3D phases (playing / dying / bj_victory /
         // death_cam) render every iteration — HUD-skip handled inside
@@ -4141,29 +4202,9 @@ let main = (args: str[]) ->
         if should_render && g->debug_overlay then
             overlay.render_debug(w->rc, w->font)
 
-        // Generate and queue audio: music -> AdLib SFX -> digi SFX -> SDL.
-        // Buffer is 1024 STEREO frames (2048 int16 values = 4096 bytes);
-        // drivers write L/R interleaved additively. Back-pressure threshold
-        // is also in bytes. Peak queue depth is roughly hi_water + 4096
-        // (one full fill above the skip threshold), so this caps SFX
-        // latency at ~70ms — close enough to the OG's ~23ms callback
-        // latency to feel snappy, with enough cushion that a single-frame
-        // render hitch doesn't underrun. Underruns on WASAPI/DirectSound
-        // are a momentary stutter; on PulseAudio/PipeWire they can
-        // disconnect the SDL_QueueAudio stream entirely, so if you tune
-        // this lower, test on Linux too.
-        let queue_hi_water = 8192u32   // bytes; ~46ms of stereo audio
-        let skip_audio = audio_dev == 0u32 ||
-            sdl2.queued_audio_size(audio_dev) >= queue_hi_water
-        if !skip_audio then
-            mixer.fill_frame(mix_buf, out_buf,
-                ms, ms.is_some && w->ac->music_on,
-                (float64) w->ac->music_gain_pct / 100.0,
-                w->ac->sfx,  (float64) w->ac->sfx_gain_pct  / 100.0,
-                w->ac->digi, (float64) w->ac->digi_gain_pct / 100.0,
-                1024, sfx.sample_rate)
-            sdl2.queue_audio(audio_dev, (any*) out_buf.ptr, 4096u32)
-            void()
+        // (Audio is produced by audio_callback on SDL's audio thread now,
+        // not here — that's what keeps it smooth when the render frame is
+        // slow. See the lock/unlock above and the callback definition.)
 
         // Upload framebuffer to texture and display. render_frame
         // produces a fully-composited dbuf (screen_w × screen_h) for

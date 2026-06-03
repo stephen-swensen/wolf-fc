@@ -142,25 +142,31 @@ module imf =
                 p->tick_accum = p->tick_accum - samples_per_tick
                 advance_tick(p)
 
-    // Render `count` samples of fade-out tail from the chip into `buf`
-    // (overwriting, not additive) with a linear gain ramp from 1.0 → 0.0.
-    // Called once at track swap before destroying the old player so the
-    // already-queued audio ends with a smooth taper instead of a hard
-    // cut from whatever the chip happened to be producing. The chip's
-    // event clock is intentionally NOT advanced — we're discarding this
-    // player after the call, so further register writes don't matter.
-    let fill_fade_out = (p: player*, buf: int32[], count: int32,
-                         user_gain: float64) ->
+    // Crossfade-out tail for a track that's being swapped away. Mixes
+    // `count` samples from the outgoing chip into `buf` *additively* with a
+    // linear gain ramp derived from `remaining`/`total` (1→0 across the
+    // window), so it can overlap the incoming track's own fade-in for a
+    // click-free swap (the incoming track stays continuous at the seam
+    // because the outgoing one is still ~full amplitude there). Like
+    // fill_fade_out, the event clock is intentionally NOT advanced — the
+    // player is being retired, so further register writes don't matter.
+    // Returns the remaining-sample count after this batch (0 once the fade
+    // completes); the caller stores it back for the next callback.
+    let fill_xfade_out = (p: player*, buf: int32[], count: int32,
+                          user_gain: float64, remaining: int32, total: int32) ->
         let scale = if user_gain < 0.0 then 0.0 else user_gain
-        let count_f = (float64) count
+        let total_f = (float64) total
+        let mut rem = remaining
         for i in 0..count
             let s = opl2.sample(p->chip)
-            let ramp = 1.0 - (float64) i / count_f
+            let ramp = if rem > 0 then (float64) rem / total_f else 0.0
             let scaled = (int32) ((float64) s * scale * ramp)
             let li = (int64) i * 2
             let ri = li + 1
-            buf[li] = scaled
-            buf[ri] = scaled
+            buf[li] = buf[li] + scaled
+            buf[ri] = buf[ri] + scaled
+            if rem > 0 then rem = rem - 1
+        rem
 
     // Tear down a player allocated by init_from_chunk. Frees the embedded
     // OPL2 chip too — `free(p)` alone would leak ~10 KB of chip state per
@@ -590,10 +596,16 @@ module mixer =
     // stereo frame count (e.g. 1024); buffers must hold at least
     // `frames * 2` slots. `music` may be none (no track loaded) or
     // silenced via `music_on=false`; both paths skip the imf.fill step.
-    // The three `*_gain` scalars are the Sound submenu's per-source Gain
-    // sliders (1.0 = default mix; 0.1..2.0 in practice).
+    // `music_prev` is the outgoing track during a swap: while `xfade_rem`
+    // is positive it's mixed in with a fade-out ramp so the swap doesn't
+    // click (see imf.fill_xfade_out). Returns the updated `xfade_rem` (0
+    // once the crossfade is done); the caller stores it back. The three
+    // `*_gain` scalars are the Sound submenu's per-source Gain sliders
+    // (1.0 = default mix; 0.1..2.0 in practice).
     let fill_frame = (mix_buf: int32[], out_buf: int16[],
-                      music: imf.player*?, music_on: bool, music_gain: float64,
+                      music: imf.player*?, music_prev: imf.player*?,
+                      music_on: bool, music_gain: float64,
+                      xfade_rem: int32, xfade_total: int32,
                       sfx: adlib.sfx_state*, sfx_gain: float64,
                       dg: digi.player*, digi_gain: float64,
                       frames: int32, sample_rate: int32) ->
@@ -603,6 +615,17 @@ module mixer =
         match music with
         | some(m) when music_on -> imf.fill(m, mix_buf, frames, sample_rate, music_gain)
         | _ -> void()
+        let mut new_rem = xfade_rem
+        if xfade_rem > 0 then
+            match music_prev with
+            | some(pm) when music_on ->
+                new_rem = imf.fill_xfade_out(pm, mix_buf, frames, music_gain,
+                    xfade_rem, xfade_total)
+            | _ ->
+                // Music off (or nothing to fade): just run the countdown
+                // down so a stale crossfade doesn't linger; render nothing.
+                new_rem = if xfade_rem > frames then xfade_rem - frames else 0
         adlib.fill(sfx, mix_buf, frames, sample_rate, sfx_gain)
         digi.fill(dg, mix_buf, frames, sample_rate, digi_gain)
         soft_clip_to_int16(mix_buf, out_buf, samples)
+        new_rem
