@@ -586,9 +586,9 @@ module menu =
             font.draw_text(rc, f, value_x, info_y + 9, "off", pal[pal_text])
         else
             // Resolved internal viewport buffer (vbuf_w × vbuf_h) plus
-            // the spelled-out mode the terse picker label abbreviates.
+            // the SSAA mode.
             font.draw_text(rc, f, value_x, info_y + 9,
-                "%d{rc->vbuf_w} x %d{rc->vbuf_h}   (%s{if rc->ssaa_mode == 1 then "vertical-only 2x" else "full 2x"} SSAA)", pal[pal_text])
+                "%d{rc->vbuf_w} x %d{rc->vbuf_h}   (%s{if rc->ssaa_mode == 1 then "vert 2x" else "full 2x"} SSAA)", pal[pal_text])
         font.draw_text(rc, f, label_x, info_y + 18,  "Texture", pal[pal_text])
         font.draw_text(rc, f, value_x, info_y + 18,
             "%d{rc->screen_w} x %d{rc->screen_h}   (%d{rc->scale}x supersample)", pal[pal_text])
