@@ -419,7 +419,9 @@ struct game =
     // Per-episode running totals for the episode-end victory screen.
     // Each completed level adds its kill / secret /
     // treasure percent + level time to these. ep_levels_played is
-    // the divisor for averages. ep_recorded_current is a dedup latch
+    // the divisor for averages — a divergence from the original's fixed
+    // divisor, so the level picker's "start mid-episode" play averages
+    // only the levels actually played. ep_recorded_current is a dedup latch
     // — set when the just-finished level was already recorded, so
     // bj_victory + intermission paths don't double-count the boss
     // level. Reset on new game / next episode.
