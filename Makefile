@@ -80,6 +80,8 @@ GEN_C  := $(BUILD_DIR)/wolf-fc.c
 GEN_FC := $(BUILD_DIR)/install_path.fc
 ifneq ($(IS_WINDOWS),)
     WIN_RES := $(BUILD_DIR)/wolf-fc-res.o
+    # Generated header that feeds the version to wolf-fc.rc's VERSIONINFO.
+    GEN_VER := $(BUILD_DIR)/version.rc.h
 endif
 
 # Source list. Order doesn't matter to fcc, but keep main.fc last for
@@ -121,6 +123,22 @@ VERSION := $(shell ts=$$(git log -1 --format=%ct HEAD 2>/dev/null); \
     echo '0.0.0.0'; \
   fi)
 
+# Comma-separated bare-int form of VERSION for the Windows VERSIONINFO
+# FILEVERSION field (e.g. 26,6,3,42799). It must NOT carry the zero-padding
+# that %y/%m/%d add: windres reads a field like "06"/"09" as octal and
+# rejects 8/9. date's GNU `%-` modifier drops the pad (SS is already
+# unpadded). Windows-only — macOS's BSD date lacks `%-`, and nothing but
+# windres consumes this. Same git-timestamp source as VERSION, so the two
+# stay in lockstep.
+ifneq ($(IS_WINDOWS),)
+VERSION_CSV := $(shell ts=$$(git log -1 --format=%ct HEAD 2>/dev/null); \
+  if [ -n "$$ts" ]; then \
+    printf '%s,%d' "$$(date -u -d @$$ts +%-y,%-m,%-d)" $$(( (ts % 86400) / 2 )); \
+  else \
+    echo '0,0,0,0'; \
+  fi)
+endif
+
 print-version:
 	@echo $(VERSION)
 
@@ -141,10 +159,25 @@ ifneq ($(IS_WINDOWS),)
 # regenerates it. (See the MAKECMDGOALS gate around the icon rules below
 # — that's what keeps make from chasing the inner SVG→PNG→ICO chain when
 # fresh-clone mtime skew makes a prereq look newer than the .ico.)
-$(WIN_RES): $(WIN_RC) | $(BUILD_DIR) $(WIN_ICO)
+#
+# The second -I puts $(BUILD_DIR) on the include search so the .rc can pull
+# in version.rc.h; $(GEN_VER) is a real (mtime-tracked) prerequisite so a
+# version bump re-runs windres and the final link.
+$(WIN_RES): $(WIN_RC) $(GEN_VER) | $(BUILD_DIR) $(WIN_ICO)
 	windres -I "$$(cygpath -am packaging)" \
+	        -I "$$(cygpath -am $(BUILD_DIR))" \
 	        "$$(cygpath -am $(WIN_RC))" \
 	        -O coff -o $@
+
+# version.rc.h supplies wolf-fc.rc's FILEVERSION/PRODUCTVERSION + the
+# string forms. FORCE-rebuilt every run (Make can't see commit-driven
+# VERSION changes), but the cmp+mv keeps the mtime stable when the value is
+# unchanged so windres only re-runs when the version actually moves. Same
+# idiom as $(GEN_FC) below.
+$(GEN_VER): FORCE | $(BUILD_DIR)
+	@printf '#define WOLFFC_VER_CSV %s\n#define WOLFFC_VER_STR "%s"\n' \
+		'$(VERSION_CSV)' '$(VERSION)' > $@.tmp
+	@if cmp -s $@.tmp $@ 2>/dev/null; then rm $@.tmp; else mv $@.tmp $@; fi
 endif
 
 $(GEN_C): $(SRCS_FC) $(GEN_FC) | $(BUILD_DIR)
