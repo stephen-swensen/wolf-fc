@@ -1376,10 +1376,15 @@ let build_level = (lv_data: maps.level*, sprite_start: int32, difficulty: int32,
     for i in 0..(map_size * map_size)
         if lv->pushwall_tiles[i] then pw = pw + 1
     lv->total_pushwalls = pw
+    // The original game counts the 1-UP among a level's treasures: both
+    // the per-level treasure total and the collected-treasure tally
+    // include the four bonus items AND the full-heal pickup. Counting
+    // extra_life only in the numerator (pickups.check) without the
+    // denominator here would let a 1-UP map read over 100%.
     let mut treas = 0
     for i in 0..lv->num_sprites
         match lv->sprites[i].item_type with
-        | cross | chalice | bible | crown -> treas = treas + 1
+        | cross | chalice | bible | crown | extra_life -> treas = treas + 1
         | _ -> void()
     lv->total_treasures = treas
     lv

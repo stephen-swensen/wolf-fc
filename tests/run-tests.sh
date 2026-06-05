@@ -168,7 +168,7 @@ assert_contains "pickup:extra-life-grants-ammo-and-life" \
     "health=100 ammo=33 score=0 lives=4"
 assert_contains "pickup:extra-life-counts-as-treasure" \
     "goto:14,55 counters" \
-    "treasures=1/22"
+    "treasures=1/23"
 # bo_gibs (tiles 57 & 61) heals +1 HP only when the player is at or below
 # 10 HP. E1M2 has a single gibs at (60,39). At full HP the pickup is
 # refused (sprite stays on the floor). At HP=10 it's accepted and heals
@@ -325,7 +325,7 @@ assert_contains "probe:detects-wall" "goto:29,57 probe" "open"
 section "death flow"
 # Total enemy count on E1M1 (hard difficulty, the default) — 37 live + 1 corpse.
 # total_kills mirrors the live count; corpses aren't counted.
-assert_contains "counters:initial" "counters" "kills=0/37 secrets=0/5 treasures=0/22"
+assert_contains "counters:initial" "counters" "kills=0/37 secrets=0/5 treasures=0/23"
 # Damaging the player drops their HP without changing phase.
 assert_contains "damage:hp-drops-not-dying" \
     "sethp:5 counters phase" \
@@ -443,7 +443,7 @@ assert_contains "counters:kill-increments" \
 # Treasure pickup counts.
 assert_contains "counters:treasure-cross-pickup" \
     "goto:7,14 counters" \
-    "treasures=1/22"
+    "treasures=1/23"
 
 section "difficulty"
 # Test mode launches at gd_hard (3) for full-roster regression coverage,

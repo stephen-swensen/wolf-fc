@@ -18,33 +18,19 @@ tag it needed *no* golden churn: the regression scripts never land a
 `rnd_byte` roll in the narrow hitchance gap (≤ dist·8 wide) the flag
 opens, so no hit/miss outcome flipped. The flag is now exercised directly
 via a new `vis=` column on `enemylist` and two `combat:enemy-sight`
-assertions, so the behavior can't silently regress. What remains is open
+assertions, so the behavior can't silently regress. **[level-1]** (count
+the 1-UP in the treasure denominator, matching the original) was applied
+2026-06-04 with its golden re-pin — only the three level-0 treasure
+assertions churned (`x/22 → x/23`); the predicted churn on other levels
+never materialized because those maps carry no 1-UP. **[cla-door-1]** was
+investigated and retired as a non-bug (the door-LOS code is already
+faithful to the original) — see Decisions below. What remains is open
 work — each item is self-contained for a solo session, with the audit ID
 in brackets for traceability. Tags:
 **[golden re-pin]** = changes RNG draw order or pinned stats, so it must
 update `tests/run-tests.sh` golden values in the same commit;
 **[needs OG source]** = can't be settled as faithful-vs-divergent
 without restoring the `../wolf3d` / `../wolf4sdl` reference trees.
-
-### Architecture / behavior — re-pins golden values
-
-- **[level-1] 1-UP counts in the treasure numerator but not the
-  denominator** (`main.fc:1302`, `level.fc:402`). `pickups.check` bumps
-  `g->treasures` for `extra_life`, but `build_level` counts only
-  `cross|chalice|bible|crown` into `total_treasures` → a map with a 1-UP
-  can exceed 100% (level 0: 23/22). Fix: add `extra_life` to the count
-  arm in `build_level`. **[golden re-pin]** — `tests/run-tests.sh` lines
-  171/431 `1/22→1/23`, 313 `0/22→0/23`, 405 `0/62→0/63`, 901 `0/66→0/67`.
-
-- **[cla-door-1] door-transparency test compares an absolute coord to a
-  within-tile threshold** (`combat.fc:726-727, 757-758`). `intercept` is
-  absolute world-y (tile index in its integer part) but is compared to
-  `door_pos*256`; the renderer (`render.fc:261-262`) correctly compares
-  only the fractional part. Fix: mirror the renderer —
-  `let frac = mid - math.floor(mid); if frac >= door_pos[...]` (drop the
-  `*256`), both X and Y passes, `>=`; rewrite the `combat.fc:685-693`
-  comment that mislabels this as faithful. **[golden re-pin]** — enemy
-  LOS through doors changes.
 
 ### Fidelity / behavior
 
@@ -184,6 +170,39 @@ re-proposed. Wolf-fc targets the GOODTIMES build of WL6 (the 1.4
 GT/ID/Activision re-release that became the Steam/GOG version);
 features the GOODTIMES executable never references are dead data, not
 fidelity gaps.
+
+### Door-LOS tile-coord transparency quirk is faithful ([cla-door-1], retired 2026-06-04)
+
+The 2026-05 audit flagged the enemy line-of-sight door check
+(`enemies.ai.check_line_clear`, `combat.fc`) as buggy: it compares an
+*absolute* intercept (tile index in the integer part) against
+`door_pos * 256.0`, whereas the raycaster (`render.fc`) compares only the
+within-tile fraction. The proposed "fix" was to make the LOS check mirror
+the renderer. We will NOT do this — the current code is already faithful,
+and the renderer-vs-LOS mismatch is reproduced straight from the original.
+
+The original ships **two different** door-occlusion routines with
+**different** comparisons, and wolf-fc mirrors each:
+
+- Raycaster (id `wl_draw.cpp`): `(word)yintbuf < doorposition[...]`. The
+  `(word)` cast keeps only the low 16 bits — the within-tile fraction. →
+  our renderer's `fr = wm − floor(wm); fr >= door_pos`.
+- Sight check (id `CheckLine`, `wl_state.cpp`):
+  `intercept = xfrac − xstep/2; if (intercept > doorposition[value])`.
+  Here `intercept` is **not** masked to a word, so the tile coordinate
+  leaks into the comparison (1/256-tile encoding puts `tile·256` inside
+  `doorposition`'s 0..0xFFFF range). → our `intercept > door_pos * 256.0`.
+
+The scaling is exact: id's `intercept₂₅₆ > doorposition₁₆` with
+`intercept₂₅₆ = tile_units·256` and `doorposition₁₆ = door_pos·65536`
+reduces to `tile_units > door_pos·256`, which is what the code computes;
+the midline term (`yfrac` taken after the increment, minus `ystep/2`)
+matches `CheckLine` as well. The visible consequence — low-tile-coord
+doors become see-through at ~4% open while tile-63 doors stay opaque to
+~25% — is a real quirk of id's `CheckLine`, not ours. The
+`combat.fc` comment that documents it as "the original's quirk, not a
+bug" is accurate and stays. Making the LOS check fractional would be a
+*divergence* from the original, not a fix.
 
 ### Defensive bounds-guards on well-formed data (retired 2026-06-01)
 
