@@ -62,13 +62,6 @@ without restoring the `../wolf3d` / `../wolf4sdl` reference trees.
   modulator alone when the carrier is off. FM mode unchanged; audible
   only on rare additive instruments.
 
-- **[cutscenes-3] zero-total ratio defaults disagree**
-  (`cutscenes.fc:554-561` vs `main.fc:1369-1371`). A category with total
-  0 shows 0% in the per-level intermission but contributes 100 to the
-  episode-end average. Fix: pick one convention, apply in both
-  `compute_ratio` and `record_level_for_episode`. **[needs OG source]**
-  to confirm 0-vs-100. Test-safe (no pinned goldens).
-
 - **[main-2] `add_score` can stack multiple 1-UP cues in one frame**
   (`main.fc:929-939`). Crossing >1 40k milestone in one add fires
   `bonus1up` per milestone (lives are correctly clamped). Cosmetic. Fix:

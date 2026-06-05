@@ -1451,9 +1451,14 @@ let reload_level_data = (w: world*, vs: const vswap.vswap_file*) ->
 // level actually adds.
 let record_level_for_episode = (g: game*) ->
     if g->ep_recorded_current then return
-    let kr = if g->total_kills > 0 then 100 * g->kills / g->total_kills else 100
-    let sr = if g->total_secrets > 0 then 100 * g->secrets / g->total_secrets else 100
-    let tr = if g->total_treasures > 0 then 100 * g->treasures / g->total_treasures else 100
+    // A category with no items to find counts as 0% — same convention
+    // the per-level intermission uses (cutscenes.compute_ratio). The
+    // original game computes each ratio once with a zero-total guard,
+    // displays it, and folds that same value into the per-episode
+    // average, so an empty category contributes 0 to both, not 100.
+    let kr = if g->total_kills > 0 then 100 * g->kills / g->total_kills else 0
+    let sr = if g->total_secrets > 0 then 100 * g->secrets / g->total_secrets else 0
+    let tr = if g->total_treasures > 0 then 100 * g->treasures / g->total_treasures else 0
     g->ep_kr_total = g->ep_kr_total + kr
     g->ep_sr_total = g->ep_sr_total + sr
     g->ep_tr_total = g->ep_tr_total + tr
