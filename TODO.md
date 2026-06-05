@@ -91,15 +91,6 @@ without restoring the `../wolf3d` / `../wolf4sdl` reference trees.
   an accepted approximation. Test-safe (text-only assertions).
   **[needs OG source]** to confirm the OG metric.
 
-- **[player-3] static/enemy collision radii deviate from OG and aren't
-  opt-in** (`player.fc:39-50`). `sprite_block_half`/`enemy_block_r2` are
-  tuned tighter than the OG's 1-tile spacing, applied unconditionally
-  (incl. the pinned test geometry) and absent from the divergence ledger.
-  **Decision needed:** (a) gate behind an opt-in toggle defaulting to OG
-  1-tile blocking (keeps OG path bit-stable), or (b) accept as a
-  permanent baseline and record it in the divergence ledger. Not a
-  code-correctness bug.
-
 - **[main-2] `add_score` can stack multiple 1-UP cues in one frame**
   (`main.fc:929-939`). Crossing >1 40k milestone in one add fires
   `bonus1up` per milestone (lives are correctly clamped). Cosmetic. Fix:
