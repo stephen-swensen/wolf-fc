@@ -493,7 +493,7 @@ module billboards =
                 x = s->x,
                 y = s->y,
                 shape_page = s->shape_page,
-                dist_sq = dx * dx + dy * dy,
+                depth = dx * g->dir_x + dy * g->dir_y,
                 alpha = 1.0
             }
             n = n + 1
@@ -520,7 +520,7 @@ module billboards =
                 x = e->x,
                 y = e->y,
                 shape_page = sprite_start + page_rel,
-                dist_sq = dx * dx + dy * dy,
+                depth = dx * g->dir_x + dy * g->dir_y,
                 alpha = alpha
             }
             n = n + 1
@@ -533,7 +533,7 @@ module billboards =
                 x = p->x,
                 y = p->y,
                 shape_page = projectiles.sprite_page(sprite_start, p),
-                dist_sq = dx * dx + dy * dy,
+                depth = dx * g->dir_x + dy * g->dir_y,
                 alpha = 1.0
             }
             n = n + 1
@@ -550,18 +550,18 @@ module billboards =
                 x = g->bj_x,
                 y = g->bj_y,
                 shape_page = sprite_start + page_rel,
-                dist_sq = dx * dx + dy * dy,
+                depth = dx * g->dir_x + dy * g->dir_y,
                 alpha = 1.0
             }
             n = n + 1
         rc->num_billboards = n
-        // Insertion sort descending by dist_sq (far → near).
+        // Insertion sort descending by perpendicular depth (far → near).
         for i in 1..n
             let key = rc->billboards[i]
             let mut j = i - 1
             loop
                 if j < 0 then break
-                if rc->billboards[j].dist_sq >= key.dist_sq then break
+                if rc->billboards[j].depth >= key.depth then break
                 rc->billboards[j + 1] = rc->billboards[j]
                 j = j - 1
             rc->billboards[j + 1] = key

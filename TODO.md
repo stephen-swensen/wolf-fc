@@ -83,14 +83,6 @@ without restoring the `../wolf3d` / `../wolf4sdl` reference trees.
   `compute_ratio` and `record_level_for_episode`. **[needs OG source]**
   to confirm 0-vs-100. Test-safe (no pinned goldens).
 
-- **[render-2] billboard sort uses Euclidean `dist_sq`, z-test uses
-  perpendicular `ty`** (`render.fc:560-569`; z-test `:669`). Near screen
-  edges the orderings disagree, so a farther-perpendicular sprite can
-  paint over a nearer one. Fix: sort by `ty` (via the available
-  `inv_det`) to match the wall z-buffer metric, or document Euclidean as
-  an accepted approximation. Test-safe (text-only assertions).
-  **[needs OG source]** to confirm the OG metric.
-
 - **[main-2] `add_score` can stack multiple 1-UP cues in one frame**
   (`main.fc:929-939`). Crossing >1 40k milestone in one add fires
   `bonus1up` per milestone (lives are correctly clamped). Cosmetic. Fix:

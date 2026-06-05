@@ -745,7 +745,13 @@ struct billboard =
     x: float64
     y: float64
     shape_page: int32
-    dist_sq: float64
+    // Perpendicular depth (distance along the view axis), not Euclidean
+    // range. This is the metric the original sorts and depth-tests
+    // against, and it matches the wall z-buffer so sprite ordering is
+    // consistent with sprite-vs-wall clipping. Sorting by Euclidean
+    // range instead would mis-order two near-equidistant sprites when
+    // one is well off-axis.
+    depth: float64
     // Alpha multiplier for the sprite. 1.0 = fully opaque (default for
     // statics, projectiles, live enemies). 0..1 = blended against the
     // existing vbuf pixel — used by Mommy Mode to fade dying enemies
