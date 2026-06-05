@@ -17,17 +17,17 @@ module data_path =
     // (whitespace-trimmed) first line, else none.
     private let read_override = () ->
         match paths.wolf_data_dir() with
-        | none -> default(str?)
+        | none -> none(str)
         | some(dir) ->
             defer free(dir)
             let path = alloc("%s{dir}/data_dir.txt")!
             defer free(path)
             match io.read_all(path) with
-            | none -> default(str?)
+            | none -> none(str)
             | some(contents) ->
                 defer free(contents)
                 let trimmed = text.trim(contents)
-                if trimmed.len == 0 then default(str?)
+                if trimmed.len == 0 then none(str)
                 else some(alloc("%s{trimmed}")!)
 
     // Resolve the data directory once at startup. Search order:

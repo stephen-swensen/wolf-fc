@@ -985,7 +985,7 @@ module spawn =
             some(enemy_spawn_info { kind = enemies.enemy_kind.pinky, patrol = false, dir4 = 0, dead = false, tier = 0 })
         else if tile == 227 then
             some(enemy_spawn_info { kind = enemies.enemy_kind.inky, patrol = false, dir4 = 0, dead = false, tier = 0 })
-        else default(enemy_spawn_info?)
+        else none(enemy_spawn_info)
 
     // Allocate one enemy entry from plane-1 data. dir4 0..3 is
     // east/north/west/south; multiplied by 2 to land on the cardinal

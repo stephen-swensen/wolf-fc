@@ -146,7 +146,7 @@ module menu =
             else some(option_kind.slider)
         | options -> some(row_kind(sel))
         | changeview -> some(option_kind.slider)
-        | _ -> default(option_kind?)
+        | _ -> none(option_kind)
 
     private let diff_label = (i: int32) ->
         match i with

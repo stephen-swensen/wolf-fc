@@ -28,7 +28,7 @@ module paths =
         | some(override) -> some(alloc("%s{override}")!)
         | none ->
             match sys.home_dir() with
-            | none -> default(str?)
+            | none -> none(str)
             | some(home) -> some(alloc("%s{home}/.wolf-fc")!)
 
     // Ensure $WOLF_FC_HOME/saves (or ~/.wolf-fc/saves) exists.
@@ -211,7 +211,7 @@ module config =
 
     private let config_path = () ->
         match paths.wolf_data_dir() with
-        | none -> default(str?)
+        | none -> none(str)
         | some(dir) ->
             defer free(dir)
             some(alloc("%s{dir}/config")!)
@@ -429,7 +429,7 @@ module save =
 
     private let slot_path = (slot: int32) ->
         match paths.wolf_data_dir() with
-        | none -> default(str?)
+        | none -> none(str)
         | some(dir) ->
             defer free(dir)
             let p = alloc("%s{dir}/saves/slot_%02d{slot}.sav")!
@@ -890,7 +890,7 @@ module save =
                         let mut level_num = 0
                         let mut difficulty = 0
                         let mut score = 0
-                        let mut label_src = default(const str?)
+                        let mut label_src = none(const str)
                         let mut valid = false
                         for li in 0..(int32) lines.len
                             let line = lines[(int64) li]
@@ -1052,7 +1052,7 @@ module highscore =
 
     private let file_path = () ->
         match paths.wolf_data_dir() with
-        | none -> default(str?)
+        | none -> none(str)
         | some(dir) ->
             defer free(dir)
             some(alloc("%s{dir}/highscores")!)

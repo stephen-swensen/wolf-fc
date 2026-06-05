@@ -1325,7 +1325,7 @@ let build_highscore_ctx = () ->
     highscore.load(scores)
     alloc(highscore_ctx {
         scores       = scores,
-        edit_index   = default(int32?),
+        edit_index   = none(int32),
         edit_active  = false,
         edit_buf     = alloc(uint8[highscore.max_name_len + 1] {})!,
         edit_len     = 0,
@@ -2836,8 +2836,8 @@ let main = (args: str[]) ->
     //                           2 (the OG-doubled raycaster density);
     //                           values below 2 are clamped up.
     let mut test_mode = false
-    let mut start_level = default(int32?)
-    let mut start_difficulty = default(int32?)
+    let mut start_level = none(int32)
+    let mut start_difficulty = none(int32)
     let mut start_near_boss = false
     let mut start_near_goldkey = false
     let mut start_near_silverkey = false
@@ -2986,7 +2986,7 @@ let main = (args: str[]) ->
         bj_dir = dir.nodir, bj_distance = 0.0, bj_run_tiles_left = 0,
         bj_anim_frame = 0, bj_anim_timer = 0.0,
         bj_phase = 0, bj_yelled = false,
-        dc_sub = 0, dc_timer = 0.0, dc_boss_idx = default(int32?),
+        dc_sub = 0, dc_timer = 0.0, dc_boss_idx = none(int32),
         dc_kill_x = 0.0, dc_kill_y = 0.0, dc_fade = 0.0,
         endart_data = alloc(uint8[0] {})!,
         endart_page_offsets = alloc(int32[0] {})!,
@@ -3057,8 +3057,8 @@ let main = (args: str[]) ->
             ad = ad,
             sfx = adlib.init((float64) sfx.sample_rate),
             digi = digi.init(vs),
-            music = default(imf.player*?),
-            music_prev = default(imf.player*?),
+            music = none(imf.player*),
+            music_prev = none(imf.player*),
             music_chunk = -1,
             music_xfade = 0,
             // Sized for the largest plausible SDL callback request (stereo
