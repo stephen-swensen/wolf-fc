@@ -121,7 +121,7 @@ What's left in `main.fc` is cross-subsystem only:
 
 ### FC module rules that bite
 
-- **Non-entry-point `.fc` files contain modules only.** File-scope `let`/`struct`/`union` is allowed only in the file with `let main`.
+- **Only the entry-point file (`main.fc`) may have top-level `let` bindings.** Top-level `struct`/`union`/`module` are allowed in *any* `.fc` file (and `struct`/`union`/`let` may also live inside a module body). In practice our non-`main` files are still organized as modules, but a top-level type in a leaf file is permitted when it has no natural module home.
 - **No circular module references.** When two modules mutually need each other, break the cycle by either (a) parameterizing the contract instead of cross-importing (e.g. `doors.update` takes `player_radius`), or (b) extracting the shared piece into a leaf module (`paths` in `save.fc`).
 
 ## Key Data Formats (since wolf4sdl is GPL, document here)

@@ -855,16 +855,35 @@ struct render_ctx =
     // captures regardless of skip cadence). Consumed + cleared at the
     // top of render_frame.
     force_redraw: bool
+    // The vsync interval in ms (1000/refresh_rate), derived from the active
+    // desktop display mode at startup and re-derived on a cross-monitor move.
+    // 0 when SDL reports an unknown refresh rate. This is a genuine engine
+    // timing parameter, NOT a debug field: the main loop's frame-pacing snap
+    // rounds dt to whole multiples of it (see the snap in the game loop), so
+    // it IS read by the simulation. The debug overlay also uses it as the
+    // fixed denominator its work / drop / jitter readouts are judged against.
+    refresh_interval_ms: float64
     // Debug overlay (TAB+D / --debug) live perf state, updated once per
-    // main-loop iteration by debug_update_timing. dbg_fps / dbg_ms are
-    // EMA-smoothed for a steady readout; dbg_skipped accumulates the
-    // estimated dropped-vsync frames from hitches; dbg_hitch_flash counts
-    // down so the FPS line shows red for a moment after a hitch. Purely
-    // a display concern — never read by the simulation, so test mode
-    // (which doesn't run the main loop) leaves these at zero.
+    // main-loop iteration by debug_update_timing. dbg_fps / dbg_ms track the
+    // full loop period (top-of-loop to top-of-loop, including the vsync wait
+    // in present()) — that's the true cadence, so dbg_fps reads the refresh
+    // rate under clean vsync. dbg_work_ms is the EMA of just the per-frame
+    // *work* (everything before present blocks) — the number that actually
+    // tells you how much budget headroom is left, judged against
+    // refresh_interval_ms (or the measured cadence when that's 0). dbg_jitter_ms
+    // is the EMA of |period − interval| — the sub-frame wobble in when present()
+    // returns (scheduler / compositor wake latency), the "how tight is my
+    // timing" signal; it does NOT mean frames were lost. dbg_drops, by
+    // contrast, accumulates only genuinely missed vblanks (a period spanning
+    // 1.5+ intervals). dbg_hitch_flash counts down so the readout shows red for
+    // a moment after a real drop. Purely a display concern — never read by the
+    // simulation, so test mode (which doesn't run the main loop) leaves these
+    // at zero.
     dbg_fps: float64
     dbg_ms: float64
-    dbg_skipped: int32
+    dbg_work_ms: float64
+    dbg_jitter_ms: float64
+    dbg_drops: int32
     dbg_hitch_flash: float64
 
 // Sound system handle: loaded-asset refs + SFX playback state.
@@ -1146,7 +1165,9 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
         screenshot_slot = 0,
         frame_counter = 0u64,
         force_redraw = true,
-        dbg_fps = 0.0, dbg_ms = 0.0, dbg_skipped = 0, dbg_hitch_flash = 0.0
+        refresh_interval_ms = 0.0,
+        dbg_fps = 0.0, dbg_ms = 0.0, dbg_work_ms = 0.0,
+        dbg_jitter_ms = 0.0, dbg_drops = 0, dbg_hitch_flash = 0.0
     })!
     rc
 
@@ -1198,6 +1219,19 @@ let pick_scale_factor = (out_w: int32, out_h: int32, fb_w: int32, fb_h: int32,
                           max_scale: int32, scale_factor: int32) ->
     if scale_factor != 0 then scale_factor
     else compute_scale_factor(out_w, out_h, fb_w, fb_h, max_scale)
+
+// The vsync interval (ms per refresh) of whatever display the window is on,
+// from its active desktop mode (so a drag to a different-Hz monitor re-derives
+// it). Drives both the main-loop frame-pacing snap and the debug overlay's
+// budget. 0 when SDL reports an unknown refresh rate (some drivers / headless)
+// — the snap then disables itself and the overlay falls back to the measured
+// loop cadence as its denominator.
+let query_refresh_interval_ms = (win: any*) ->
+    let disp = sdl2.window_display_index(win)
+    let mut mode = default(sdl_display_mode)
+    if disp >= 0 && sdl2.current_display_mode(disp, (any*) &mode) == 0 && mode.refresh_rate > 0 then
+        1000.0 / (float64) mode.refresh_rate
+    else 0.0
 
 // Free + realloc the size-dependent buffers (fb if fb_w changed,
 // title_bg if fb_w changed, dbuf + zbuf always when scale or fb_w
@@ -3288,6 +3322,12 @@ let main = (args: str[]) ->
     apply_scale_factor(w, vg, pal, optimal_scale)
     w->rc->drawable_w = out_w
     w->rc->drawable_h = out_h
+    // Vsync interval — drives the frame-pacing snap and the overlay budget.
+    w->rc->refresh_interval_ms = query_refresh_interval_ms(win)
+    if w->rc->refresh_interval_ms > 0.0 then
+        io.write("Display: %4.1f{1000.0 / w->rc->refresh_interval_ms} Hz (%4.1f{w->rc->refresh_interval_ms} ms frame interval)\n", stdout)
+    else
+        io.write("Display: refresh rate unknown — frame-pacing snap off, debug overlay budget falls back to measured cadence\n", stdout)
     // Mutable so the Change View menu can resize on the fly when
     // fb_w changes (the SS factor is sticky across view-mode changes).
     let mut runtime_screen_w = w->rc->screen_w
@@ -3344,6 +3384,11 @@ let main = (args: str[]) ->
     // jittery 16/17 by ms quantization) from a genuinely late one.
     let perf_freq = sdl2.get_perf_frequency()
     let mut last_perf = sdl2.get_perf_counter()
+    // Per-frame work time (top-of-loop to just-before-present, i.e. everything
+    // except the vsync wait present() blocks on) from the previous rendered
+    // iteration. Folded into the debug overlay's EMA at the top of the next
+    // loop so it shows the same frame the full-period sample describes.
+    let mut prev_work_ms = 0.0
     let mut event = default(sdl2.sdl_event)
 
     loop
@@ -3355,18 +3400,40 @@ let main = (args: str[]) ->
         let mut dt = (float64) (now - last_ticks) / 1000.0
         last_ticks = now
         if dt > 0.1 then dt = 0.1    // clamp large spikes
+        // Frame-pacing: under vsync the real time between displayed frames is
+        // an exact multiple of the refresh interval — the ms wobble in `now`
+        // (coarse GetTicks + scheduler wake jitter) is just noise around it.
+        // Snap dt to the nearest whole number of refresh intervals so the
+        // variable-dt simulation advances in lockstep with the display and
+        // motion doesn't micro-judder. CRUCIAL caveat: only snap when the
+        // frame actually landed NEAR a clean multiple (within `snap_tol`), i.e.
+        // we're genuinely vsync-locked. When vsync isn't honored — e.g. a
+        // compositor that drops sync on battery, where periods free-run at
+        // 6/13/31 ms — the periods aren't multiples of anything, and rounding
+        // them to 16.67/33.3 would systematically run the sim fast or slow. In
+        // that case leave dt raw (the honest elapsed time). Only active when
+        // the refresh rate is known (refresh_interval_ms > 0).
+        if w->rc->refresh_interval_ms > 0.0 then
+            let interval_s = w->rc->refresh_interval_ms / 1000.0
+            let n = (int32) (dt / interval_s + 0.5)
+            if n >= 1 then
+                let snapped = (float64) n * interval_s
+                let err = if dt > snapped then dt - snapped else snapped - dt
+                let snap_tol = interval_s * 0.2
+                if err <= snap_tol then dt = snapped
 
         // Debug-overlay perf accounting. Runs every iteration (even on
         // skipped-render frames) so FPS tracks the true loop cadence;
         // the readout itself is only drawn when the overlay is on. Uses
         // the high-res counter — top-of-loop to top-of-loop is the full
-        // frame period, including the vsync wait in present().
+        // frame period (the cadence, incl. the vsync wait in present()),
+        // while prev_work_ms is just the work that filled that period.
         let now_perf = sdl2.get_perf_counter()
         let frame_ms = if perf_freq > 0u64 then
             (float64) (now_perf - last_perf) / (float64) perf_freq * 1000.0
         else 0.0
         last_perf = now_perf
-        overlay.debug_update_timing(w->rc, frame_ms)
+        overlay.debug_update_timing(w->rc, frame_ms, prev_work_ms)
 
         w->rc->frame_counter = w->rc->frame_counter + 1u64
         // Tracks "user did something this iteration" — used by the
@@ -3404,6 +3471,8 @@ let main = (args: str[]) ->
                 sdl2.get_output_size(ren, &new_out_w, &new_out_h)
                 w->rc->drawable_w = new_out_w
                 w->rc->drawable_h = new_out_h
+                // The window may have crossed to a different-refresh display.
+                w->rc->refresh_interval_ms = query_refresh_interval_ms(win)
                 let new_scale = pick_scale_factor(new_out_w, new_out_h, w->rc->fb_w, w->rc->fb_h, max_scale, g->scale_factor)
                 if apply_scale_factor(w, vg, pal, new_scale) then
                     io.write("Drawable %d{new_out_w}x%d{new_out_h} -> super-sample %d{new_scale}x\n", stdout)
@@ -4257,6 +4326,16 @@ let main = (args: str[]) ->
             != ((int64) runtime_actual_h * (int64) w->rc->drawable_w)
         if needs_clear then sdl2.clear(ren)
         sdl2.render_copy(ren, tex, (any*) 0, (any*) 0)
+
+        // Stamp the per-frame work time just before present() blocks on
+        // vsync — this is the whole "prepare the frame" span (sim tick +
+        // 3D render + overlay + texture upload + render_copy). Only kept
+        // from rendered frames: a skipped static-phase iteration does
+        // almost nothing, and folding that into the EMA would understate
+        // the real cost of the frames the player actually sees.
+        if should_render && perf_freq > 0u64 then
+            prev_work_ms = (float64) (sdl2.get_perf_counter() - now_perf)
+                / (float64) perf_freq * 1000.0
         sdl2.present(ren)
 
     // Cleanup

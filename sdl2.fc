@@ -14,6 +14,17 @@
 // and high-DPI), the accelerated 2D renderer used only as a blit
 // primitive, streaming textures, keyboard events, and the audio device.
 
+// Layout mirror of SDL's tagless `SDL_DisplayMode` typedef, which can't be
+// bound as an `extern struct` (see current_display_mode in the module below).
+// Lives at file scope because a `from` C-interop module body permits only
+// extern declarations. Only `refresh_rate` is read; the rest align offsets.
+struct sdl_display_mode =
+    format: uint32
+    w: int32
+    h: int32
+    refresh_rate: int32
+    driverdata: any*
+
 module sdl2 from "SDL2/SDL.h" =
     // --- Extern structs ---
     extern struct SDL_Rect as rect =
@@ -123,6 +134,17 @@ module sdl2 from "SDL2/SDL.h" =
     extern SDL_GetNumVideoDisplays as num_video_displays: () -> int32
     extern SDL_GetDisplayBounds as get_display_bounds: (int32, rect*) -> int32
     extern SDL_GetDisplayUsableBounds as get_display_usable_bounds: (int32, rect*) -> int32
+    // Active desktop video mode for a display. SDL_DisplayMode is a tagless
+    // typedef (`typedef struct { ... } SDL_DisplayMode;`), which FC's
+    // `extern struct` can't bind — it always emits `struct <name>`, and there
+    // is no `struct SDL_DisplayMode` tag. So `current_display_mode` takes the
+    // out-param as `any*` and callers pass `(any*) &mode` where `mode` is the
+    // top-level `sdl_display_mode` mirror struct (declared above this module —
+    // a `from` C-interop module body permits only extern declarations). Only
+    // `refresh_rate` (Hz) is read: the vsync cadence present() is pinned to,
+    // for the debug overlay's frame budget. Returns 0 on success.
+    extern SDL_GetWindowDisplayIndex as window_display_index: (any*) -> int32
+    extern SDL_GetCurrentDisplayMode as current_display_mode: (int32, any*) -> int32
     extern SDL_GetError as get_error: () -> cstr
 
     // --- Window ---

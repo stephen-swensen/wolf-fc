@@ -896,43 +896,62 @@ module overlay =
 
     // Clear the debug perf state. Called when the view mode / scale / SSAA
     // changes: those reallocate buffers (one-off frame spike) and may shift
-    // the steady cadence, so the EMA baseline and desync tally should start
+    // the steady cadence, so the EMA baseline and drops tally should start
     // fresh rather than count the transition. dbg_ms == 0 reseeds the EMA
     // from the next frame.
     let debug_reset = (rc: render_ctx*) ->
         rc->dbg_fps = 0.0
         rc->dbg_ms = 0.0
-        rc->dbg_skipped = 0
+        rc->dbg_work_ms = 0.0
+        rc->dbg_jitter_ms = 0.0
+        rc->dbg_drops = 0
         rc->dbg_hitch_flash = 0.0
 
-    // Per-iteration timing accumulation; `ms` is the high-res frame period.
-    // Assumes vsync is on (renderer created with renderer_vsync): every
-    // frame that fits its work in one refresh interval blocks in present()
-    // for exactly that interval, so a perfectly smooth run clusters all
-    // frame times tightly at the cadence. Anything that misses a vblank
-    // runs ~2× (and its catch-up frame runs short) — both depart from the
-    // cadence, which is what we count.
-    let debug_update_timing = (rc: render_ctx*, ms: float64) ->
-        // Compare against the smoothed cadence from BEFORE folding in this
-        // sample, so a frame is judged against the recent steady state and
-        // not against itself. First call seeds the EMA (baseline == ms).
+    // Per-iteration timing accumulation. `ms` is the high-res frame period
+    // (the cadence); `work_ms` is just the prepare-the-frame span, before
+    // present() blocks. Assumes vsync is on (renderer created with
+    // renderer_vsync): a frame whose work fits in one refresh interval blocks
+    // in present() for the rest of that interval, so its period lands at ~1×
+    // the interval; a frame that misses a vblank spans 2+ intervals.
+    //
+    // Two distinct signals, both keyed off the period vs. the refresh interval:
+    //
+    //  • dbg_drops counts MISSED VBLANKS: round(period / interval) − 1. A
+    //    period within half an interval of 1× counts as 0, so sub-interval
+    //    wobble never registers — only a period of ~1.5×+ (an actually dropped
+    //    frame) ticks it, by the number of intervals dropped.
+    //  • dbg_jitter_ms is the EMA of |period − interval| — the sub-frame
+    //    wobble itself (scheduler / compositor wake latency in when present()
+    //    returns). This is what climbs when work sits a few ms under budget
+    //    and present() barely blocks; it's healthy variance, not lost frames.
+    //
+    // The reference interval is the true refresh budget when known; otherwise
+    // the smoothed cadence (best-effort: a sustained slowdown then becomes the
+    // new "1×" and stops registering as drops, which the refresh path avoids).
+    let debug_update_timing = (rc: render_ctx*, ms: float64, work_ms: float64) ->
+        // EMA from BEFORE folding in this sample, so a frame is judged against
+        // the recent steady state, not itself. First call seeds it (== ms).
         let baseline = if rc->dbg_ms > 0.0 then rc->dbg_ms else ms
-        // "desync" counts frames out of step with the cadence in EITHER
-        // direction (late = ran long, catch-up = ran short) by more than a
-        // tight tolerance. Tolerance is mostly relative (10% of the cadence,
-        // so it tracks any refresh rate) with a small absolute floor that
-        // swallows scheduler / present-jitter noise. Under clean vsync this
-        // stays at 0; it ticks up only when frames stop landing on vblank.
-        let dev = if ms > baseline then ms - baseline else baseline - ms
-        let rel = baseline * 0.1
-        let tol = if rel > 1.0 then rel else 1.0
-        if dev > tol then
-            rc->dbg_skipped = rc->dbg_skipped + 1
+        let interval = if rc->refresh_interval_ms > 0.0 then rc->refresh_interval_ms else baseline
+        let dropped = if interval > 0.0 then (int32) (ms / interval + 0.5) - 1 else 0
+        if dropped > 0 then
+            rc->dbg_drops = rc->dbg_drops + dropped
             rc->dbg_hitch_flash = 0.4
         else if rc->dbg_hitch_flash > 0.0 then
             rc->dbg_hitch_flash = rc->dbg_hitch_flash - ms / 1000.0
+        // Jitter EMA — |period − interval|, seeded on the first frame (where
+        // dbg_ms is still 0) since a deviation of exactly 0 is legitimate.
+        let dev = if ms > interval then ms - interval else interval - ms
+        rc->dbg_jitter_ms = if rc->dbg_ms > 0.0 then
+            rc->dbg_jitter_ms * 0.9 + dev * 0.1
+        else dev
         rc->dbg_ms = baseline * 0.9 + ms * 0.1
         rc->dbg_fps = if rc->dbg_ms > 0.0 then 1000.0 / rc->dbg_ms else 0.0
+        // Work EMA, seeded on the first non-zero sample (frame 0 has no prior
+        // work). Same 0.9/0.1 smoothing as the period so the two move together.
+        rc->dbg_work_ms = if rc->dbg_work_ms > 0.0 then
+            rc->dbg_work_ms * 0.9 + work_ms * 0.1
+        else work_ms
 
     // Blit one UI-font glyph into dbuf, each source pixel expanded to an
     // s×s block. Returns the scaled advance width. Mirrors font.draw_char
@@ -986,13 +1005,21 @@ module overlay =
                    else if rc->ssaa_mode == 1 then "2xV"
                    else "off"
         let fps_i = (int32) (rc->dbg_fps + 0.5)
-        let ms_i = (int32) (rc->dbg_ms + 0.5)
+        // Denominator is the fixed vsync budget when known, else the measured
+        // cadence. The work line reads "<prep> / <budget> ms" — e.g. 5/17 at
+        // a comfortable 60 Hz, climbing toward (and past) the budget as the
+        // scene gets heavy. When prep exceeds the budget present() can't pace
+        // the frame any more, so the period inflates and desync starts to tick.
+        let budget = if rc->refresh_interval_ms > 0.0 then rc->refresh_interval_ms else rc->dbg_ms
+        let work_i = (int32) (rc->dbg_work_ms + 0.5)
+        let budget_i = (int32) (budget + 0.5)
+        let over_budget = rc->dbg_work_ms > budget && budget > 0.0
         // Every line carries an interpolation so each element is `str`
         // (a pure literal would be `const str` and break the array's
         // inferred element type).
         let lines = str[4] {
-            "FPS %d{fps_i}  %d{ms_i} ms",
-            "desync %d{rc->dbg_skipped}",
+            "FPS %d{fps_i}  %d{work_i}/%d{budget_i} ms",
+            "drops %d{rc->dbg_drops}  jit %3.1f{rc->dbg_jitter_ms} ms",
             "%d{rc->fb_w}x%d{rc->fb_h} x%d{rc->scale}",
             "%d{rc->screen_w}x%d{rc->screen_h} ss %s{ssaa}"
         }
@@ -1009,7 +1036,9 @@ module overlay =
         let red = 0xFFFF5555u32
         for i in 0..4
             let lw = font.text_width(f, lines[i]) * s
-            let color = if i == 0 && rc->dbg_hitch_flash > 0.0 then red else white
+            // Top line reds out on a recent hitch or while work overruns the
+            // frame budget — the at-a-glance "we're not keeping up" signal.
+            let color = if i == 0 && (rc->dbg_hitch_flash > 0.0 || over_budget) then red else white
             dbg_text(rc, f, x_right - lw, y_top + i * line_h, lines[i], color, s)
 
     // Top-left automap overlay (opt-in via Options → Map). One fb
