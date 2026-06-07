@@ -330,7 +330,7 @@ All project modules are declared at the top level (no namespaces), so they're re
 - **`sdl2.fc`** — Flat `extern` FFI against `SDL2/SDL.h`: lifecycle, window (incl. fullscreen-desktop + high-DPI), the accelerated 2D renderer (used only as a blit primitive for one streaming ARGB8888 texture), keyboard events, and the audio device.
 - **`png.fc`** — Pure-FC PNG writer (CRC-32, Adler-32, stored deflate, optional tEXt metadata) used by the screenshot path.
 
-SDL2's role is deliberately minimal — it's a host abstraction, not a rendering framework. Each frame, the engine draws into a `uint32[]` ARGB framebuffer entirely in FC, then uploads it as a single streaming texture via `SDL_UpdateTexture` + `SDL_RenderCopy` + `SDL_RenderPresent`; the scale-quality hint is pinned to `nearest` for crisp upscaling. The 2D renderer is never asked to draw geometry — no `SDL_RenderFillRect`, no per-sprite textures, no shaders. Audio is equally bare: `SDL_QueueAudio` receives raw S16 PCM that our own mixer produced (no `SDL_AudioCallback`, no `SDL_mixer`). Input is keyboard-only, driven by `SDL_PollEvent` against `SDL_KEYDOWN`/`SDL_KEYUP`. No `SDL_image`, `SDL_ttf`, `SDL_mixer`, or `SDL_net` — just core `SDL2`, linked dynamically.
+SDL2's role is deliberately minimal — it's a host abstraction, not a rendering framework. Each frame, the engine draws into a `uint32[]` ARGB framebuffer entirely in FC, then uploads it as a single streaming texture via `SDL_UpdateTexture` + `SDL_RenderCopy` + `SDL_RenderPresent`; the scale-quality hint is pinned to `nearest` for crisp upscaling. The 2D renderer is never asked to draw geometry — no `SDL_RenderFillRect`, no per-sprite textures, no shaders. Audio is equally bare: SDL drives a single `SDL_AudioCallback` that our own mixer fills with raw S16 PCM (no `SDL_mixer`). Input is keyboard-only, driven by `SDL_PollEvent` against `SDL_KEYDOWN`/`SDL_KEYUP`. No `SDL_image`, `SDL_ttf`, `SDL_mixer`, or `SDL_net` — just core `SDL2`, linked dynamically.
 
 ### Display pipeline
 
@@ -408,7 +408,7 @@ This is deliberately the *whole* of the frame-pacing story. Because the snap loc
 
 ### Audio pipeline
 
-Wolf-fc generates one stereo audio batch per frame entirely in FC, then pushes it to SDL2 via `SDL_QueueAudio`. The output is **44.1 kHz signed 16-bit interleaved stereo** at 1024 frames per batch (~23 ms). No `SDL_AudioCallback`, no `SDL_mixer` — the main loop drives sample generation and decides when to produce.
+Wolf-fc mixes audio entirely in FC, on demand, from SDL2's audio callback. SDL runs `audio_callback` on its own dedicated audio thread and asks it to fill the device buffer — **44.1 kHz signed 16-bit interleaved stereo**, 512 frames (~11.6 ms) by default — whenever the hardware needs more samples; `mixer.fill_frame` produces those samples straight into SDL's `stream`. No `SDL_mixer`, and crucially no push model: running on SDL's thread fully decouples sound from rendering, so even a heavy supersampling / SSAA frame that blows past its budget can't stutter the audio. The render loop never generates samples — it only *mutates* shared audio state (trigger an SFX, swap the music track), under `SDL_LockAudioDevice` so the callback never reads the OPL2 chips or digi slots mid-write, then releases the lock before the slow 3D pass so the callback keeps pulling throughout.
 
 Three format drivers in [`sound.fc`](sound.fc), each consuming bytes from a Wolf3D audio chunk and mixing additively into a shared `int32` buffer:
 
@@ -419,13 +419,13 @@ Three format drivers in [`sound.fc`](sound.fc), each consuming bytes from a Wolf
 Each `sfx.id` constant has both a `digi_slot[id]` and an `adlib_chunk[id]`; `sfx.trigger` prefers digi, falls through to AdLib if no digi exists for that ID. The two SFX paths use different chips, so a fast retrigger of an AdLib effect cleanly preempts itself without ever touching the music chip.
 
 ```
-   mix_buf := 0                                 int32[2048]   stereo, ~23 ms
+   audio_callback(stream, len)                  on SDL's audio thread; frames = len/4
+   mix_buf := 0                                 int32, frames × 2   (~11.6 ms @ 512)
        ↓ imf.fill           music chip → mono, duplicated L = R
        ↓ adlib.fill         SFX chip   → mono, duplicated L = R
        ↓ digi.fill          4 slots    → per-slot pan → L, R independently
-       ↓ mixer.soft_clip_to_int16                int16[2048]
-       ↓ SDL_QueueAudio
-   SDL device queue                             44.1 kHz, S16 stereo
+       ↓ mixer.soft_clip_to_int16    → int16, written straight into ...
+   stream  (SDL device buffer)                  44.1 kHz, S16 stereo
 ```
 
 `mix_buf` is `int32` so the three additive fills can sum freely without per-stage clipping starving later stages of headroom (digi, last in line, was the biggest loser before we widened the intermediate). The final soft-clip is a rational asymptotic curve — linear up to ±24000, then `y = knee + over × range / (range + over)` toward an asymptote at ±32767 — so a single source peak gets ~1.5 dB of compression and three sources peaking together still don't hard-clip. Mirrors how Sound Blaster hardware summed FM and PCM in the analog domain.
@@ -447,11 +447,11 @@ So one chip sample → push to buf → maybe advance one event. The same loop bo
 **Slot management.**
 
 - **AdLib SFX** runs one chunk at a time on its dedicated chip. New triggers honour an `SD_PlaySound`-style priority gate: a strictly lower priority is dropped, equal-or-greater preempts. So an incidental wall bump can't trample an in-flight pickup confirmation, but cross→cross retriggers restart audibly.
-- **Digi** has 4 slots. Slot selection is: (1) if the same `sound_num` is already playing in any slot, rewind that slot in place and update its pan — no overlap, no stacking; (2) otherwise pick the first idle slot; (3) otherwise steal slot 0. The dedup in step 1 keeps held-down wall-bump retriggers from burning through all four slots in a few hundred ms — that used to disconnect the SDL queue stream entirely on PulseAudio backends.
+- **Digi** has 4 slots. Slot selection is: (1) if the same `sound_num` is already playing in any slot, rewind that slot in place and update its pan — no overlap, no stacking; (2) otherwise pick the first idle slot; (3) otherwise steal slot 0. The dedup in step 1 keeps held-down wall-bump retriggers from burning through all four slots in a few hundred ms, so a single spammed effect can't crowd out every other digitized sound.
 
 **Loudness alignment.** Digi's `pcm_scale = 172` is chosen so a centered 8-bit PCM peak hits ~±22000 in `mix_buf` — the same scale OPL2's `sample` function emits at full envelope. Music, AdLib SFX, and digi therefore sit at roughly equal hardware-mixer loudness without any explicit gain matching, mirroring what the original Sound Blaster delivered through its analog mixer.
 
-**Backpressure.** The main loop watches `SDL_GetQueuedAudioSize` and skips `mixer.fill_frame` entirely when the device queue already holds ≥ 8192 bytes (~46 ms of stereo). Peak depth is ~70 ms (one full fill above the threshold). Underruns on WASAPI / DirectSound are a momentary stutter; on PulseAudio / PipeWire they can disconnect the queue stream, so the threshold is tuned with a generous cushion. Music chunk swaps (phase change) destroy the old IMF player and load the new chunk without flushing the device queue — the in-flight samples drain naturally into the new track, which sounds cleaner than the underrun a hard flush causes.
+**Threading and latency.** Because SDL pulls samples on its own thread, there's no queue to keep topped up and no backpressure logic — the callback fills exactly what the device asks for each time. End-to-end latency is the device buffer (`audio_buffer_frames = 512` ≈ 11.6 ms) plus whatever the OS audio layer stacks underneath; drop it to 256 for snappier SFX, or raise to 1024 if a CPU-starved audio thread (e.g. WSLg under software rendering) misses its deadline and you hear underruns. The one hard rule is the lock: every main-thread mutation of audio state runs inside `SDL_LockAudioDevice` / `SDL_UnlockAudioDevice`, and the loop releases the lock *before* the expensive render so the callback runs fully concurrent with the 3D pass and its vsync wait. Music chunk swaps (phase change) happen under that lock — the new IMF player is loaded and the outgoing one is handed to the callback as `music_prev`, which crossfades it out over `music_xfade_samples` (256 samples ≈ 5.8 ms) so the track change doesn't click.
 
 ### Customising the quit prompt
 
