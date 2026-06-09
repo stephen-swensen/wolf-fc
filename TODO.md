@@ -40,44 +40,30 @@ and moved to Decisions:
 - **[sdl2-1]** — a cosmetic `const`-on-extern doc nit with no behavioral
   effect; the finding itself flagged it skippable.
 
-**[player-4]** was confirmed real and was *under-scoped* — see P1. The rest
-stand and are ordered below by priority rather than by category.
+**[player-2]** and **[player-4]** (the P1 pair) were applied 2026-06-09 —
+both predicted test-safe, and indeed the 208-test suite passed with no
+golden churn (it drives weapons via `setweapon:`, never the number keys,
+and the respawn key-clear is inert in test mode):
+
+- **[player-2]** — `restart_current_level` (`main.fc:1577`) now calls
+  `player.clear_input_keys(g)` right after `reset_for_life`, so a movement
+  key held when the death animation ends no longer walks the respawned
+  player. Mirrors `advance_next_level` and id's `Died → IN_ClearKeysDown`
+  (`WL_GAME.C:1199`).
+- **[player-4]** — the bare `g->weapon = 0..3` number-key handler
+  (`main.fc:4149`) now mirrors id's `CheckWeaponChange` (`WL_AGENT.C:117`):
+  it switches only while playing, only when `g->fire_timer <= 0.0` (id's
+  `T_Attack` never calls `CheckWeaponChange`, so the OG can't switch
+  mid-attack — this was the real cause of the audit's "attack-frame
+  desync"), only with `g->ammo > 0`, and only up to `g->best_weapon`
+  (so `4` no longer selects an unowned chain gun). The `setweapon:` test
+  command stays ungated on purpose.
+
+The rest stand and are ordered below by priority rather than by category.
 
 Tag: **[golden re-pin]** = changes RNG draw order or pinned stats, so it
 must update `tests/run-tests.sh` golden values in the same commit. (The
 old **[needs OG source]** tag is retired — `../wolf3d` is now present.)
-
-### P1 — real gameplay bugs, OG-confirmed, do first
-
-- **[player-2] respawn doesn't clear held input keys**
-  (`main.fc:1577`). `restart_current_level` calls `reset_for_life`
-  (`:1586`) but not `clear_input_keys` — unlike `advance_next_level`
-  (`:1554`) — so a movement key held when the death animation ends walks
-  the respawned player. **OG-faithful:** id's `Died()` calls
-  `IN_ClearKeysDown()` (`WL_GAME.C:1199`). Fix: add
-  `player.clear_input_keys(g)` after `reset_for_life`. One line,
-  test-safe.
-
-- **[player-4] number-key weapon select is ungated — wrong frame *and*
-  selects unowned/no-ammo weapons** (`main.fc:4149-4152`). The number
-  keys do a bare `g->weapon = 0..3` with no gate. This is worse than the
-  original audit's "attack-frame desync" framing — the OG's
-  `CheckWeaponChange` (`WL_AGENT.C:117`) gates the switch **three** ways
-  and we honor none:
-  1. **Not during an attack.** Firing sets `player->state = &s_attack`
-     (`WL_AGENT.C:989`); the attack thinker `T_Attack` does *not* call
-     `CheckWeaponChange`, so the OG cannot change weapons mid-attack.
-     Ours can, and `update_weapon`'s `progress = 1 - fire_timer /
-     fire_rate[g->weapon]` (`player.fc:629`) then divides by the *new*
-     weapon's rate mid-cycle → the firing animation freezes or jumps.
-  2. **Requires ammo.** OG: `if (!gamestate.ammo) return;` (forced knife).
-  3. **Only owned weapons.** OG loops `i = wp_knife .. gamestate.bestweapon`;
-     ours lets `4` select the chain gun at level start.
-  Faithful fix: gate the keydown on `g->fire_timer <= 0.0`, require
-  `g->ammo > 0` for weapons > knife, and clamp the target to
-  `g->best_weapon`. The `setweapon:` test command (`main.fc:1978`) stays
-  ungated on purpose (test tool). No test presses number keys → no golden
-  churn; test-safe.
 
 ### P2 — real, narrower scope or edge cases
 
