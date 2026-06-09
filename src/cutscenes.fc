@@ -1014,10 +1014,6 @@ module endart_screen =
     // leading non-digits. Returns the parsed value plus the byte
     // offset of the first character past the number — matches the
     // shape of the original article parser's number reader.
-    private struct num_at =
-        value: int32
-        next:  int32
-
     private let read_number = (data: uint8[], i: int32) ->
         let mut j = i
         loop
@@ -1030,7 +1026,7 @@ module endart_screen =
             if !is_digit(data[(int64) j]) then break
             val = val * 10 + (int32) data[(int64) j] - 0x30
             j = j + 1
-        num_at { value = val, next = j }
+        { val, j }
 
     // Skip the rest of the current line (including the trailing '\n').
     private let skip_to_eol = (data: uint8[], i: int32) ->
@@ -1218,17 +1214,17 @@ module endart_screen =
                 st.cursor = st.cursor + 2
                 if cmd == 0x42u8 || cmd == 0x62u8 then
                     // ^B y x w h — fill rect with back colour.
-                    let py_n = read_number(data, st.cursor)
-                    let px_n = read_number(data, py_n.next)
-                    let pw_n = read_number(data, px_n.next)
-                    let ph_n = read_number(data, pw_n.next)
-                    st.cursor = skip_to_eol(data, ph_n.next)
+                    let { py, c1 } = read_number(data, st.cursor)
+                    let { px, c2 } = read_number(data, c1)
+                    let { pw, c3 } = read_number(data, c2)
+                    let { ph, c4 } = read_number(data, c3)
+                    st.cursor = skip_to_eol(data, c4)
                     let bcol = pal[backcolor]
-                    for yy in 0..ph_n.value
-                        let dy = py_n.value + yy
+                    for yy in 0..ph
+                        let dy = py + yy
                         if dy < 0 || dy >= game_h then continue
-                        for xx in 0..pw_n.value
-                            let dx = px_n.value + xx
+                        for xx in 0..pw
+                            let dx = px + xx
                             if dx < 0 || dx >= rc->fb_w then continue
                             rc->fb[(int64) dy * (int64) rc->fb_w + (int64) dx] = bcol
                 else if cmd == 0x3Bu8 then
@@ -1247,44 +1243,42 @@ module endart_screen =
                     st.px = screen_mid
                 else if cmd == 0x4Cu8 || cmd == 0x6Cu8 then
                     // ^L yyy,xxx — jump to row at y, then x.
-                    let py_n = read_number(data, st.cursor)
-                    let px_n = read_number(data, py_n.next)
-                    let new_row = (py_n.value - top_margin) / font_height
+                    let { py, c1 } = read_number(data, st.cursor)
+                    let { px, c2 } = read_number(data, c1)
+                    let new_row = (py - top_margin) / font_height
                     let snap_y  = top_margin + new_row * font_height
                     st.rowon = if new_row < 0 then 0
                         else if new_row >= text_rows then text_rows - 1
                         else new_row
                     st.py = snap_y
-                    st.px = px_n.value
-                    st.cursor = skip_to_eol(data, px_n.next)
+                    st.px = px
+                    st.cursor = skip_to_eol(data, c2)
                 else if cmd == 0x47u8 || cmd == 0x67u8
                         || cmd == 0x54u8 || cmd == 0x74u8 then
                     // ^G y,x,p — draw graphic; ^T y,x,p,t — timed pic
                     // (we draw it and ignore the timer).
-                    let py_n  = read_number(data, st.cursor)
-                    let px_n  = read_number(data, py_n.next)
-                    let pic_n = read_number(data, px_n.next)
+                    let { py, c1 }  = read_number(data, st.cursor)
+                    let { px, c2 }  = read_number(data, c1)
+                    let { pic, c3 } = read_number(data, c2)
                     let after = if cmd == 0x54u8 || cmd == 0x74u8 then
-                        let _t = read_number(data, pic_n.next)
-                        _t.next
-                    else pic_n.next
+                        read_number(data, c3)[1]
+                    else c3
                     st.cursor = skip_to_eol(data, after)
-                    let aligned_x = px_n.value & ~7
-                    pics.draw(rc, vg, pal, pic_n.value, aligned_x, py_n.value)
-                    let pic_w = vgagraph.pic_width(vg, pic_n.value)
-                    let pic_h = vgagraph.pic_height(vg, pic_n.value)
+                    let aligned_x = px & ~7
+                    pics.draw(rc, vg, pal, pic, aligned_x, py)
+                    let { pic_w, pic_h } = vgagraph.pic_dims_at(vg, pic)
                     if pic_w > 0 && pic_h > 0 then
                         // Adjust per-row margins so text reflows around
                         // the graphic — left margin if pic mid-x is on
                         // the left half, right margin otherwise.
-                        let pic_mid = px_n.value + pic_w / 2
+                        let pic_mid = px + pic_w / 2
                         let new_margin = if pic_mid > screen_mid then
-                            px_n.value - pic_margin   // becomes new right margin
+                            px - pic_margin   // becomes new right margin
                         else
-                            px_n.value + pic_w + pic_margin   // becomes new left margin
-                        let mut top_r = (py_n.value - top_margin) / font_height
+                            px + pic_w + pic_margin   // becomes new left margin
+                        let mut top_r = (py - top_margin) / font_height
                         if top_r < 0 then top_r = 0
-                        let mut bot_r = (py_n.value + pic_h - top_margin) / font_height
+                        let mut bot_r = (py + pic_h - top_margin) / font_height
                         if bot_r >= text_rows then bot_r = text_rows - 1
                         for r in top_r..(bot_r + 1)
                             if pic_mid > screen_mid then

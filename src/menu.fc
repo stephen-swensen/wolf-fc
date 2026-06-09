@@ -420,8 +420,7 @@ module menu =
             // above the top bevel so the pic reads as a name-plate
             // tabbed over the window (matches the original frame).
             let pic = section_pic(s)
-            let pw  = vgagraph.pic_width(vg, pic)
-            let ph  = vgagraph.pic_height(vg, pic)
+            let { pw, ph } = vgagraph.pic_dims_at(vg, pic)
             let pic_x = sect_x + (sect_w - pw) / 2
             // Pic floats fully above the window with a 1-px breath so
             // its red border doesn't bleed into the dark-red interior.

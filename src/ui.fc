@@ -241,16 +241,14 @@ module pics =
             let pic = vgagraph.load_pic(vg, chunk)
             defer free(pic)
             if pic.len == 0 then return
-            let w = vgagraph.pic_width(vg, chunk)
-            let h = vgagraph.pic_height(vg, chunk)
+            let { w, h } = vgagraph.pic_dims_at(vg, chunk)
             if w <= 0 || h <= 0 then return
             let buf = alloc(uint32[w * h] {})!
             for i in 0..(w * h)
                 buf[(int64) i] = pal[(int32) pic[(int64) i]]
             rc->pic_cache[chunk] = buf
         let buf = rc->pic_cache[chunk]
-        let w = vgagraph.pic_width(vg, chunk)
-        let h = vgagraph.pic_height(vg, chunk)
+        let { w, h } = vgagraph.pic_dims_at(vg, chunk)
         let y0 = if src_top_skip < 0 then 0 else src_top_skip
         for y in y0..h
             let dy = dst_y + y - y0
@@ -282,8 +280,7 @@ module pics =
                 rc->fb[base + x] = bg
         // Center the pic within the viewport. Use the VGAGRAPH-reported
         // size in case the pic is ever re-packed; the original's is 224x48.
-        let pw = vgagraph.pic_width(vg, id.get_psyched)
-        let ph = vgagraph.pic_height(vg, id.get_psyched)
+        let { pw, ph } = vgagraph.pic_dims_at(vg, id.get_psyched)
         let pic_w = if pw > 0 then pw else get_psyched_pic_w
         let pic_h = if ph > 0 then ph else get_psyched_pic_h
         let pic_x = (rc->fb_w - pic_w) / 2
@@ -332,8 +329,7 @@ module pics =
         let pic = vgagraph.load_pic(vg, id.title)
         defer free(pic)
         if pic.len == 0 then return buf
-        let w = vgagraph.pic_width(vg, id.title)
-        let h = vgagraph.pic_height(vg, id.title)
+        let { w, h } = vgagraph.pic_dims_at(vg, id.title)
         if w <= 0 || h <= 0 then return buf
         // Letterbox geometry: pic at native size, centred.
         let dst_w = if w < fb_w then w else fb_w
@@ -357,8 +353,7 @@ module pics =
         let chunk = id.face_base
         let pic = vgagraph.load_pic(vg, chunk)
         defer free(pic)
-        let w = vgagraph.pic_width(vg, chunk)
-        let h = vgagraph.pic_height(vg, chunk)
+        let { w, h } = vgagraph.pic_dims_at(vg, chunk)
         let n = if w > 0 && h > 0 then w * h else 0
         let buf = alloc(uint32[n] {})!
         if pic.len == 0 || n == 0 then return buf
@@ -379,8 +374,7 @@ module pics =
                          dst_x: int32, dst_y: int32) ->
         let buf = rc->god_face
         if buf.len == 0 then return
-        let w = vgagraph.pic_width(vg, id.face_base)
-        let h = vgagraph.pic_height(vg, id.face_base)
+        let { w, h } = vgagraph.pic_dims_at(vg, id.face_base)
         if w <= 0 || h <= 0 then return
         for y in 0..h
             let dy = dst_y + y
@@ -406,16 +400,14 @@ module pics =
             let pic = vgagraph.load_pic(vg, chunk)
             defer free(pic)
             if pic.len == 0 then return
-            let w = vgagraph.pic_width(vg, chunk)
-            let h = vgagraph.pic_height(vg, chunk)
+            let { w, h } = vgagraph.pic_dims_at(vg, chunk)
             if w <= 0 || h <= 0 then return
             let buf = alloc(uint32[w * h] {})!
             for i in 0..(w * h)
                 buf[(int64) i] = pal[(int32) pic[(int64) i]]
             rc->pic_cache[chunk] = buf
         let buf = rc->pic_cache[chunk]
-        let src_w = vgagraph.pic_width(vg, chunk)
-        let src_h = vgagraph.pic_height(vg, chunk)
+        let { src_w, src_h } = vgagraph.pic_dims_at(vg, chunk)
         if src_w <= 0 || src_h <= 0 || dst_w <= 0 then return
         for y in 0..src_h
             let dy = dst_y + y
@@ -452,8 +444,7 @@ module pics =
     let extend_pic_horizontally = (rc: render_ctx*,
                                     vg: const vgagraph.vgagraph_file*,
                                     pic_x: int32, pic_y: int32, chunk: int32) ->
-        let pw = vgagraph.pic_width(vg, chunk)
-        let ph = vgagraph.pic_height(vg, chunk)
+        let { pw, ph } = vgagraph.pic_dims_at(vg, chunk)
         if pw <= 0 || ph <= 0 then return
         let stride = (int64) rc->fb_w
         let left_x = if pic_x >= 0 then pic_x else 0

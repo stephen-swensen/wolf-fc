@@ -524,18 +524,14 @@ module vgagraph =
             pic_dims = pic_dims, num_pics = num_pics
         })!
 
-    // Look up pic dimensions by chunk number. Returns (0,0) for non-pic
-    // chunks (font, tile, out-of-range). Caller should validate before
-    // using the result for rendering.
-    let pic_width = (vg: const vgagraph_file*, chunk: int32) ->
+    // Look up pic dimensions by chunk number as a { width, height }
+    // tuple. Returns { 0, 0 } for non-pic chunks (font, tile, out-of-
+    // range). Caller should validate before using the result for
+    // rendering.
+    let pic_dims_at = (vg: const vgagraph_file*, chunk: int32) ->
         let idx = chunk - start_pics
-        if idx < 0 || idx >= vg->num_pics then 0
-        else vg->pic_dims[idx].width
-
-    let pic_height = (vg: const vgagraph_file*, chunk: int32) ->
-        let idx = chunk - start_pics
-        if idx < 0 || idx >= vg->num_pics then 0
-        else vg->pic_dims[idx].height
+        if idx < 0 || idx >= vg->num_pics then { 0, 0 }
+        else { vg->pic_dims[idx].width, vg->pic_dims[idx].height }
 
     // Convert a VGA-planar pic (as stored in VGAGRAPH) into a linear row-
     // major 8-bit palette-index buffer. Planes are 4-way interleaved: the
@@ -558,8 +554,7 @@ module vgagraph =
     // Load a picture chunk and produce a linear 8-bit palette buffer.
     // Returned slice is width * height bytes; caller owns it.
     let load_pic = (vg: const vgagraph_file*, chunk: int32) ->
-        let w = pic_width(vg, chunk)
-        let h = pic_height(vg, chunk)
+        let { w, h } = pic_dims_at(vg, chunk)
         if w <= 0 || h <= 0 then return alloc(uint8[0] {})!
         let planar = decompress_chunk(vg, chunk)
         defer free(planar)

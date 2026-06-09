@@ -1220,6 +1220,15 @@ let pick_scale_factor = (out_w: int32, out_h: int32, fb_w: int32, fb_h: int32,
     if scale_factor != 0 then scale_factor
     else compute_scale_factor(out_w, out_h, fb_w, fb_h, max_scale)
 
+// SDL_GetRendererOutputSize wrapped to return the drawable size as a
+// { width, height } tuple instead of writing through two out-pointers.
+// All callers are in main.fc's display-setup / resize path.
+let renderer_output_size = (ren: any*) ->
+    let mut w = 0i32
+    let mut h = 0i32
+    sdl2.get_output_size(ren, &w, &h)
+    { w, h }
+
 // The vsync interval (ms per refresh) of whatever display the window is on,
 // from its active desktop mode (so a drag to a different-Hz monitor re-derives
 // it). Drives both the main-loop frame-pacing snap and the debug overlay's
@@ -2224,8 +2233,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // the decoder produces sane widths/heights after the Huffman expand.
         match text.parse_int32(arg[7..arg.len]) with
         | some(n) ->
-            let pw = vgagraph.pic_width(w->vg, n)
-            let ph = vgagraph.pic_height(w->vg, n)
+            let { pw, ph } = vgagraph.pic_dims_at(w->vg, n)
             let off = if n < w->vg->num_chunks then w->vg->offsets[n] else -1i64
             io.write("vgchunk %d{n}: offset=%d{off} width=%d{pw} height=%d{ph}\n", stdout)
             void()
@@ -3305,16 +3313,14 @@ let main = (args: str[]) ->
     // we hit a 250ms ceiling. On native fullscreen-desktop the
     // first query already returns the final size, so this is a
     // no-op in the common case.
-    let mut out_w = 0i32
-    let mut out_h = 0i32
-    sdl2.get_output_size(ren, &out_w, &out_h)
+    let { init_w, init_h } = renderer_output_size(ren)
+    let mut out_w = init_w
+    let mut out_h = init_h
     let mut wait_ms = 0u32
     loop
         if wait_ms >= 250u32 then break
         sdl2.pump_events()
-        let mut next_w = 0i32
-        let mut next_h = 0i32
-        sdl2.get_output_size(ren, &next_w, &next_h)
+        let { next_w, next_h } = renderer_output_size(ren)
         if next_w == out_w && next_h == out_h && wait_ms > 0u32 then break
         out_w = next_w
         out_h = next_h
@@ -3472,9 +3478,7 @@ let main = (args: str[]) ->
             // walk past.
             if t == sdl2.windowevent
                 && event.window.event == sdl2.windowevent_size_changed then
-                let mut new_out_w = 0i32
-                let mut new_out_h = 0i32
-                sdl2.get_output_size(ren, &new_out_w, &new_out_h)
+                let { new_out_w, new_out_h } = renderer_output_size(ren)
                 w->rc->drawable_w = new_out_w
                 w->rc->drawable_h = new_out_h
                 // The window may have crossed to a different-refresh display.
