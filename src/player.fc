@@ -513,20 +513,29 @@ module player =
         if g->key_space then
             let edge = !g->key_space_handled
             g->key_space_handled = true
-            let fx = (int32) (g->pos_x + g->dir_x)
-            let fy = (int32) (g->pos_y + g->dir_y)
+            // Quantize the heading to a single cardinal direction the
+            // way the original's Cmd_Use does: the dominant axis wins
+            // (the 45° quadrant split), so the use target is ALWAYS the
+            // orthogonally-adjacent tile and a push-wall only ever
+            // slides along one cardinal. The old code derived the
+            // facing tile from the raw heading vector and thresholded
+            // each axis independently at 0.5 — a near-diagonal heading
+            // could then both pick a diagonal neighbour AND hand
+            // try_push a diagonal (dx,dy), sliding a secret wall through
+            // cell corners into a slot that stranded the rest of the
+            // secret. Exactly one of push_dx/push_dy is non-zero.
+            let face_horiz = math.abs(g->dir_x) > math.abs(g->dir_y)
+            let push_dx = if face_horiz then (if g->dir_x >= 0.0 then 1 else -1) else 0
+            let push_dy = if face_horiz then 0 else (if g->dir_y >= 0.0 then 1 else -1)
+            let fx = (int32) g->pos_x + push_dx
+            let fy = (int32) g->pos_y + push_dy
             let mut did_anything = false
             // Push-wall first so sliding a held space along a wall
-            // activates secret tiles even when an edge event isn't
-            // fresh (cardinal-only; diagonals wouldn't map to a
-            // single push direction).
-            let push_dx = if g->dir_x > 0.5 then 1 else if g->dir_x < -0.5 then -1 else 0
-            let push_dy = if g->dir_y > 0.5 then 1 else if g->dir_y < -0.5 then -1 else 0
-            if push_dx != 0 || push_dy != 0 then
-                if pushwall.try_push(lv, fx, fy, push_dx, push_dy) then
-                    sfx.trigger(sfx.id.push_wall, ac)
-                    g->secrets = g->secrets + 1
-                    did_anything = true
+            // activates secret tiles even when an edge event isn't fresh.
+            if pushwall.try_push(lv, fx, fy, push_dx, push_dy) then
+                sfx.trigger(sfx.id.push_wall, ac)
+                g->secrets = g->secrets + 1
+                did_anything = true
             // Elevator + door fire once per press. Tile 21 is the
             // elevator switch; standing on the alt-elevator tile
             // (area 0) at switch-flip routes to the secret level

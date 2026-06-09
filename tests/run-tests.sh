@@ -213,6 +213,33 @@ assert_not_contains "door:straddle-does-not-lock" \
     "sethp:1000 goto:34,40 turnl:90 fwd:15 space wait:40 fwd:16 wait:200 fwd:10 state" \
     "pos=( 34.5000,  37.8000)"
 
+section "push-walls"
+# The use-key quantizes the heading to a single cardinal direction
+# (dominant axis wins) exactly like the original's Cmd_Use, so the
+# push target is always the orthogonally-adjacent tile and a secret
+# wall only ever slides along one cardinal. The old code derived the
+# facing tile from the raw heading vector and thresholded each axis
+# independently at 0.5 — a near-diagonal heading could pick a diagonal
+# neighbour AND hand try_push a diagonal (dx,dy), sliding a secret
+# through cell corners into a slot that stranded the rest of the level.
+# E1L1's pushwall at (17,50) is pushable due-east or due-west; here the
+# player stands on its east floor tile (18,50) with a west-south-west
+# heading (turnl:215 ~ (-0.82,+0.57)). Dominant axis is X, so the use
+# target is the WEST neighbour (17,50) and the slide must run due west.
+assert_contains "pushwall:angled-heading-targets-cardinal-tile" \
+    "setlevel:0 goto:18,50 turnl:215 facetile" "facing=(17,50)"
+# The wall slides two tiles due west and stops at (15,50). Before the
+# fix this heading targeted (17,51) — not a pushable tile — so nothing
+# moved at all.
+assert_contains "pushwall:angled-heading-slides-due-west" \
+    "setlevel:0 goto:18,50 turnl:215 space wait:90 goto:15,50 probe" \
+    "tile (15,50) = 1 (WALL)"
+# The diagonal corner (15,52) the buggy SW slide clipped through stays
+# open floor — the secret only ever moves along the cardinal axis.
+assert_contains "pushwall:no-diagonal-corner-slide" \
+    "setlevel:0 goto:18,50 turnl:215 space wait:90 goto:15,52 probe" \
+    "tile (15,52) = 0 (open)"
+
 section "combat:player-fires"
 assert_contains "hitscan:pistol-point-blank-kills-guard" \
     "goto:30,62 turnr:180 setammo:50 fire wait:15 fire wait:15 fire state" \

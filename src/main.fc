@@ -1977,8 +1977,14 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         tick(w, dt)
         g->key_fire = false
     else if arg == "facetile" then
-        let fx = (int32) (g->pos_x + g->dir_x)
-        let fy = (int32) (g->pos_y + g->dir_y)
+        // Mirror the use-key's cardinal quantization (dominant axis
+        // wins) so this reports the actual door/elevator/push-wall
+        // target, not the raw-heading neighbour.
+        let face_horiz = math.abs(g->dir_x) > math.abs(g->dir_y)
+        let cdx = if face_horiz then (if g->dir_x >= 0.0 then 1 else -1) else 0
+        let cdy = if face_horiz then 0 else (if g->dir_y >= 0.0 then 1 else -1)
+        let fx = (int32) g->pos_x + cdx
+        let fy = (int32) g->pos_y + cdy
         let ft = if fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
             (int32) w->lv->tilemap[(int64) fx * 64 + (int64) fy]
         else -1
