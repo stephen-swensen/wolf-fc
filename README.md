@@ -301,7 +301,7 @@ The tests rely on the enemy RNG's fixed seed for reproducibility — scripted sc
 
 ## Architecture
 
-All project modules are declared at the top level (no namespaces), so they're reachable from any file by qualified name without imports. The source tree is split by subsystem:
+All project `.fc` sources live in `src/`. All project modules are declared at the top level (no namespaces), so they're reachable from any file by qualified name without imports. The source tree is split by subsystem:
 
 **Engine core**
 

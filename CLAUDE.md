@@ -87,7 +87,7 @@ Test mode pins `fb_w = 320`, `scale = 2`, SSAA off so the regression suite stays
 
 ## Source Files
 
-All project modules are top-level (no namespace), so they're reachable from anywhere by qualified name with no imports. Only stdlib (`std::`) imports appear in `main.fc`.
+All project `.fc` sources live in `src/` (the Makefile's `SRCS_FC` prefixes them with `src/`). All project modules are top-level (no namespace), so they're reachable from anywhere by qualified name with no imports. Only stdlib (`std::`) imports appear in `main.fc`.
 
 | File | Modules | What's in it |
 |---|---|---|
