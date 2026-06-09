@@ -6,7 +6,7 @@ something feels off in play — audit the relevant subsystem against id's
 source / wolf4sdl, log a finding here if it turns into more than a
 one-off fix, and patch.
 
-## Open findings — 2026-05 audit
+## Open findings — 2026-05 audit (re-prioritized 2026-06-09 against id's source)
 
 A multi-agent audit (2026-05-31) over the whole engine produced 76
 confirmed findings. The license-hygiene, doc-comment, leak, and
@@ -24,113 +24,150 @@ the 1-UP in the treasure denominator, matching the original) was applied
 assertions churned (`x/22 → x/23`); the predicted churn on other levels
 never materialized because those maps carry no 1-UP. **[cla-door-1]** was
 investigated and retired as a non-bug (the door-LOS code is already
-faithful to the original) — see Decisions below. What remains is open
-work — each item is self-contained for a solo session, with the audit ID
-in brackets for traceability. Tags:
-**[golden re-pin]** = changes RNG draw order or pinned stats, so it must
-update `tests/run-tests.sh` golden values in the same commit;
-**[needs OG source]** = can't be settled as faithful-vs-divergent
-without restoring the `../wolf3d` / `../wolf4sdl` reference trees.
+faithful to the original) — see Decisions below.
 
-### Fidelity / behavior
+**2026-06-09 recheck.** The original audit ran *without* the OG reference
+tree. It has since been restored at `../wolf3d/WOLFSRC` (id's DOS source;
+wolf4sdl is currently absent, but id's source is authoritative anyway), so
+every open finding was re-read against it. Two were retired as non-issues
+and moved to Decisions:
+
+- **[main-2]** — the OG's `GivePoints` (`WL_AGENT.C:523`) loops its
+  next-extra counter and fires `BONUS1UPSND` *per* 40k milestone, exactly
+  as our `add_score` does; the proposed "fire the cue once" would
+  *diverge* from the OG, and two `SD_PlaySound` calls in one frame just
+  retrigger the same cue (no glitch). Already faithful.
+- **[sdl2-1]** — a cosmetic `const`-on-extern doc nit with no behavioral
+  effect; the finding itself flagged it skippable.
+
+**[player-4]** was confirmed real and was *under-scoped* — see P1. The rest
+stand and are ordered below by priority rather than by category.
+
+Tag: **[golden re-pin]** = changes RNG draw order or pinned stats, so it
+must update `tests/run-tests.sh` golden values in the same commit. (The
+old **[needs OG source]** tag is retired — `../wolf3d` is now present.)
+
+### P1 — real gameplay bugs, OG-confirmed, do first
 
 - **[player-2] respawn doesn't clear held input keys**
-  (`main.fc:1442-1459`). `restart_current_level` calls `reset_for_life`
-  but not `clear_input_keys` (unlike `advance_next_level:1419`), so a
-  movement key held when the death animation ends walks the respawned
-  player. Fix: add `player.clear_input_keys(g)` after `reset_for_life`.
-  Test-safe.
+  (`main.fc:1577`). `restart_current_level` calls `reset_for_life`
+  (`:1586`) but not `clear_input_keys` — unlike `advance_next_level`
+  (`:1554`) — so a movement key held when the death animation ends walks
+  the respawned player. **OG-faithful:** id's `Died()` calls
+  `IN_ClearKeysDown()` (`WL_GAME.C:1199`). Fix: add
+  `player.clear_input_keys(g)` after `reset_for_life`. One line,
+  test-safe.
+
+- **[player-4] number-key weapon select is ungated — wrong frame *and*
+  selects unowned/no-ammo weapons** (`main.fc:4149-4152`). The number
+  keys do a bare `g->weapon = 0..3` with no gate. This is worse than the
+  original audit's "attack-frame desync" framing — the OG's
+  `CheckWeaponChange` (`WL_AGENT.C:117`) gates the switch **three** ways
+  and we honor none:
+  1. **Not during an attack.** Firing sets `player->state = &s_attack`
+     (`WL_AGENT.C:989`); the attack thinker `T_Attack` does *not* call
+     `CheckWeaponChange`, so the OG cannot change weapons mid-attack.
+     Ours can, and `update_weapon`'s `progress = 1 - fire_timer /
+     fire_rate[g->weapon]` (`player.fc:629`) then divides by the *new*
+     weapon's rate mid-cycle → the firing animation freezes or jumps.
+  2. **Requires ammo.** OG: `if (!gamestate.ammo) return;` (forced knife).
+  3. **Only owned weapons.** OG loops `i = wp_knife .. gamestate.bestweapon`;
+     ours lets `4` select the chain gun at level start.
+  Faithful fix: gate the keydown on `g->fire_timer <= 0.0`, require
+  `g->ammo > 0` for weapons > knife, and clamp the target to
+  `g->best_weapon`. The `setweapon:` test command (`main.fc:1978`) stays
+  ungated on purpose (test tool). No test presses number keys → no golden
+  churn; test-safe.
+
+### P2 — real, narrower scope or edge cases
 
 - **[save-3] loading a save under a different view mode gives a wrong
-  FOV** (`save.fc:727-732`). `from_slot` restores `plane_x/plane_y`
+  FOV** (`save.fc:733-738`). `from_slot` restores `plane_x/plane_y`
   verbatim, but the plane magnitude must equal the live `plane_factor`
-  (view-mode/aspect-derived; `view_mode` is in config, not the slot).
-  Fix: after restoring dir+plane, renormalize the plane to
-  `|plane| == g->plane_factor`. No-op in test mode → test-safe.
-
-- **[cutscenes-4] endart `^L` desyncs `st.py` from `st.rowon` for an
-  out-of-range row** (`cutscenes.fc:1245-1250`). `st.rowon` is clamped
-  but `st.py` is derived from the unclamped row → drawn baseline drifts
-  (cosmetic; `font.draw_char` clips, no OOB). Fix: clamp `new_row` once,
-  derive both fields from it. Endart-only, test-safe.
-
-- **[opl2-1] additive-connection channel drops the modulator when the
-  carrier env hits 'off'** (`opl2.fc:599`). The whole-channel early-out
-  keys only on the carrier; in an additive channel a still-audible
-  modulator is cut when the carrier finishes release. Fix: gate the
-  early-out on connection mode and, in the additive branch, emit the
-  modulator alone when the carrier is off. FM mode unchanged; audible
-  only on rare additive instruments.
-
-- **[main-2] `add_score` can stack multiple 1-UP cues in one frame**
-  (`main.fc:929-939`). Crossing >1 40k milestone in one add fires
-  `bonus1up` per milestone (lives are correctly clamped). Cosmetic. Fix:
-  grant silently in the loop, fire the cue once after if any granted.
-  Test-safe (audio off in test mode).
-
-- **[sdl2-1] `SDL_OpenAudioDevice` extern drops `const` on pointer
-  params** (`sdl2.fc`). Harmless. Fix: optional doc-accuracy — `const
-  any*`; verify the spec accepts `const any*` in an extern sig first.
-  Skip if it risks churn. (The `SDL_QueueAudio` binding was removed when
-  audio moved to a callback device.)
-
-### Minor bugs
-
-- **[main-5] `--level` launch doesn't pin `oldscore`**
-  (`main.fc:2989-3000`), unlike `setlevel:` (`:2190`). No-op today (score
-  is 0 at launch) but makes the death-rewind baseline well-defined. Fix:
-  add `g->oldscore = g->score` in the `start_level` branch. Test-safe.
+  (view-mode/aspect-derived; `view_mode` lives in config, not the slot),
+  so saving in 4:3 and loading in widescreen (or vice-versa) keeps the
+  stale FOV until the next CHANGE VIEW. Fix: after restoring dir+plane,
+  renormalize the plane to `|plane| == g->plane_factor` (its direction is
+  already perpendicular to dir). No-op in test mode (view mode pinned) →
+  test-safe.
 
 - **[main-4] `setlevel:`/`setepisode:` test commands leave
-  `next_level`/episode latches stale** (`main.fc:2184-2215`). A script
+  `next_level`/episode latches stale** (`main.fc:2325`, `:2340`). A script
   doing `endepisode` then `setlevel:N` bounces straight into intermission
   on the new level. Fix: in both branches clear `next_level=false;
   next_level_delay=0.0; went_secret=false; ep_recorded_current=false`
-  (mirrors `advance_next_level`). Test-only; existing golden scripts
-  don't pre-set these → test-safe.
+  (mirrors `advance_next_level`). Test-only; existing golden scripts don't
+  pre-set these → test-safe.
 
-- **[player-4] mid-attack weapon switch desyncs the attack-frame
-  denominator** (`player.fc:619-625`). `fire_timer` is set from the
-  firing weapon's `fire_rate`, but the per-frame
-  `progress = 1 - fire_timer/fire_rate[g->weapon]` uses the *current*
-  weapon, and the number keys (`main.fc:3895-3898`) switch with no timer
-  gate → the animation freezes on a frame or jumps. Fix: snapshot the
-  firing weapon's rate at fire time and use it as the denominator (covers
-  the `setweapon` test path), or gate the keydown switch on
-  `fire_timer <= 0.0`. Test-safe.
+- **[opl2-1] additive-connection channel drops the modulator when the
+  carrier env hits 'off'** (`opl2.fc:599`). The whole-channel early-out
+  keys only on the carrier; in an additive (connection-bit) channel a
+  still-audible modulator is cut when the carrier finishes release. Fix:
+  gate the early-out on connection mode and, in the additive branch, emit
+  the modulator alone when the carrier is off. FM mode unchanged.
+  **Latent — confirm reach before investing:** check whether any WL6 SFX
+  instrument or music track ever writes a `0xC0+ch` register with bit 0
+  set; if none do, this is emulator-correctness only with no audible
+  effect on our data.
+
+### P3 — cosmetic / well-definedness / very-low-reach
+
+- **[cutscenes-4] endart `^L` desyncs `st.py` from `st.rowon` for an
+  out-of-range row** (`cutscenes.fc:1248-1253`). `st.rowon` is clamped
+  (`:1250-1252`) but `st.py = snap_y` is derived from the *unclamped*
+  `new_row` (`:1249`) → drawn baseline drifts
+  (cosmetic; `font.draw_char` clips, no OOB). The OG's `^L`
+  (`WL_TEXT.C:231`) keeps them consistent precisely because it derives
+  *both* from one value and clamps *neither* (`rowon = (py-TOPMARGIN)/
+  FONTHEIGHT; py = TOPMARGIN + rowon*FONTHEIGHT`). Simplest faithful fix:
+  mirror the OG — compute `new_row` once, derive both fields from it. The
+  clamp only matters on malformed markup the real `endart` chunk never
+  emits, so this never triggers on shipped data. Endart-only, test-safe.
+
+- **[main-5] `--level` launch doesn't pin `oldscore`**
+  (`main.fc:3170-3179`), unlike `setlevel:` (`:2331`/`:2348`). No-op today
+  (score is 0 and `oldscore` inits to 0) but makes the death-rewind
+  baseline well-defined. Fix: add `g->oldscore = g->score` in the
+  `some(lvl)` branch. Test-safe.
 
 ### Dead code — each needs a keep-or-delete call
 
 - **[main-1] redundant 2nd `update_phase_transitions()` in the
-  interactive loop** (`main.fc:3979`; `tick()` already calls it at
-  `:1651`). A no-op today but a maintenance trap (a future
-  non-phase-changing transition would run twice interactively, once per
-  test tick). Fix: delete `:3979`; if the loop's music-refresh needs the
-  `level_changed` bool, return it from `tick()` and read it at the single
-  site. Interactive-only, test-safe.
+  interactive loop** (`main.fc:4234`; `tick()` already calls it at
+  `:1786`, discarding the returned `level_changed`). A no-op today
+  (idempotent when no transition is pending) but a maintenance trap — a
+  future non-phase-changing transition would run twice interactively, once
+  per test tick. Fix: delete `:4234`; if the loop's music refresh ever
+  needs `level_changed`, read it from `tick()`'s already-returned bool at
+  the single site. Interactive-only, test-safe.
 
 - **[cla-dead-1] unused enemy fields** `move_remaining` / `dist_flat` /
   `dist_to_player` (`combat.fc:118-120`). Never read for behavior. Fix:
-  drop `dist_flat`/`dist_to_player` + their `level.fc:1032-1033` inits
+  drop `dist_flat`/`dist_to_player` + their `level.fc:1034-1035` inits
   (zero other refs). `move_remaining` is also serialized
-  (`save.fc:606/807`) — removing it changes the save format (renumber
+  (`save.fc:611`/`:813`) — removing it changes the save format (renumber
   later token indices), so version-bump the save or leave that one field.
 
-- **[ui-3] unused HUD number-drawer cluster** `hud.draw_number` /
-  `draw_digit` / `digit_glyph` + private `fill_rect`
-  (`ui.fc:666-699, 720-724`). No callers. Fix: delete. Note the 3×5-font
-  path (`char_glyph`/`draw_text` → `overlay.draw_centered_text`) is *also*
-  currently unreachable — decide whether to keep it.
+- **[ui-3] unused HUD number-drawer / mini-font cluster**
+  (`ui.fc:660-673` `draw_digit`/`digit_glyph`/`draw_number`,
+  `ui.fc:712` private `fill_rect`). `hud.draw_number` has no callers.
+  Confirmed 2026-06-09: the 3×5-font path is *also* dead — `hud.draw_text`
+  (`ui.fc:694`) is reached only by `overlay.draw_centered_text`
+  (`render.fc:813`), which itself has no callers. Fix: delete the whole
+  cluster (`draw_number`/`draw_digit`/`digit_glyph` + `char_glyph`/3×5
+  `draw_text` + `draw_centered_text` + the private `fill_rect`). Keep the
+  real font path `font.draw_text` (`ui.fc:545`) — it's live.
 
 - **[ui-2] `pics.extend_pic_horizontally` is never called**
-  (`ui.fc:452-474`), with a latent OOB (no upper `pic_x` clamp) if wired.
+  (`ui.fc:444`), with a latent OOB (no upper `pic_x` clamp) if wired.
   Fix: delete; or if kept for future widescreen banners, add the upper
   clamp + a TODO that it's unwired.
 
 - **[menu-6] `render_quit_modal` has an unused `ac` param**
-  (`menu.fc:720`; call site `:769`). Fix: drop the param + arg (leave
-  `render_main`'s `ac` — still used by `render_sound_list`). Only if no
-  quit-modal SFX is planned.
+  (`menu.fc:722`; call site `:771`). Confirmed `ac` is referenced only in
+  the signature. Fix: drop the param + arg (leave `render_main`'s `ac` —
+  still used by `render_sound_list`). Only if no quit-modal SFX is
+  planned.
 
 ### Performance — optional micro-opts (none per-frame-critical)
 
@@ -163,6 +200,28 @@ re-proposed. Wolf-fc targets the GOODTIMES build of WL6 (the 1.4
 GT/ID/Activision re-release that became the Steam/GOG version);
 features the GOODTIMES executable never references are dead data, not
 fidelity gaps.
+
+### 1-UP cue fires per 40k milestone — already faithful ([main-2], retired 2026-06-09)
+
+The 2026-05 audit flagged `add_score` (`main.fc:1013`) for firing the
+`bonus1up` cue once per 40k milestone when a single add crosses more than
+one (e.g. a near-boundary intermission bonus), and proposed firing it
+once. We will NOT do this — it's already faithful. id's `GivePoints`
+(`WL_AGENT.C:523`) is a `while (score >= nextextra) { nextextra +=
+EXTRAPOINTS; GiveExtraMan(); }` loop, and `GiveExtraMan` calls
+`SD_PlaySound(BONUS1UPSND)` (`:497`) every iteration — so the OG fires the
+cue per milestone exactly as we do. Collapsing to one cue would be a
+*divergence*. (Two `SD_PlaySound` calls in one frame just retrigger the
+same sample — no audible stutter — so there's nothing cosmetic to fix
+either.)
+
+### `const`-on-extern doc nit — not tracked ([sdl2-1], retired 2026-06-09)
+
+The `SDL_OpenAudioDevice` extern dropped `const` on a couple of pointer
+params relative to the C header. This is a pure documentation-accuracy
+nit with zero behavioral or codegen effect; the finding itself flagged it
+"skip if it risks churn." Not worth a tracked item — fold it into any
+unrelated `sdl2.fc` edit if convenient.
 
 ### Door-LOS tile-coord transparency quirk is faithful ([cla-door-1], retired 2026-06-04)
 
@@ -262,26 +321,17 @@ referenced by any original Wolf3D code path.
 
 ## Reference
 
-- **wolf4sdl** at `../wolf4sdl/` — reference C implementation, consult
-  for data format details and rendering correctness (but don't copy
-  code to avoid GPL).
-- **wolf3d** at `../wolf3d/` — id's original DOS source (also GPL);
-  authoritative for OG behavior over wolf4sdl when they disagree.
+- **wolf3d** at `../wolf3d/WOLFSRC/` — id's original DOS source (GPLv2);
+  authoritative for OG behavior. Consult for behavior, don't transcribe
+  (see CLAUDE.md copyleft hygiene). Key files: `WL_AGENT.C` (player /
+  weapon firing / `GivePoints` / `CheckWeaponChange`), `WL_GAME.C`
+  (`Died`, level setup), `WL_PLAY.C` (game loop, `songs[]`), `WL_ACT1.C`
+  (doors, pushwall), `WL_ACT2.C` (enemy AI), `WL_DRAW.C` (raycaster),
+  `WL_STATE.C` (`CheckLine` sight), `WL_TEXT.C` (endart markup),
+  `ID_SD.C` (audio), `ID_CA.C` (Carmack/RLEW/Huffman), `ID_PM.C` (VSWAP),
+  `WL_DEF.H` (constants/structs), `AUDIOWL6.H` (sound/music enums).
+- **wolf4sdl** — reference C port, normally at `../wolf4sdl/`. **Currently
+  absent** from this checkout; restore it if a format detail is clearer
+  in the SDL port. id's DOS source wins when they disagree.
 - **fc-lang** at `../fc-lang/` — FC compiler source and stdlib
   (installed system-wide as `fcc` via `make install`; see README.md).
-- Key wolf4sdl files:
-  - `wl_draw.cpp` — raycaster (AsmRefresh, HitVertWall/Door,
-    ScaleShape, DrawScaleds)
-  - `wl_act1.cpp` — doors (MoveDoors, OpenDoor), PushWall
-  - `wl_act2.cpp` — enemy AI state machines (SpawnStand/SpawnPatrol,
-    T_Chase, T_Shoot)
-  - `wl_game.cpp` — level setup (SetupGameLevel, ScanInfoPlane)
-  - `wl_agent.cpp` — player actions (weapon firing, damage)
-  - `wl_play.cpp` — game loop, songs[] table
-  - `id_ca.cpp` — asset loading (Carmack/RLEW/Huffman)
-  - `id_sd.cpp` — audio (IMF playback, SFX)
-  - `id_pm.cpp` — VSWAP page manager
-  - `id_vl.cpp` — display setup
-  - `audiowl6.h` — sound/music chunk enums (LASTSOUND=87,
-    STARTMUSIC=261)
-  - `wl_def.h` — all game constants and structs
