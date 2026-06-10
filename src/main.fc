@@ -892,20 +892,41 @@ struct audio_ctx =
     ad: audio.audio_data*      // AUDIOT — AdLib SFX chunks + music
     sfx: adlib.sfx_state*      // AdLib SFX playback (owns its own OPL2 chip)
     digi: digi.player*         // 8-bit PCM playback (up to 4 slots)
-    // Music + mix scratch, owned here so the SDL audio callback (which
-    // runs on its own thread, decoupled from the render loop) can reach
-    // them through its userdata pointer. The main thread guards every
-    // mutation of these with sdl2.lock_audio / unlock_audio so the two
-    // threads never touch the OPL2 chips concurrently. `music_prev` is the
-    // outgoing track during a swap and `music_xfade` counts down its
-    // crossfade-out (see the music-swap block in the main loop). `mix_buf`
-    // is the int32 accumulation buffer the callback sums sources into
-    // before soft-clipping straight to SDL's stream.
+    // Music + mix scratch. These are owned by the SDL audio callback thread:
+    // it mutates `music` / `music_prev` / `music_xfade` only while draining
+    // `cmd_ring` and mixing, so they are touched on a single thread and need
+    // no lock. The main thread sets `music` exactly once at startup (before
+    // the device is unpaused, so no callback can be running) and thereafter
+    // hands new tracks across via `cmd_ring`; it never reads or writes these
+    // directly again. `music_prev` is the outgoing track during a swap and
+    // `music_xfade` counts its crossfade-out down. `mix_buf` is the int32
+    // accumulation buffer the callback sums sources into before soft-clipping
+    // straight to SDL's stream. `music_chunk`, by contrast, is owned by the
+    // MAIN thread (the swap-decision in the loop) and never read by the
+    // callback — it just records which track we last asked for.
     music: imf.player*?        // current track (none = nothing loaded)
     music_prev: imf.player*?   // outgoing track, crossfading out
-    music_chunk: int32         // AUDIOT chunk currently loaded (-1 = none)
+    music_chunk: int32         // AUDIOT chunk last requested (-1 = none)
     music_xfade: int32         // samples remaining in the crossfade-out
     mix_buf: int32[]
+    // Lock-free command channel between the main thread (producer) and the
+    // SDL audio callback (consumer). `cmd_ring` carries play-sfx / set-music
+    // requests main -> audio; the callback drains it at the top of each call
+    // and performs the actual chip / slot / player mutation. `free_ring`
+    // carries retired music players the other way (audio -> main), since only
+    // the main thread may free them — the callback hands a player back once
+    // its crossfade is done and the main loop destroys it. `adlib_busy_flag`
+    // mirrors `sfx->active` across the boundary: the callback publishes it
+    // each call (release) and sfx.adlib_busy reads it (acquire) for the
+    // use-key "do-do-do" rhythm gate, which runs on the main thread.
+    cmd_ring: spsc.ring<audio_q.cmd>*
+    free_ring: spsc.ring<audio_q.retired>*
+    adlib_busy_flag: bool
+    // Audio-callback heartbeat: bumped + published once per callback. The
+    // main loop's diagnostic beat reads it (acquire) to tell a stalled audio
+    // thread (cb frozen) from a stalled main thread (beats frozen). Diagnostic
+    // only — never read by the simulation.
+    cb_count: int64
     // Sound submenu toggles. `sfx_on` gates the AdLib SFX fallback path
     // (synthesized FM hits — see sfx.trigger_*). `digi_on` gates the
     // digitized PCM path (Sound Blaster samples). `music_on` gates the
@@ -1789,6 +1810,15 @@ let tick = (w: world*, dt: float64) ->
     // layers music switching on top of this; test mode doesn't need music
     // so it can ignore the return value.
     let _changed = update_phase_transitions(w, w->ac->vs)
+    // Headless test mode has no audio thread to drain cmd_ring, so pump it
+    // synchronously each tick: this runs the real producer -> ring -> consumer
+    // path (not a bypass) and keeps digi / sfx state observable to the test
+    // harness. Per-tick so a long `wait:N` can't overflow the ring. Gated on
+    // test_mode because the interactive game drains on the audio thread, and
+    // the ring is single-consumer.
+    if w->g->test_mode then
+        drain_audio_commands(w->ac)
+        atomic_store_release(&w->ac->adlib_busy_flag, w->ac->sfx->active)
 
 // Render the full game frame to fb (used before saving a screenshot).
 let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[]) ->
@@ -1925,6 +1955,11 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
 
 let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64) ->
     let g = w->g
+    // Apply audio commands a prior command left on the ring (e.g. a `goto`
+    // that collected a pickup — it doesn't tick, so nothing pumped it) before
+    // this command runs, so audio probes observe them. Ticking commands pump
+    // per tick already; this just covers the non-ticking enqueuers.
+    drain_audio_commands(w->ac)
     let bad = (expected: const str) ->
         io.write("bad arg '%s{arg}': expected %s{expected}\n", stderr)
         void()
@@ -2825,32 +2860,107 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         io.write("Unknown test command: %s{arg}\n", stdout)
         void()
 
+// Compact integer code for the current phase, for the diagnostic log
+// (game_phase is a union with no numeric form). Keep in sync with the union.
+let phase_code = (p: game_phase) ->
+    match p with
+    | pg13 -> 0
+    | title -> 1
+    | main_menu -> 2
+    | playing -> 3
+    | dying -> 4
+    | intermission -> 5
+    | bj_victory -> 6
+    | death_cam -> 7
+    | episode_end -> 8
+    | endart -> 9
+    | high_scores -> 10
+
+// Compact integer code for the active menu level, for the diagnostic log
+// (menu.nav is a union). 8 is the quit (Y/N) modal — the prompt the reported
+// freeze happens at. Keep in sync with menu.nav.
+let menu_code = (m: menu.nav) ->
+    match m with
+    | main -> 0
+    | difficulty -> 1
+    | episode -> 2
+    | savelist -> 3
+    | loadlist -> 4
+    | sound -> 5
+    | options -> 6
+    | changeview -> 7
+    | quit -> 8
+
+// Drain the command ring and apply every pending command — the single place
+// the OPL2 chips / digi slots / music players are mutated. Runs on the audio
+// thread (from audio_callback) in the real game; in headless test mode, where
+// there is no audio thread, it's pumped synchronously each tick (see `tick`)
+// so the regression suite exercises this real producer -> ring -> consumer
+// path rather than a bypass. Single-consumer either way.
+let drain_audio_commands = (ac: audio_ctx*) ->
+    loop
+        match spsc.dequeue(ac->cmd_ring) with
+        | some(c) ->
+            if c.kind == audio_q.play_sfx then
+                sfx.apply_trigger(c.sfx_id, ac, c.pan, c.gain)
+            else if c.kind == audio_q.set_music then
+                match c.player with
+                | some(np) ->
+                    // Demote the current track to crossfade out. If a prior
+                    // crossfade is still in flight (rapid double-swap), retire
+                    // that older outgoing player back to the main thread now.
+                    match ac->music_prev with
+                    | some(old) ->
+                        spsc.enqueue(ac->free_ring, audio_q.retired { player = old })
+                        void()
+                    | none -> void()
+                    ac->music_prev = ac->music
+                    ac->music_xfade = if ac->music.is_some then music_xfade_samples else 0
+                    ac->music = some(np)
+                | none -> void()
+        | none -> break
+
 // SDL audio callback — runs on SDL's dedicated audio thread, so it is fully
-// decoupled from the render loop and heavy supersampling / SSAA frame
-// hitches can't stutter the sound. It reads and advances all audio state
-// (music, the crossfading-out previous track, AdLib SFX, digi) through the
-// `audio_ctx` handed in as `userdata`; the main thread guards every
-// mutation of that state with sdl2.lock_audio / unlock_audio so the two
-// threads never touch the OPL2 chips or digi slots at once. `stream` is the
-// device buffer (interleaved stereo int16) and `len` its size in bytes (4
-// bytes per stereo frame). Non-capturing (references only module-level
-// bindings), so `&audio_callback` yields a plain C function pointer.
-// `stream` is typed uint8* (not any*) so the generated C trampoline matches
-// SDL_AudioCallback's `void(*)(void*, Uint8*, int)` exactly — an any* there
-// trips -Werror=incompatible-pointer-types against the real SDL field.
+// decoupled from the render loop and heavy supersampling / SSAA frame hitches
+// can't stutter the sound. It is the SOLE mutator of the OPL2 chips, digi
+// slots, and music players: the main thread never touches them directly, it
+// only posts requests onto `cmd_ring`, which this callback drains and applies
+// here. That is what lets the whole thing run lock-free — the main loop never
+// blocks on the audio thread. `stream` is the device buffer (interleaved
+// stereo int16) and `len` its size in bytes (4 bytes per stereo frame).
+// Non-capturing (references only module-level bindings), so `&audio_callback`
+// yields a plain C function pointer. `stream` is typed uint8* (not any*) so
+// the generated C trampoline matches SDL_AudioCallback's
+// `void(*)(void*, Uint8*, int)` exactly — an any* there trips
+// -Werror=incompatible-pointer-types against the real SDL field.
 let audio_callback = (userdata: any*, stream: uint8*, len: int32) ->
     let ac = (audio_ctx*) userdata
+    // Diagnostic heartbeat: publish that this callback fired (see audio_ctx).
+    atomic_store_release(&ac->cb_count, ac->cb_count + 1i64)
+    // Apply pending main-thread requests on this (audio) thread.
+    drain_audio_commands(ac)
     let mut frames = len / 4
     let cap = (int32) ac->mix_buf.len / 2
     if frames > cap then frames = cap     // safety net; never trips at 1024
     let out = int16[] { ptr = (int16*) stream, len = (int64) (frames * 2) }
+    let xfade_before = ac->music_xfade
     ac->music_xfade = mixer.fill_frame(ac->mix_buf, out,
-        ac->music, ac->music_prev, ac->music_on,
-        (float64) ac->music_gain_pct / 100.0,
+        ac->music, ac->music_prev, atomic_load_acquire(&ac->music_on),
+        (float64) atomic_load_acquire(&ac->music_gain_pct) / 100.0,
         ac->music_xfade, music_xfade_samples,
-        ac->sfx,  (float64) ac->sfx_gain_pct  / 100.0,
-        ac->digi, (float64) ac->digi_gain_pct / 100.0,
+        ac->sfx,  (float64) atomic_load_acquire(&ac->sfx_gain_pct)  / 100.0,
+        ac->digi, (float64) atomic_load_acquire(&ac->digi_gain_pct) / 100.0,
         frames, sfx.sample_rate)
+    // A crossfade that just finished means music_prev is silent and untouched
+    // from here on — hand it back to the main thread to free.
+    if xfade_before > 0 && ac->music_xfade == 0 then
+        match ac->music_prev with
+        | some(old) ->
+            spsc.enqueue(ac->free_ring, audio_q.retired { player = old })
+            ac->music_prev = none(imf.player*)
+        | none -> void()
+    // Publish AdLib-busy for the main thread's use-key rhythm gate.
+    atomic_store_release(&ac->adlib_busy_flag, ac->sfx->active)
     void()
 
 // ============================================================
@@ -3130,7 +3240,15 @@ let main = (args: str[]) ->
             music_on = cfg.music_on,
             sfx_gain_pct = cfg.sfx_gain_pct,
             digi_gain_pct = cfg.digi_gain_pct,
-            music_gain_pct = cfg.music_gain_pct
+            music_gain_pct = cfg.music_gain_pct,
+            // 64 commands is far more than one ~11ms buffer ever accrues
+            // (a handful of triggers per frame); the ring drops on overflow
+            // rather than stalling. free_ring rarely holds more than the one
+            // or two players a swap retires.
+            cmd_ring = spsc.make(alloc(audio_q.cmd[64] {})!),
+            free_ring = spsc.make(alloc(audio_q.retired[16] {})!),
+            adlib_busy_flag = false,
+            cb_count = 0i64
         })!,
         sm = build_save_menu_ctx(),
         hs = build_highscore_ctx(),
@@ -3359,13 +3477,21 @@ let main = (args: str[]) ->
         io.write("fatal: SDL_CreateTexture failed: %s{(const str) sdl2.get_error()}\n", stderr)
         return 1
 
+    // Crash-surviving diagnostics (opt-in via $WOLF_FC_DIAG). Opened here,
+    // before audio setup, so it captures an audio device that "doesn't even
+    // start". A `none` handle (env unset) makes every diag call a no-op.
+    let diag_file = diag.open()
+    let diag_start = sys.time()
+    diag.mark(diag_file, diag_start, "startup: window/renderer/texture ready, opening audio")
+
     // Set up audio device and start music. Output is stereo (2 channels
     // interleaved L,R,…) so enemy SFX can pan spatially via digi. We run a
     // callback (not the push/SDL_QueueAudio model): SDL drives audio
     // generation on its own thread at the sound-card's rate, so a slow
     // render frame (heavy supersampling / SSAA) can never starve it. The
-    // callback reaches all mutable audio state through `userdata = ac`; the
-    // main loop holds sdl2.lock_audio around every mutation of that state.
+    // callback reaches all mutable audio state through `userdata = ac`, and is
+    // its sole mutator: the main loop only posts commands onto the lock-free
+    // cmd_ring (see audio_callback), so it never blocks on the audio thread.
     let mut spec = sdl2.audio_spec {
         freq = sfx.sample_rate, format = sdl2.audio_s16sys,
         channels = 2u8, silence = 0u8, samples = (uint16) audio_buffer_frames,
@@ -3383,12 +3509,15 @@ let main = (args: str[]) ->
     // WONDERIN). Phase-driven swap below keeps this in sync afterward. The
     // device opens paused, so load the track before unpausing — the
     // callback can't fire (and read ac->music) until pause_audio(…, 0).
+    diag.mark(diag_file, diag_start,
+        if audio_dev > 0u32 then "audio: device opened" else "audio: device FAILED — silent")
     if audio_dev > 0u32 then
         let init_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
         if init_chunk < ad->num_chunks then
             w->ac->music = some(font.music_load(ad, init_chunk))
             w->ac->music_chunk = init_chunk
         sdl2.pause_audio(audio_dev, 0)
+        diag.mark(diag_file, diag_start, "audio: unpaused (callback live)")
     // Fresh screenshot directory each session — user copies any they want to keep.
     overlay.clear_screenshots()
 
@@ -3407,10 +3536,18 @@ let main = (args: str[]) ->
     // loop so it shows the same frame the full-period sample describes.
     let mut prev_work_ms = 0.0
     let mut event = default(sdl2.sdl_event)
+    let mut diag_frame = 0i64
 
     loop
         if !running then break
         if g->want_quit then break
+
+        // Diagnostic heartbeat (no-op unless $WOLF_FC_DIAG). Last beat before
+        // a freeze names the frame + phase + menu we hung in; a `cb` that
+        // stops advancing across beats means the audio thread stalled.
+        diag_frame = diag_frame + 1i64
+        diag.beat(diag_file, diag_start, diag_frame, phase_code(g->phase),
+                  menu_code(g->menu_level), atomic_load_acquire(&w->ac->cb_count))
 
         // Delta time
         let now = sdl2.get_ticks()
@@ -3458,15 +3595,10 @@ let main = (args: str[]) ->
         // input response crisp even when the half-rate skip is active.
         let mut event_seen = false
 
-        // Hold the audio lock across everything that mutates audio state
-        // this iteration — input handling (menu cues), tick (gameplay SFX),
-        // and the music swap below — so the callback thread never reads the
-        // OPL2 chips / digi slots mid-write. Released before render_frame so
-        // the expensive 3D pass (and its vsync wait) runs fully concurrent
-        // with audio generation. In steady state this region is well under
-        // a millisecond; the only long holds are rare (a level build during
-        // a transition), where a brief audio hiccup is masked anyway.
-        if audio_dev > 0u32 then sdl2.lock_audio(audio_dev)
+        // No audio lock: the main thread never blocks on the audio thread.
+        // Everything that "mutates audio state" below — menu cues, gameplay
+        // SFX in tick(), the music swap — only posts commands onto the
+        // lock-free cmd_ring; the callback applies them on its own thread.
 
         // Poll events
         loop
@@ -3509,6 +3641,12 @@ let main = (args: str[]) ->
                 // clears it, so the gatling fires on the first frame of the
                 // next level. Checked per-branch below.
                 let is_key_repeat = event.key.repeat != 0u8
+                // Diagnostic: log real (non-repeat) key presses with the state
+                // they hit, so the trail shows e.g. "Y at the quit modal" right
+                // before a freeze. No-op unless $WOLF_FC_DIAG.
+                if !is_key_repeat then
+                    diag.key(diag_file, diag_start, k, phase_code(g->phase),
+                             menu_code(g->menu_level), atomic_load_acquire(&w->ac->cb_count))
                 // Fullscreen toggle — always works (even from menu / pause).
                 // F11 is our own shortcut; Alt+Enter matches the original
                 // SDL port. Either Alt modifier counts (KMOD_ALT = LALT |
@@ -3820,18 +3958,20 @@ let main = (args: str[]) ->
                             let section = menu.sound_section(row)
                             let is_toggle = menu.sound_is_toggle(row)
                             let mut changed = false
+                            // The audio callback reads these toggles / gains
+                            // on its own thread, so publish each change with a
+                            // release store (the main thread is the only
+                            // writer, so the read side of the flip stays
+                            // plain). The callback picks the new value up
+                            // within one buffer (~12 ms) — no queue to flush.
                             if is_toggle then
                                 if is_confirm || k == sdl2.key_left || k == sdl2.key_right then
                                     if section == 0 then
-                                        w->ac->sfx_on = !w->ac->sfx_on
+                                        atomic_store_release(&w->ac->sfx_on, !w->ac->sfx_on)
                                     else if section == 1 then
-                                        w->ac->digi_on = !w->ac->digi_on
+                                        atomic_store_release(&w->ac->digi_on, !w->ac->digi_on)
                                     else
-                                        // The callback gates music on this
-                                        // flag, so toggling off silences it
-                                        // within one buffer (~23 ms) — no
-                                        // queue to flush.
-                                        w->ac->music_on = !w->ac->music_on
+                                        atomic_store_release(&w->ac->music_on, !w->ac->music_on)
                                     changed = true
                             else if k == sdl2.key_left || k == sdl2.key_right then
                                 let delta = if k == sdl2.key_left
@@ -3843,9 +3983,9 @@ let main = (args: str[]) ->
                                 cur = cur + delta
                                 if cur < config.gain_pct_min then cur = config.gain_pct_min
                                 if cur > config.gain_pct_max then cur = config.gain_pct_max
-                                if section == 0 then w->ac->sfx_gain_pct = cur
-                                else if section == 1 then w->ac->digi_gain_pct = cur
-                                else w->ac->music_gain_pct = cur
+                                if section == 0 then atomic_store_release(&w->ac->sfx_gain_pct, cur)
+                                else if section == 1 then atomic_store_release(&w->ac->digi_gain_pct, cur)
+                                else atomic_store_release(&w->ac->music_gain_pct, cur)
                                 changed = true
                             if changed then
                                 config.save(config.snapshot(w))
@@ -4279,27 +4419,35 @@ let main = (args: str[]) ->
         // pattern can't distinguish key direction. high_scores is
         // also dispatched directly (the editing flow needs typing keys
         // distinct from ack keys; see the high_scores arm above).
-        // Sync the active music to whatever phase we're now in. Only swap
-        // when the chunk actually changed, so we don't restart the IMF
-        // player every frame. The outgoing track becomes `music_prev` and
-        // crossfades out (in the callback) while the new track fades in, so
-        // the swap doesn't click. Still under the audio lock taken above.
-        let want_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
-        if want_chunk != w->ac->music_chunk then
-            if audio_dev > 0u32 && want_chunk < ad->num_chunks then
-                // Free the previous swap's outgoing player — its crossfade
-                // finished long ago and we hold the lock, so this is safe.
-                match w->ac->music_prev with
-                | some(pm) -> imf.destroy(pm)
-                | none -> void()
-                w->ac->music_prev = w->ac->music
-                w->ac->music_xfade = if w->ac->music.is_some then music_xfade_samples else 0
-                w->ac->music = some(font.music_load(ad, want_chunk))
-                w->ac->music_chunk = want_chunk
+        // Free music players the audio thread has finished with. The callback
+        // can't call free, so it hands retired players back over free_ring
+        // once their crossfade is done (or a newer track displaced them); we
+        // drain and destroy them here. Empty (a no-op) in test mode, where no
+        // callback ever runs.
+        loop
+            match spsc.dequeue(w->ac->free_ring) with
+            | some(r) -> imf.destroy(r.player)
+            | none -> break
 
-        // Audio state is now settled for this iteration — release the lock
-        // before the (possibly slow) render so the callback keeps running.
-        if audio_dev > 0u32 then sdl2.unlock_audio(audio_dev)
+        // Sync the active music to whatever phase we're now in. Only swap when
+        // the chunk actually changed, so we don't restart the IMF player every
+        // frame. The heavy work (alloc + Huffman decode) happens here on the
+        // main thread; we hand the ready player to the audio thread via
+        // set_music, which demotes the current track to a crossfade-out so the
+        // swap doesn't click. `music_chunk` is main-thread-owned, so this stays
+        // race-free.
+        let want_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
+        if want_chunk != w->ac->music_chunk && audio_dev > 0u32 && want_chunk < ad->num_chunks then
+            let np = font.music_load(ad, want_chunk)
+            let posted = spsc.enqueue(w->ac->cmd_ring, audio_q.cmd {
+                kind = audio_q.set_music, sfx_id = 0,
+                pan = 0.0, gain = 0.0, player = some(np) })
+            if posted then
+                w->ac->music_chunk = want_chunk
+            else
+                // Ring full (extremely unlikely — it's drained every buffer).
+                // Free the player we just loaded and retry on a later frame.
+                imf.destroy(np)
 
         // Frame-skip predicate. 3D phases (playing / dying / bj_victory /
         // death_cam) render every iteration — HUD-skip handled inside
@@ -4365,13 +4513,33 @@ let main = (args: str[]) ->
         if should_render && perf_freq > 0u64 then
             prev_work_ms = (float64) (sdl2.get_perf_counter() - now_perf)
                 / (float64) perf_freq * 1000.0
+        // Breadcrumb the present() boundary: SDL_RenderPresent blocks on vsync
+        // and is the one per-frame call that can hang under a wedged GPU /
+        // compositor. A trailing "present" with no following beat fingers it.
+        diag.mark(diag_file, diag_start, "present")
         sdl2.present(ren)
 
-    // Cleanup
-    if audio_dev > 0u32 then sdl2.close_audio(audio_dev)
+    // Quit. We deliberately DO NOT close the audio device, free the audio
+    // players, or call SDL_Quit here — the process is exiting and the kernel
+    // reaps the audio thread, the device, and all memory anyway.
+    //
+    // Why this matters: SDL_CloseAudioDevice (and SDL_Quit, which closes the
+    // device too) *joins* the audio callback thread. When PipeWire wedges that
+    // thread — the "sound dies after a few seconds" failure on this machine —
+    // the join blocks forever and the only escape is a hard reboot. The diag
+    // log caught exactly that: the callback went silent ~20 s before quit
+    // (cb frozen), then the process hung at "close_audio start". SDL offers no
+    // close-with-timeout, so the robust shutdown is to not join at all; the OS
+    // tears the (possibly stuck) thread down cleanly on exit, and closing the
+    // PipeWire connection via process death releases the device for the next
+    // launch. Freeing ac->music here would also be unsafe with the device
+    // still open — a live callback could read a player mid-free.
+    //
+    // We DO tear down the window/renderer/texture: that's video, never blocked
+    // by an audio wedge, and it closes the window cleanly.
+    diag.mark(diag_file, diag_start, "EXIT: process exit, audio thread + device left for the OS to reap")
+    diag.close(diag_file)
     sdl2.destroy_texture(tex)
     sdl2.destroy_renderer(ren)
     sdl2.destroy_window(win)
-    sdl2.quit()
-    quit_prompts.free_override(g->quit_prompts_override)
     0

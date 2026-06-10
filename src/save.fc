@@ -44,6 +44,89 @@ module paths =
 
 
 // ============================================================
+// Crash-surviving diagnostic log (leaf module). When $WOLF_FC_DIAG is set,
+// breadcrumbs the main loop + audio callback to ~/.wolf-fc/diag.log, fsync'd
+// after every line so the trail reaches the disk platter even if the process
+// then hard-freezes and the machine is power-cycled (fflush alone only
+// reaches the OS page cache, which a power cut discards). The LAST line names
+// where execution stopped; a clean shutdown appends "EXIT clean", so a log
+// missing that line hung at its final breadcrumb. Entirely off — every call a
+// no-op on a `none` handle — unless the env var is set. Linux/POSIX (fsync);
+// a debugging aid, never shipped on.
+// ============================================================
+module diag =
+    import io from std::
+    import sys from std::
+
+    // fileno is in <stdio.h>, fsync in <unistd.h>.
+    private module cio from "stdio.h" =
+        extern fileno: (any*) -> int32
+    private module cunistd from "unistd.h" =
+        extern fsync: (int32) -> int32
+
+    // Open ~/.wolf-fc/diag.log (truncating) when $WOLF_FC_DIAG is set; none
+    // otherwise, which makes every mark/beat/key/close below a no-op.
+    let open = () ->
+        if sys.env("WOLF_FC_DIAG").is_none then return none(any*)
+        paths.ensure_save_dir()
+        match paths.wolf_data_dir() with
+        | none -> none(any*)
+        | some(dir) ->
+            defer free(dir)
+            let path = alloc("%s{dir}/diag.log")!
+            defer free(path)
+            match io.open(path, "w") with
+            | some(f) ->
+                io.write("== wolf-fc diag log (lock-free audio) — fsync per line ==\n", f)
+                io.flush(f)
+                some(f)
+            | none -> none(any*)
+
+    // Flush a line all the way to disk so a later hard freeze can't lose it.
+    private let sync_line = (f: any*) ->
+        io.flush(f)
+        cunistd.fsync(cio.fileno(f))
+        void()
+
+    // Free-text breadcrumb (startup steps, the present() boundary, each
+    // shutdown step, the final "EXIT clean").
+    let mark = (file: any*?, start_ms: int64, label: const str) ->
+        match file with
+        | none -> void()
+        | some(f) ->
+            io.write("%d{sys.time() - start_ms} %s{label}\n", f)
+            sync_line(f)
+
+    // Per-frame heartbeat: frame counter, phase + menu_level ints (to spot
+    // the quit prompt = menu nav.quit), and the audio-callback count — if
+    // `cb` stops advancing across beats, the audio thread has stalled.
+    let beat = (file: any*?, start_ms: int64, frame: int64,
+                phase: int32, menu: int32, cb: int64) ->
+        match file with
+        | none -> void()
+        | some(f) ->
+            io.write("%d{sys.time() - start_ms} frame=%d{frame} phase=%d{phase} menu=%d{menu} cb=%d{cb}\n", f)
+            sync_line(f)
+
+    // A keypress, with the state it landed in — pinpoints which key at which
+    // prompt preceded a freeze (e.g. Y at the quit modal).
+    let key = (file: any*?, start_ms: int64, sym: int32,
+               phase: int32, menu: int32, cb: int64) ->
+        match file with
+        | none -> void()
+        | some(f) ->
+            io.write("%d{sys.time() - start_ms} KEY sym=%d{sym} phase=%d{phase} menu=%d{menu} cb=%d{cb}\n", f)
+            sync_line(f)
+
+    let close = (file: any*?) ->
+        match file with
+        | none -> void()
+        | some(f) ->
+            io.close(f)
+            void()
+
+
+// ============================================================
 // User preferences — sound toggles + future settings, persisted at
 // `~/.wolf-fc/config` so they survive across launches. Distinct from
 // `module save` (per-game-state slot files) since prefs aren't tied

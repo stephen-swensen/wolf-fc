@@ -394,9 +394,11 @@ module sfx =
     // handler: holding space against a wall fires the cue on the
     // press edge, then re-fires each time the previous chunk
     // finishes — naturally paced "do-do-do" without restarting the
-    // OPL2 envelope mid-attack.
+    // OPL2 envelope mid-attack. The chip itself lives on the audio
+    // thread now, so read the flag the callback publishes (acquire)
+    // rather than poking `sfx->active` across the boundary.
     let adlib_busy = (ac: audio_ctx*) ->
-        ac->sfx->active
+        atomic_load_acquire(&ac->adlib_busy_flag)
 
     // Play a sound by sfx.id.*. The Sound submenu has two independent
     // toggles relevant here: DIGITIZED SOUND (gates the digi PCM path)
@@ -412,16 +414,33 @@ module sfx =
     // has no cheap per-note attenuation knob (in practice enemy/pickup
     // sounds all have digi versions, so the fall-through is silent
     // for spatial callers when digi is on).
+    // Producer side (any caller, main thread): post the play request onto the
+    // audio command ring. The actual digi/adlib dispatch and chip/slot
+    // mutation happen on the audio thread in `apply_trigger`, drained from
+    // `ac->cmd_ring`. A full ring just drops the sound (never a stall). The
+    // id is validated here so we never enqueue an out-of-range index.
     private let trigger_panned_gain = (sound_id: int32, ac: audio_ctx*,
                                 pan: float64, gain: float64) ->
         if sound_id < 0 || sound_id >= count then return
+        spsc.enqueue(ac->cmd_ring, audio_q.cmd {
+            kind = audio_q.play_sfx, sfx_id = sound_id,
+            pan = pan, gain = gain, player = none(imf.player*) })
+        void()
+
+    // Consumer side (audio thread only): perform the trigger the ring carried.
+    // Digi pack is preferred when DIGITIZED SOUND is on and a sample exists;
+    // otherwise the AdLib chunk plays when SOUND EFFECTS is on. Both toggles
+    // are written by the main thread, so read them with acquire ordering.
+    // `sound_id` is already range-checked by the producer.
+    let apply_trigger = (sound_id: int32, ac: audio_ctx*,
+                         pan: float64, gain: float64) ->
         let digi_idx = digi_slot[sound_id]
-        if digi_idx >= 0 && ac->digi_on then
+        if digi_idx >= 0 && atomic_load_acquire(&ac->digi_on) then
             digi.play_with_gain(ac->digi, digi_idx, pan, gain)
             return
         // No digi (off, or no sample) — fall through to AdLib if the
         // SFX toggle is on and an AdLib chunk exists.
-        if !ac->sfx_on then return
+        if !atomic_load_acquire(&ac->sfx_on) then return
         let enum_val = adlib_chunk[sound_id]
         if enum_val >= 0 then
             let chunk = 87 + enum_val   // 87 = AdLib block base in AUDIOT

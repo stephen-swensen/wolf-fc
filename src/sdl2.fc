@@ -216,11 +216,6 @@ module sdl2 from "SDL2/SDL.h" =
 
     extern SDL_OpenAudioDevice as open_audio: (any*, int32, const audio_spec*, audio_spec*, int32) -> uint32
     extern SDL_PauseAudioDevice as pause_audio: (uint32, int32) -> void
-    // Pause/resume the audio callback thread to mutate shared audio state
-    // from the main thread without a data race. Each lock must be matched
-    // with an unlock; the callback won't run while the device is locked.
-    extern SDL_LockAudioDevice as lock_audio: (uint32) -> void
-    extern SDL_UnlockAudioDevice as unlock_audio: (uint32) -> void
     extern SDL_CloseAudioDevice as close_audio: (uint32) -> void
 
     // --- Events ---

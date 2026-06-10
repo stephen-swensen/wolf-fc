@@ -629,3 +629,77 @@ module mixer =
         digi.fill(dg, mix_buf, frames, sample_rate, digi_gain)
         soft_clip_to_int16(mix_buf, out_buf, samples)
         new_rem
+
+// Lock-free single-producer / single-consumer ring buffer. One thread
+// enqueues, a different thread dequeues; no lock. Correctness rests entirely
+// on the acquire/release pair on the two indices: the producer writes the
+// slot then *release*-stores `tail`, and the consumer *acquire*-loads `tail`
+// before reading the slot — so the slot write is published before the index
+// that exposes it. The slot payload itself is ordinary (non-atomic) data;
+// the index ordering carries it across the thread boundary. Indices grow
+// monotonically (usize, never wraps in practice); the live slot is
+// `index % capacity`. SPSC only — exactly one producer thread and one
+// consumer thread (multiple call sites on the *same* thread are fine).
+module spsc =
+    struct ring =
+        buf: 'a[]
+        head: usize      // consumer-owned: only the consumer advances it
+        tail: usize      // producer-owned: only the producer advances it
+
+    // Wrap a caller-allocated backing buffer in a ring. The caller allocates
+    // it (so the element type is inferred from the argument — no explicit
+    // type argument needed at the call site); its length is the capacity.
+    let make = (buf: 'a[]) ->
+        let r = alloc(ring<'a>)!
+        r->buf = buf
+        r->head = 0u
+        r->tail = 0u
+        r
+
+    // Producer side. Returns false when the ring is full (caller drops the
+    // item — for audio that means a sound is skipped, never a stall).
+    let enqueue = (r: ring<'a>*, v: 'a) ->
+        let cap = (usize) r->buf.len
+        let t = atomic_load_acquire(&r->tail)
+        let h = atomic_load_acquire(&r->head)
+        if t - h == cap then false
+        else
+            r->buf[t % cap] = v
+            atomic_store_release(&r->tail, t + 1u)
+            true
+
+    // Consumer side. Returns none when the ring is empty.
+    let dequeue = (r: ring<'a>*) ->
+        let cap = (usize) r->buf.len
+        let t = atomic_load_acquire(&r->tail)
+        let h = atomic_load_acquire(&r->head)
+        if t == h then none('a)
+        else
+            let v = r->buf[h % cap]
+            atomic_store_release(&r->head, h + 1u)
+            some(v)
+
+// One audio command, carried main-thread -> audio-thread over an spsc.ring.
+// The main loop only ever *describes* what it wants (play this sound, install
+// this track); the audio callback drains the ring and performs the actual
+// chip / slot / player mutation, so that state is touched on a single thread
+// and needs no lock. Retired music players travel the other way (audio ->
+// main) as bare `imf.player*` over a second ring, since only the main thread
+// may free them.
+module audio_q =
+    let play_sfx  = 0    // sfx_id + pan + gain are set; trigger a sound
+    let set_music = 1    // player is set; install it as the new track
+
+    struct cmd =
+        kind: int32
+        sfx_id: int32
+        pan: float64
+        gain: float64
+        player: imf.player*?
+
+    // A music player handed back audio-thread -> main-thread for freeing. A
+    // bare `imf.player*` can't currently be an explicit generic type argument
+    // (`spsc.ring<imf.player*>` won't parse), so the free-ring rides this
+    // one-field wrapper instead.
+    struct retired =
+        player: imf.player*
