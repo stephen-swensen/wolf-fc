@@ -563,13 +563,14 @@ module font =
         let w = text_width(f, s)
         draw_text(rc, f, (rc->fb_w - w) / 2, y, s, color)
 
-    // Load an IMF music player from an AUDIOT chunk number. Grouped
-    // with font because it reuses the VGAGRAPH-pipeline approach — a
-    // better home may emerge later.
-    let music_load = (ad: audio.audio_data*, chunk: int32) ->
+    // Load an IMF music player from an AUDIOT chunk number, synthesizing at
+    // `sample_rate` Hz (interactive callers pass the detected device rate,
+    // `audio_ctx.sample_rate`). Grouped with font because it reuses the
+    // VGAGRAPH-pipeline approach — a better home may emerge later.
+    let music_load = (ad: audio.audio_data*, chunk: int32, sample_rate: float64) ->
         let off = (int64) audio.chunk_offset(ad, chunk)
         let len = (int64) audio.chunk_length(ad, chunk)
-        imf.init_from_chunk(ad->raw, off, (int64) len, (float64) sfx.sample_rate)
+        imf.init_from_chunk(ad->raw, off, (int64) len, sample_rate)
 
     // Pick the AUDIOT chunk number that should be playing for the
     // current phase. The intro song plays continuously through the

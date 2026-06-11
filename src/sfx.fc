@@ -126,11 +126,10 @@ module sfx =
     // data but were never called from the original — see the 2026-04-25
     // audit in TODO.md. Don't add them as fidelity items.
 
-    // Output sample rate for the SDL audio device (Hz). All driver
-    // chips run at this rate. The int32-mix + soft-clip finalizer lives
-    // in `sound.fc::mixer` — the main loop just calls `mixer.fill_frame`
-    // and queues the resulting int16 buffer to SDL.
-    let sample_rate = 44100
+    // (The output sample rate is no longer a constant — it's detected from
+    // the default output device at startup and lives on
+    // `audio_ctx.sample_rate`; all driver chips are constructed at that
+    // rate. The int32-mix + soft-clip finalizer lives in `sound.fc::mixer`.)
 
     // Digi-pack index for each sfx.id.* (-1 = no digitized version).
     // The mapping matches the WL6 branch of the original's digi-map

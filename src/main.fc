@@ -38,17 +38,19 @@ let fov_factor = 0.7269
 // Audio-callback sizing. `audio_buffer_frames` is the device buffer SDL
 // asks the callback to fill per call — it sets the playback latency floor
 // (e.g. how long after a shot the death cry is heard) at
-// `frames / 44100` per buffer, plus whatever the OS audio layer stacks
-// underneath (PulseAudio/WSLg adds more). Lower = snappier SFX; higher =
-// more cushion against the audio thread missing a deadline under load
-// (matters on WSLg, where software rendering can starve it of CPU). 512 ≈
-// 11.6 ms is a balance; drop to 256 for tighter SFX, raise to 1024 if you
-// hear underruns. `audio_cb_max_frames` caps the int32 mix scratch
+// `frames / sample_rate` per buffer, plus whatever the OS audio layer
+// stacks underneath. Lower = snappier SFX; higher = more cushion against
+// the audio thread missing a deadline under load. 1024 ≈ 21.3 ms at 48 kHz
+// and matches PipeWire's default graph quantum (1024), so our wakeups align
+// 1:1 with the graph's instead of beating against it. (The mix/synthesis
+// *rate* is not a constant — it's detected from the default output device
+// at startup and lives on `audio_ctx.sample_rate`; see `audio_rate` in
+// main.) `audio_cb_max_frames` caps the int32 mix scratch
 // (`audio_ctx.mix_buf`) well above any buffer the device might hand us.
 // `music_xfade_samples` is the click-killing crossfade applied when a
-// track is swapped — 256 samples ≈ 5.8 ms at 44.1 kHz, matching the
+// track is swapped — 256 samples ≈ 5.3 ms at 48 kHz, matching the
 // original fade-out tail.
-let audio_buffer_frames = 512
+let audio_buffer_frames = 1024
 let audio_cb_max_frames = 4096
 let music_xfade_samples = 256
 
@@ -909,6 +911,10 @@ struct audio_ctx =
     music_chunk: int32         // AUDIOT chunk last requested (-1 = none)
     music_xfade: int32         // samples remaining in the crossfade-out
     mix_buf: int32[]
+    // Mix/synthesis rate in Hz, detected from the default output device at
+    // startup (48000 fallback; see `audio_rate` in main). Immutable after
+    // construction, so both threads read it without synchronization.
+    sample_rate: int32
     // Lock-free command channel between the main thread (producer) and the
     // SDL audio callback (consumer). `cmd_ring` carries play-sfx / set-music
     // requests main -> audio; the callback drains it at the top of each call
@@ -2133,9 +2139,11 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         match text.parse_int32(arg[11..arg.len]) with
         | some(n) ->
             // WONDERIN = music.wonderin = 14, chunk = 261 + 14 = 275.
+            // Pinned to 44100 (not the detected device rate) so bench
+            // numbers stay comparable across machines.
             let chunk = 261 + 14
-            let ms = font.music_load(w->ac->ad, chunk)
             let sample_rate = 44100i32
+            let ms = font.music_load(w->ac->ad, chunk, (float64) sample_rate)
             let frames_per_batch = 1024i32
             let total_frames = n * sample_rate
             let batches = total_frames / frames_per_batch
@@ -2950,7 +2958,7 @@ let audio_callback = (userdata: any*, stream: uint8*, len: int32) ->
         ac->music_xfade, music_xfade_samples,
         ac->sfx,  (float64) atomic_load_acquire(&ac->sfx_gain_pct)  / 100.0,
         ac->digi, (float64) atomic_load_acquire(&ac->digi_gain_pct) / 100.0,
-        frames, sfx.sample_rate)
+        frames, ac->sample_rate)
     // A crossfade that just finished means music_prev is silent and untouched
     // from here on — hand it back to the main thread to free.
     if xfade_before > 0 && ac->music_xfade == 0 then
@@ -3104,6 +3112,12 @@ let main = (args: str[]) ->
     // `Widescreen 16:10` always picks 384, etc.
     let mut fb_w = 320
     let mut plane_factor = fov_factor
+    // Mix/synthesis sample rate. Detected from the default output device so
+    // our stream runs at the audio graph's native rate (no resample between
+    // us and the hardware); 48000 covers detection failure and test mode,
+    // where no device is ever opened so the value only seeds the chip
+    // constructors. Everything downstream reads `audio_ctx.sample_rate`.
+    let mut audio_rate = 48000
     if !test_mode then
         // Per-monitor v2 DPI awareness. MUST be set before the
         // first SDL_Init(SDL_INIT_VIDEO) — Windows applies the
@@ -3116,6 +3130,32 @@ let main = (args: str[]) ->
         // real pixels. Ignored on non-Windows platforms.
         sdl2.set_hint(c"SDL_WINDOWS_DPI_AWARENESS", c"permonitorv2")
         sdl2.init(sdl2.init_video)
+        // Prefer SDL's native PipeWire audio backend. SDL's default driver
+        // order picks pulseaudio first on Linux, which on a PipeWire desktop
+        // routes through the pipewire-pulse shim — that's the path where the
+        // 2026-06 SOF "sound dies mid-session" wedge bit us. The native
+        // backend negotiates rate/quantum with the graph directly and
+        // rebuilds its stream across device recoveries the way other desktop
+        // apps do. A bare driver name in this hint is a RESTRICTION, not a
+        // preference — SDL won't fall back on its own — so if audio init
+        // fails (no PipeWire: older distro, Windows) clear the hint and
+        // re-init against the default driver list. SDL_SetHint is
+        // normal-priority, so a user's SDL_AUDIODRIVER env still overrides
+        // both settings.
+        sdl2.set_hint(c"SDL_AUDIODRIVER", c"pipewire")
+        if sdl2.init(sdl2.init_audio) != 0 then
+            sdl2.set_hint(c"SDL_AUDIODRIVER", c"")
+            sdl2.init(sdl2.init_audio)
+            void()
+        let adrv = sdl2.get_current_audio_driver()
+        if adrv != default(const cstr) then
+            let mut pref = default(sdl2.audio_spec)
+            let detected = sdl2.get_default_audio_info((any*) 0, &pref, 0) == 0
+                && pref.freq > 0
+            if detected then audio_rate = pref.freq
+            io.write("Audio driver: %s{(const str) adrv}, device rate %d{audio_rate} Hz%s{if detected then "" else " (fallback)"}\n", stdout)
+        else
+            io.write("Audio driver: none (%s{(const str) sdl2.get_error()}) — running silent\n", stdout)
         fb_w = compute_fb_w_for_view_mode(cfg.view_mode)
         plane_factor = fov_factor * (float64) fb_w / 320.0
         io.write("View mode %s{config.view_mode_label(cfg.view_mode)} -> fb %d{fb_w}x200\n", stdout)
@@ -3225,12 +3265,13 @@ let main = (args: str[]) ->
         ac = alloc(audio_ctx {
             vs = vs,
             ad = ad,
-            sfx = adlib.init((float64) sfx.sample_rate),
+            sfx = adlib.init((float64) audio_rate),
             digi = digi.init(vs),
             music = none(imf.player*),
             music_prev = none(imf.player*),
             music_chunk = -1,
             music_xfade = 0,
+            sample_rate = audio_rate,
             // Sized for the largest plausible SDL callback request (stereo
             // int32, audio_cb_max_frames per call); the device asks for
             // 1024 frames, so this never fills.
@@ -3241,7 +3282,7 @@ let main = (args: str[]) ->
             sfx_gain_pct = cfg.sfx_gain_pct,
             digi_gain_pct = cfg.digi_gain_pct,
             music_gain_pct = cfg.music_gain_pct,
-            // 64 commands is far more than one ~11ms buffer ever accrues
+            // 64 commands is far more than one ~21ms buffer ever accrues
             // (a handful of triggers per frame); the ring drops on overflow
             // rather than stalling. free_ring rarely holds more than the one
             // or two players a swap retires.
@@ -3365,7 +3406,9 @@ let main = (args: str[]) ->
     if !on_wsl then
         sdl2.set_hint(c"SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", c"0")
         void()
-    sdl2.init(sdl2.init_video | sdl2.init_audio)
+    // (Video and audio subsystems were already initialized in the
+    // audio-driver selection block at startup, before the world was built —
+    // the chip constructors needed the detected device rate.)
 
     // Window: fullscreen-desktop everywhere except WSL, where we
     // create a normal resizable window and call maximize_window
@@ -3493,7 +3536,7 @@ let main = (args: str[]) ->
     // its sole mutator: the main loop only posts commands onto the lock-free
     // cmd_ring (see audio_callback), so it never blocks on the audio thread.
     let mut spec = sdl2.audio_spec {
-        freq = sfx.sample_rate, format = sdl2.audio_s16sys,
+        freq = w->ac->sample_rate, format = sdl2.audio_s16sys,
         channels = 2u8, silence = 0u8, samples = (uint16) audio_buffer_frames,
         padding = 0u16, size = 0u32,
         callback = &audio_callback, userdata = (any*) w->ac
@@ -3509,12 +3552,19 @@ let main = (args: str[]) ->
     // WONDERIN). Phase-driven swap below keeps this in sync afterward. The
     // device opens paused, so load the track before unpausing — the
     // callback can't fire (and read ac->music) until pause_audio(…, 0).
-    diag.mark(diag_file, diag_start,
-        if audio_dev > 0u32 then "audio: device opened" else "audio: device FAILED — silent")
+    if audio_dev > 0u32 then
+        // Re-query the driver name here (the selection block's binding is
+        // out of scope) so the diag trail records which backend wedges.
+        let adrv = sdl2.get_current_audio_driver()
+        let drv = if adrv != default(const cstr) then (const str) adrv else "?"
+        diag.mark(diag_file, diag_start,
+            "audio: device opened (driver=%s{drv}, %d{obtained.freq} Hz, %d{(int32) obtained.samples}-frame buffer)")
+    else
+        diag.mark(diag_file, diag_start, "audio: device FAILED — silent")
     if audio_dev > 0u32 then
         let init_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
         if init_chunk < ad->num_chunks then
-            w->ac->music = some(font.music_load(ad, init_chunk))
+            w->ac->music = some(font.music_load(ad, init_chunk, (float64) w->ac->sample_rate))
             w->ac->music_chunk = init_chunk
         sdl2.pause_audio(audio_dev, 0)
         diag.mark(diag_file, diag_start, "audio: unpaused (callback live)")
@@ -3963,7 +4013,7 @@ let main = (args: str[]) ->
                             // release store (the main thread is the only
                             // writer, so the read side of the flip stays
                             // plain). The callback picks the new value up
-                            // within one buffer (~12 ms) — no queue to flush.
+                            // within one buffer (~21 ms) — no queue to flush.
                             if is_toggle then
                                 if is_confirm || k == sdl2.key_left || k == sdl2.key_right then
                                     if section == 0 then
@@ -4438,7 +4488,7 @@ let main = (args: str[]) ->
         // race-free.
         let want_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
         if want_chunk != w->ac->music_chunk && audio_dev > 0u32 && want_chunk < ad->num_chunks then
-            let np = font.music_load(ad, want_chunk)
+            let np = font.music_load(ad, want_chunk, (float64) w->ac->sample_rate)
             let posted = spsc.enqueue(w->ac->cmd_ring, audio_q.cmd {
                 kind = audio_q.set_music, sfx_id = 0,
                 pan = 0.0, gain = 0.0, player = some(np) })
