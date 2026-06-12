@@ -646,12 +646,11 @@ module spsc =
         head: usize      // consumer-owned: only the consumer advances it
         tail: usize      // producer-owned: only the producer advances it
 
-    // Wrap a caller-allocated backing buffer in a ring. The caller allocates
-    // it (so the element type is inferred from the argument — no explicit
-    // type argument needed at the call site); its length is the capacity.
-    let make = (buf: 'a[]) ->
+    // Allocate a ring with `cap` slots. The element type appears nowhere in
+    // the arguments, so call sites name it explicitly: `spsc.make<audio_q.cmd>(64)`.
+    let make = <'a>(cap: int64) ->
         let r = alloc(ring<'a>)!
-        r->buf = buf
+        r->buf = alloc('a[cap] { })!
         r->head = 0u
         r->tail = 0u
         r
@@ -696,10 +695,3 @@ module audio_q =
         pan: float64
         gain: float64
         player: imf.player*?
-
-    // A music player handed back audio-thread -> main-thread for freeing. A
-    // bare `imf.player*` can't currently be an explicit generic type argument
-    // (`spsc.ring<imf.player*>` won't parse), so the free-ring rides this
-    // one-field wrapper instead.
-    struct retired =
-        player: imf.player*

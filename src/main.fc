@@ -926,7 +926,7 @@ struct audio_ctx =
     // each call (release) and sfx.adlib_busy reads it (acquire) for the
     // use-key "do-do-do" rhythm gate, which runs on the main thread.
     cmd_ring: spsc.ring<audio_q.cmd>*
-    free_ring: spsc.ring<audio_q.retired>*
+    free_ring: spsc.ring<imf.player*>*
     adlib_busy_flag: bool
     // Audio-callback heartbeat: bumped + published once per callback. The
     // main loop's diagnostic beat reads it (acquire) to tell a stalled audio
@@ -2919,7 +2919,7 @@ let drain_audio_commands = (ac: audio_ctx*) ->
                     // that older outgoing player back to the main thread now.
                     match ac->music_prev with
                     | some(old) ->
-                        spsc.enqueue(ac->free_ring, audio_q.retired { player = old })
+                        spsc.enqueue(ac->free_ring, old)
                         void()
                     | none -> void()
                     ac->music_prev = ac->music
@@ -2964,7 +2964,7 @@ let audio_callback = (userdata: any*, stream: uint8*, len: int32) ->
     if xfade_before > 0 && ac->music_xfade == 0 then
         match ac->music_prev with
         | some(old) ->
-            spsc.enqueue(ac->free_ring, audio_q.retired { player = old })
+            spsc.enqueue(ac->free_ring, old)
             ac->music_prev = none(imf.player*)
         | none -> void()
     // Publish AdLib-busy for the main thread's use-key rhythm gate.
@@ -3286,8 +3286,8 @@ let main = (args: str[]) ->
             // (a handful of triggers per frame); the ring drops on overflow
             // rather than stalling. free_ring rarely holds more than the one
             // or two players a swap retires.
-            cmd_ring = spsc.make(alloc(audio_q.cmd[64] {})!),
-            free_ring = spsc.make(alloc(audio_q.retired[16] {})!),
+            cmd_ring = spsc.make<audio_q.cmd>(64),
+            free_ring = spsc.make<imf.player*>(16),
             adlib_busy_flag = false,
             cb_count = 0i64
         })!,
@@ -4476,7 +4476,7 @@ let main = (args: str[]) ->
         // callback ever runs.
         loop
             match spsc.dequeue(w->ac->free_ring) with
-            | some(r) -> imf.destroy(r.player)
+            | some(p) -> imf.destroy(p)
             | none -> break
 
         // Sync the active music to whatever phase we're now in. Only swap when
