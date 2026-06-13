@@ -51,18 +51,13 @@ module paths =
 // reaches the OS page cache, which a power cut discards). The LAST line names
 // where execution stopped; a clean shutdown appends "EXIT clean", so a log
 // missing that line hung at its final breadcrumb. Entirely off — every call a
-// no-op on a `none` handle — unless the env var is set. Linux/POSIX (fsync);
-// a debugging aid, never shipped on.
+// no-op on a `none` handle — unless the env var is set. The platter-flush is
+// Linux/POSIX only (fsync); Windows isn't a target for this aid, so there it
+// degrades to a plain flush. A debugging aid, never shipped on.
 // ============================================================
 module diag =
     import io from std::
     import sys from std::
-
-    // fileno is in <stdio.h>, fsync in <unistd.h>.
-    private module cio from "stdio.h" =
-        extern fileno: (any*) -> int32
-    private module cunistd from "unistd.h" =
-        extern fsync: (int32) -> int32
 
     // Open ~/.wolf-fc/diag.log (truncating) when $WOLF_FC_DIAG is set; none
     // otherwise, which makes every mark/beat/key/close below a no-op.
@@ -83,10 +78,25 @@ module diag =
             | none -> none(any*)
 
     // Flush a line all the way to disk so a later hard freeze can't lose it.
+#if os == "windows"
+    // No platter-sync on Windows — this crash-survival aid isn't a target
+    // there, and skipping fsync keeps <unistd.h>'s missing decl out of the
+    // MinGW build. Plain flush only (reaches the OS cache, not the platter).
+    private let sync_line = (f: any*) ->
+        io.flush(f)
+        void()
+#else
+    // fileno is in <stdio.h>, fsync in <unistd.h>.
+    private module cio from "stdio.h" =
+        extern fileno: (any*) -> int32
+    private module cunistd from "unistd.h" =
+        extern fsync: (int32) -> int32
+
     private let sync_line = (f: any*) ->
         io.flush(f)
         cunistd.fsync(cio.fileno(f))
         void()
+#end
 
     // Free-text breadcrumb (startup steps, the present() boundary, each
     // shutdown step, the final "EXIT clean").
