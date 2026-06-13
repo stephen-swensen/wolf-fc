@@ -597,12 +597,13 @@ struct game =
     // so `apply_view_mode` can re-pick the scale when fb_w changes
     // without threading the cap through every call site.
     max_scale: int32
-    // Shadow Depth (0..100). Controls how dark walls / sprites get
-    // at long distance — 0 disables distance fading entirely (the
-    // OG-faithful default; the original has no distance shading,
-    // only a side tint on perpendicular walls), 100 lets things go
-    // to full black at the far end. Read every frame by the
-    // raycaster + billboards via `raycaster.shadow_floor_from_depth`.
+    // Shadow Depth (0..100). Controls how dark walls / sprites and
+    // the floor / ceiling fills get at long distance — 0 disables
+    // distance fading entirely (the OG-faithful default; the original
+    // has no distance shading, only a side tint on perpendicular
+    // walls), 100 lets things go to full black at the far end. Read
+    // every frame by the raycaster (walls + per-row flats) and
+    // billboards via `raycaster.shadow_floor_from_depth`.
     shadow_depth: int32
     // Speed multipliers as percentages (20..200, default 100).
     // bj_speed_pct scales every player movement: forward / back /

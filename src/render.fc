@@ -109,10 +109,35 @@ module raycaster =
         let vbuf_p = rc->vbuf.ptr
         let ceil_end = (int64) half * sw
         let view_end = (int64) view_render_h * sw
-        for i in 0..ceil_end
-            vbuf_p[i] = ceil_color
-        for i in ceil_end..view_end
-            vbuf_p[i] = floor_color
+        if shadow_floor >= 1.0 then
+            // Shadow Depth 0% — flat fills, no per-row work at all.
+            for i in 0..ceil_end
+                vbuf_p[i] = ceil_color
+            for i in ceil_end..view_end
+                vbuf_p[i] = floor_color
+        else
+            // Distance-shaded flats. The planes are horizontal and the
+            // camera sits at half wall height, so every pixel on a
+            // screen row maps to the same perpendicular distance — one
+            // shade per row is exact, not an approximation. The row
+            // distance inverts the wall projection (a wall at perp
+            // distance d puts its base at row half + vfocal/(2d)), so
+            // d = vfocal / (2·|y − half|), which also makes the floor
+            // shade meet the wall shade exactly along the wall base.
+            // Cost over the flat path is one divide + two clamps + one
+            // shade_color per row; the fill stores are identical.
+            for y in 0..half
+                let d = vfocal / (2.0 * ((float64) (half - y) - 0.5))
+                let c = shade_color(ceil_color, dist_shade(d, shadow_floor))
+                let row = (int64) y * sw
+                for i in row..(row + sw)
+                    vbuf_p[i] = c
+            for y in half..view_render_h
+                let d = vfocal / (2.0 * ((float64) (y - half) + 0.5))
+                let c = shade_color(floor_color, dist_shade(d, shadow_floor))
+                let row = (int64) y * sw
+                for i in row..(row + sw)
+                    vbuf_p[i] = c
 
         // Reset z-buffer.
         for i in 0..rc->vbuf_w
