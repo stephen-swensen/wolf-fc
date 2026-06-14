@@ -6,6 +6,10 @@ something feels off in play — audit the relevant subsystem against id's
 source / wolf4sdl, log a finding here if it turns into more than a
 one-off fix, and patch.
 
+## Manual notes
+
+* disabling wide screen mode actually leads to more jit and frame drops on linux. possibly because the repaint SDL command takes more time than if we just black filled the side bars ourselves...
+
 ## Open findings — 2026-05 audit (re-prioritized 2026-06-09 against id's source)
 
 A multi-agent audit (2026-05-31) over the whole engine produced 76
