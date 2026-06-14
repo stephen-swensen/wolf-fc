@@ -3462,7 +3462,7 @@ let main = (args: str[]) ->
     sdl2.show_cursor(0)
     let mut rinfo = default(sdl2.renderer_info)
     sdl2.get_renderer_info(ren, &rinfo)
-    io.write(alloca("Renderer driver: %s{(const str) (const cstr) rinfo.name}\n"), stdout)
+    io.write(alloca("Renderer driver: %s{(const cstr) rinfo.name}\n"), stdout)
 
     // Nearest-neighbor scaling — must be set BEFORE creating the texture.
     sdl2.set_hint(c"SDL_RENDER_SCALE_QUALITY", c"nearest")
