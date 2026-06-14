@@ -1046,7 +1046,7 @@ module overlay =
             "FPS %d{fps_i}  %d{work_i}/%d{budget_i} ms",
             "drops %d{rc->dbg_drops}  jit %3.1f{rc->dbg_jitter_ms} ms",
             "%d{rc->fb_w}x%d{rc->fb_h} x%d{rc->scale}",
-            "%d{rc->screen_w}x%d{rc->screen_h} ss %s{ssaa}"
+            alloca("%d{rc->screen_w}x%d{rc->screen_h} ss %s{ssaa}")
         }
         let line_h = (f->height + 1) * s
         let margin = 3 * s
@@ -1237,7 +1237,7 @@ module overlay =
         | none -> void()
         | some(dir) ->
             defer free(dir)
-            let ss_dir = "%s{dir}/screenshots"
+            let ss_dir = alloca("%s{dir}/screenshots")
             io.mkdir(dir)
             io.mkdir(ss_dir)
             match io.list_dir(ss_dir) with
@@ -1246,12 +1246,12 @@ module overlay =
                 let mut deleted = 0
                 for name in entries
                     if text.starts_with(name, "ss_") && text.ends_with(name, ".png") then
-                        io.remove("%s{ss_dir}/%s{name}")
+                        io.remove(alloca("%s{ss_dir}/%s{name}"))
                         deleted = deleted + 1
                     free(name)
                 free(entries)
                 if deleted > 0 then
-                    io.write("[screenshot] cleared %d{deleted} old file(s) from %s{ss_dir}\n", stdout)
+                    io.write(alloca("[screenshot] cleared %d{deleted} old file(s) from %s{ss_dir}\n"), stdout)
                     void()
 
     // Take an interactive screenshot: renders, picks the next
@@ -1266,14 +1266,14 @@ module overlay =
         | some(dir) ->
             defer free(dir)
             io.mkdir(dir)
-            io.mkdir("%s{dir}/screenshots")
+            io.mkdir(alloca("%s{dir}/screenshots"))
             let slot = w->rc->screenshot_slot
             w->rc->screenshot_slot = (w->rc->screenshot_slot + 1) % screenshot_max_slots
-            let path = "%s{dir}/screenshots/ss_%03d{slot}.png"
+            let path = alloca("%s{dir}/screenshots/ss_%03d{slot}.png")
             // Force a full HUD redraw so the snapshot is full-fidelity
             // regardless of the main loop's frame-skip cadence.
             w->rc->force_redraw = true
             render_frame(w, vs, pal)
             save_png(w, path)
-            io.write("[screenshot] saved %s{path} (+ -raw.png, -display.png)\n", stdout)
+            io.write(alloca("[screenshot] saved %s{path} (+ -raw.png, -display.png)\n"), stdout)
             void()

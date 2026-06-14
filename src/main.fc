@@ -1968,7 +1968,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
     // per tick already; this just covers the non-ticking enqueuers.
     drain_audio_commands(w->ac)
     let bad = (expected: const str) ->
-        io.write("bad arg '%s{arg}': expected %s{expected}\n", stderr)
+        io.write(alloca("bad arg '%s{arg}': expected %s{expected}\n"), stderr)
         void()
     if text.starts_with(arg, "fwd:") then
         match text.parse_int32(arg[4..arg.len]) with
@@ -2090,7 +2090,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         w->rc->force_redraw = true
         render_frame(w, w->ac->vs, pal)
         overlay.save_png(w, arg[3..arg.len])
-        io.write("Saved %s{arg[3..arg.len]}\n", stdout)
+        io.write(alloca("Saved %s{arg[3..arg.len]}\n"), stdout)
         void()
     else if text.starts_with(arg, "setscale:") then
         // Resize dbuf/zbuf to the given supersample factor. Test mode
@@ -2239,7 +2239,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         | endart       -> "endart"
         | high_scores  -> "high_scores"
         let par = if g->level_num < 60 then intermission.par_times[g->level_num] else 0
-        io.write("phase=%s{phase_s} difficulty=%d{g->difficulty}\n", stdout)
+        io.write(alloca("phase=%s{phase_s} difficulty=%d{g->difficulty}\n"), stdout)
         io.write("kills=%d{g->kills}/%d{g->total_kills} secrets=%d{g->secrets}/%d{g->total_secrets} treasures=%d{g->treasures}/%d{g->total_treasures}\n", stdout)
         io.write("time=%6.2f{g->level_time} par=%d{par}\n", stdout)
         void()
@@ -2256,7 +2256,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
                     w->rc->fb[i] = 0xFF000000u32
                 pics.draw(w->rc, w->vg, pal, n, 0, 0)
                 png.write(parts[1], w->rc->fb, w->rc->fb_w, game_h, "vg")
-                io.write("Saved %s{parts[1]}\n", stdout)
+                io.write(alloca("Saved %s{parts[1]}\n"), stdout)
                 void()
             | none -> bad("integer chunk number")
         else bad("CHUNK,PATH.png")
@@ -2275,7 +2275,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
                 px = 8
                 py = py + w->font->height + 2
         png.write(arg[13..arg.len], w->rc->fb, w->rc->fb_w, game_h, "font")
-        io.write("Saved %s{arg[13..arg.len]}\n", stdout)
+        io.write(alloca("Saved %s{arg[13..arg.len]}\n"), stdout)
         void()
     else if text.starts_with(arg, "vginfo:") then
         // Dump the dimensions of one VGAGRAPH chunk (pic). Useful to verify
@@ -2420,7 +2420,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             if n < 0 || n >= save.num_slots then bad("slot 0..%d{save.num_slots - 1}")
             else
                 let ok = save.from_slot(w, w->ac->vs, n)
-                io.write("load slot %d{n}: %s{if ok then "ok" else "failed"}\n", stdout)
+                io.write(alloca("load slot %d{n}: %s{if ok then "ok" else "failed"}\n"), stdout)
                 void()
         | none -> bad("integer slot")
     else if arg == "listsaves" then
@@ -2627,7 +2627,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         | episode_end  -> "episode_end"
         | endart       -> "endart"
         | high_scores  -> "high_scores"
-        io.write("phase=%s{phase_s} timer=%6.3f{g->phase_timer} lives=%d{g->lives}\n", stdout)
+        io.write(alloca("phase=%s{phase_s} timer=%6.3f{g->phase_timer} lives=%d{g->lives}\n"), stdout)
         void()
     else if arg == "music" then
         // Print the AUDIOT chunk that would be playing for the current phase.
@@ -2686,7 +2686,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
                     | open    -> "DOOR:open"
                     | closing -> "DOOR:closing"
                 let solid = if ti >= 1 && ti <= 63 then "WALL" else dstate
-                io.write("  tile (%d{tx},%d{ty}) = %d{ti} (%s{solid})\n", stdout)
+                io.write(alloca("  tile (%d{tx},%d{ty}) = %d{ti} (%s{solid})\n"), stdout)
         for i in 0..w->lv->num_enemies
             let e = w->lv->enemies[i]
             match e.state with
@@ -2714,7 +2714,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
                     | pinky   -> "pinky"
                     | clyde   -> "clyde"
                     | inky    -> "inky"
-                    io.write("  enemy[%d{i}] %s{ks} tile(%d{e.tile_x},%d{e.tile_y}) pos(%6.3f{e.x},%6.3f{e.y}) d=%5.3f{d}\n", stdout)
+                    io.write(alloca("  enemy[%d{i}] %s{ks} tile(%d{e.tile_x},%d{e.tile_y}) pos(%6.3f{e.x},%6.3f{e.y}) d=%5.3f{d}\n"), stdout)
         for i in 0..w->lv->num_sprites
             let s = w->lv->sprites[i]
             if !s.alive then continue
@@ -2723,7 +2723,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             let d = math.sqrt(dx * dx + dy * dy)
             if d < 2.5 then
                 let bs = if s.blocks then "BLOCKS" else "walk"
-                io.write("  sprite[%d{i}] tile(%d{(int32) s.x},%d{(int32) s.y}) page=%d{s.shape_page} %s{bs} d=%5.3f{d}\n", stdout)
+                io.write(alloca("  sprite[%d{i}] tile(%d{(int32) s.x},%d{(int32) s.y}) page=%d{s.shape_page} %s{bs} d=%5.3f{d}\n"), stdout)
         void()
     else if arg == "arrows" then
         // Dump every path-arrow marker tile baked into the level. Lets a
@@ -2767,7 +2767,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             | die   -> "die"
             | dead  -> "dead"
             let area = (int32) w->lv->tile_areas[(int64) e.tile_x * 64 + (int64) e.tile_y]
-            io.write("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp} area=%d{area} vis=%d{(int32) e.last_visible}\n", stdout)
+            io.write(alloca("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp} area=%d{area} vis=%d{(int32) e.last_visible}\n"), stdout)
         void()
     else if arg == "pickups" then
         // Per-level pickup inventory: dumps every live sprite whose
@@ -2801,7 +2801,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             if ks.len == 0 then continue
             let tx = (int32) s.x
             let ty = (int32) s.y
-            io.write("[%d{i}] (%d{tx},%d{ty}) kind=%s{ks}\n", stdout)
+            io.write(alloca("[%d{i}] (%d{tx},%d{ty}) kind=%s{ks}\n"), stdout)
             count = count + 1
         io.write("pickups: count=%d{count}\n", stdout)
         void()
@@ -2862,11 +2862,11 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             | rocket -> "rocket"
             | fire   -> "fire"
             | boom   -> "boom"
-            io.write("  proj[%d{i}] %s{ks} pos(%6.3f{p->x},%6.3f{p->y}) ang=%5.3f{p->angle} frame=%d{p->anim_frame}\n", stdout)
+            io.write(alloca("  proj[%d{i}] %s{ks} pos(%6.3f{p->x},%6.3f{p->y}) ang=%5.3f{p->angle} frame=%d{p->anim_frame}\n"), stdout)
         io.write("projectiles: alive=%d{alive}\n", stdout)
         void()
     else
-        io.write("Unknown test command: %s{arg}\n", stdout)
+        io.write(alloca("Unknown test command: %s{arg}\n"), stdout)
         void()
 
 // Compact integer code for the current phase, for the diagnostic log
@@ -3061,7 +3061,7 @@ let main = (args: str[]) ->
     // then ./data, then the compile-time install location. The resulting
     // heap str is owned by the game struct (set below) and freed at exit.
     let data_dir = data_path.resolve()
-    io.write("Data dir: %s{data_dir}\n", stdout)
+    io.write(alloca("Data dir: %s{data_dir}\n"), stdout)
 
     // Load game data (no SDL needed)
     io.write("Loading palette...\n", stdout)
@@ -3154,12 +3154,12 @@ let main = (args: str[]) ->
             let detected = sdl2.get_default_audio_info((any*) 0, &pref, 0) == 0
                 && pref.freq > 0
             if detected then audio_rate = pref.freq
-            io.write("Audio driver: %s{(const str) adrv}, device rate %d{audio_rate} Hz%s{if detected then "" else " (fallback)"}\n", stdout)
+            io.write(alloca("Audio driver: %s{(const str) adrv}, device rate %d{audio_rate} Hz%s{if detected then "" else " (fallback)"}\n"), stdout)
         else
-            io.write("Audio driver: none (%s{(const str) sdl2.get_error()}) — running silent\n", stdout)
+            io.write(alloca("Audio driver: none (%s{(const str) sdl2.get_error()}) — running silent\n"), stdout)
         fb_w = compute_fb_w_for_view_mode(cfg.view_mode)
         plane_factor = fov_factor * (float64) fb_w / 320.0
-        io.write("View mode %s{config.view_mode_label(cfg.view_mode)} -> fb %d{fb_w}x200\n", stdout)
+        io.write(alloca("View mode %s{config.view_mode_label(cfg.view_mode)} -> fb %d{fb_w}x200\n"), stdout)
 
     // Assemble the `world` — the handle that groups game state, level data,
     // renderer, and audio. Orchestrators take `world*`; narrower functions
@@ -3435,7 +3435,7 @@ let main = (args: str[]) ->
     let win = sdl2.create_window(c"Wolf-FC",
         sdl2.pos_centered, sdl2.pos_centered, initial_screen_w, initial_actual_h, flags)
     if win == (any*) 0 then
-        io.write("fatal: SDL_CreateWindow failed: %s{(const str) sdl2.get_error()}\n", stderr)
+        io.write(alloca("fatal: SDL_CreateWindow failed: %s{(const str) sdl2.get_error()}\n"), stderr)
         return 1
     if on_wsl then sdl2.maximize_window(win)
     let mut fullscreen = true
@@ -3457,12 +3457,12 @@ let main = (args: str[]) ->
     // pipeline).
     let ren = sdl2.create_renderer(win, -1, sdl2.renderer_vsync)
     if ren == (any*) 0 then
-        io.write("fatal: SDL_CreateRenderer failed: %s{(const str) sdl2.get_error()}\n", stderr)
+        io.write(alloca("fatal: SDL_CreateRenderer failed: %s{(const str) sdl2.get_error()}\n"), stderr)
         return 1
     sdl2.show_cursor(0)
     let mut rinfo = default(sdl2.renderer_info)
     sdl2.get_renderer_info(ren, &rinfo)
-    io.write("Renderer driver: %s{(const str) (const cstr) rinfo.name}\n", stdout)
+    io.write(alloca("Renderer driver: %s{(const str) (const cstr) rinfo.name}\n"), stdout)
 
     // Nearest-neighbor scaling — must be set BEFORE creating the texture.
     sdl2.set_hint(c"SDL_RENDER_SCALE_QUALITY", c"nearest")
@@ -3518,7 +3518,7 @@ let main = (args: str[]) ->
     let mut tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
         sdl2.tex_streaming, runtime_screen_w, runtime_screen_h)
     if tex == (any*) 0 then
-        io.write("fatal: SDL_CreateTexture failed: %s{(const str) sdl2.get_error()}\n", stderr)
+        io.write(alloca("fatal: SDL_CreateTexture failed: %s{(const str) sdl2.get_error()}\n"), stderr)
         return 1
 
     // Crash-surviving diagnostics (opt-in via $WOLF_FC_DIAG). Opened here,
@@ -3548,7 +3548,7 @@ let main = (args: str[]) ->
         let buf_ms = (float64) obtained.samples * 1000.0 / (float64) obtained.freq
         io.write("Audio: %d{obtained.freq} Hz, %d{(int32) obtained.channels} ch, %d{(int32) obtained.samples}-frame buffer (~%4.1f{buf_ms} ms callback latency)\n", stdout)
     else
-        io.write("Audio: device open failed (%s{(const str) sdl2.get_error()}) — running silent\n", stdout)
+        io.write(alloca("Audio: device open failed (%s{(const str) sdl2.get_error()}) — running silent\n"), stdout)
     // First-frame music = whatever fits the initial phase (title →
     // WONDERIN). Phase-driven swap below keeps this in sync afterward. The
     // device opens paused, so load the track before unpausing — the
@@ -3559,7 +3559,7 @@ let main = (args: str[]) ->
         let adrv = sdl2.get_current_audio_driver()
         let drv = if adrv != default(const cstr) then (const str) adrv else "?"
         diag.mark(diag_file, diag_start,
-            "audio: device opened (driver=%s{drv}, %d{obtained.freq} Hz, %d{(int32) obtained.samples}-frame buffer)")
+            alloca("audio: device opened (driver=%s{drv}, %d{obtained.freq} Hz, %d{(int32) obtained.samples}-frame buffer)"))
     else
         diag.mark(diag_file, diag_start, "audio: device FAILED — silent")
     if audio_dev > 0u32 then

@@ -39,7 +39,7 @@ module paths =
         | some(dir) ->
             defer free(dir)
             io.mkdir(dir)
-            io.mkdir("%s{dir}/saves")
+            io.mkdir(alloca("%s{dir}/saves"))
             true
 
 
@@ -104,7 +104,7 @@ module diag =
         match file with
         | none -> void()
         | some(f) ->
-            io.write("%d{sys.time() - start_ms} %s{label}\n", f)
+            io.write(alloca("%d{sys.time() - start_ms} %s{label}\n"), f)
             sync_line(f)
 
     // Per-frame heartbeat: frame counter, phase + menu_level ints (to spot
@@ -633,7 +633,7 @@ module save =
             let lv = w->lv
             match io.open(path, "wb") with
             | none ->
-                io.write("save: failed to open %s{path}\n", stderr)
+                io.write(alloca("save: failed to open %s{path}\n"), stderr)
                 void()
             | some(f) ->
                 defer io.close(f)
@@ -643,7 +643,7 @@ module save =
                 // "E<ep>M<lvl>" form when the caller passes an empty
                 // string (e.g. test commands that bypass name entry).
                 if label.len > 0 then
-                    io.write("label %s{label}\n", f)
+                    io.write(alloca("label %s{label}\n"), f)
                 else
                     let ep = g->level_num / episode.levels_per + 1
                     let lvl = g->level_num % episode.levels_per + 1
@@ -735,7 +735,7 @@ module save =
                 defer free(lines)
                 if lines.len < 2 then false
                 else if lines[0] != "WLFC 2" then
-                    io.write("save: %s{path} is an older format and cannot be loaded by this build — delete the file to dismiss this slot\n", stderr)
+                    io.write(alloca("save: %s{path} is an older format and cannot be loaded by this build — delete the file to dismiss this slot\n"), stderr)
                     false
                 else
                     let g = w->g
