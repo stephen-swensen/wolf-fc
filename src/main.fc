@@ -3507,6 +3507,10 @@ let main = (args: str[]) ->
         io.write("Display: %4.1f{1000.0 / w->rc->refresh_interval_ms} Hz (%4.1f{w->rc->refresh_interval_ms} ms frame interval)\n", stdout)
     else
         io.write("Display: refresh rate unknown — frame-pacing snap off, debug overlay budget falls back to measured cadence\n", stdout)
+    // Active SDL video backend — wayland vs x11 (XWayland) matters for the
+    // 4:3-letterbox jitter under fractional scaling (see TODO.md manual note).
+    // Override with $SDL_VIDEODRIVER.
+    io.write(alloca("Video driver: %s{(const str) sdl2.current_video_driver()}\n"), stdout)
     // Mutable so the Change View menu can resize on the fly when
     // fb_w changes (the SS factor is sticky across view-mode changes).
     let mut runtime_screen_w = w->rc->screen_w

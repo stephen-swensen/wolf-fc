@@ -145,6 +145,10 @@ module sdl2 from "SDL2/SDL.h" =
     // for the debug overlay's frame budget. Returns 0 on success.
     extern SDL_GetWindowDisplayIndex as window_display_index: (any*) -> int32
     extern SDL_GetCurrentDisplayMode as current_display_mode: (int32, any*) -> int32
+    // Active video backend ("wayland", "x11", …) — set by $SDL_VIDEODRIVER or
+    // auto-picked. Diagnostic: native Wayland vs XWayland behave differently
+    // under fractional display scaling. Returns NULL before SDL_Init.
+    extern SDL_GetCurrentVideoDriver as current_video_driver: () -> cstr
     extern SDL_GetError as get_error: () -> cstr
 
     // --- Window ---

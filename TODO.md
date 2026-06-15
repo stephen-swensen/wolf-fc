@@ -8,7 +8,16 @@ one-off fix, and patch.
 
 ## Manual notes
 
-* disabling wide screen mode actually leads to more jit and frame drops on linux. possibly because the repaint SDL command takes more time than if we just black filled the side bars ourselves...
+* disabling wide screen mode (4:3 letterbox) shows more jitter/frame drops
+  on Linux — but ONLY under fractional display scaling (Linux Mint @ 150%);
+  at 100% it's gone. Measured: `work_ms` stays flat/slightly lower in 4:3
+  (smaller texture, fewer pixels to scale), only `dbg_jitter_ms` climbs — so
+  it's NOT the prep path (the original "SDL repaint / black-fill the bars
+  ourselves" guess is disproven; filling bars wouldn't help). It's a
+  compositor/present interaction: under fractional scaling a pillarboxed
+  surface can't take the direct-scanout fast path the way a full-bleed
+  widescreen surface can, forcing recomposition. Environmental, out of our
+  hands → won't-fix.
 
 ## Open findings — 2026-05 audit (re-prioritized 2026-06-09 against id's source)
 
