@@ -194,12 +194,19 @@ old **[needs OG source]** tag is retired — `../wolf3d` is now present.)
   verify no visible seams/wobble at grazing angles before re-blessing).
   Bigger than a micro-opt; sequence it as its own pass.
 
-  > Context: rc5's `(int32)float` now emits a saturating helper
-  > (`fc_f2i32`: NaN-check + two range branches) instead of rc4's bare
-  > `cvttsd2si`, making each per-pixel conversion ~2.5× costlier. Fixed-point
-  > removes the conversion outright, so it wins regardless of how that
-  > compiler-side question (revert vs. add an unchecked-cast escape hatch)
-  > is resolved upstream in fc-lang.
+  > Context: rc5's `(int32)float` emits a saturating helper (`fc_f2i32`:
+  > NaN-check + two range branches) instead of rc4's bare `cvttsd2si`,
+  > making each per-pixel conversion ~2.5× costlier. That compiler-side
+  > question resolved upstream as an unchecked-cast escape hatch (`(T!)`),
+  > which is now applied to every in-range cast on the hot render path —
+  > the per-pixel wall texel (`render.fc` band loops), per-column line_h /
+  > tex_x, `shade_color`'s channel casts, and the billboard scaler all emit
+  > a bare `cvttsd2si` again (disassembly-confirmed: zero `fc_f2*` calls in
+  > `raycaster__render_walls` / `billboards__render`; golden suite unchanged
+  > since `(T!)` is bit-identical for in-range inputs). So the saturation
+  > overhead is *already* clawed back; what remains for this item is the
+  > conversion itself — fixed-point removes the per-pixel float→int op (and
+  > its `[0,63]` clamp) outright, a further win on top.
 
 - **[png-1] CRC-32 is bit-by-bit, run ~3× over multi-MB IDAT per
   screenshot** (`png.fc:11-18`). One-frame hitch on the `s` key / `ss:`
