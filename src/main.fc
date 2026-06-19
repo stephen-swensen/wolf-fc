@@ -3151,7 +3151,7 @@ let main = (args: str[]) ->
         let adrv = sdl2.get_current_audio_driver()
         if adrv != default(const cstr) then
             let mut pref = default(sdl2.audio_spec)
-            let detected = sdl2.get_default_audio_info((any*) 0, &pref, 0) == 0
+            let detected = sdl2.get_default_audio_info(default(any*), &pref, 0) == 0
                 && pref.freq > 0
             if detected then audio_rate = pref.freq
             io.write(alloca("Audio driver: %s{(const str) adrv}, device rate %d{audio_rate} Hz%s{if detected then "" else " (fallback)"}\n"), stdout)
@@ -3434,7 +3434,7 @@ let main = (args: str[]) ->
         | sdl2.window_allow_highdpi | fullscreen_flag
     let win = sdl2.create_window(c"Wolf-FC",
         sdl2.pos_centered, sdl2.pos_centered, initial_screen_w, initial_actual_h, flags)
-    if win == (any*) 0 then
+    if win == default(any*) then
         io.write(alloca("fatal: SDL_CreateWindow failed: %s{(const str) sdl2.get_error()}\n"), stderr)
         return 1
     if on_wsl then sdl2.maximize_window(win)
@@ -3456,7 +3456,7 @@ let main = (args: str[]) ->
     // stretch is the bottleneck; "direct3d" / "opengl" / etc. → GPU
     // pipeline).
     let ren = sdl2.create_renderer(win, -1, sdl2.renderer_vsync)
-    if ren == (any*) 0 then
+    if ren == default(any*) then
         io.write(alloca("fatal: SDL_CreateRenderer failed: %s{(const str) sdl2.get_error()}\n"), stderr)
         return 1
     sdl2.show_cursor(0)
@@ -3521,7 +3521,7 @@ let main = (args: str[]) ->
     // Streaming texture at the chosen supersample dims.
     let mut tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
         sdl2.tex_streaming, runtime_screen_w, runtime_screen_h)
-    if tex == (any*) 0 then
+    if tex == default(any*) then
         io.write(alloca("fatal: SDL_CreateTexture failed: %s{(const str) sdl2.get_error()}\n"), stderr)
         return 1
 
@@ -3547,7 +3547,7 @@ let main = (args: str[]) ->
         callback = &audio_callback, userdata = (any*) w->ac
     }
     let mut obtained = default(sdl2.audio_spec)
-    let audio_dev = sdl2.open_audio((any*) 0, 0, &spec, &obtained, 0)
+    let audio_dev = sdl2.open_audio(default(any*), 0, &spec, &obtained, 0)
     if audio_dev > 0u32 then
         let buf_ms = (float64) obtained.samples * 1000.0 / (float64) obtained.freq
         io.write("Audio: %d{obtained.freq} Hz, %d{(int32) obtained.channels} ch, %d{(int32) obtained.samples}-frame buffer (~%4.1f{buf_ms} ms callback latency)\n", stdout)
@@ -4547,7 +4547,7 @@ let main = (args: str[]) ->
         // render_copy + present stay unconditional so vsync timing and
         // letterbox painting are preserved.
         if should_render then
-            sdl2.update_texture(tex, (any*) 0, (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
+            sdl2.update_texture(tex, default(any*), (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
         // Only clear the backbuffer when SDL's logical-size step will
         // letterbox/pillarbox into the drawable. With FLIP_DISCARD swap
         // chains (D3D11) the backbuffer is undefined each frame, so the
@@ -4557,7 +4557,7 @@ let main = (args: str[]) ->
         let needs_clear = ((int64) runtime_screen_w * (int64) w->rc->drawable_h)
             != ((int64) runtime_actual_h * (int64) w->rc->drawable_w)
         if needs_clear then sdl2.clear(ren)
-        sdl2.render_copy(ren, tex, (any*) 0, (any*) 0)
+        sdl2.render_copy(ren, tex, default(any*), default(any*))
 
         // Stamp the per-frame work time just before present() blocks on
         // vsync — this is the whole "prepare the frame" span (sim tick +
