@@ -170,6 +170,37 @@ old **[needs OG source]** tag is retired — `../wolf3d` is now present.)
 
 ### Performance — optional micro-opts (none per-frame-critical)
 
+- **[render-fp] move the per-pixel texture coordinate to fixed-point —
+  the one per-frame-critical item in this section, and structural.** The
+  hot band loop keeps the texel coordinate as a `float64` accumulator and
+  converts to a row index *every pixel* with `let tex_y = (int32)
+  bd_tex_pos[k]` (`render.fc:465`, `:478`, `:493`; ~64k+ conversions/frame
+  in the fast/edge bands), then clamps to `[0,63]`. Same shape in the
+  per-column DDA setup (`:326` `(int32)(vfocal/perp_dist)`, `:385-386`
+  step/tex_pos) and the billboard scaler (`:688-690`, `:698`). The float→int
+  conversion is the expensive op: at `-O3` an isolated cast+clamp+LUT loop
+  measured ~0.035s (bare cast) vs ~0.02s when the coordinate is 16.16
+  fixed-point — `let tex_y = (tex[k] >> 16) & 63` is a shift+mask, emits
+  **zero** float→int conversions, and the `& 63` makes the range exact so
+  the `if tex_y < 0 … if tex_y > 63 …` clamp drops too (two per-pixel costs
+  removed, not one). This is the classic Wolf3D/Doom software-rasterizer
+  technique: step texcoords in fixed-point, extract the texel with a shift.
+  Worth doing "throughout" — wall texturing, floor/ceiling, sprite scaling,
+  DDA — not just the wall band. Also sidesteps the rc5 saturating-cast cost
+  entirely (see below). **Caveat — NOT test-safe:** fixed-point rounds
+  differently from `float64`, so this *changes rendered pixels* and busts
+  the bit-stable golden suite — needs a deliberate golden re-pin plus a
+  precision review (16.16 has ample headroom for 64-texel textures, but
+  verify no visible seams/wobble at grazing angles before re-blessing).
+  Bigger than a micro-opt; sequence it as its own pass.
+
+  > Context: rc5's `(int32)float` now emits a saturating helper
+  > (`fc_f2i32`: NaN-check + two range branches) instead of rc4's bare
+  > `cvttsd2si`, making each per-pixel conversion ~2.5× costlier. Fixed-point
+  > removes the conversion outright, so it wins regardless of how that
+  > compiler-side question (revert vs. add an unchecked-cast escape hatch)
+  > is resolved upstream in fc-lang.
+
 - **[png-1] CRC-32 is bit-by-bit, run ~3× over multi-MB IDAT per
   screenshot** (`png.fc:11-18`). One-frame hitch on the `s` key / `ss:`
   only, never per-frame. Fix: 256-entry CRC table (embed as a literal
