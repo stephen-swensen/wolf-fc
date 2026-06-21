@@ -214,6 +214,31 @@ old **[needs OG source]** tag is retired — `../wolf3d` is now present.)
   > cost — the per-pixel float→int conversion and its `[0,63]` clamp —
   > outright.
 
+- **[render-fp-2] fixed-point / integer the remaining per-row & per-column
+  render math — APPLIED 2026-06-21 (follow-up sweep to [render-fp]).** Two
+  classes:
+  - *Viewport tints* (`overlay.viewport_tint` / `viewport_tint_full` /
+    `dbuf_tint_full`): the per-pixel `src·inv + tint·a` float lerp (3 muls +
+    3 float→int casts/pixel) → an integer 8-bit lerp `(src·inv8 + tint·a8)
+    >> 8` via a shared `tint_px` helper, with `unguarded` inner loops. These
+    run full-viewport *every frame during a damage flash / death-fade*, and
+    that path was dropping frames at high scale. **Measured (scale 6,
+    1920×1200): `viewport_tint` 5.53ms → 1.15ms (4.8×); `dbuf_tint_full`
+    6.83ms → 1.57ms (4.3×)** — ~4–5ms/frame back during the flash. Output is
+    within ≤1/255 of the float blend (verified over all src/alpha/tint; a
+    real tinted frame diffs by max 1 channel level); not pixel-pinned.
+  - *Sprite / weapon scalers* (`billboards.draw_sprite_col` sy-span,
+    `billboards.render` tex_col, `player.draw_hud_sprite` sx/sy-spans): the
+    per-row / per-stripe integer `i·dim/64` and `i·64/spr_w` divides → 16.16
+    fixed-point accumulators (and a Bresenham step for tex_col). These are
+    **bit-identical** (byte-identical screenshots across spawn / corridor /
+    boss-arena, suite 208/208), but measured **perf-neutral** — billboards
+    stay ≤ 0.13ms even in the densest scene found, below the noise floor. Kept
+    as zero-risk cleanups; also folded out a redundant per-stripe
+    `dist_shade` recompute. The genuinely measurable win here was the tints;
+    `render_walls`'s remaining per-column `line_h` / `tex_x` are one-shot
+    float→int boundary conversions that fixed-point can't remove.
+
 - **[png-1] CRC-32 is bit-by-bit, run ~3× over multi-MB IDAT per
   screenshot** (`png.fc:11-18`). One-frame hitch on the `s` key / `ss:`
   only, never per-frame. Fix: 256-entry CRC table (embed as a literal

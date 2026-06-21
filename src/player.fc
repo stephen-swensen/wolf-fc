@@ -666,9 +666,19 @@ module player =
         // render_weapon).
         let sw = (int64) rc->vbuf_w
         let view_render_h = rc->vbuf_h
+        // Source→dest spans in 16.16 fixed-point: dst_w/64 per source
+        // column, dst_h/64 per source row, stepped by add+shift instead of
+        // a multiply+divide each boundary. dst·1024 == (dst<<10) makes >>16
+        // an exact /64, so the spans are bit-identical to the old
+        // `coord·dst/64` and each boundary is computed once (sx1/sy1 of one
+        // index is sx0/sy0 of the next).
+        let dst_w_fp = (int64) dst_w << 10
+        let dst_h_fp = (int64) dst_h << 10
+        let mut acc_x = (int64) hdr.left_pix * dst_w_fp
         for sc in hdr.left_pix..(hdr.right_pix + 1)
-            let sx0 = dst_x + sc * dst_w / 64
-            let sx1 = dst_x + (sc + 1) * dst_w / 64
+            let sx0 = dst_x + (int32) (acc_x >> 16)
+            acc_x = acc_x + dst_w_fp
+            let sx1 = dst_x + (int32) (acc_x >> 16)
             if sx1 <= 0 || sx0 >= rc->vbuf_w then continue
             let data_off = (int64) hdr.col_offsets[sc]
             let mut off = base + data_off
@@ -680,11 +690,13 @@ module player =
                 off = off + 6
                 let row_start = starty_raw / 2
                 let row_end = endy_raw / 2
+                let mut acc_y = (int64) row_start * dst_h_fp
                 for row in row_start..row_end
                     let pix = vs->raw[base + newstart + (int64) row]
                     let color = pal[(int32) pix]
-                    let sy0 = dst_y + row * dst_h / 64
-                    let sy1 = dst_y + (row + 1) * dst_h / 64
+                    let sy0 = dst_y + (int32) (acc_y >> 16)
+                    acc_y = acc_y + dst_h_fp
+                    let sy1 = dst_y + (int32) (acc_y >> 16)
                     let y0 = if sy0 < 0 then 0 else sy0
                     let y1 = if sy1 > view_render_h then view_render_h else sy1
                     for sx in sx0..sx1

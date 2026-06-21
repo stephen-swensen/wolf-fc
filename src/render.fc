@@ -667,6 +667,13 @@ module billboards =
         let upper = view_render_h / 2 - sprite_h / 2
         let sw = (int64) rc->vbuf_w
         let dcol = (int64) screen_x
+        // Vertical source→screen span in 16.16 fixed-point: sprite_h / 64
+        // per source row, stepped by add+shift instead of a per-row
+        // multiply+divide. sprite_h·1024 == (sprite_h<<10) makes >>16 an
+        // exact /64, so sy = upper + (acc>>16) is bit-identical to the old
+        // `row·sprite_h/64 + upper`; sy1 of one row is sy0 of the next, so
+        // each boundary is computed once instead of twice.
+        let sprite_h_fp = (int64) sprite_h << 10
         let mut off = base + data_off
         loop
             let endy_raw = (int32) bytes.u16(vs->raw, off)
@@ -676,9 +683,11 @@ module billboards =
             off = off + 6
             let row_start = starty_raw / 2
             let row_end = endy_raw / 2
+            let mut acc = (int64) row_start * sprite_h_fp
             for row in row_start..row_end
-                let sy0 = row * sprite_h / 64 + upper
-                let sy1 = (row + 1) * sprite_h / 64 + upper
+                let sy0 = upper + (int32) (acc >> 16)
+                acc = acc + sprite_h_fp
+                let sy1 = upper + (int32) (acc >> 16)
                 if sy0 != sy1 && sy1 > 0 then
                     let pix = vs->raw[base + newstart + (int64) row]
                     let color = raycaster.shade_color(pal[(int32) pix], shade)
@@ -739,15 +748,27 @@ module billboards =
             let half_w = spr_w / 2
             let draw_x0 = scr_x - half_w
             let draw_x1 = scr_x + half_w
+            // ty / shadow_floor are column-invariant — hoist the shade out
+            // of the stripe loop (was recomputed per stripe).
+            let spr_shade = raycaster.dist_shade(ty, shadow_floor)
+            // tex_col = (stripe − draw_x0)·64 / spr_w, stepped incrementally
+            // (Bresenham) so the per-stripe integer divide becomes an add +
+            // conditional subtract. Bit-identical to the divide: `tc` tracks
+            // ⌊i·64 / spr_w⌋ exactly via the running remainder `rem`, and
+            // advances every stripe (including z/offscreen-skipped ones) so
+            // it stays in lockstep with the screen column.
+            let mut tc = 0
+            let mut rem = 0
             for stripe in draw_x0..draw_x1
                 if stripe >= 0 && stripe < rc->vbuf_w then
                     if ty < rc->vzbuf[stripe] then
-                        // spr_w ≥ 1 was asserted above, so the divisor is never
-                        // zero (nor INT_MIN/-1) — drop the divide-by-zero guard.
-                        let tex_col = unguarded ((stripe - draw_x0) * 64 / spr_w)
-                        let spr_shade = raycaster.dist_shade(ty, shadow_floor)
                         draw_sprite_col(rc, vs, pal, bb.shape_page,
-                            tex_col, stripe, spr_h, spr_shade, bb.alpha)
+                            tc, stripe, spr_h, spr_shade, bb.alpha)
+                rem = rem + 64
+                loop
+                    if rem < spr_w then break
+                    rem = rem - spr_w
+                    tc = tc + 1
 
 
 // ============================================================
@@ -824,6 +845,31 @@ module overlay =
                         let bot = (c10 | c11) - (((c10 ^ c11) >> 1u32) & mask)
                         dst[dst_row + (int64) x] = (top | bot) - (((top ^ bot) >> 1u32) & mask)
 
+    // Integer 8-bit lerp of one ARGB pixel toward a tint. Replaces the
+    // per-pixel float blend (3 muls + 3 float→int casts) with integer
+    // mul/add/shift: out = (src·inv8 + tint·a8) >> 8, where a8 = ⌊a·256⌋
+    // ∈ [0,256], inv8 = 256 − a8, and the tint·a8 terms (tr8/tg8/tb8)
+    // are hoisted to the caller (constant over the whole fill). Because
+    // inv8 + a8 = 256 every channel result is ≤ 255 — no clamp needed.
+    // Alpha lane forced to 0xFF (target pixels are always opaque). Within
+    // ±1/256 of the float result, below visible threshold for the
+    // transient damage / fade tints these drive, and these effects are
+    // not pixel-pinned by the (state-based) regression suite.
+    private let tint_px = (c: uint32, inv8: uint32, tr8: uint32, tg8: uint32, tb8: uint32) ->
+        let r = (((c >> 16) & 0xFFu32) * inv8 + tr8) >> 8u32
+        let g = (((c >>  8) & 0xFFu32) * inv8 + tg8) >> 8u32
+        let b = (( c        & 0xFFu32) * inv8 + tb8) >> 8u32
+        0xFF000000u32 | (r << 16) | (g << 8) | b
+
+    // Per-pixel a8 / inv8 / tint·a8 weights for the integer tint lerp.
+    // a8 = ⌊a·256⌋ ∈ [0,256]; the once-per-call float→int cast is cold.
+    private let tint_weights = (tint: uint32, a: float64) ->
+        let a8 = (uint32) (a * 256.0)
+        let inv8 = 256u32 - a8
+        { inv8, ((tint >> 16) & 0xFFu32) * a8,
+                ((tint >>  8) & 0xFFu32) * a8,
+                ( tint        & 0xFFu32) * a8 }
+
     // Overlay a color tint over the 3D viewport by blending each
     // pixel toward `tint` at `alpha` (0..1). alpha=0 is a no-op;
     // alpha=1 paints the tint solid. Used for damage red-flash and
@@ -831,39 +877,27 @@ module overlay =
     let viewport_tint = (rc: render_ctx*, tint: uint32, alpha: float64) ->
         if alpha <= 0.0 then return
         let a = if alpha >= 1.0 then 1.0 else alpha
-        let inv = 1.0 - a
-        let tr = (float64) ((tint >> 16) & 0xFFu32) * a
-        let tg = (float64) ((tint >> 8) & 0xFFu32) * a
-        let tb = (float64) (tint & 0xFFu32) * a
+        let { inv8, tr8, tg8, tb8 } = tint_weights(tint, a)
         let sw = (int64) rc->screen_w
         let view_render_h = rc->view_render_h
         for y in 0..view_render_h
             let row = (int64) y * sw
-            for x in 0..rc->screen_w
-                let c = rc->dbuf[row + (int64) x]
-                let r = (float64) ((c >> 16) & 0xFFu32) * inv + tr
-                let g = (float64) ((c >> 8) & 0xFFu32) * inv + tg
-                let b = (float64) (c & 0xFFu32) * inv + tb
-                rc->dbuf[row + (int64) x] =
-                    0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
+            unguarded
+                for x in 0..rc->screen_w
+                    rc->dbuf[row + (int64) x] = tint_px(rc->dbuf[row + (int64) x], inv8, tr8, tg8, tb8)
 
     // Variant of viewport_tint that covers the whole framebuffer
     // (HUD + view).
     let viewport_tint_full = (rc: render_ctx*, tint: uint32, alpha: float64) ->
         if alpha <= 0.0 then return
         let a = if alpha >= 1.0 then 1.0 else alpha
-        let inv = 1.0 - a
-        let tr = (float64) ((tint >> 16) & 0xFFu32) * a
-        let tg = (float64) ((tint >> 8) & 0xFFu32) * a
-        let tb = (float64) (tint & 0xFFu32) * a
+        let { inv8, tr8, tg8, tb8 } = tint_weights(tint, a)
+        let fbw = (int64) rc->fb_w
         for y in 0..game_h
-            for x in 0..rc->fb_w
-                let c = rc->fb[(int64) y * (int64) rc->fb_w + (int64) x]
-                let r = (float64) ((c >> 16) & 0xFFu32) * inv + tr
-                let g = (float64) ((c >> 8) & 0xFFu32) * inv + tg
-                let b = (float64) (c & 0xFFu32) * inv + tb
-                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] =
-                    0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
+            let row = (int64) y * fbw
+            unguarded
+                for x in 0..rc->fb_w
+                    rc->fb[row + (int64) x] = tint_px(rc->fb[row + (int64) x], inv8, tr8, tg8, tb8)
 
     // Stippled red dissolve driven by a per-pixel spatial hash. For
     // each pixel, a deterministic 16-bit hash h(x,y) is compared
@@ -1181,21 +1215,14 @@ module overlay =
     let dbuf_tint_full = (rc: render_ctx*, tint: uint32, alpha: float64) ->
         if alpha <= 0.0 then return
         let a = if alpha >= 1.0 then 1.0 else alpha
-        let inv = 1.0 - a
-        let tr = (float64) ((tint >> 16) & 0xFFu32) * a
-        let tg = (float64) ((tint >> 8) & 0xFFu32) * a
-        let tb = (float64) (tint & 0xFFu32) * a
+        let { inv8, tr8, tg8, tb8 } = tint_weights(tint, a)
         let sw = (int64) rc->screen_w
         let total_h = rc->screen_h
         for y in 0..total_h
             let row = (int64) y * sw
-            for x in 0..rc->screen_w
-                let c = rc->dbuf[row + (int64) x]
-                let r = (float64) ((c >> 16) & 0xFFu32) * inv + tr
-                let g = (float64) ((c >> 8) & 0xFFu32) * inv + tg
-                let b = (float64) (c & 0xFFu32) * inv + tb
-                rc->dbuf[row + (int64) x] =
-                    0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
+            unguarded
+                for x in 0..rc->screen_w
+                    rc->dbuf[row + (int64) x] = tint_px(rc->dbuf[row + (int64) x], inv8, tr8, tg8, tb8)
 
     // Downsample dbuf's viewport region (rows 0..view_render_h) back
     // into fb's top region (rows 0..view_h) at scale:1 in both axes.
