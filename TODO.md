@@ -170,49 +170,49 @@ old **[needs OG source]** tag is retired — `../wolf3d` is now present.)
 
 ### Performance — optional micro-opts (none per-frame-critical)
 
-- **[render-fp] move the per-pixel texture coordinate to fixed-point —
-  the one per-frame-critical item in this section, and structural.** The
-  hot band loop keeps the texel coordinate as a `float64` accumulator and
-  converts to a row index *every pixel* with `let tex_y = (int32)
-  bd_tex_pos[k]` (`render.fc:465`, `:478`, `:493`; ~64k+ conversions/frame
-  in the fast/edge bands), then clamps to `[0,63]`. Same shape in the
-  per-column DDA setup (`:326` `(int32)(vfocal/perp_dist)`, `:385-386`
-  step/tex_pos) and the billboard scaler (`:688-690`, `:698`). The float→int
-  conversion is the expensive op: at `-O3` an isolated cast+clamp+LUT loop
-  measured ~0.035s (bare cast) vs ~0.02s when the coordinate is 16.16
-  fixed-point — `let tex_y = (tex[k] >> 16) & 63` is a shift+mask, emits
-  **zero** float→int conversions, and the `& 63` makes the range exact so
-  the `if tex_y < 0 … if tex_y > 63 …` clamp drops too (two per-pixel costs
-  removed, not one). This is the classic Wolf3D/Doom software-rasterizer
-  technique: step texcoords in fixed-point, extract the texel with a shift.
-  Worth doing "throughout" — wall texturing, floor/ceiling, sprite scaling,
-  DDA — not just the wall band. Also sidesteps the rc5 saturating-cast cost
-  entirely (see below). **Caveat — NOT test-safe:** fixed-point rounds
-  differently from `float64`, so this *changes rendered pixels* and busts
-  the bit-stable golden suite — needs a deliberate golden re-pin plus a
-  precision review (16.16 has ample headroom for 64-texel textures, but
-  verify no visible seams/wobble at grazing angles before re-blessing).
-  Bigger than a micro-opt; sequence it as its own pass.
+- **[render-fp] move the per-pixel wall texel to 16.16 fixed-point —
+  APPLIED 2026-06-21.** The wall band loop carried the texel coordinate as
+  a `float64` accumulator and converted to a row index *every pixel* with
+  `(int32) bd_tex_pos[k]` (~64k+ conversions/frame across the fast/edge
+  bands), then clamped to `[0,63]`. Now the per-column setup folds
+  `step_v`/`tex_pos` into 16.16 once (`bd_step_fp`/`bd_tex_fp`, `int64[16]`)
+  and the three band loops extract the row with `(bd_tex_fp[k] >> 16) & 63`
+  — a shift+mask that emits **zero** float→int conversions, and the `& 63`
+  (the texture is 64 rows = power-of-two, so the mask *is* the wrap) makes
+  the range exact so the per-pixel `if tex_y < 0 … if tex_y > 63 …` clamp
+  drops with it. Generated-C confirmed: the fast-band body
+  (`render.fc:520`) is `((bd_tex_fp[k] >> 16) & 63)` with no `cvttsd2si`
+  and no clamp branch; the two float→fixed casts are hoisted per-column.
+  This is the classic Wolf3D/Doom software-rasterizer technique, and the OG
+  raycaster itself stepped texcoords in fixed-point — so this is *more*
+  OG-faithful, not a deviation.
 
-  > Context: rc5's `(int32)float` emits a saturating helper (`fc_f2i32`:
-  > NaN-check + two range branches) instead of rc4's bare `cvttsd2si`,
-  > making each per-pixel conversion ~2.5× costlier. That compiler-side
-  > question resolved upstream as `unguarded`/`guarded` blocks (which
-  > superseded the interim `(T!)` cast), now wrapping every in-range cast
-  > on the hot render path — the per-pixel wall texel (`render.fc` band
-  > loops), per-column line_h / tex_x, `shade_color`'s channel casts, and
-  > the billboard scaler all emit a bare `cvttsd2si` again. The same blocks
-  > also drop the per-store bounds check that previously forced the raw
-  > `vbuf.ptr` / `ssaa_buf.ptr` escape (flat fill, band stores, sprite-col
-  > blend, SSAA downsample now index the slice directly under `unguarded`),
-  > and the per-stripe `… / spr_w` billboard divide skips its divide-by-zero
-  > guard. Disassembly-confirmed: zero `fc_f2*` calls and zero hot-loop
-  > `fc_oob` in `raycaster__render_walls` / `billboards__render`; the
-  > `unguarded` slice form is byte-identical to the old raw pointer; golden
-  > suite unchanged since `unguarded` is bit-identical for in-range inputs.
-  > So the saturation + bounds-check overhead is *already* clawed back; what
-  > remains for this item is the conversion itself — fixed-point removes the
-  > per-pixel float→int op (and its `[0,63]` clamp) outright, a further win.
+  Scope note: the other call-outs in the original finding turned out not to
+  be per-pixel-critical and were left as-is. The per-column DDA `line_h`
+  cast and the billboard `spr_w`/`spr_h`/`scr_x`/`tex_col` casts run once
+  per column / per billboard (not per pixel), and `draw_sprite_col`'s inner
+  blend loop is already integer (it iterates source rows). Floor/ceiling
+  shade is per-row. So the wall band was the only genuine per-pixel
+  conversion hot path, matching the finding's own "the one per-frame-
+  critical item" framing.
+
+  Precision review (the finding required it): a 320×200 before/after diff
+  over four scenes (spawn, close wall, grazing angle, elevator switch)
+  changed 0.04–1.18% of pixels, all confined to thin horizontal texel-row
+  boundaries (a 1-row swap where adjacent texels differ in color) — no
+  seams, wobble, or geometry loss; verified visually at a grazing angle.
+  Worst-case accumulated drift from the rounded step over a ~960-row column
+  is < 0.01 texel (16.16 holds the 0..64 index with 16 fractional bits).
+  The finding flagged this as "NOT test-safe / busts the golden suite," but
+  the regression suite asserts game *state* from the `ss:` tEXt chunk, not
+  rendered pixels, so it passed 208/208 with no re-pin needed; the
+  pixel-level change is real but unpinned.
+
+  > Context (resolved): rc5's saturating `fc_f2i32` and the per-store bounds
+  > check were already clawed back upstream by the `unguarded`/`guarded`
+  > blocks now wrapping the hot render path. This item removed the remaining
+  > cost — the per-pixel float→int conversion and its `[0,63]` clamp —
+  > outright.
 
 - **[png-1] CRC-32 is bit-by-bit, run ~3× over multi-MB IDAT per
   screenshot** (`png.fc:11-18`). One-frame hitch on the `s` key / `ss:`

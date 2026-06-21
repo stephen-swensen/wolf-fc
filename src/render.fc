@@ -187,8 +187,18 @@ module raycaster =
         let bd_skip = uint8[16] {}
         let bd_draw_start = int32[16] {}
         let bd_draw_end = int32[16] {}
-        let bd_step_v = float64[16] {}
-        let bd_tex_pos = float64[16] {}
+        // Texel walk in 16.16 fixed-point. The per-pixel inner loop
+        // extracts the texture row with `(bd_tex_fp[k] >> 16) & 63` — a
+        // shift+mask that emits *zero* float→int conversions (the old
+        // `(int32) bd_tex_pos` cost one cvttsd2si — or, under rc5's
+        // saturating `fc_f2i32`, a NaN-test + two range branches — every
+        // pixel). The `& 63` also makes the texel range exact (a 64-row
+        // texture is power-of-two, so the mask *is* the wrap), so the
+        // per-pixel `if tex_y < 0 … if tex_y > 63` clamp drops too. The
+        // single float→fixed conversion stays hoisted into the per-column
+        // setup below, out of the ~line_h-deep pixel loop.
+        let bd_step_fp = int64[16] {}
+        let bd_tex_fp = int64[16] {}
         let bd_col_lut = uint32[1024] {}
         let num_blocks = (rc->vbuf_w + 15) / 16
         for blk in 0..num_blocks
@@ -402,6 +412,17 @@ module raycaster =
 
                 let step_v = 64.0 / (float64) line_h
                 let tex_pos = (float64) (draw_start - view_render_h / 2 + line_h / 2) * step_v
+                // Fold step / start into 16.16 fixed-point once per column.
+                // tex_pos is always ≥ 0 (when the wall fits the viewport
+                // draw_start = vh/2 − line_h/2 makes the start exactly 0;
+                // when it overflows draw_start clamps to 0 and the start is
+                // (line_h − vh)/2 > 0), and step_v ∈ (0, 64], so both
+                // products are finite and within int64 — the casts are
+                // unguarded. 16.16 holds the 0..64 texel index with 16
+                // fractional bits; worst-case drift from the rounded step
+                // over a ~960-row column is < 0.01 texel, so no seam.
+                let bd_step_fp_k = unguarded (int64) (step_v * 65536.0)
+                let bd_tex_fp_k = unguarded (int64) (tex_pos * 65536.0)
 
                 // shade depends only on perp_dist, shadow_floor, side — all
                 // column-invariant; hoist out of the per-pixel loop.
@@ -440,8 +461,8 @@ module raycaster =
 
                 bd_draw_start[k] = draw_start
                 bd_draw_end[k] = draw_end
-                bd_step_v[k] = step_v
-                bd_tex_pos[k] = tex_pos
+                bd_step_fp[k] = bd_step_fp_k
+                bd_tex_fp[k] = bd_tex_fp_k
                 bd_skip[k] = 0u8
 
             // Phase 2: y_min / y_max bound the union of active
@@ -480,30 +501,25 @@ module raycaster =
                 for k in 0..16
                     if bd_skip[k] == 0u8 then
                         if y >= bd_draw_start[k] && y < bd_draw_end[k] then
-                            let mut tex_y = unguarded (int32) bd_tex_pos[k]
-                            if tex_y < 0 then tex_y = 0
-                            if tex_y > 63 then tex_y = 63
-                            bd_tex_pos[k] = bd_tex_pos[k] + bd_step_v[k]
-                            unguarded rc->vbuf[row_base + (int64) k] = bd_col_lut[(int64) k * 64 + (int64) tex_y]
+                            let tex_y = (bd_tex_fp[k] >> 16) & 63
+                            bd_tex_fp[k] = bd_tex_fp[k] + bd_step_fp[k]
+                            unguarded rc->vbuf[row_base + (int64) k] = bd_col_lut[(int64) k * 64 + tex_y]
 
             // Fast band: y in [fast_lo, fast_hi). All columns active,
             // no per-pixel skip / range branches; gcc unrolls k=0..16
-            // and the body is double-add + cvttsd2si + LUT load +
-            // store, one cache line of dbuf per row. The `unguarded`
-            // cast is what keeps the conversion a bare cvttsd2si: every
-            // active column's bd_tex_pos is finite and in [0,64]
-            // (skipped / degenerate line_h==0 columns are excluded —
-            // they leave an empty fast band), so the saturating fc_f2i32
-            // helper would be dead weight here. The same block drops the
-            // store's bounds check, replacing the old raw `vbuf.ptr`.
+            // and the body is now int64-add + shift-and-mask + LUT load +
+            // store, one cache line of dbuf per row — no float→int
+            // conversion at all (the old `(int32) bd_tex_pos` was the
+            // band's only cvttsd2si / fc_f2i32). The `& 63` is the texel
+            // wrap, so the per-pixel range clamp is gone with it. The
+            // `unguarded` store still drops the bounds check, replacing
+            // the old raw `vbuf.ptr`.
             for y in fast_lo..fast_hi
                 let row_base = (int64) y * sw + (int64) block_col
                 for k in 0..16
-                    let mut tex_y = unguarded (int32) bd_tex_pos[k]
-                    if tex_y < 0 then tex_y = 0
-                    if tex_y > 63 then tex_y = 63
-                    bd_tex_pos[k] = bd_tex_pos[k] + bd_step_v[k]
-                    unguarded rc->vbuf[row_base + (int64) k] = bd_col_lut[(int64) k * 64 + (int64) tex_y]
+                    let tex_y = (bd_tex_fp[k] >> 16) & 63
+                    bd_tex_fp[k] = bd_tex_fp[k] + bd_step_fp[k]
+                    unguarded rc->vbuf[row_base + (int64) k] = bd_col_lut[(int64) k * 64 + tex_y]
 
             // Lower edge band: y in [fast_hi, y_max). Symmetric to
             // the upper edge — at least one column has finished.
@@ -514,11 +530,9 @@ module raycaster =
                 for k in 0..16
                     if bd_skip[k] == 0u8 then
                         if y >= bd_draw_start[k] && y < bd_draw_end[k] then
-                            let mut tex_y = unguarded (int32) bd_tex_pos[k]
-                            if tex_y < 0 then tex_y = 0
-                            if tex_y > 63 then tex_y = 63
-                            bd_tex_pos[k] = bd_tex_pos[k] + bd_step_v[k]
-                            unguarded rc->vbuf[row_base + (int64) k] = bd_col_lut[(int64) k * 64 + (int64) tex_y]
+                            let tex_y = (bd_tex_fp[k] >> 16) & 63
+                            bd_tex_fp[k] = bd_tex_fp[k] + bd_step_fp[k]
+                            unguarded rc->vbuf[row_base + (int64) k] = bd_col_lut[(int64) k * 64 + tex_y]
 
 
 // ============================================================
