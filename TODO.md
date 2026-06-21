@@ -197,16 +197,22 @@ old **[needs OG source]** tag is retired — `../wolf3d` is now present.)
   > Context: rc5's `(int32)float` emits a saturating helper (`fc_f2i32`:
   > NaN-check + two range branches) instead of rc4's bare `cvttsd2si`,
   > making each per-pixel conversion ~2.5× costlier. That compiler-side
-  > question resolved upstream as an unchecked-cast escape hatch (`(T!)`),
-  > which is now applied to every in-range cast on the hot render path —
-  > the per-pixel wall texel (`render.fc` band loops), per-column line_h /
-  > tex_x, `shade_color`'s channel casts, and the billboard scaler all emit
-  > a bare `cvttsd2si` again (disassembly-confirmed: zero `fc_f2*` calls in
-  > `raycaster__render_walls` / `billboards__render`; golden suite unchanged
-  > since `(T!)` is bit-identical for in-range inputs). So the saturation
-  > overhead is *already* clawed back; what remains for this item is the
-  > conversion itself — fixed-point removes the per-pixel float→int op (and
-  > its `[0,63]` clamp) outright, a further win on top.
+  > question resolved upstream as `unguarded`/`guarded` blocks (which
+  > superseded the interim `(T!)` cast), now wrapping every in-range cast
+  > on the hot render path — the per-pixel wall texel (`render.fc` band
+  > loops), per-column line_h / tex_x, `shade_color`'s channel casts, and
+  > the billboard scaler all emit a bare `cvttsd2si` again. The same blocks
+  > also drop the per-store bounds check that previously forced the raw
+  > `vbuf.ptr` / `ssaa_buf.ptr` escape (flat fill, band stores, sprite-col
+  > blend, SSAA downsample now index the slice directly under `unguarded`),
+  > and the per-stripe `… / spr_w` billboard divide skips its divide-by-zero
+  > guard. Disassembly-confirmed: zero `fc_f2*` calls and zero hot-loop
+  > `fc_oob` in `raycaster__render_walls` / `billboards__render`; the
+  > `unguarded` slice form is byte-identical to the old raw pointer; golden
+  > suite unchanged since `unguarded` is bit-identical for in-range inputs.
+  > So the saturation + bounds-check overhead is *already* clawed back; what
+  > remains for this item is the conversion itself — fixed-point removes the
+  > per-pixel float→int op (and its `[0,63]` clamp) outright, a further win.
 
 - **[png-1] CRC-32 is bit-by-bit, run ~3× over multi-MB IDAT per
   screenshot** (`png.fc:11-18`). One-frame hitch on the `s` key / `ss:`
