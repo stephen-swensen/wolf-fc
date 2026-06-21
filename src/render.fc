@@ -823,15 +823,23 @@ module overlay =
         let tb = (float64) (tint & 0xFFu32) * a
         let sw = (int64) rc->screen_w
         let view_render_h = rc->view_render_h
+        // unguarded — each channel is a convex combination
+        // chan·(1−a) + tint·a of two values in [0,255], so r,g,b ∈ [0,255]
+        // and never NaN; the (uint32) casts stay bare cvttsd2si instead of
+        // the saturating fc_f2u32. row+x is a row-major offset provably <
+        // dbuf.len (view_render_h ≤ screen_h), so the per-pixel load/store
+        // bounds check is dropped too — this is full-viewport-per-frame hot
+        // during the damage flash / death-cam fade.
         for y in 0..view_render_h
             let row = (int64) y * sw
-            for x in 0..rc->screen_w
-                let c = rc->dbuf[row + (int64) x]
-                let r = (float64) ((c >> 16) & 0xFFu32) * inv + tr
-                let g = (float64) ((c >> 8) & 0xFFu32) * inv + tg
-                let b = (float64) (c & 0xFFu32) * inv + tb
-                rc->dbuf[row + (int64) x] =
-                    0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
+            unguarded
+                for x in 0..rc->screen_w
+                    let c = rc->dbuf[row + (int64) x]
+                    let r = (float64) ((c >> 16) & 0xFFu32) * inv + tr
+                    let g = (float64) ((c >> 8) & 0xFFu32) * inv + tg
+                    let b = (float64) (c & 0xFFu32) * inv + tb
+                    rc->dbuf[row + (int64) x] =
+                        0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
 
     // Variant of viewport_tint that covers the whole framebuffer
     // (HUD + view).
@@ -842,14 +850,19 @@ module overlay =
         let tr = (float64) ((tint >> 16) & 0xFFu32) * a
         let tg = (float64) ((tint >> 8) & 0xFFu32) * a
         let tb = (float64) (tint & 0xFFu32) * a
+        // unguarded — same convex-combination range argument as
+        // viewport_tint (r,g,b ∈ [0,255], non-NaN) so the casts stay bare;
+        // y < game_h == fb_h and x < fb_w so the fb index is in bounds.
         for y in 0..game_h
-            for x in 0..rc->fb_w
-                let c = rc->fb[(int64) y * (int64) rc->fb_w + (int64) x]
-                let r = (float64) ((c >> 16) & 0xFFu32) * inv + tr
-                let g = (float64) ((c >> 8) & 0xFFu32) * inv + tg
-                let b = (float64) (c & 0xFFu32) * inv + tb
-                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] =
-                    0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
+            let row = (int64) y * (int64) rc->fb_w
+            unguarded
+                for x in 0..rc->fb_w
+                    let c = rc->fb[row + (int64) x]
+                    let r = (float64) ((c >> 16) & 0xFFu32) * inv + tr
+                    let g = (float64) ((c >> 8) & 0xFFu32) * inv + tg
+                    let b = (float64) (c & 0xFFu32) * inv + tb
+                    rc->fb[row + (int64) x] =
+                        0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
 
     // Stippled red dissolve driven by a per-pixel spatial hash. For
     // each pixel, a deterministic 16-bit hash h(x,y) is compared
@@ -864,14 +877,20 @@ module overlay =
         let color = 0xFF000000u32 | (tint & 0x00FFFFFFu32)
         let sw = (int64) rc->screen_w
         let view_render_h = rc->view_render_h
+        // unguarded — row+x is provably < dbuf.len, so the conditional
+        // store skips its bounds check (the cold fc_oob branch no longer
+        // makes the body look side-effecting). Per-pixel cost here is the
+        // integer hash, not a float cast, so this is the smaller of the
+        // overlay wins.
         for y in 0..view_render_h
             let row = (int64) y * sw
-            for x in 0..rc->screen_w
-                let mut h = (uint32) x * 0x9E3779B1u32 + (uint32) y * 0xC2B2AE35u32
-                h = (h ^ (h >> 13u32)) * 0x85EBCA6Bu32
-                h = (h ^ (h >> 16u32)) & 0xFFFFu32
-                if h < threshold then
-                    rc->dbuf[row + (int64) x] = color
+            unguarded
+                for x in 0..rc->screen_w
+                    let mut h = (uint32) x * 0x9E3779B1u32 + (uint32) y * 0xC2B2AE35u32
+                    h = (h ^ (h >> 13u32)) * 0x85EBCA6Bu32
+                    h = (h ^ (h >> 16u32)) & 0xFFFFu32
+                    if h < threshold then
+                        rc->dbuf[row + (int64) x] = color
 
     // Draw a centered string in the 3D viewport using the 3x5 bitmap
     // font, scaled up to `scale` px per bit. Used by the intermission
@@ -1173,15 +1192,22 @@ module overlay =
         let tb = (float64) (tint & 0xFFu32) * a
         let sw = (int64) rc->screen_w
         let total_h = rc->screen_h
+        // unguarded — same convex-combination range argument as
+        // viewport_tint (r,g,b ∈ [0,255], non-NaN). This covers the entire
+        // upscaled dbuf (screen_w × screen_h — ~1M px at high scale), run
+        // every frame for the duration of the elevator next-level fade, so
+        // dropping the saturating casts + per-pixel bounds check is the
+        // largest of the overlay wins.
         for y in 0..total_h
             let row = (int64) y * sw
-            for x in 0..rc->screen_w
-                let c = rc->dbuf[row + (int64) x]
-                let r = (float64) ((c >> 16) & 0xFFu32) * inv + tr
-                let g = (float64) ((c >> 8) & 0xFFu32) * inv + tg
-                let b = (float64) (c & 0xFFu32) * inv + tb
-                rc->dbuf[row + (int64) x] =
-                    0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
+            unguarded
+                for x in 0..rc->screen_w
+                    let c = rc->dbuf[row + (int64) x]
+                    let r = (float64) ((c >> 16) & 0xFFu32) * inv + tr
+                    let g = (float64) ((c >> 8) & 0xFFu32) * inv + tg
+                    let b = (float64) (c & 0xFFu32) * inv + tb
+                    rc->dbuf[row + (int64) x] =
+                        0xFF000000u32 | ((uint32) r << 16) | ((uint32) g << 8) | (uint32) b
 
     // Downsample dbuf's viewport region (rows 0..view_render_h) back
     // into fb's top region (rows 0..view_h) at scale:1 in both axes.
