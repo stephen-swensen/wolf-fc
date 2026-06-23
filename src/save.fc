@@ -51,9 +51,9 @@ module paths =
 // reaches the OS page cache, which a power cut discards). The LAST line names
 // where execution stopped; a clean shutdown appends "EXIT clean", so a log
 // missing that line hung at its final breadcrumb. Entirely off — every call a
-// no-op on a `none` handle — unless the env var is set. The platter-flush is
-// Linux/POSIX only (fsync); Windows isn't a target for this aid, so there it
-// degrades to a plain flush. A debugging aid, never shipped on.
+// no-op on a `none` handle — unless the env var is set. The platter-flush goes
+// through std::io's sync(), which forces the bytes to disk on every target
+// (fsync on POSIX, _commit on Windows). A debugging aid, never shipped on.
 // ============================================================
 module diag =
     import io from std::
@@ -78,25 +78,13 @@ module diag =
             | none -> none(any*)
 
     // Flush a line all the way to disk so a later hard freeze can't lose it.
-#if os == "windows"
-    // No platter-sync on Windows — this crash-survival aid isn't a target
-    // there, and skipping fsync keeps <unistd.h>'s missing decl out of the
-    // MinGW build. Plain flush only (reaches the OS cache, not the platter).
+    // io.sync flushes and then forces the bytes to the platter (fsync on
+    // POSIX, _commit on Windows), so the breadcrumb survives a power cut on
+    // every target. The bool result (did it reach disk?) is irrelevant to a
+    // best-effort debugging aid, so it's discarded.
     private let sync_line = (f: any*) ->
-        io.flush(f)
+        io.sync(f)
         void()
-#else
-    // fileno is in <stdio.h>, fsync in <unistd.h>.
-    private module cio from "stdio.h" =
-        extern fileno: (any*) -> int32
-    private module cunistd from "unistd.h" =
-        extern fsync: (int32) -> int32
-
-    private let sync_line = (f: any*) ->
-        io.flush(f)
-        cunistd.fsync(cio.fileno(f))
-        void()
-#end
 
     // Free-text breadcrumb (startup steps, the present() boundary, each
     // shutdown step, the final "EXIT clean").
