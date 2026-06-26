@@ -750,7 +750,7 @@ module intermission =
                            x: int32, y: int32, s: const str) ->
         let mut nx = x
         let mut ny = y
-        for i in 0..(int32) s.len
+        for i in 0..(int32) s.len do
             let ch = (int32) s[(int64) i]
             if ch == 10 then
                 nx = x
@@ -777,7 +777,7 @@ module intermission =
                 n = n / 10
                 count = count + 1
         let start_x = if align_right then x - count * 16 else x
-        for i in 0..count
+        for i in 0..count do
             let d = digits[count - 1 - i]
             pics.draw(rc, vg, pal, pics.id.l_num0 + d, start_x + i * 16, y)
 
@@ -790,8 +790,8 @@ module intermission =
                   g: game*) ->
         let ox = rc->ui_offset_x
         let bg = pal[0x7F]
-        for y in 0..view_h
-            for x in 0..rc->fb_w
+        for y in 0..view_h do
+            for x in 0..rc->fb_w do
                 rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = bg
 
         let breathe = ((int32) (g->inter_breathe_timer * 2.0)) % 2
@@ -921,9 +921,9 @@ module episode_end =
         // HUD strip below alone. Spans the whole framebuffer so
         // widescreen side panels are the same neutral grey as the centre.
         let bg = pal[0x7F]
-        for y in 0..view_h
+        for y in 0..view_h do
             let base = y * rc->fb_w
-            for x in 0..rc->fb_w
+            for x in 0..rc->fb_w do
                 rc->fb[base + x] = bg
         // BJ-wins art on the left.
         pics.draw(rc, vg, pal, pics.id.l_bjwins, ox + 8, 4)
@@ -1143,7 +1143,7 @@ module endart_screen =
                                 lefts: int32[], rights: int32[],
                                 word: uint8[], n: int32) ->
         let mut wwidth = 0
-        for k in 0..n
+        for k in 0..n do
             let ch = (int32) word[(int64) k]
             if ch >= 0 && ch < 256 then wwidth = wwidth + f->width[ch]
         loop
@@ -1153,7 +1153,7 @@ module endart_screen =
         if st->done then return
         let color = pal[st->fontcolor]
         let mut cx = st->px
-        for k in 0..n
+        for k in 0..n do
             let ch = (int32) word[(int64) k]
             cx = cx + font.draw_char(rc, f, cx, st->py, ch, color)
         st->px = cx
@@ -1173,7 +1173,7 @@ module endart_screen =
                   pal: const uint32[], f: const font.info*, g: game*) ->
         // Backdrop + window frame.
         let bg = pal[backcolor]
-        for i in 0..(rc->fb_w * game_h)
+        for i in 0..(rc->fb_w * game_h) do
             rc->fb[i] = bg
         pics.draw_help_window(rc, vg, pal)
         if g->endart_total_pages == 0 || g->endart_data.len == 0 then return
@@ -1183,7 +1183,7 @@ module endart_screen =
         // Per-row margin arrays — ^G updates the rows it overlaps.
         let lefts  = int32[18] {}
         let rights = int32[18] {}
-        for i in 0..text_rows
+        for i in 0..text_rows do
             lefts[i]  = left_margin
             rights[i] = rc->fb_w - right_margin
         // Skip the ^P line itself.
@@ -1220,10 +1220,10 @@ module endart_screen =
                     let { ph, c4 } = read_number(data, c3)
                     st.cursor = skip_to_eol(data, c4)
                     let bcol = pal[backcolor]
-                    for yy in 0..ph
+                    for yy in 0..ph do
                         let dy = py + yy
                         if dy < 0 || dy >= game_h then continue
-                        for xx in 0..pw
+                        for xx in 0..pw do
                             let dx = px + xx
                             if dx < 0 || dx >= rc->fb_w then continue
                             rc->fb[(int64) dy * (int64) rc->fb_w + (int64) dx] = bcol
@@ -1280,7 +1280,7 @@ module endart_screen =
                         if top_r < 0 then top_r = 0
                         let mut bot_r = (py + pic_h - top_margin) / font_height
                         if bot_r >= text_rows then bot_r = text_rows - 1
-                        for r in top_r..(bot_r + 1)
+                        for r in top_r..(bot_r + 1) do
                             if pic_mid > screen_mid then
                                 rights[r] = new_margin
                             else
@@ -1373,7 +1373,7 @@ module title_screen =
             // Black fill behind the credits pic so widescreen letterboxes
             // cleanly. `pics.draw` clips silently if the fb is wider
             // than the 320x200 pic.
-            for i in 0..(rc->fb_w * rc->fb_h)
+            for i in 0..(rc->fb_w * rc->fb_h) do
                 rc->fb[(int64) i] = 0xFF000000u32
             pics.draw(rc, vg, pal, pics.id.credits, rc->ui_offset_x, 0)
             apply_fade(rc, time - title_hold, credits_hold)
@@ -1404,7 +1404,7 @@ module pg13_screen =
     private let pic_y    = 110
     let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[]) ->
         let bg = pal[bg_index]
-        for i in 0..(rc->fb_w * rc->fb_h)
+        for i in 0..(rc->fb_w * rc->fb_h) do
             rc->fb[i] = bg
         // Add ui_offset_x so the OG-relative (216, 110) lands centred
         // in widescreen, with the side panels filled in the same cyan
@@ -1463,7 +1463,7 @@ module high_scores_screen =
     // Clear the edit buffer (zero bytes + len=0). Called on enter
     // before any keystrokes land.
     private let clear_edit_buf = (hs: highscore_ctx*) ->
-        for i in 0..(int32) hs->edit_buf.len
+        for i in 0..(int32) hs->edit_buf.len do
             hs->edit_buf[(int64) i] = 0u8
         hs->edit_len = 0
 
@@ -1547,7 +1547,7 @@ module high_scores_screen =
         // menu screens use, so all title pics sit on a consistent
         // full-width black strip.
         let bg = pal[0x29]
-        for i in 0..(rc->fb_w * rc->fb_h)
+        for i in 0..(rc->fb_w * rc->fb_h) do
             rc->fb[i] = bg
         menu.draw_stripes(rc, pal, 10)
         // High-scores banner at (48, 0). Some WL6 rips ship a smaller
@@ -1560,7 +1560,7 @@ module high_scores_screen =
         // Row data. White text (palette 15) on the red border-color
         // background, matching the original.
         let text_color = pal[15]
-        for i in 0..highscore.max_scores
+        for i in 0..highscore.max_scores do
             let row_y = 76 + 16 * i
             let e = &hs->scores[i]
             // Name — left-aligned at column 4*8 = 32. Show the typed

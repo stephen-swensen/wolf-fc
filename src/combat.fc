@@ -819,7 +819,7 @@ module enemies =
                         && !kind_walks_onto_player(e->kind) then false
                 else
                     let mut blocked = false
-                    for j in 0..lv->num_enemies
+                    for j in 0..lv->num_enemies do
                         if j == self_idx then continue
                         let oe = &lv->enemies[j]
                         match oe->state with
@@ -834,7 +834,7 @@ module enemies =
                                         && oe->tile_x + dir.dx[oe->dir] == tx
                                         && oe->tile_y + dir.dy[oe->dir] == ty then
                                     blocked = true
-                    for i in 0..lv->num_sprites
+                    for i in 0..lv->num_sprites do
                         let s = &lv->sprites[i]
                         if s->alive && s->blocks
                            && (int32) s->x == tx && (int32) s->y == ty then blocked = true
@@ -893,7 +893,7 @@ module enemies =
                 if try_enemy_walk(lv, g, self_idx, old_dir) then return
             let cardinals = int32[4] { dir.east, dir.north, dir.west, dir.south }
             let start = rnd_byte(g) % 4
-            for k in 0..4
+            for k in 0..4 do
                 let d = cardinals[(start + k) % 4]
                 if d == turnaround then continue
                 e->dir = d
@@ -1046,7 +1046,7 @@ module enemies =
         // clearing rooms.
         private let add_dropped_item = (lv: level*, x: float64, y: float64, page: int32, it: pickups.item_kind) ->
             let mut slot = -1
-            for i in 0..lv->num_sprites
+            for i in 0..lv->num_sprites do
                 if !lv->sprites[i].alive then
                     slot = i
                     break
@@ -1505,7 +1505,7 @@ module enemies =
 
         let update_enemies = (w: world*, dt: float64) ->
             let sprite_start = w->ac->vs->sprite_start
-            for i in 0..w->lv->num_enemies
+            for i in 0..w->lv->num_enemies do
                 update_enemy(w->lv, w->g, w->ac, i, dt, sprite_start)
             // Refresh on-screen visibility for next tick's fire_at_player
             // falloff. Mirrors the original's FL_VISABLE: set during the
@@ -1518,7 +1518,7 @@ module enemies =
             // so the threshold is invariant across view modes.
             let g = w->g
             let inv_det = 1.0 / (g->plane_x * g->dir_y - g->dir_x * g->plane_y)
-            for i in 0..w->lv->num_enemies
+            for i in 0..w->lv->num_enemies do
                 let e = &w->lv->enemies[i]
                 let dx = e->x - g->pos_x
                 let dy = e->y - g->pos_y
@@ -1533,7 +1533,7 @@ module enemies =
         // on the dead-pose sprite instead of staying stuck on its
         // first die frame.
         let update_dying_enemies = (lv: level*, g: game*, dt: float64) ->
-            for i in 0..lv->num_enemies
+            for i in 0..lv->num_enemies do
                 let e = &lv->enemies[i]
                 match e->state with
                 | die ->
@@ -1629,7 +1629,7 @@ module projectiles =
     // original's actor-cap guard).
     private let alloc_slot = (lv: level*) ->
         let mut slot = -1
-        for i in 0..max_projectiles
+        for i in 0..max_projectiles do
             if slot < 0 && !lv->projectiles[i].alive then slot = i
         slot
 
@@ -1669,8 +1669,8 @@ module projectiles =
         let xh = (int32) math.floor(x + wall_radius)
         let yh = (int32) math.floor(y + wall_radius)
         let mut hit = false
-        for tx in xl..(xh + 1)
-            for ty in yl..(yh + 1)
+        for tx in xl..(xh + 1) do
+            for ty in yl..(yh + 1) do
                 if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then
                     hit = true
                 else
@@ -1745,7 +1745,7 @@ module projectiles =
                     p->alive = false
 
     let update_all = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
-        for i in 0..max_projectiles
+        for i in 0..max_projectiles do
             update(lv, g, ac, &lv->projectiles[i], dt)
 
     // True iff this enemy kind fires a visible, dodgeable projectile
@@ -1802,7 +1802,7 @@ module hitscan =
     private let find_hit_enemy = (lv: level*, g: game*) ->
         let mut best_idx = -1
         let mut best_dist = 1e6
-        for i in 0..lv->num_enemies
+        for i in 0..lv->num_enemies do
             let e = &lv->enemies[i]
             match e->state with
             | dead | die -> continue

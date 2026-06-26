@@ -289,7 +289,7 @@ module menu =
         // Draw window at (menu_x - 8, menu_y - 3), sized to the main menu rows.
         let win_h = main_len * row_h + 6
         draw_window(rc, pal, ox + menu_x - 8, menu_y - 3, menu_w, win_h)
-        for i in 0..main_len
+        for i in 0..main_len do
             let row_y = menu_y + i * row_h
             let is_sel = g->menu_sel == i
             let is_locked = main_is_locked(i, g->has_active_game)
@@ -336,7 +336,7 @@ module menu =
         let x_cursor = ne_x + 4
         let x_card   = ne_x + 32
         let x_label  = ne_x + 96
-        for i in 0..episode.count
+        for i in 0..episode.count do
             let row_y = ne_y + i * row_step
             let is_sel = g->menu_sel == i
             if is_sel then
@@ -374,7 +374,7 @@ module menu =
         let row_top  = nm_y - 2
         let x_cursor = nm_x
         let x_label  = nm_x + 24
-        for i in 0..4
+        for i in 0..4 do
             let row_y = row_top + i * row_h
             let is_sel = g->menu_sel == i
             if is_sel then
@@ -413,7 +413,7 @@ module menu =
             | 1 -> pics.id.c_digi_title
             | 2 -> pics.id.c_music_title
             | _ -> -1
-        for s in 0..3
+        for s in 0..3 do
             let box_y = first_top + s * sect_step
             draw_window(rc, pal, sect_x, box_y, sect_w, sect_h)
             // Header pic centred horizontally on the window. Sits just
@@ -428,7 +428,7 @@ module menu =
             pics.draw(rc, vg, pal, pic, pic_x, pic_y)
             // Inner rows.
             let row_top = box_y + 6
-            for k in 0..2
+            for k in 0..2 do
                 let row_i = s * 2 + k
                 let row_y = row_top + k * row_step
                 let is_sel = g->menu_sel == row_i
@@ -469,7 +469,7 @@ module menu =
         let x_cursor = op_x + 8
         let x_label  = op_x + 36
         let x_value  = op_x + op_w - 56
-        for i in 0..options_len
+        for i in 0..options_len do
             let row_y = row_top + i * row_step
             let is_sel = g->menu_sel == i
             if is_sel then
@@ -529,7 +529,7 @@ module menu =
         // Right-anchored column for the picker value. Sized to fit
         // "Widescreen (16:10)" with a few px of padding on either side.
         let x_value  = cv_x + cv_w - 116
-        for i in 0..changeview_len
+        for i in 0..changeview_len do
             let row_y = row_top + i * row_step
             let is_sel = g->menu_sel == i
             if is_sel then
@@ -655,7 +655,7 @@ module menu =
         draw_window(rc, pal, lsm_x_off - 10, lsm_y - 5, lsm_w, win_h)
         let editing = is_editing_save(g)
         let cursor_blink = ((int32) (time * 3.5)) % 2 == 0
-        for i in 0..save.num_slots
+        for i in 0..save.num_slots do
             let s = &sm->slots[i]
             let row_y = lsm_y + i * lsm_row_h
             let is_sel = sel == i
@@ -695,7 +695,7 @@ module menu =
                 if s->label.len > 0 then
                     let mut limit = (int32) s->label.len
                     if limit > 22 then limit = 22
-                    for j in 0..limit
+                    for j in 0..limit do
                         sm->label_scratch[j] = s->label[j]
                     sm->label_scratch[limit] = 0u8
                     let slab = (const str) sm->label_scratch[0..(int64) limit]

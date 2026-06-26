@@ -244,16 +244,16 @@ module pics =
             let { w, h } = vgagraph.pic_dims_at(vg, chunk)
             if w <= 0 || h <= 0 then return
             let buf = alloc(uint32[w * h] {})!
-            for i in 0..(w * h)
+            for i in 0..(w * h) do
                 buf[(int64) i] = pal[(int32) pic[(int64) i]]
             rc->pic_cache[chunk] = buf
         let buf = rc->pic_cache[chunk]
         let { w, h } = vgagraph.pic_dims_at(vg, chunk)
         let y0 = if src_top_skip < 0 then 0 else src_top_skip
-        for y in y0..h
+        for y in y0..h do
             let dy = dst_y + y - y0
             if dy < 0 || dy >= game_h then continue
-            for x in 0..w
+            for x in 0..w do
                 let dx = dst_x + x
                 if dx < 0 || dx >= rc->fb_w then continue
                 rc->fb[(int64) dy * (int64) rc->fb_w + (int64) dx] = buf[(int64) y * (int64) w + (int64) x]
@@ -274,9 +274,9 @@ module pics =
         // Blank the 3D viewport with the grey border color. Leave the
         // status bar (y >= view_h) untouched.
         let bg = pal[get_psyched_bg_index]
-        for y in 0..view_h
+        for y in 0..view_h do
             let base = y * rc->fb_w
-            for x in 0..rc->fb_w
+            for x in 0..rc->fb_w do
                 rc->fb[base + x] = bg
         // Center the pic within the viewport. Use the VGAGRAPH-reported
         // size in case the pic is ever re-packed; the original's is 224x48.
@@ -296,9 +296,9 @@ module pics =
         let bar_col = pal[0x37]
         let bar_hilight = pal[0x32]
         // Trough (always full-width black strip 2px tall).
-        for by in 0..2
+        for by in 0..2 do
             let row = (bar_y + by) * rc->fb_w
-            for bx in 0..bar_full_w
+            for bx in 0..bar_full_w do
                 rc->fb[row + bar_x + bx] = bg_col
         // Filled portion: 0 → 100% as timer_remaining goes from total → 0.
         let elapsed = timer_total - timer_remaining
@@ -307,13 +307,13 @@ module pics =
         let fill_w = if fill_w_f < 0.0 then 0
             else if fill_w_f > (float64) bar_full_w then bar_full_w
             else (int32) fill_w_f
-        for by in 0..2
+        for by in 0..2 do
             let row = (bar_y + by) * rc->fb_w
             let col = if by == 0 then bar_hilight else bar_col
             // The original draws the main bar full-width then the
             // highlight one pixel shorter. For simplicity we paint both
             // at the same width.
-            for bx in 0..fill_w
+            for bx in 0..fill_w do
                 rc->fb[row + bar_x + bx] = col
 
     // One-time decode of the title pic into an `fb_w × fb_h` ARGB buffer.
@@ -324,7 +324,7 @@ module pics =
                                 fb_w: int32, fb_h: int32) ->
         let buf = alloc(uint32[fb_w * fb_h] {})!
         // Black side panels (in 4:3 the pic covers everything anyway).
-        for i in 0..(fb_w * fb_h)
+        for i in 0..(fb_w * fb_h) do
             buf[(int64) i] = 0xFF000000u32
         let pic = vgagraph.load_pic(vg, id.title)
         defer free(pic)
@@ -336,9 +336,9 @@ module pics =
         let dst_h = if h < fb_h then h else fb_h
         let off_x = (fb_w - dst_w) / 2
         let off_y = (fb_h - dst_h) / 2
-        for py in 0..dst_h
+        for py in 0..dst_h do
             let sy = (int64) py * (int64) h / (int64) dst_h
-            for px in 0..dst_w
+            for px in 0..dst_w do
                 let sx = (int64) px * (int64) w / (int64) dst_w
                 let pix = pic[sy * (int64) w + sx]
                 buf[(int64) (off_y + py) * (int64) fb_w + (int64) (off_x + px)] = pal[(int32) pix]
@@ -358,7 +358,7 @@ module pics =
         let buf = alloc(uint32[n] {})!
         if pic.len == 0 || n == 0 then return buf
         let gold = 0xFFFFD700u32
-        for i in 0..n
+        for i in 0..n do
             let pix = pal[(int32) pic[(int64) i]]
             let r  = (pix >> 16) & 0xFFu32
             let gc = (pix >> 8)  & 0xFFu32
@@ -376,10 +376,10 @@ module pics =
         if buf.len == 0 then return
         let { w, h } = vgagraph.pic_dims_at(vg, id.face_base)
         if w <= 0 || h <= 0 then return
-        for y in 0..h
+        for y in 0..h do
             let dy = dst_y + y
             if dy < 0 || dy >= rc->fb_h then continue
-            for x in 0..w
+            for x in 0..w do
                 let dx = dst_x + x
                 if dx < 0 || dx >= rc->fb_w then continue
                 rc->fb[(int64) dy * (int64) rc->fb_w + (int64) dx] = buf[(int64) y * (int64) w + (int64) x]
@@ -403,18 +403,18 @@ module pics =
             let { w, h } = vgagraph.pic_dims_at(vg, chunk)
             if w <= 0 || h <= 0 then return
             let buf = alloc(uint32[w * h] {})!
-            for i in 0..(w * h)
+            for i in 0..(w * h) do
                 buf[(int64) i] = pal[(int32) pic[(int64) i]]
             rc->pic_cache[chunk] = buf
         let buf = rc->pic_cache[chunk]
         let { src_w, src_h } = vgagraph.pic_dims_at(vg, chunk)
         if src_w <= 0 || src_h <= 0 || dst_w <= 0 then return
-        for y in 0..src_h
+        for y in 0..src_h do
             let dy = dst_y + y
             if dy < 0 || dy >= rc->fb_h then continue
             let src_row = (int64) y * (int64) src_w
             let dst_row = (int64) dy * (int64) rc->fb_w
-            for x in 0..dst_w
+            for x in 0..dst_w do
                 let sx = (int64) x * (int64) src_w / (int64) dst_w
                 let dx = dst_x + x
                 if dx < 0 || dx >= rc->fb_w then continue
@@ -448,7 +448,7 @@ module pics =
         if pw <= 0 || ph <= 0 then return
         let stride = (int64) rc->fb_w
         let left_x = if pic_x >= 0 then pic_x else 0
-        for r in 0..ph
+        for r in 0..ph do
             let dy = pic_y + r
             if dy < 0 || dy >= rc->fb_h then continue
             let row = (int64) dy * stride
@@ -467,7 +467,7 @@ module pics =
     // Blit the cached title backdrop into the framebuffer.
     let blit_title_bg = (rc: render_ctx*) ->
         if rc->title_bg.len == 0 then return
-        for i in 0..(rc->fb_w * rc->fb_h)
+        for i in 0..(rc->fb_w * rc->fb_h) do
             rc->fb[i] = rc->title_bg[i]
 
 
@@ -509,7 +509,7 @@ module font =
         let h = (int32) bytes.u16(raw, 0i64)
         let loc = int32[256] {}
         let wdt = int32[256] {}
-        for i in 0..256
+        for i in 0..256 do
             // location[] is 256 uint16 entries starting at offset 2.
             loc[i] = (int32) bytes.u16(raw, 2i64 + (int64) i * 2)
             // width[] is 256 uint8 entries starting after the location
@@ -532,8 +532,8 @@ module font =
         if cw <= 0 then return 0
         let ch_h = f->height
         let src_off = (int64) f->location[ch]
-        for row in 0..ch_h
-            for col in 0..cw
+        for row in 0..ch_h do
+            for col in 0..cw do
                 let px = f->pixels[src_off + (int64) row * (int64) cw + (int64) col]
                 if px != 0u8 then
                     let dx = x + col
@@ -545,7 +545,7 @@ module font =
     let draw_text = (rc: render_ctx*, f: const info*,
                      x: int32, y: int32, s: const str, color: uint32) ->
         let mut cx = x
-        for i in 0..(int32) s.len
+        for i in 0..(int32) s.len do
             let ch = (int32) s[(int64) i]
             let advance = draw_char(rc, f, cx, y, ch, color)
             cx = cx + advance
@@ -553,7 +553,7 @@ module font =
     // Measure a string's rendered pixel width (for centering).
     let text_width = (f: const info*, s: const str) ->
         let mut w = 0
-        for i in 0..(int32) s.len
+        for i in 0..(int32) s.len do
             let ch = (int32) s[(int64) i]
             if ch >= 0 && ch < 256 then w = w + f->width[ch]
         w
@@ -660,12 +660,12 @@ module hud =
 
     private let draw_digit = (rc: render_ctx*, x: int32, y: int32, d: int32, color: uint32, scale: int32) ->
         let g = digit_glyph(d)
-        for row in 0..5
+        for row in 0..5 do
             let bits = (g >> (row * 3)) & 7
-            for col in 0..3
+            for col in 0..3 do
                 if (bits >> (2 - col)) & 1 != 0 then
-                    for sy in 0..scale
-                        for sx in 0..scale
+                    for sy in 0..scale do
+                        for sx in 0..scale do
                             let px = x + col * scale + sx
                             let py = y + row * scale + sy
                             if px >= 0 && px < rc->fb_w && py >= 0 && py < game_h then
@@ -687,23 +687,23 @@ module hud =
                 n = n / 10
                 count = count + 1
         // Draw right-to-left (digits are stored reversed)
-        for i in 0..count
+        for i in 0..count do
             let dx = x - (i * (3 * scale + scale))
             draw_digit(rc, dx, y, digits[i], color, scale)
 
     // Draw a string using the 3x5 bitmap font.
     let draw_text = (rc: render_ctx*, x: int32, y: int32, s: const str, color: uint32, scale: int32) ->
-        for ci in 0..(int32) s.len
+        for ci in 0..(int32) s.len do
             let ch = (int32) s[(int64) ci]
             let gl = char_glyph(ch)
             if gl != 0 then
                 let cx = x + ci * (3 * scale + scale)
-                for row in 0..5
+                for row in 0..5 do
                     let bits = (gl >> (row * 3)) & 7
-                    for col in 0..3
+                    for col in 0..3 do
                         if (bits >> (2 - col)) & 1 != 0 then
-                            for sy in 0..scale
-                                for sx in 0..scale
+                            for sy in 0..scale do
+                                for sx in 0..scale do
                                     let px = cx + col * scale + sx
                                     let py = y + row * scale + sy
                                     if px >= 0 && px < rc->fb_w && py >= 0 && py < game_h then
@@ -711,8 +711,8 @@ module hud =
 
     // Draw a filled rectangle in the framebuffer.
     private let fill_rect = (rc: render_ctx*, x0: int32, y0: int32, x1: int32, y1: int32, color: uint32) ->
-        for y in y0..y1
-            for x in x0..x1
+        for y in y0..y1 do
+            for x in x0..x1 do
                 if x >= 0 && x < rc->fb_w && y >= 0 && y < game_h then
                     rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = color
 
@@ -786,7 +786,7 @@ module hud =
                 n = n / 10
                 count = count + 1
         // Draw right-to-left: rightmost digit at px + (digits-1)*8
-        for slot in 0..digits
+        for slot in 0..digits do
             let x = px + (digits - 1 - slot) * 8
             let chunk = if slot < count then pics.id.n_0 + out_digits[slot]
                 else pics.id.n_blank
@@ -804,11 +804,11 @@ module hud =
         let ox = rc->ui_offset_x
         if ox > 0 then
             let fill = pal[0x7f]
-            for y in bar_top..rc->fb_h
+            for y in bar_top..rc->fb_h do
                 let row = y * rc->fb_w
-                for x in 0..ox
+                for x in 0..ox do
                     rc->fb[(int64) (row + x)] = fill
-                for x in (ox + 320)..rc->fb_w
+                for x in (ox + 320)..rc->fb_w do
                     rc->fb[(int64) (row + x)] = fill
         // Full Wolf3D status-bar graphic: all the cell outlines +
         // labels are pre-rendered into a single 320x40 image. We
@@ -878,7 +878,7 @@ module hud =
     let show_message = (g: game*, text: const str) ->
         let mut n = (int32) text.len
         if n > 255 then n = 255
-        for i in 0..n
+        for i in 0..n do
             g->msg_buf[i] = text[i]
         g->msg_len = n
         g->msg_timer = 3.0
@@ -906,11 +906,11 @@ module hud =
             if at_end || is_nl then
                 // Measure + render the slice [line_start .. i).
                 let mut w = 0
-                for j in line_start..i
+                for j in line_start..i do
                     let ch = (int32) g->msg_buf[j]
                     if ch >= 0 && ch < 256 then w = w + f->width[ch]
                 let mut cx = (rc->fb_w - w) / 2
-                for j in line_start..i
+                for j in line_start..i do
                     cx = cx + font.draw_char(rc, f, cx, y, (int32) g->msg_buf[j], color)
                 y = y + line_h
                 line_start = i + 1

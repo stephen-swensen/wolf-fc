@@ -194,7 +194,7 @@ module opl2 =
         let c = alloc(chip)!
         c->rate = sample_rate
         c->counter = 0u64
-        for i in 0..18
+        for i in 0..18 do
             c->op_tl[i] = 63
             c->op_mult[i] = 1
             c->op_env[i] = env_max
@@ -203,7 +203,7 @@ module opl2 =
         // First-quadrant log-sin in 1/16 env units (0.01172 dB per
         // unit). See the field comment for the chip-precision rationale.
         let fine_unit_db = 0.01171875        // 0.1875 / 16
-        for i in 0..256
+        for i in 0..256 do
             let x = ((float64) i + 0.5) * pi / 512.0
             let s = math.sin(x)
             let atten = 0.0 - 20.0 * math.log10(s) / fine_unit_db
@@ -212,7 +212,7 @@ module opl2 =
         // linear amplitude after the given attenuation in fine units.
         // Past i≈6400 the value rounds to 0 (inaudibly quiet) but we
         // size the table to cover the full possible total_fine range.
-        for i in 0..16384
+        for i in 0..16384 do
             let atten_db = (float64) i * fine_unit_db
             let amp = (float64) op_peak * math.pow(10.0, 0.0 - atten_db / 20.0)
             c->gain_table[i] = (int32) amp
@@ -309,7 +309,7 @@ module opl2 =
     // eff_rate ≥ 52, where inc can reach 8).
     let attack_step = (env: int32, inc: int32) ->
         let mut e = env
-        for k in 0..inc
+        for k in 0..inc do
             if e <= 0 then break
             e = e - ((e >> 3) + 1)
         if e < 0 then 0 else e
@@ -587,7 +587,7 @@ module opl2 =
         let vib_mul = 1.0 + math.sin(c->lfo_vib_phase * two_pi) * vib_cents
 
         let mut sum = 0i32
-        for ch in 0..9
+        for ch in 0..9 do
             let mi = ch * 2
             let ci = ch * 2 + 1
             // Skip channels with both ops idle — no audible output.
@@ -718,11 +718,11 @@ module opl2 =
     // key-on-with-phase-reset against a still-sounding voice doesn't
     // produce an audible click.
     let silence_voices = (c: chip*) ->
-        for i in 0..18
+        for i in 0..18 do
             c->op_env[i] = env_max
             c->op_stage[i] = envelope_stage.off
             c->op_phase[i] = 0.0
-        for i in 0..9
+        for i in 0..9 do
             c->ch_key[i] = false
             c->ch_prev0[i] = 0
             c->ch_prev1[i] = 0
@@ -763,7 +763,7 @@ module opl2 =
                            gain: float64) ->
         let samples_per_tick = (float64) sample_rate / (float64) tick_rate
         let scale = if gain < 0.0 then 0.0 else gain
-        for i in 0..count
+        for i in 0..count do
             let s = sample(c)
             let scaled = (int32) ((float64) s * scale)
             let li = (int64) i * 2

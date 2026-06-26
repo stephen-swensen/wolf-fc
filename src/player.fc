@@ -154,7 +154,7 @@ module player =
             // sprite_block_half.
             let reach = radius + sprite_block_half
             let mut hit = false
-            for i in 0..lv->num_sprites
+            for i in 0..lv->num_sprites do
                 let s = &lv->sprites[i]
                 if s->alive && s->blocks then
                     let dx = px - s->x
@@ -174,7 +174,7 @@ module player =
     private let move_blocked_by_enemy = (lv: level*, cur_x: float64, cur_y: float64,
                                  nx: float64, ny: float64) ->
         let mut hit = false
-        for i in 0..lv->num_enemies
+        for i in 0..lv->num_enemies do
             let e = &lv->enemies[i]
             match e->state with
             | dead | die -> void()
@@ -666,7 +666,7 @@ module player =
         // render_weapon).
         let sw = (int64) rc->vbuf_w
         let view_render_h = rc->vbuf_h
-        for sc in hdr.left_pix..(hdr.right_pix + 1)
+        for sc in hdr.left_pix..(hdr.right_pix + 1) do
             let sx0 = dst_x + sc * dst_w / 64
             let sx1 = dst_x + (sc + 1) * dst_w / 64
             if sx1 <= 0 || sx0 >= rc->vbuf_w then continue
@@ -680,16 +680,16 @@ module player =
                 off = off + 6
                 let row_start = starty_raw / 2
                 let row_end = endy_raw / 2
-                for row in row_start..row_end
+                for row in row_start..row_end do
                     let pix = vs->raw[base + newstart + (int64) row]
                     let color = pal[(int32) pix]
                     let sy0 = dst_y + row * dst_h / 64
                     let sy1 = dst_y + (row + 1) * dst_h / 64
                     let y0 = if sy0 < 0 then 0 else sy0
                     let y1 = if sy1 > view_render_h then view_render_h else sy1
-                    for sx in sx0..sx1
+                    for sx in sx0..sx1 do
                         if sx < 0 || sx >= rc->vbuf_w then continue
-                        for sy in y0..y1
+                        for sy in y0..y1 do
                             rc->vbuf[(int64) sy * sw + (int64) sx] = color
 
     // Draw the currently-held weapon sprite centered at the bottom

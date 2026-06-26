@@ -152,7 +152,7 @@ module quit_prompts =
     private let dup_str = (s: const str) ->
         let n = s.len
         let buf = alloc(uint8[n] {})!
-        for i in 0..n
+        for i in 0..n do
             buf[i] = s[i]
         (str) buf
 
@@ -174,14 +174,14 @@ module quit_prompts =
                 defer free(lines)
                 // First pass: count non-blank trimmed lines.
                 let mut n = 0i64
-                for i in 0..lines.len
+                for i in 0..lines.len do
                     if text.trim(lines[i]).len > 0i64 then
                         n = n + 1i64
                 if n == 0i64 then alloc(str[0] {})!
                 else
                     let out = alloc(str[n] {})!
                     let mut k = 0i64
-                    for i in 0..lines.len
+                    for i in 0..lines.len do
                         let t = text.trim(lines[i])
                         if t.len > 0i64 then
                             out[k] = dup_str(t)
@@ -190,7 +190,7 @@ module quit_prompts =
 
     // Free the heap-allocated override pool (line buffers + outer slice).
     let free_override = (pool: str[]) ->
-        for i in 0..pool.len
+        for i in 0..pool.len do
             free(pool[i])
         free(pool)
 
@@ -1440,13 +1440,13 @@ let build_level = (lv_data: maps.level*, sprite_start: int32, difficulty: int32,
     // Tally totals for the intermission screen (enemies that are not
     // pre-dead corpses; push-wall marker tiles; treasure pickups).
     let mut enemies_live = 0
-    for i in 0..lv->num_enemies
+    for i in 0..lv->num_enemies do
         match lv->enemies[i].state with
         | dead -> void()
         | _ -> enemies_live = enemies_live + 1
     lv->total_enemies = enemies_live
     let mut pw = 0
-    for i in 0..(map_size * map_size)
+    for i in 0..(map_size * map_size) do
         if lv->pushwall_tiles[i] then pw = pw + 1
     lv->total_pushwalls = pw
     // The original game counts the 1-UP among a level's treasures: both
@@ -1455,7 +1455,7 @@ let build_level = (lv_data: maps.level*, sprite_start: int32, difficulty: int32,
     // extra_life only in the numerator (pickups.check) without the
     // denominator here would let a 1-UP map read over 100%.
     let mut treas = 0
-    for i in 0..lv->num_sprites
+    for i in 0..lv->num_sprites do
         match lv->sprites[i].item_type with
         | cross | chalice | bible | crown | extra_life -> treas = treas + 1
         | _ -> void()
@@ -1974,7 +1974,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         match text.parse_int32(arg[4..arg.len]) with
         | some(n) ->
             g->key_up = true
-            for j in 0..n
+            for j in 0..n do
                 tick(w, dt)
             g->key_up = false
         | none -> bad("integer tick count")
@@ -1982,7 +1982,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         match text.parse_int32(arg[5..arg.len]) with
         | some(n) ->
             g->key_down = true
-            for j in 0..n
+            for j in 0..n do
                 tick(w, dt)
             g->key_down = false
         | none -> bad("integer tick count")
@@ -2083,7 +2083,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
     else if text.starts_with(arg, "wait:") then
         match text.parse_int32(arg[5..arg.len]) with
         | some(n) ->
-            for j in 0..n
+            for j in 0..n do
                 tick(w, dt)
         | none -> bad("integer tick count")
     else if text.starts_with(arg, "ss:") then
@@ -2123,7 +2123,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         match text.parse_int32(arg[6..arg.len]) with
         | some(n) ->
             let t0 = sys.time()
-            for j in 0..n
+            for j in 0..n do
                 render_frame(w, w->ac->vs, pal)
             let t1 = sys.time()
             let total_ms = t1 - t0
@@ -2150,8 +2150,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             let batches = total_frames / frames_per_batch
             let mix_buf = int32[2048] {}
             let t0 = sys.time()
-            for j in 0..batches
-                for k in 0..2048
+            for j in 0..batches do
+                for k in 0..2048 do
                     mix_buf[k] = 0i32
                 imf.fill(ms, mix_buf, frames_per_batch, sample_rate, 1.0)
             let t1 = sys.time()
@@ -2176,30 +2176,30 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         match text.parse_int32(arg[11..arg.len]) with
         | some(n) ->
             let t0 = sys.time()
-            for j in 0..n
+            for j in 0..n do
                 overlay.clear_view_sentinel(w->rc)
             let t1 = sys.time()
-            for j in 0..n
+            for j in 0..n do
                 raycaster.render_walls(w->lv, w->rc, w->g, w->ac->vs, pal)
             let t2 = sys.time()
-            for j in 0..n
+            for j in 0..n do
                 billboards.build(w->lv, w->rc, w->g, w->ac->vs->sprite_start)
                 billboards.render(w->rc, w->g, w->ac->vs, pal)
             let t3 = sys.time()
-            for j in 0..n
+            for j in 0..n do
                 player.render_weapon(w->rc, w->ac->vs, pal, w->g)
             let t4 = sys.time()
-            for j in 0..n
+            for j in 0..n do
                 overlay.ssaa_downsample(w->rc)
             let t5 = sys.time()
-            for j in 0..n
+            for j in 0..n do
                 hud.render(w->rc, w->vg, pal, w->g)
                 hud.render_message(w->rc, w->font, w->g)
             let t6 = sys.time()
-            for j in 0..n
+            for j in 0..n do
                 overlay.composite_view_overlay(w->rc)
             let t7 = sys.time()
-            for j in 0..n
+            for j in 0..n do
                 overlay.composite_hud(w->rc)
             let t8 = sys.time()
             let nf = (float64) n
@@ -2252,7 +2252,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             match text.parse_int32(parts[0]) with
             | some(n) ->
                 // Clear the fb black first so metadata is obvious.
-                for i in 0..(w->rc->fb_w * game_h)
+                for i in 0..(w->rc->fb_w * game_h) do
                     w->rc->fb[i] = 0xFF000000u32
                 pics.draw(w->rc, w->vg, pal, n, 0, 0)
                 png.write(parts[1], w->rc->fb, w->rc->fb_w, game_h, "vg")
@@ -2264,11 +2264,11 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
     else if text.starts_with(arg, "vgrenderfont:") then
         // Render the entire font ASCII range onto the fb and save. Useful
         // for verifying the font loader extracts correct glyphs.
-        for i in 0..(w->rc->fb_w * game_h)
+        for i in 0..(w->rc->fb_w * game_h) do
             w->rc->fb[i] = 0xFF000000u32
         let mut py = 8
         let mut px = 8
-        for ch in 32..127
+        for ch in 32..127 do
             let adv = font.draw_char(w->rc, w->font, px, py, ch, 0xFFFFFFFFu32)
             px = px + adv + 1
             if px > w->rc->fb_w - 16 then
@@ -2289,7 +2289,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         | none -> bad("integer chunk number")
     else if arg == "vgtable" then
         // Dump the entire picture-dimensions table (STRUCTPIC / chunk 0).
-        for i in 0..w->vg->num_pics
+        for i in 0..w->vg->num_pics do
             let pw = w->vg->pic_dims[i].width
             let ph = w->vg->pic_dims[i].height
             if pw > 0 || ph > 0 then
@@ -2363,7 +2363,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             spawn.spawn_enemies(w->lv, w->lv_data, g->difficulty, g->mommy_mode)
             // Recount total_enemies so the counters tally correctly.
             let mut alive = 0
-            for i in 0..w->lv->num_enemies
+            for i in 0..w->lv->num_enemies do
                 match w->lv->enemies[i].state with
                 | dead -> void()
                 | _ -> alive = alive + 1
@@ -2426,7 +2426,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
     else if arg == "listsaves" then
         // Dump the on-disk save slots (label + level + score).
         save.refresh_slots(w->sm)
-        for i in 0..save.num_slots
+        for i in 0..save.num_slots do
             let s = &w->sm->slots[i]
             if s->empty then
                 io.write("slot %d{i}: EMPTY\n", stdout)
@@ -2461,7 +2461,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // coordinates: "killby:32.5,57.5".
         let body = arg[7..arg.len]
         let mut comma = -1i64
-        for i in 0..body.len
+        for i in 0..body.len do
             if body[i] == 0x2C then    // ','
                 comma = i
                 break
@@ -2585,11 +2585,11 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // to commit + dismiss.
         if w->hs->edit_active then
             let nm = arg[8..arg.len]
-            for k in 0..(int32) w->hs->edit_buf.len
+            for k in 0..(int32) w->hs->edit_buf.len do
                 w->hs->edit_buf[(int64) k] = 0u8
             let mut n = (int32) nm.len
             if n > highscore.max_name_len then n = highscore.max_name_len
-            for k in 0..n
+            for k in 0..n do
                 w->hs->edit_buf[(int64) k] = nm[(int64) k]
             w->hs->edit_len = n
     else if arg == "hs_state" then
@@ -2607,7 +2607,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             if typed.len > 0 then io.write(typed, stdout)
             io.write("'", stdout)
         io.write("\n", stdout)
-        for i in 0..highscore.max_scores
+        for i in 0..highscore.max_scores do
             let e = &w->hs->scores[i]
             let nm = highscore.name_str(e)
             io.write("score[%d{i}] %d{e->score} L%d{e->completed} E%d{e->episode + 1} ", stdout)
@@ -2651,7 +2651,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // retriggers of a sound already playing should reuse the same
         // slot rather than fan out across all four mixer voices.
         let mut active = 0
-        for i in 0..4
+        for i in 0..4 do
             let s = &w->ac->digi->slots[i]
             if s->playing then active = active + 1
             io.write("slot %d{i}: playing=%d{if s->playing then 1 else 0} sound=%d{s->sound_num}\n", stdout)
@@ -2676,8 +2676,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         let yl = (int32) (py - player.radius)
         let yh = (int32) (py + player.radius)
         io.write("probe pos=(%7.3f{px}, %7.3f{py}) bbox_tiles: x[%d{xl}..%d{xr}] y[%d{yl}..%d{yh}]\n", stdout)
-        for tx in xl..(xr + 1)
-            for ty in yl..(yh + 1)
+        for tx in xl..(xr + 1) do
+            for ty in yl..(yh + 1) do
                 let ti = (int32) w->lv->tilemap[(int64) tx * 64 + (int64) ty]
                 let dstate = if ti < 128 then "open"
                     else match w->lv->doors[ti - 128].state with
@@ -2687,7 +2687,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
                     | closing -> "DOOR:closing"
                 let solid = if ti >= 1 && ti <= 63 then "WALL" else dstate
                 io.write(alloca("  tile (%d{tx},%d{ty}) = %d{ti} (%s{solid})\n"), stdout)
-        for i in 0..w->lv->num_enemies
+        for i in 0..w->lv->num_enemies do
             let e = w->lv->enemies[i]
             match e.state with
             | dead | die -> void()
@@ -2715,7 +2715,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
                     | clyde   -> "clyde"
                     | inky    -> "inky"
                     io.write(alloca("  enemy[%d{i}] %s{ks} tile(%d{e.tile_x},%d{e.tile_y}) pos(%6.3f{e.x},%6.3f{e.y}) d=%5.3f{d}\n"), stdout)
-        for i in 0..w->lv->num_sprites
+        for i in 0..w->lv->num_sprites do
             let s = w->lv->sprites[i]
             if !s.alive then continue
             let dx = s.x - px
@@ -2729,8 +2729,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // Dump every path-arrow marker tile baked into the level. Lets a
         // test author find a tile to walk a patrolling enemy through to verify
         // that enemies.ai.select_path_dir applies the override.
-        for y in 0..map_size
-            for x in 0..map_size
+        for y in 0..map_size do
+            for x in 0..map_size do
                 let v = (int32) w->lv->path_arrows[(int64) x * 64 + (int64) y]
                 if v != dir.nodir then
                     io.write("arrow (%d{x},%d{y}) dir=%d{v}\n", stdout)
@@ -2738,7 +2738,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
     else if arg == "enemylist" then
         // Per-enemy dump: grid position, kind, state, dir. Handy to locate
         // a specific enemy for a scripted screenshot or attack test.
-        for i in 0..w->lv->num_enemies
+        for i in 0..w->lv->num_enemies do
             let e = w->lv->enemies[i]
             let ks = match e.kind with
             | guard   -> "guard"
@@ -2778,7 +2778,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         //   [slot] (tx,ty) kind=<kind>
         // followed by a count line.
         let mut count = 0
-        for i in 0..w->lv->num_sprites
+        for i in 0..w->lv->num_sprites do
             let s = w->lv->sprites[i]
             if !s.alive then continue
             let ks = match s.item_type with
@@ -2810,8 +2810,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // Boss-level maps place exactly one of these behind the gold-key
         // door; stepping onto it triggers the BJ-victory cutscene.
         let mut count = 0
-        for y in 0..map_size
-            for x in 0..map_size
+        for y in 0..map_size do
+            for x in 0..map_size do
                 if w->lv->exit_tiles[(int64) x * 64 + (int64) y] then
                     io.write("exit: %d{x},%d{y}\n", stdout)
                     count = count + 1
@@ -2822,7 +2822,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // Buckets: 0=guard, 1=officer, 2=ss, 3=dog, 4=mutant, 5=boss, 6=ghost.
         let by_kind = int32[7] { 0, 0, 0, 0, 0, 0, 0 }
         let by_state = int32[7] { 0, 0, 0, 0, 0, 0, 0 }
-        for i in 0..w->lv->num_enemies
+        for i in 0..w->lv->num_enemies do
             let e = w->lv->enemies[i]
             let ki = match e.kind with
             | guard -> 0
@@ -2853,7 +2853,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // tests to verify Schabbs / Giftmacher / fake-Hitler actually
         // spawn visible projectiles instead of hitscanning.
         let mut alive = 0
-        for i in 0..projectiles.max_projectiles
+        for i in 0..projectiles.max_projectiles do
             let p = &w->lv->projectiles[i]
             if !p->alive then continue
             alive = alive + 1
@@ -3028,7 +3028,7 @@ let main = (args: str[]) ->
     // pre-CLI clamp; --max-scale lets the user move it in either
     // direction. Floor stays at 2 inside compute_scale_factor.
     let mut max_scale = 6
-    for i in 1..(int32) args.len
+    for i in 1..(int32) args.len do
         let a = args[(int64) i]
         if a == "--mommy-mode" then arg_mommy_mode = true
         if a == "--test" then test_mode = true
@@ -3367,13 +3367,13 @@ let main = (args: str[]) ->
     // the command loop, we skip anything matching a known flag so it isn't
     // reported as "Unknown test command".
     let mut test_idx = -1
-    for i in 1..(int32) args.len
+    for i in 1..(int32) args.len do
         if test_idx < 0 && args[(int64) i] == "--test" then test_idx = i
     if test_mode then
         g->phase = game_phase.playing
         g->has_active_game = true
         let test_dt = 1.0 / 35.0
-        for ti in (test_idx + 1)..(int32) args.len
+        for ti in (test_idx + 1)..(int32) args.len do
             if args[(int64) ti] == "--mommy-mode" then continue
             if args[(int64) ti] == "--cheat" then continue
             run_test_cmd(w, args[(int64) ti], pal, test_dt)
@@ -3867,13 +3867,13 @@ let main = (args: str[]) ->
                         // get in the way.
                         if k == sdl2.key_up then
                             let mut s = g->menu_sel
-                            for _ in 0..menu.main_len
+                            for _ in 0..menu.main_len do
                                 s = (s + menu.main_len - 1) % menu.main_len
                                 if !menu.main_is_locked(s, g->has_active_game) then break
                             g->menu_sel = s
                         else if k == sdl2.key_down then
                             let mut s = g->menu_sel
-                            for _ in 0..menu.main_len
+                            for _ in 0..menu.main_len do
                                 s = (s + 1) % menu.main_len
                                 if !menu.main_is_locked(s, g->has_active_game) then break
                             g->menu_sel = s
@@ -4222,7 +4222,7 @@ let main = (args: str[]) ->
                             let mut n = if s->empty then 0
                                 else (int32) s->label.len
                             if n > 31 then n = 31
-                            for i in 0..n
+                            for i in 0..n do
                                 w->sm->edit_buf[(int64) i] = s->label[(int64) i]
                             w->sm->edit_buf[(int64) n] = 0u8
                             w->sm->edit_len = n

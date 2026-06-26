@@ -496,7 +496,7 @@ module save =
             // Copy into a heap slice so entries outlive any caller
             // reuse.
             let buf = alloc(uint8[n] {})!
-            for k in 0..n
+            for k in 0..n do
                 buf[k] = s[start + k]
             out[ti] = buf
             ti = ti + 1
@@ -504,7 +504,7 @@ module save =
 
     // Free the result of split_ws (both the outer array and each entry).
     private let free_split = (toks: str[]) ->
-        for k in 0..(int32) toks.len
+        for k in 0..(int32) toks.len do
             free(toks[(int64) k])
         free(toks)
 
@@ -651,7 +651,7 @@ module save =
                 io.write("area %d{g->area_number}\n", f)
                 // Doors: count + one row per door.
                 io.write("doors %d{lv->num_doors}\n", f)
-                for i in 0..lv->num_doors
+                for i in 0..lv->num_doors do
                     let d = &lv->doors[i]
                     let st = match d->state with
                     | closed  -> 0
@@ -670,9 +670,9 @@ module save =
                 io.write("sprites %d{lv->num_sprites} ", f)
                 let ns = lv->num_sprites
                 let bytes_needed = (ns + 3) / 4
-                for b in 0..bytes_needed
+                for b in 0..bytes_needed do
                     let mut nibble = 0
-                    for bit in 0..4
+                    for bit in 0..4 do
                         let idx = b * 4 + bit
                         if idx < ns && lv->sprites[idx].alive then
                             nibble = nibble | (1 << bit)
@@ -682,7 +682,7 @@ module save =
                 io.write("\n", f)
                 // Enemies.
                 io.write("enemies %d{lv->num_enemies}\n", f)
-                for i in 0..lv->num_enemies
+                for i in 0..lv->num_enemies do
                     let e = &lv->enemies[i]
                     let ki = enemy_kind_to_int(e->kind)
                     let si = enemy_state_to_int(e->state)
@@ -858,13 +858,13 @@ module save =
                                 let ns = unwrap_int(toks[1])
                                 let bits = toks[2]
                                 let bytes_needed = (ns + 3) / 4
-                                for b in 0..bytes_needed
+                                for b in 0..bytes_needed do
                                     if (int64) b >= bits.len then break
                                     let ch = (int32) bits[(int64) b]
                                     let nibble = if ch >= 48 && ch <= 57 then ch - 48
                                                  else if ch >= 97 && ch <= 102 then ch - 87
                                                  else 0
-                                    for bit in 0..4
+                                    for bit in 0..4 do
                                         let idx = b * 4 + bit
                                         if idx >= ns then break
                                         if idx < w->lv->num_sprites then
@@ -900,13 +900,13 @@ module save =
                     // states so enemy AI sees the correct
                     // connectivity. areas.connect walks the door list
                     // and re-floods from the player's anchor area.
-                    for a in 0..areas.num_areas
+                    for a in 0..areas.num_areas do
                         w->lv->area_by_player[a] = false
-                    for aa in 0..(areas.num_areas * areas.num_areas)
+                    for aa in 0..(areas.num_areas * areas.num_areas) do
                         w->lv->area_connect[aa] = 0u8
                     // Sum open-door counts into area_connect (both
                     // directions).
-                    for di in 0..w->lv->num_doors
+                    for di in 0..w->lv->num_doors do
                         let d = &w->lv->doors[di]
                         match d->state with
                         | open ->
@@ -946,7 +946,7 @@ module save =
     // (not the full body) by streaming line-by-line until we've seen
     // the `game` line.
     let refresh_slots = (sm: save_menu_ctx*) ->
-        for i in 0..save.num_slots
+        for i in 0..save.num_slots do
             // Free any label from a previous refresh.
             let old_label = sm->slots[i].label
             if old_label.len > 0 then free(old_label)
@@ -955,7 +955,7 @@ module save =
                 label = default(uint8[]),
                 level_num = 0, difficulty = 0, score = 0
             }
-        for i in 0..save.num_slots
+        for i in 0..save.num_slots do
             match slot_path(i) with
             | none -> void()
             | some(path) ->
@@ -973,7 +973,7 @@ module save =
                         let mut score = 0
                         let mut label_src = none(const str)
                         let mut valid = false
-                        for li in 0..(int32) lines.len
+                        for li in 0..(int32) lines.len do
                             let line = lines[(int64) li]
                             if text.starts_with(line, "label ") then
                                 label_src = some(line[6..line.len])
@@ -990,7 +990,7 @@ module save =
                             | some(s) ->
                                 let n = s.len
                                 let buf = alloc(uint8[n] {})!
-                                for k in 0..n
+                                for k in 0..n do
                                     buf[k] = s[k]
                                 buf
                             | none -> default(uint8[])
@@ -1047,9 +1047,9 @@ module highscore =
     private let copy_name = (e: entry*, src: const str) ->
         let mut n = (int32) src.len
         if n > max_name_len then n = max_name_len
-        for i in 0..n
+        for i in 0..n do
             e->name[i] = src[(int64) i]
-        for i in n..29
+        for i in n..29 do
             e->name[i] = 0u8
         e->name_len = n
 
@@ -1065,7 +1065,7 @@ module highscore =
         copy_name(&scores[4], "Tom Hall")
         copy_name(&scores[5], "John Romero")
         copy_name(&scores[6], "Jay Wilbur")
-        for i in 0..max_scores
+        for i in 0..max_scores do
             scores[i].score = 10000
             scores[i].completed = 1
             scores[i].episode = 0
@@ -1109,7 +1109,7 @@ module highscore =
             if i <= n then break
             let src = &scores[i - 1]
             let dst = &scores[i]
-            for k in 0..29
+            for k in 0..29 do
                 dst->name[k] = src->name[k]
             dst->name_len = src->name_len
             dst->score = src->score
@@ -1117,7 +1117,7 @@ module highscore =
             dst->episode = src->episode
             i = i - 1
         let dst = &scores[n]
-        for k in 0..29
+        for k in 0..29 do
             dst->name[k] = 0u8
         dst->name_len = 0
         dst->score = score
@@ -1176,7 +1176,7 @@ module highscore =
                     // capture mutable bindings.
                     let mut p = 6i64       // past "score "
                     let nums = int32[3] {}
-                    for ti in 0..3
+                    for ti in 0..3 do
                         let start = p
                         loop
                             if p >= line.len then break
@@ -1206,7 +1206,7 @@ module highscore =
             | some(f) ->
                 defer io.close(f)
                 io.write("WLFC_HISCORES %d{version}\n", f)
-                for i in 0..max_scores
+                for i in 0..max_scores do
                     let e = &scores[i]
                     let nm = name_str(e)
                     io.write("score %d{e->score} %d{e->completed} %d{e->episode} ", f)

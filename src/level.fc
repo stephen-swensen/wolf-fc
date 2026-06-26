@@ -161,7 +161,7 @@ module doors =
     // circular module reference (player.blocked_by_map uses
     // doors.passable, so doors mustn't depend back on module player).
     let update = (lv: level*, g: game*, dt: float64, ac: audio_ctx*, player_radius: float64) ->
-        for i in 0..lv->num_doors
+        for i in 0..lv->num_doors do
             match lv->doors[i].state with
             | opening ->
                 lv->door_pos[i] = lv->door_pos[i] + speed * dt
@@ -301,7 +301,7 @@ module pushwall =
         let cur_floor = (int32) math.floor(cur)
         if cur_floor > prev_floor then
             let steps = cur_floor - prev_floor
-            for i in 0..steps
+            for i in 0..steps do
                 lv->tilemap[(int64) lv->pushwall.tile_x * 64 + (int64) lv->pushwall.tile_y] = 0u8
                 lv->pushwall.tile_x = lv->pushwall.tile_x + lv->pushwall.dir_x
                 lv->pushwall.tile_y = lv->pushwall.tile_y + lv->pushwall.dir_y
@@ -362,7 +362,7 @@ module pickups =
     let check = (lv: level*, g: game*, ac: audio_ctx*) ->
         let px = (int32) g->pos_x
         let py = (int32) g->pos_y
-        for i in 0..lv->num_sprites
+        for i in 0..lv->num_sprites do
             if !lv->sprites[i].alive then continue
             let sx = (int32) lv->sprites[i].x
             let sy = (int32) lv->sprites[i].y
@@ -508,8 +508,8 @@ module tilemap =
     //   128+     = door (128 + door_index)
     let build = (lv: level*, lv_data: maps.level*, sprite_start: int32) ->
         lv->num_doors = 0
-        for y in 0..map_size
-            for x in 0..map_size
+        for y in 0..map_size do
+            for x in 0..map_size do
                 let tile = (int32) lv_data->walls[(int64) y * 64 + (int64) x]
                 let idx = (int64) x * 64 + (int64) y
                 if tile >= 1 && tile <= 63 then
@@ -609,8 +609,8 @@ module areas =
     // player" checks have a number to use); area-connect counters
     // are touched only when a door actually opens.
     let build = (lv: level*, lv_data: maps.level*) ->
-        for y in 0..map_size
-            for x in 0..map_size
+        for y in 0..map_size do
+            for x in 0..map_size do
                 let idx = (int64) x * 64 + (int64) y
                 let raw = (int32) lv_data->walls[(int64) y * 64 + (int64) x]
                 let a = raw - area_tile
@@ -630,7 +630,7 @@ module areas =
         // Now that floor + door areas are assigned, give each door its
         // two connected areas (the cells perpendicular to the door
         // axis).
-        for di in 0..lv->num_doors
+        for di in 0..lv->num_doors do
             let d = &lv->doors[di]
             let a1 = if d->vertical then raw_at(lv_data, d->tile_x + 1, d->tile_y)
                      else raw_at(lv_data, d->tile_x, d->tile_y + 1)
@@ -660,7 +660,7 @@ module areas =
     // reachability set (matches the original, which never re-floods
     // on bare player movement).
     let connect = (lv: level*, player_area: int32) ->
-        for i in 0..num_areas
+        for i in 0..num_areas do
             lv->area_by_player[i] = false
         if player_area < 0 || player_area >= num_areas then return
         lv->area_by_player[player_area] = true
@@ -668,9 +668,9 @@ module areas =
         loop
             if !changed then break
             changed = false
-            for a in 0..num_areas
+            for a in 0..num_areas do
                 if !lv->area_by_player[a] then continue
-                for b in 0..num_areas
+                for b in 0..num_areas do
                     if lv->area_by_player[b] then continue
                     if lv->area_connect[(int64) a * (int64) num_areas + (int64) b] > 0u8 then
                         lv->area_by_player[b] = true
@@ -703,8 +703,8 @@ module spawn =
     // Find player start position and facing from level plane 1.
     // Tile values 19-22 = player facing N/E/S/W.
     let find_player_start = (lv: maps.level*, g: game*) ->
-        for y in 0..map_size
-            for x in 0..map_size
+        for y in 0..map_size do
+            for x in 0..map_size do
                 let obj = (int32) lv->objects[(int64) y * 64 + (int64) x]
                 if obj >= 19 && obj <= 22 then
                     g->pos_x = (float64) x + 0.5
@@ -764,7 +764,7 @@ module spawn =
             { {-2,  0}, { 1.0,  0.0}, {     0.0,      pf} },
             { {-1,  0}, { 1.0,  0.0}, {     0.0,      pf} } }
         let mut placed = false
-        for { off, face, plane } in cands
+        for { off, face, plane } in cands do
             if !placed then
                 let tx = target_x + off[0]
                 let ty = target_y + off[1]
@@ -789,7 +789,7 @@ module spawn =
     let near_boss = (lv: level*, g: game*) ->
         let mut bx = -1
         let mut by = -1
-        for i in 0..lv->num_enemies
+        for i in 0..lv->num_enemies do
             if bx < 0 then
                 let e = &lv->enemies[i]
                 // Episode-ending bosses only. hitler_fake decoys on
@@ -811,7 +811,7 @@ module spawn =
     let near_goldkey = (lv: level*, g: game*) ->
         let mut kx = -1
         let mut ky = -1
-        for i in 0..lv->num_sprites
+        for i in 0..lv->num_sprites do
             if kx < 0 && lv->sprites[i].alive then
                 match lv->sprites[i].item_type with
                 | gold_key ->
@@ -826,7 +826,7 @@ module spawn =
     let near_silverkey = (lv: level*, g: game*) ->
         let mut kx = -1
         let mut ky = -1
-        for i in 0..lv->num_sprites
+        for i in 0..lv->num_sprites do
             if kx < 0 && lv->sprites[i].alive then
                 match lv->sprites[i].item_type with
                 | silver_key ->
@@ -842,7 +842,7 @@ module spawn =
     let near_gibs = (lv: level*, g: game*) ->
         let mut kx = -1
         let mut ky = -1
-        for i in 0..lv->num_sprites
+        for i in 0..lv->num_sprites do
             if kx < 0 && lv->sprites[i].alive then
                 match lv->sprites[i].item_type with
                 | gibs ->
@@ -856,8 +856,8 @@ module spawn =
     // Tile values 23-72 are static objects. Shape = 2 + (tile - 23).
     let sprites = (lv: level*, lv_data: maps.level*, sprite_start: int32) ->
         lv->num_sprites = 0
-        for y in 0..map_size
-            for x in 0..map_size
+        for y in 0..map_size do
+            for x in 0..map_size do
                 let obj = (int32) lv_data->objects[(int64) y * 64 + (int64) x]
                 if obj >= 23 && obj <= 72 && lv->num_sprites < tilemap.max_sprites then
                     let shape = 2 + obj - 23
@@ -1054,8 +1054,8 @@ module spawn =
 
     let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: int32, mommy_mode: bool) ->
         lv->num_enemies = 0
-        for y in 0..map_size
-            for x in 0..map_size
+        for y in 0..map_size do
+            for x in 0..map_size do
                 let obj = (int32) lv_data->objects[(int64) y * 64 + (int64) x]
                 if obj == 0 then continue
                 match classify_enemy_tile(obj) with
@@ -1095,8 +1095,8 @@ module spawn =
     // Tile value 98 in plane 1 marks the wall at that position as
     // pushable.
     let mark_pushwalls = (lv: level*, lv_data: maps.level*) ->
-        for y in 0..map_size
-            for x in 0..map_size
+        for y in 0..map_size do
+            for x in 0..map_size do
                 let obj = (int32) lv_data->objects[(int64) y * 64 + (int64) x]
                 lv->pushwall_tiles[(int64) x * 64 + (int64) y] = obj == 98
 
@@ -1106,8 +1106,8 @@ module spawn =
     // the BJ-victory cutscene (matches the original's victory-tile
     // → BJ-victory spawn).
     let mark_exit_tiles = (lv: level*, lv_data: maps.level*) ->
-        for y in 0..map_size
-            for x in 0..map_size
+        for y in 0..map_size do
+            for x in 0..map_size do
                 let obj = (int32) lv_data->objects[(int64) y * 64 + (int64) x]
                 lv->exit_tiles[(int64) x * 64 + (int64) y] = obj == 99
 
@@ -1117,8 +1117,8 @@ module spawn =
     // forth routes. Anywhere else stores dir.nodir (8) so
     // enemies.ai.select_path_dir leaves the enemy's heading alone.
     let mark_path_arrows = (lv: level*, lv_data: maps.level*) ->
-        for y in 0..map_size
-            for x in 0..map_size
+        for y in 0..map_size do
+            for x in 0..map_size do
                 let obj = (int32) lv_data->objects[(int64) y * 64 + (int64) x]
                 let idx = (int64) x * 64 + (int64) y
                 if obj >= 90 && obj <= 97 then

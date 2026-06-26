@@ -138,7 +138,7 @@ module palette =
             38,0,34
         }
         let pal = alloc(uint32[256] {})!
-        for i in 0..256
+        for i in 0..256 do
             let ri = (int64) i * 3
             let rv = (uint32) raw[ri] * 255u32 / 63u32
             let gv = (uint32) raw[ri + 1] * 255u32 / 63u32
@@ -197,7 +197,7 @@ module vswap =
         // re-reading from raw bytes every frame.
         let n_sprites = snd - ss
         let headers = alloc(sprite_header[(int64) n_sprites] {})!
-        for i in 0..n_sprites
+        for i in 0..n_sprites do
             let page = ss + i
             let base = (int64) bytes.u32(raw, 6i64 + (int64) page * 4)
             if base == 0 then
@@ -209,7 +209,7 @@ module vswap =
                 let rp = (int32) bytes.u16(raw, base + 2)
                 let col_off = uint16[64] {}
                 let count = rp - lp + 1
-                for c in 0..count
+                for c in 0..count do
                     col_off[lp + c] = bytes.u16(raw, base + 4 + (int64) c * 2)
                 headers[i] = sprite_header { valid = true, base = base,
                     left_pix = lp, right_pix = rp, col_offsets = col_off }
@@ -288,7 +288,7 @@ module maps =
                     let offset = (int64) src[s]
                     s = s + 1
                     let cp = d - offset
-                    for i in 0..count
+                    for i in 0..count do
                         dest[d + i] = dest[cp + i]
                     d = d + count
                     remaining = remaining - count
@@ -302,7 +302,7 @@ module maps =
                 else
                     let cp = (int64) bytes.u16(src, s)
                     s = s + 2
-                    for i in 0..count
+                    for i in 0..count do
                         dest[d + i] = dest[cp + i]
                     d = d + count
                     remaining = remaining - count
@@ -325,7 +325,7 @@ module maps =
                 s = s + 1
                 let fill = src[s]
                 s = s + 1
-                for i in 0..count
+                for i in 0..count do
                     dest[d + i] = fill
                 d = d + count
             else
@@ -473,7 +473,7 @@ module vgagraph =
         io.read(dict_raw, dsize, df)
         io.close(df)
         let dict = alloc(huffnode[255] {})!
-        for i in 0..255
+        for i in 0..255 do
             let o = (int64) i * 4
             dict[i] = huffnode {
                 bit0 = bytes.u16(dict_raw, o),
@@ -491,7 +491,7 @@ module vgagraph =
         io.close(hf)
         let nc = (int32) (hsize / 3)
         let offsets = alloc(int64[nc] {})!
-        for i in 0..nc
+        for i in 0..nc do
             let o = (int64) i * 3
             let v = (int32) head_raw[o]
                   | ((int32) head_raw[o + 1] << 8)
@@ -512,7 +512,7 @@ module vgagraph =
         let pic_table = decompress_at(raw, dict, offsets[0])
         let num_pics = (int32) (pic_table.len / 4)
         let pic_dims = alloc(pic_dim[num_pics] {})!
-        for i in 0..num_pics
+        for i in 0..num_pics do
             pic_dims[i] = pic_dim {
                 width  = (int32) bytes.u16(pic_table, (int64) i * 4),
                 height = (int32) bytes.u16(pic_table, (int64) i * 4 + 2)
@@ -541,11 +541,11 @@ module vgagraph =
         let w4 = width / 4
         let size = (int64) width * (int64) height
         let linear = alloc(uint8[size] {})!
-        for plane in 0..4
+        for plane in 0..4 do
             let plane_off = (int64) plane * (int64) w4 * (int64) height
-            for y in 0..height
+            for y in 0..height do
                 let row_off = plane_off + (int64) y * (int64) w4
-                for x in 0..w4
+                for x in 0..w4 do
                     let dst = (int64) y * (int64) width
                             + (int64) x * 4 + (int64) plane
                     linear[dst] = planar[row_off + (int64) x]
