@@ -42,7 +42,7 @@ Runs the engine with no window, no audio, deterministic RNG (both PCG32 streams 
 **Entry point:** `run_test_cmd` in `main.fc`. **User-facing reference:** `README.md`.
 
 - **stderr vs stdout:** the `bad` helper writes malformed-arg errors to `stderr`; `state`, `facetile`, `ss:` go to `stdout`. Use `2>&1` if you need to see warnings in captured output.
-- **Adding a command:** add an `else if` branch in `run_test_cmd`. Prefix commands use `text.starts_with` + `text.parse_int32`. Branches that produce text end in `void()` so all arms have matching types. If the command advances time, call `tick(w, dt)`; otherwise don't. Document it in `README.md`.
+- **Adding a command:** add an `else if` branch in `run_test_cmd`. Prefix commands use `text.starts_with` + `text.parse_i32`. Branches that produce text end in `void()` so all arms have matching types. If the command advances time, call `tick(w, dt)`; otherwise don't. Document it in `README.md`.
 - **Regression suite:** `tests/run-tests.sh`, with `assert_contains` / `assert_not_contains` / `assert_regex` helpers, grouped by `section "name"` headers. One assertion per test, failing for one clear reason. When you change AI / RNG-consuming logic expect golden-value churn — the failures are loud.
 - **Probing landmarks** (level 0, default spawn `(29.5, 57.5)` facing east): door at `(32, 57)`, elevator switch at `(25, 46)`, push-wall at `(10, 13)`, first-aid at `(29, 24)`, cross at `(7, 14)`. The `probe` command dumps bbox tiles + nearby enemies — first stop for movement-blocker reports.
 
@@ -126,13 +126,13 @@ What's left in `main.fc` is cross-subsystem only:
 
 ## Key Data Formats (since wolf4sdl is GPL, document here)
 
-- **VSWAP.WL6** — Header: 3 × uint16 (`num_chunks=663`, `sprite_start=106`, `sound_start=542`), then offset/length tables, then page data. Walls (pages 0–105): 64×64 column-major 8-bit indexed. Sprites (106–541): `t_compshape` (see below). Sounds (542+): 8-bit unsigned PCM @ 7042 Hz.
-- **Sprite (`t_compshape`)** — uint16 `leftpix`, `rightpix`, then `(rightpix − leftpix + 1)` uint16 column offsets. Each column is runs of `[endy, newstart, starty]` uint16 triples (terminator `endy=0`). Pixel = `shape_bytes[newstart + row]`. **`newstart` is signed int16** — small sprites reach back into the header. Read as `(int64) (int16) bytes.u16(...)`.
+- **VSWAP.WL6** — Header: 3 × u16 (`num_chunks=663`, `sprite_start=106`, `sound_start=542`), then offset/length tables, then page data. Walls (pages 0–105): 64×64 column-major 8-bit indexed. Sprites (106–541): `t_compshape` (see below). Sounds (542+): 8-bit unsigned PCM @ 7042 Hz.
+- **Sprite (`t_compshape`)** — u16 `leftpix`, `rightpix`, then `(rightpix − leftpix + 1)` u16 column offsets. Each column is runs of `[endy, newstart, starty]` u16 triples (terminator `endy=0`). Pixel = `shape_bytes[newstart + row]`. **`newstart` is signed i16** — small sprites reach back into the header. Read as `(i64) (i16) bytes.u16(...)`.
 - **Wall tile mapping** — tile `t` → horiz page `(t−1)*2`, vert page `(t−1)*2+1`. Door textures at pages `sprite_start − 8 .. sprite_start − 1`.
-- **MAPHEAD.WL6** — uint16 RLEW tag + 100 × int32 offsets into GAMEMAPS.
-- **GAMEMAPS.WL6** — Per level: 3 × int32 plane offsets, 3 × uint16 plane lengths, uint16 width/height, char[16] name. Decompression: first uint16 = expanded size, then Carmack expand, then RLEW expand (skip the first word).
+- **MAPHEAD.WL6** — u16 RLEW tag + 100 × i32 offsets into GAMEMAPS.
+- **GAMEMAPS.WL6** — Per level: 3 × i32 plane offsets, 3 × u16 plane lengths, u16 width/height, char[16] name. Decompression: first u16 = expanded size, then Carmack expand, then RLEW expand (skip the first word).
 - **Plane 0** — walls (1–63) + doors (90–101, even=vertical, odd=horizontal). **Plane 1** — objects (19–22=player spawn N/E/S/W, 23–72=statics, 98=pushwall, 108+=enemies).
-- **AUDIOHED/AUDIOT** — uint32 chunk offsets. Chunks 0–86=PC speaker, 87–173=AdLib, 174–260=digi, 261+=music (`STARTMUSIC=261`). Music: optional uint16 length prefix, then 4-byte entries `[reg, val, delay_lo, delay_hi]` at 700 Hz tick rate.
+- **AUDIOHED/AUDIOT** — u32 chunk offsets. Chunks 0–86=PC speaker, 87–173=AdLib, 174–260=digi, 261+=music (`STARTMUSIC=261`). Music: optional u16 length prefix, then 4-byte entries `[reg, val, delay_lo, delay_hi]` at 700 Hz tick rate.
 - **Per-level music:** `songs[episode*10 + level]` → music enum (chunk = `261 + songs[i]`).
 - **Per-level ceiling colors:** `ceil_table[episode*10 + level]` is a palette index.
 
@@ -149,7 +149,7 @@ What's left in `main.fc` is cross-subsystem only:
 Anything general about FC syntax/semantics: **read `../fc-lang/spec/examples.fc` (or `fc-spec.html`) instead of guessing or relying on memory.** The points below are wolf-fc-specific patterns or compiler corners we've actually hit:
 
 - `let main = (args: str[]) ->` — must take `str[]`.
-- `int32` literals auto-widen to `int64` in slice indices, comparisons, and call args. Only use the `i64` suffix when a binding's *type* needs to be int64 from the start (e.g. `let mut x = 0i64` used in later int64 arithmetic).
+- `i32` literals auto-widen to `i64` in slice indices, comparisons, and call args. Only use the `i64` suffix when a binding's *type* needs to be i64 from the start (e.g. `let mut x = 0i64` used in later i64 arithmetic).
 - `%f` interpolation requires an explicit width: `"%8.2f{expr}"`.
 - `from` is a reserved word; don't use as a variable name.
-- Module-level `let`s are limited to constant expressions. `alloc(...)!` is *not* a constant expression — keep buffers/caches on context structs, allocate in their factories. Array literals at module scope require literal lengths and matching element-type suffixes (e.g. `uint8[n] { 0u8, 1u8, ... }`); when in doubt use `int32[n]` with plain int literals.
+- Module-level `let`s are limited to constant expressions. `alloc(...)!` is *not* a constant expression — keep buffers/caches on context structs, allocate in their factories. Array literals at module scope require literal lengths and matching element-type suffixes (e.g. `u8[n] { 0u8, 1u8, ... }`); when in doubt use `i32[n]` with plain int literals.

@@ -5,7 +5,7 @@
 // names the section ("WLFC", "label", "game", "pos", "doors", "door",
 // "pushwall", "sprites_alive", "enemies", "enemy"). Text is deliberate:
 // it's debuggable, round-trips cleanly through printf/%f parsing, and
-// avoids the platform-specific float64-to-bytes dance that a binary
+// avoids the platform-specific f64-to-bytes dance that a binary
 // format would need.
 
 // ============================================================
@@ -88,7 +88,7 @@ module diag =
 
     // Free-text breadcrumb (startup steps, the present() boundary, each
     // shutdown step, the final "EXIT clean").
-    let mark = (file: any*?, start_ms: int64, label: const str) ->
+    let mark = (file: any*?, start_ms: i64, label: const str) ->
         match file with
         | none -> void()
         | some(f) ->
@@ -98,8 +98,8 @@ module diag =
     // Per-frame heartbeat: frame counter, phase + menu_level ints (to spot
     // the quit prompt = menu nav.quit), and the audio-callback count — if
     // `cb` stops advancing across beats, the audio thread has stalled.
-    let beat = (file: any*?, start_ms: int64, frame: int64,
-                phase: int32, menu: int32, cb: int64) ->
+    let beat = (file: any*?, start_ms: i64, frame: i64,
+                phase: i32, menu: i32, cb: i64) ->
         match file with
         | none -> void()
         | some(f) ->
@@ -108,8 +108,8 @@ module diag =
 
     // A keypress, with the state it landed in — pinpoints which key at which
     // prompt preceded a freeze (e.g. Y at the quit modal).
-    let key = (file: any*?, start_ms: int64, sym: int32,
-               phase: int32, menu: int32, cb: int64) ->
+    let key = (file: any*?, start_ms: i64, sym: i32,
+               phase: i32, menu: i32, cb: i64) ->
         match file with
         | none -> void()
         | some(f) ->
@@ -153,23 +153,23 @@ module config =
         // On/Off toggle is the way to silence a source — the slider
         // floors at 10 so a tiny nudge doesn't dial the audio to zero
         // unintentionally.
-        sfx_gain_pct: int32
-        digi_gain_pct: int32
-        music_gain_pct: int32
+        sfx_gain_pct: i32
+        digi_gain_pct: i32
+        music_gain_pct: i32
         mommy_mode: bool
         // Shadow depth as 0..100 percent. 0 = no shading, 100 = full
         // black at distance, 55 = original Wolf3D feel.
-        shadow_depth: int32
+        shadow_depth: i32
         // Display aspect choice for the rendering pipeline. 0=auto
         // (detect display at startup), 1=Original 4:3 (320×200),
         // 2=Widescreen 16:10 (384×200), 3=Widescreen 16:9 (428×200).
         // Stored as int so the file is greppable; "auto" is encoded
         // as 0 — `view_mode_to_fb_w` reads the value back.
-        view_mode: int32
+        view_mode: i32
         // Supersample factor for the CPU upscale step. 0=auto (display-
         // driven, capped by --max-scale), 2..12=explicit. When non-auto,
         // the chosen value is used verbatim and --max-scale is ignored.
-        scale_factor: int32
+        scale_factor: i32
         // Opt-in super-sample anti-aliasing applied on top of the scale
         // factor. 0=off, 1=vertical-only 2× (viewport renders 2× tall,
         // same width — halves the cost of full SSAA since the horizontal
@@ -178,7 +178,7 @@ module config =
         // and is box-downsampled into dbuf before HUD composite. Default
         // off. Older configs used a boolean `ssaa` key, which is now
         // ignored (treated as off) — no backward compatibility.
-        ssaa_mode: int32
+        ssaa_mode: i32
         // Speed multipliers as percentages (20..200, default 100).
         // bj_speed_pct scales the player's walking / strafing / turning.
         // enemy_speed_pct scales every enemy's patrol + chase speed
@@ -187,8 +187,8 @@ module config =
         // adjustments. Default 100 keeps OG-faithful behaviour. The
         // 20% floor is deliberate — at 10% enemies were slow enough
         // to fail interactions with auto-closing doors.
-        bj_speed_pct: int32
-        enemy_speed_pct: int32
+        bj_speed_pct: i32
+        enemy_speed_pct: i32
         // Top-left automap overlay. Off by default — purely a UX
         // affordance for navigation, not part of OG-faithful play.
         show_map: bool
@@ -213,7 +213,7 @@ module config =
     let view_mode_widescreen_16_10 = 2
     let view_mode_widescreen_16_9  = 3
 
-    let view_mode_label = (m: int32) ->
+    let view_mode_label = (m: i32) ->
         match m with
         | 1 -> "Original (4:3)"
         | 2 -> "Widescreen (16:10)"
@@ -223,7 +223,7 @@ module config =
     // Map an explicit view-mode choice to its framebuffer width. Auto
     // returns 0 — the caller is expected to fall back to display
     // detection in that case.
-    let view_mode_to_fb_w = (m: int32) ->
+    let view_mode_to_fb_w = (m: i32) ->
         match m with
         | 1 -> 320
         | 2 -> 384
@@ -314,49 +314,49 @@ module config =
                 defer free(lines)
                 let mut i = 0
                 loop
-                    if i >= (int32) lines.len then break
-                    let line = lines[(int64) i]
+                    if i >= (i32) lines.len then break
+                    let line = lines[(i64) i]
                     i = i + 1
                     if line.len == 0 then continue
                     if text.starts_with(line, "music ") then
-                        match text.parse_int32(line[6..line.len]) with
+                        match text.parse_i32(line[6..line.len]) with
                         | some(v) -> p.music_on = v != 0
                         | none -> void()
                     else if text.starts_with(line, "sfx ") then
-                        match text.parse_int32(line[4..line.len]) with
+                        match text.parse_i32(line[4..line.len]) with
                         | some(v) -> p.sfx_on = v != 0
                         | none -> void()
                     else if text.starts_with(line, "digi ") then
-                        match text.parse_int32(line[5..line.len]) with
+                        match text.parse_i32(line[5..line.len]) with
                         | some(v) -> p.digi_on = v != 0
                         | none -> void()
                     else if text.starts_with(line, "sfx_gain_pct ") then
-                        match text.parse_int32(line[13..line.len]) with
+                        match text.parse_i32(line[13..line.len]) with
                         | some(v) ->
                             p.sfx_gain_pct = if v < gain_pct_min then gain_pct_min
                                 else if v > gain_pct_max then gain_pct_max
                                 else v
                         | none -> void()
                     else if text.starts_with(line, "digi_gain_pct ") then
-                        match text.parse_int32(line[14..line.len]) with
+                        match text.parse_i32(line[14..line.len]) with
                         | some(v) ->
                             p.digi_gain_pct = if v < gain_pct_min then gain_pct_min
                                 else if v > gain_pct_max then gain_pct_max
                                 else v
                         | none -> void()
                     else if text.starts_with(line, "music_gain_pct ") then
-                        match text.parse_int32(line[15..line.len]) with
+                        match text.parse_i32(line[15..line.len]) with
                         | some(v) ->
                             p.music_gain_pct = if v < gain_pct_min then gain_pct_min
                                 else if v > gain_pct_max then gain_pct_max
                                 else v
                         | none -> void()
                     else if text.starts_with(line, "mommy_mode ") then
-                        match text.parse_int32(line[11..line.len]) with
+                        match text.parse_i32(line[11..line.len]) with
                         | some(v) -> p.mommy_mode = v != 0
                         | none -> void()
                     else if text.starts_with(line, "shadow_depth ") then
-                        match text.parse_int32(line[13..line.len]) with
+                        match text.parse_i32(line[13..line.len]) with
                         | some(v) ->
                             // Clamp to 0..100 in case a hand-edited
                             // config falls outside the slider range.
@@ -365,12 +365,12 @@ module config =
                                 else v
                         | none -> void()
                     else if text.starts_with(line, "view_mode ") then
-                        match text.parse_int32(line[10..line.len]) with
+                        match text.parse_i32(line[10..line.len]) with
                         | some(v) ->
                             p.view_mode = if v < 0 || v > 3 then 0 else v
                         | none -> void()
                     else if text.starts_with(line, "scale_factor ") then
-                        match text.parse_int32(line[13..line.len]) with
+                        match text.parse_i32(line[13..line.len]) with
                         | some(v) ->
                             // 0 = auto; otherwise clamp to [min, max].
                             // Out-of-range values fall back to auto so a
@@ -382,25 +382,25 @@ module config =
                                 else v
                         | none -> void()
                     else if text.starts_with(line, "ssaa_mode ") then
-                        match text.parse_int32(line[10..line.len]) with
+                        match text.parse_i32(line[10..line.len]) with
                         | some(v) -> p.ssaa_mode = if v < 0 || v > 2 then 0 else v
                         | none -> void()
                     else if text.starts_with(line, "bj_speed_pct ") then
-                        match text.parse_int32(line[13..line.len]) with
+                        match text.parse_i32(line[13..line.len]) with
                         | some(v) ->
                             p.bj_speed_pct = if v < speed_pct_min then speed_pct_min
                                 else if v > speed_pct_max then speed_pct_max
                                 else v
                         | none -> void()
                     else if text.starts_with(line, "enemy_speed_pct ") then
-                        match text.parse_int32(line[16..line.len]) with
+                        match text.parse_i32(line[16..line.len]) with
                         | some(v) ->
                             p.enemy_speed_pct = if v < speed_pct_min then speed_pct_min
                                 else if v > speed_pct_max then speed_pct_max
                                 else v
                         | none -> void()
                     else if text.starts_with(line, "show_map ") then
-                        match text.parse_int32(line[9..line.len]) with
+                        match text.parse_i32(line[9..line.len]) with
                         | some(v) -> p.show_map = v != 0
                         | none -> void()
                 p
@@ -454,10 +454,10 @@ module save =
     // frame. Empty slots have `empty=true` and zero-length `label`.
     struct slot_info =
         empty: bool
-        label: uint8[]
-        level_num: int32
-        difficulty: int32
-        score: int32
+        label: u8[]
+        level_num: i32
+        difficulty: i32
+        score: i32
 
     // Split a save-file line on spaces, compacting consecutive
     // separators so the padded-width floats we write (e.g. "%14.6f")
@@ -495,7 +495,7 @@ module save =
             let n = j - start
             // Copy into a heap slice so entries outlive any caller
             // reuse.
-            let buf = alloc(uint8[n] {})!
+            let buf = alloc(u8[n] {})!
             for k in 0..n do
                 buf[k] = s[start + k]
             out[ti] = buf
@@ -504,11 +504,11 @@ module save =
 
     // Free the result of split_ws (both the outer array and each entry).
     private let free_split = (toks: str[]) ->
-        for k in 0..(int32) toks.len do
-            free(toks[(int64) k])
+        for k in 0..(i32) toks.len do
+            free(toks[(i64) k])
         free(toks)
 
-    private let slot_path = (slot: int32) ->
+    private let slot_path = (slot: i32) ->
         match paths.wolf_data_dir() with
         | none -> none(str)
         | some(dir) ->
@@ -523,17 +523,17 @@ module save =
     // (alloca-overflow safety lives in the stdlib), so over-long tokens
     // simply parse as none here like any other malformed field.
     private let unwrap_int = (s: const str) ->
-        match text.parse_int32(s) with
+        match text.parse_i32(s) with
         | some(n) -> n
         | none    -> 0
 
-    private let unwrap_int64 = (s: const str) ->
-        match text.parse_int64(s) with
+    private let unwrap_i64 = (s: const str) ->
+        match text.parse_i64(s) with
         | some(n) -> n
         | none    -> 0i64
 
     private let unwrap_float = (s: const str) ->
-        match text.parse_float64(s) with
+        match text.parse_f64(s) with
         | some(x) -> x
         | none    -> 0.0
 
@@ -559,7 +559,7 @@ module save =
         | inky         -> 15
         | mecha_hitler -> 16
 
-    private let int_to_enemy_kind = (n: int32) ->
+    private let int_to_enemy_kind = (n: i32) ->
         match n with
         | 0  -> enemies.enemy_kind.guard
         | 1  -> enemies.enemy_kind.officer
@@ -589,7 +589,7 @@ module save =
         | die   -> 5
         | dead  -> 6
 
-    private let int_to_enemy_state = (n: int32) ->
+    private let int_to_enemy_state = (n: i32) ->
         match n with
         | 0 -> enemies.enemy_state.stand
         | 1 -> enemies.enemy_state.path
@@ -599,7 +599,7 @@ module save =
         | 5 -> enemies.enemy_state.die
         | _ -> enemies.enemy_state.dead
 
-    private let int_to_door_state = (n: int32) ->
+    private let int_to_door_state = (n: i32) ->
         match n with
         | 0 -> doors.door_state.closed
         | 1 -> doors.door_state.opening
@@ -609,7 +609,7 @@ module save =
     // Write the running world state to a save-slot file. Overwrites
     // any existing slot. Metadata label is auto-generated from the
     // current level + time.
-    let to_slot = (w: world*, slot: int32, label: const str) ->
+    let to_slot = (w: world*, slot: i32, label: const str) ->
         paths.ensure_save_dir()
         match slot_path(slot) with
         | none ->
@@ -664,7 +664,7 @@ module save =
                 let pw = &lv->pushwall
                 let pw_active = if pw->active then 1 else 0
                 io.write(
-                    "pushwall %d{pw_active} %d{pw->tile_x} %d{pw->tile_y} %d{pw->dir_x} %d{pw->dir_y} %14.6f{pw->progress} %d{(int32) pw->orig_tile}\n", f)
+                    "pushwall %d{pw_active} %d{pw->tile_x} %d{pw->tile_y} %d{pw->dir_x} %d{pw->dir_y} %14.6f{pw->progress} %d{(i32) pw->orig_tile}\n", f)
                 // Sprite alive flags: compact hex bitmask, one char
                 // per 4 sprites.
                 io.write("sprites %d{lv->num_sprites} ", f)
@@ -677,7 +677,7 @@ module save =
                         if idx < ns && lv->sprites[idx].alive then
                             nibble = nibble | (1 << bit)
                     let ch = if nibble < 10 then 48 + nibble else 87 + nibble
-                    w->sm->hex_scratch[0] = (uint8) ch
+                    w->sm->hex_scratch[0] = (u8) ch
                     io.write(w->sm->hex_scratch[0..1], f)
                 io.write("\n", f)
                 // Enemies.
@@ -690,13 +690,13 @@ module save =
                     let nfd = if e->notified then 1 else 0
                     io.write(
                         "enemy %d{i} %14.6f{e->x} %14.6f{e->y} %d{e->tile_x} %d{e->tile_y} %d{ki} %d{si} %d{e->dir} %d{e->hp} %d{e->anim_frame} %14.6f{e->anim_timer} %14.6f{e->move_remaining} %d{amb} %d{nfd} %14.6f{e->reaction_timer} %14.6f{e->touch_cooldown}\n", f)
-                // PRNG state. Bits round-trip through signed int64
-                // (same width as uint64 under 2's complement); load
-                // reinterprets via (uint64). Older saves lack this
+                // PRNG state. Bits round-trip through signed i64
+                // (same width as u64 under 2's complement); load
+                // reinterprets via (u64). Older saves lack this
                 // line and fall back to a fresh seed-0 stream (reset
                 // at the top of from_slot).
                 io.write(
-                    "rng %d{(int64) g->rng_enemy.state} %d{(int64) g->rng_enemy.inc} %d{(int64) g->rng_face.state} %d{(int64) g->rng_face.inc}\n", f)
+                    "rng %d{(i64) g->rng_enemy.state} %d{(i64) g->rng_enemy.inc} %d{(i64) g->rng_face.state} %d{(i64) g->rng_face.inc}\n", f)
                 io.write("end\n", f)
                 void()
 
@@ -710,7 +710,7 @@ module save =
     // for the saved level_num, then overlay door / pushwall / sprite
     // / enemy state. The freshly-built level already has enemies
     // spawned from plane-1, which we overwrite.
-    let from_slot = (w: world*, vs: const vswap.vswap_file*, slot: int32) ->
+    let from_slot = (w: world*, vs: const vswap.vswap_file*, slot: i32) ->
         match slot_path(slot) with
         | none -> false
         | some(path) ->
@@ -745,8 +745,8 @@ module save =
                     let mut level_loaded = false
                     let mut i = 0
                     loop
-                        if i >= (int32) lines.len then break
-                        let line = lines[(int64) i]
+                        if i >= (i32) lines.len then break
+                        let line = lines[(i64) i]
                         i = i + 1
                         if line.len == 0 then continue
                         if text.starts_with(line, "label ") then
@@ -825,10 +825,10 @@ module save =
                             let toks = split_ws(line)
                             defer free_split(toks)
                             if toks.len >= 5 then
-                                g->rng_enemy.state = (uint64) unwrap_int64(toks[1])
-                                g->rng_enemy.inc   = (uint64) unwrap_int64(toks[2])
-                                g->rng_face.state  = (uint64) unwrap_int64(toks[3])
-                                g->rng_face.inc    = (uint64) unwrap_int64(toks[4])
+                                g->rng_enemy.state = (u64) unwrap_i64(toks[1])
+                                g->rng_enemy.inc   = (u64) unwrap_i64(toks[2])
+                                g->rng_face.state  = (u64) unwrap_i64(toks[3])
+                                g->rng_face.inc    = (u64) unwrap_i64(toks[4])
                         else if text.starts_with(line, "door ") then
                             let toks = split_ws(line)
                             defer free_split(toks)
@@ -850,7 +850,7 @@ module save =
                                 pw->dir_x    = unwrap_int(toks[4])
                                 pw->dir_y    = unwrap_int(toks[5])
                                 pw->progress = unwrap_float(toks[6])
-                                pw->orig_tile = (uint8) unwrap_int(toks[7])
+                                pw->orig_tile = (u8) unwrap_int(toks[7])
                         else if text.starts_with(line, "sprites ") && level_loaded then
                             let toks = split_ws(line)
                             defer free_split(toks)
@@ -859,8 +859,8 @@ module save =
                                 let bits = toks[2]
                                 let bytes_needed = (ns + 3) / 4
                                 for b in 0..bytes_needed do
-                                    if (int64) b >= bits.len then break
-                                    let ch = (int32) bits[(int64) b]
+                                    if (i64) b >= bits.len then break
+                                    let ch = (i32) bits[(i64) b]
                                     let nibble = if ch >= 48 && ch <= 57 then ch - 48
                                                  else if ch >= 97 && ch <= 102 then ch - 87
                                                  else 0
@@ -952,7 +952,7 @@ module save =
             if old_label.len > 0 then free(old_label)
             sm->slots[i] = save.slot_info {
                 empty = true,
-                label = default(uint8[]),
+                label = default(u8[]),
                 level_num = 0, difficulty = 0, score = 0
             }
         for i in 0..save.num_slots do
@@ -973,8 +973,8 @@ module save =
                         let mut score = 0
                         let mut label_src = none(const str)
                         let mut valid = false
-                        for li in 0..(int32) lines.len do
-                            let line = lines[(int64) li]
+                        for li in 0..(i32) lines.len do
+                            let line = lines[(i64) li]
                             if text.starts_with(line, "label ") then
                                 label_src = some(line[6..line.len])
                             else if text.starts_with(line, "game ") then
@@ -989,11 +989,11 @@ module save =
                             let lbl = match label_src with
                             | some(s) ->
                                 let n = s.len
-                                let buf = alloc(uint8[n] {})!
+                                let buf = alloc(u8[n] {})!
                                 for k in 0..n do
                                     buf[k] = s[k]
                                 buf
-                            | none -> default(uint8[])
+                            | none -> default(u8[])
                             sm->slots[i] = save.slot_info {
                                 empty = false, label = lbl,
                                 level_num = level_num,
@@ -1035,20 +1035,20 @@ module highscore =
     // byte count inside the inline `name` buffer (so editing during
     // input doesn't have to walk for a NUL).
     struct entry =
-        name: uint8[29]        // = max_name_len + 1; literal required for FC struct fields
-        name_len: int32
-        score: int32
-        completed: int32       // 1..10 (matches the original's level+1 convention)
-        episode: int32         // 0..5
+        name: u8[29]         // = max_name_len + 1; literal required for FC struct fields
+        name_len: i32
+        score: i32
+        completed: i32       // 1..10 (matches the original's level+1 convention)
+        episode: i32         // 0..5
 
     // Copy `src` (a const str) into the entry's inline name buffer,
     // truncating to `max_name_len` bytes if needed and zero-filling
     // the trailing slot for clean dumps.
     private let copy_name = (e: entry*, src: const str) ->
-        let mut n = (int32) src.len
+        let mut n = (i32) src.len
         if n > max_name_len then n = max_name_len
         for i in 0..n do
-            e->name[i] = src[(int64) i]
+            e->name[i] = src[(i64) i]
         for i in n..29 do
             e->name[i] = 0u8
         e->name_len = n
@@ -1074,12 +1074,12 @@ module highscore =
     // bytes. Result references the caller-owned buffer so it stays
     // valid as long as `e` does.
     let name_str = (e: const entry*) ->
-        (const str) e->name[0..(int64) e->name_len]
+        (const str) e->name[0..(i64) e->name_len]
 
     // Returns the insert index (0..max_scores-1) if (score, completed)
     // qualifies; -1 otherwise. Mirrors the original's `score >` /
     // `(== && completed >)` ordering — tie on score *and* level loses.
-    let qualifies = (scores: entry[], score: int32, completed: int32) ->
+    let qualifies = (scores: entry[], score: i32, completed: i32) ->
         let mut idx = -1
         let mut i = 0
         loop
@@ -1099,8 +1099,8 @@ module highscore =
     // Caller is expected to have called `qualifies` first; this
     // function trusts `n` is in range. Name copies start blank so the
     // caller can drive a rename via `set_name_at` while editing.
-    let insert_at = (scores: entry[], n: int32, score: int32,
-                     completed: int32, episode: int32) ->
+    let insert_at = (scores: entry[], n: i32, score: i32,
+                     completed: i32, episode: i32) ->
         if n < 0 || n >= max_scores then return
         // Shift down from the bottom: entry[i] <- entry[i-1] for
         // i = max_scores-1 down to n+1.
@@ -1127,7 +1127,7 @@ module highscore =
     // Replace the name at row `n`. Used by the name editor on commit
     // so the buffer it was typing into lands in the table before we
     // persist to disk.
-    let set_name_at = (scores: entry[], n: int32, name: const str) ->
+    let set_name_at = (scores: entry[], n: i32, name: const str) ->
         if n < 0 || n >= max_scores then return
         copy_name(&scores[n], name)
 
@@ -1139,7 +1139,7 @@ module highscore =
             some(alloc("%s{dir}/highscores")!)
 
     private let parse_int_or_zero = (s: const str) ->
-        match text.parse_int32(s) with
+        match text.parse_i32(s) with
         | some(v) -> v
         | none    -> 0
 
@@ -1162,9 +1162,9 @@ module highscore =
                 let mut row = 0
                 let mut li = 0
                 loop
-                    if li >= (int32) lines.len then break
+                    if li >= (i32) lines.len then break
                     if row >= max_scores then break
-                    let line = lines[(int64) li]
+                    let line = lines[(i64) li]
                     li = li + 1
                     if line.len == 0 then continue
                     if !text.starts_with(line, "score ") then continue
@@ -1175,7 +1175,7 @@ module highscore =
                     // (instead of a closure) because FC closures can't
                     // capture mutable bindings.
                     let mut p = 6i64       // past "score "
-                    let nums = int32[3] {}
+                    let nums = i32[3] {}
                     for ti in 0..3 do
                         let start = p
                         loop

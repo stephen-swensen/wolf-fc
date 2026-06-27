@@ -330,7 +330,7 @@ All project `.fc` sources live in `src/`. All project modules are declared at th
 - **`sdl2.fc`** — Flat `extern` FFI against `SDL2/SDL.h`: lifecycle, window (incl. fullscreen-desktop + high-DPI), the accelerated 2D renderer (used only as a blit primitive for one streaming ARGB8888 texture), keyboard events, and the audio device.
 - **`png.fc`** — Pure-FC PNG writer (CRC-32, Adler-32, stored deflate, optional tEXt metadata) used by the screenshot path.
 
-SDL2's role is deliberately minimal — it's a host abstraction, not a rendering framework. Each frame, the engine draws into a `uint32[]` ARGB framebuffer entirely in FC, then uploads it as a single streaming texture via `SDL_UpdateTexture` + `SDL_RenderCopy` + `SDL_RenderPresent`; the scale-quality hint is pinned to `nearest` for crisp upscaling. The 2D renderer is never asked to draw geometry — no `SDL_RenderFillRect`, no per-sprite textures, no shaders. Audio is equally bare: SDL drives a single `SDL_AudioCallback` that our own mixer fills with raw S16 PCM (no `SDL_mixer`). Input is keyboard-only, driven by `SDL_PollEvent` against `SDL_KEYDOWN`/`SDL_KEYUP`. No `SDL_image`, `SDL_ttf`, `SDL_mixer`, or `SDL_net` — just core `SDL2`, linked dynamically.
+SDL2's role is deliberately minimal — it's a host abstraction, not a rendering framework. Each frame, the engine draws into a `u32[]` ARGB framebuffer entirely in FC, then uploads it as a single streaming texture via `SDL_UpdateTexture` + `SDL_RenderCopy` + `SDL_RenderPresent`; the scale-quality hint is pinned to `nearest` for crisp upscaling. The 2D renderer is never asked to draw geometry — no `SDL_RenderFillRect`, no per-sprite textures, no shaders. Audio is equally bare: SDL drives a single `SDL_AudioCallback` that our own mixer fills with raw S16 PCM (no `SDL_mixer`). Input is keyboard-only, driven by `SDL_PollEvent` against `SDL_KEYDOWN`/`SDL_KEYUP`. No `SDL_image`, `SDL_ttf`, `SDL_mixer`, or `SDL_net` — just core `SDL2`, linked dynamically.
 
 ### Display pipeline
 
@@ -410,7 +410,7 @@ This is deliberately the *whole* of the frame-pacing story. Because the snap loc
 
 Wolf-fc mixes audio entirely in FC, on demand, from SDL2's audio callback. SDL runs `audio_callback` on its own dedicated audio thread and asks it to fill the device buffer — **44.1 kHz signed 16-bit interleaved stereo**, 512 frames (~11.6 ms) by default — whenever the hardware needs more samples; `mixer.fill_frame` produces those samples straight into SDL's `stream`. No `SDL_mixer`, and crucially no push model: running on SDL's thread fully decouples sound from rendering, so even a heavy supersampling / SSAA frame that blows past its budget can't stutter the audio. The render loop never generates samples — it only *mutates* shared audio state (trigger an SFX, swap the music track), under `SDL_LockAudioDevice` so the callback never reads the OPL2 chips or digi slots mid-write, then releases the lock before the slow 3D pass so the callback keeps pulling throughout.
 
-Three format drivers in [`sound.fc`](sound.fc), each consuming bytes from a Wolf3D audio chunk and mixing additively into a shared `int32` buffer:
+Three format drivers in [`sound.fc`](sound.fc), each consuming bytes from a Wolf3D audio chunk and mixing additively into a shared `i32` buffer:
 
 - **`imf`** (music) — id Music Format. A flat sequence of `(reg, val, delay)` events written to a YM3812 OPL2 chip at a 700 Hz tick rate. Loops the track at end-of-stream. Has a `volume` knob for level-end fade-out. Owns a dedicated chip so its register state never collides with SFX.
 - **`adlib`** (SFX fallback) — id-Software AdLibSound chunks. A 23-byte header (length, priority, 16-byte instrument, block) followed by one F-number byte per 140 Hz tick. One voice on channel 0. Owns a separate OPL2 chip so SFX never disrupts the music chip. Used as the fallback for sounds that have no digitized version.
@@ -420,15 +420,15 @@ Each `sfx.id` constant has both a `digi_slot[id]` and an `adlib_chunk[id]`; `sfx
 
 ```
    audio_callback(stream, len)                  on SDL's audio thread; frames = len/4
-   mix_buf := 0                                 int32, frames × 2   (~11.6 ms @ 512)
+   mix_buf := 0                                 i32, frames × 2   (~11.6 ms @ 512)
        ↓ imf.fill           music chip → mono, duplicated L = R
        ↓ adlib.fill         SFX chip   → mono, duplicated L = R
        ↓ digi.fill          4 slots    → per-slot pan → L, R independently
-       ↓ mixer.soft_clip_to_int16    → int16, written straight into ...
+       ↓ mixer.soft_clip_to_i16    → i16, written straight into ...
    stream  (SDL device buffer)                  44.1 kHz, S16 stereo
 ```
 
-`mix_buf` is `int32` so the three additive fills can sum freely without per-stage clipping starving later stages of headroom (digi, last in line, was the biggest loser before we widened the intermediate). The final soft-clip is a rational asymptotic curve — linear up to ±24000, then `y = knee + over × range / (range + over)` toward an asymptote at ±32767 — so a single source peak gets ~1.5 dB of compression and three sources peaking together still don't hard-clip. Mirrors how Sound Blaster hardware summed FM and PCM in the analog domain.
+`mix_buf` is `i32` so the three additive fills can sum freely without per-stage clipping starving later stages of headroom (digi, last in line, was the biggest loser before we widened the intermediate). The final soft-clip is a rational asymptotic curve — linear up to ±24000, then `y = knee + over × range / (range + over)` toward an asymptote at ±32767 — so a single source peak gets ~1.5 dB of compression and three sources peaking together still don't hard-clip. Mirrors how Sound Blaster hardware summed FM and PCM in the analog domain.
 
 **Ticked event-driven generation.** The OPL2 chip in [`opl2.fc`](opl2.fc) runs at the output sample rate. Both `imf` and `adlib` route their per-sample work through one shared helper, `opl2.fill_ticked`, that advances a `tick_accum` counter every emitted sample and invokes the driver's `advance` closure once per event tick:
 

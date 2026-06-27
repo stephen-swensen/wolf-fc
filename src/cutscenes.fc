@@ -30,10 +30,10 @@ module bj_victory =
     // block only when not fully open; any other tile is free (floors
     // / floor-tagged markers / dead actors). Matches the original's
     // BJ-victory walk check.
-    private let tile_passable = (lv: level*, tx: int32, ty: int32) ->
+    private let tile_passable = (lv: level*, tx: i32, ty: i32) ->
         if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
         else
-            let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+            let t = (i32) lv->tilemap[(i64) tx * 64 + (i64) ty]
             if t >= 1 && t <= 63 then false
             else if t >= 128 then lv->doors[t - 128].state == doors.door_state.open
             else true
@@ -44,7 +44,7 @@ module bj_victory =
     // direction pick. Distance is reset to 1 tile so the running
     // loop advances one tile before consulting the arrow table again.
     private let select_path_dir = (lv: level*, g: game*) ->
-        let arrow = (int32) lv->path_arrows[(int64) g->bj_tile_x * 64 + (int64) g->bj_tile_y]
+        let arrow = (i32) lv->path_arrows[(i64) g->bj_tile_x * 64 + (i64) g->bj_tile_y]
         if arrow != dir.nodir then g->bj_dir = arrow
         g->bj_distance = 1.0
         if g->bj_dir == dir.nodir then return
@@ -70,8 +70,8 @@ module bj_victory =
         record_level_for_episode(g)
         g->bj_x = g->pos_x
         g->bj_y = g->pos_y
-        g->bj_tile_x = (int32) g->pos_x
-        g->bj_tile_y = (int32) g->pos_y + 1
+        g->bj_tile_x = (i32) g->pos_x
+        g->bj_tile_y = (i32) g->pos_y + 1
         g->bj_dir = dir.north
         g->bj_distance = 0.0
         g->bj_run_tiles_left = 6
@@ -100,7 +100,7 @@ module bj_victory =
     // arrow. After bj_run_tiles_left reaches 0 BJ jumps in whatever
     // direction he was last running, then holds the final frame
     // briefly before the episode-end screen takes over.
-    let tick = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
+    let tick = (lv: level*, g: game*, ac: audio_ctx*, dt: f64) ->
         g->bj_anim_timer = g->bj_anim_timer - dt
         if g->bj_phase == 0 then
             // Running — step in bj_dir, snapping to each tile center
@@ -114,8 +114,8 @@ module bj_victory =
                     g->bj_y = g->bj_y + dir.vy[g->bj_dir] * move
                     g->bj_distance = g->bj_distance - move
                     break
-                g->bj_x = (float64) g->bj_tile_x + 0.5
-                g->bj_y = (float64) g->bj_tile_y + 0.5
+                g->bj_x = (f64) g->bj_tile_x + 0.5
+                g->bj_y = (f64) g->bj_tile_y + 0.5
                 move = move - g->bj_distance
                 g->bj_distance = 0.0
                 select_path_dir(lv, g)
@@ -222,7 +222,7 @@ module death_cam =
     // sprite flash and the suppression of the normal weapon sprite,
     // which the original replaces with the "DEATH CAM" graphic during
     // this window.
-    private let is_replay_view = (s: int32) ->
+    private let is_replay_view = (s: i32) ->
         s == sub.fade_in || s == sub.pre_replay
             || s == sub.replay_anim || s == sub.replay_hold
             || s == sub.fade_to_black
@@ -233,7 +233,7 @@ module death_cam =
     // enemies.ai.damage_enemy for death-cam bosses instead of the
     // regular enemies.ai.kill_enemy path.
     let enter = (lv: level*, g: game*, ac: audio_ctx*, e: enemies.enemy*,
-                 boss_idx: int32, sprite_start: int32) ->
+                 boss_idx: i32, sprite_start: i32) ->
         // Drive the boss into its death animation.
         // enemies.ai.kill_enemy plays the per-kind death scream but —
         // because enemies.drop_for_kind returns decoration for death-
@@ -269,7 +269,7 @@ module death_cam =
     // kill-direction ray, step outward by 1/16 of a tile until the camera
     // bbox clears walls. Sets pos + dir vectors; the raycaster picks
     // up the new view automatically.
-    private let teleport = (lv: level*, g: game*, boss_x: float64, boss_y: float64) ->
+    private let teleport = (lv: level*, g: game*, boss_x: f64, boss_y: f64) ->
         let dx = g->dc_kill_x - boss_x
         let dy = g->dc_kill_y - boss_y
         let len = math.sqrt(dx * dx + dy * dy)
@@ -308,7 +308,7 @@ module death_cam =
     // enemy animation is pumped from the outer tick dispatch
     // (enemies.ai.update_dying_enemies), so this function doesn't
     // call it directly.
-    let tick = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
+    let tick = (lv: level*, g: game*, ac: audio_ctx*, dt: f64) ->
         g->dc_timer = g->dc_timer + dt
         let s = g->dc_sub
         if s == sub.pre_fade then
@@ -409,10 +409,10 @@ module death_cam =
     // `dcsprite` probe so a layout regression is caught without
     // having to drive the whole death_cam phase.
     struct sprite_layout =
-        dx: int32
-        dy: int32
-        dw: int32
-        dh: int32
+        dx: i32
+        dy: i32
+        dw: i32
+        dh: i32
 
     let compute_sprite_layout = (rc: render_ctx*) ->
         // Square gun-style sizing: dh fills the viewport height
@@ -432,9 +432,9 @@ module death_cam =
     // viewport, sized the same way player.render_weapon sizes the gun.
     // Flashes on/off per phase_timer; caller is expected to gate on
     // is_replay_view.
-    private let render_sprite = (rc: render_ctx*, vs: const vswap.vswap_file*, pal: const uint32[],
-                         phase_timer: float64) ->
-        let tics = (int32) (phase_timer * 70.0)
+    private let render_sprite = (rc: render_ctx*, vs: const vswap.vswap_file*, pal: const u32[],
+                         phase_timer: f64) ->
+        let tics = (i32) (phase_timer * 70.0)
         if (tics & 32) != 0 then return
         let page = vs->sprite_start + sprite_offset
         let l = compute_sprite_layout(rc)
@@ -445,7 +445,7 @@ module death_cam =
     // fade_out and fade_in; a solid backdrop with the taunt pic
     // font during the taunt sub-phase; zoomed-in corpse view with a
     // flashing DEATH CAM sprite during the replay sub-phases.
-    let render = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[],
+    let render = (w: world*, vs: const vswap.vswap_file*, pal: const u32[],
                   vg: const vgagraph.vgagraph_file*) ->
         let g = w->g
         let rc = w->rc
@@ -523,7 +523,7 @@ module intermission =
     // rounded to whole seconds). Used both for the bonus computation
     // (beat par → time bonus) and the "PAR: M:SS" display on the
     // intermission screen.
-    let par_times = int32[60] {
+    let par_times = i32[60] {
          90, 120, 120, 150,  90, 240, 150, 180, 420,   0,
          90, 180, 270, 360, 120, 270, 330, 420, 360,   0,
         120, 150, 240, 300, 270, 330, 420, 360, 330,   0,
@@ -546,15 +546,15 @@ module intermission =
     // its episode. Secret intermissions show a different layout and
     // award a flat bonus instead of ticking through kill / secret /
     // treasure ratios.
-    private let is_secret_level = (level_num: int32) ->
+    private let is_secret_level = (level_num: i32) ->
         level_num % episode.levels_per == 9
 
     private let compute_time_left = (g: game*) ->
         let par = if g->level_num < 60 then par_times[g->level_num] else 0
-        let t = (int32) g->level_time
+        let t = (i32) g->level_time
         if par > 0 && t < par then par - t else 0
 
-    private let compute_ratio = (cur: int32, tot: int32) ->
+    private let compute_ratio = (cur: i32, tot: i32) ->
         if tot <= 0 then 0 else (cur * 100) / tot
 
     let compute_level_bonus = (g: game*) ->
@@ -653,7 +653,7 @@ module intermission =
     //        * pause_timer (longer — total hold before advancing)
     //          → when it expires we step to the next stage.
     //      The ring sound is one of the 100% / 0% / partial cues.
-    let tick = (g: game*, ac: audio_ctx*, dt: float64) ->
+    let tick = (g: game*, ac: audio_ctx*, dt: f64) ->
         g->inter_breathe_timer = g->inter_breathe_timer + dt
         if g->inter_stage >= 4 then return
         if g->phase_timer < lead_in then return
@@ -693,7 +693,7 @@ module intermission =
         | _ -> 0
         let prev = g->inter_counter
         g->inter_progress = g->inter_progress + rate * dt
-        let mut cur = (int32) g->inter_progress
+        let mut cur = (i32) g->inter_progress
         if cur > target then cur = target
         g->inter_counter = cur
         if g->inter_stage == 0 then
@@ -717,8 +717,8 @@ module intermission =
     // original's per-character dispatch: letters, digits, and '%'
     // advance 16 px (the pics are drawn inside 16-wide cells); ':',
     // '!', "'" advance 8 px; ' ' just advances 16.
-    private let write_lpic_char = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
-                           x: int32, y: int32, ch: int32) ->
+    private let write_lpic_char = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const u32[],
+                           x: i32, y: i32, ch: i32) ->
         let mut c = ch
         if c >= 97 && c <= 122 then c = c - 32
         if c == 32 then
@@ -746,12 +746,12 @@ module intermission =
 
     // Draw a string using the level-end letter/digit pics, starting
     // at pixel (x, y). `\n` resets x and advances y by 16 px (one row).
-    let write_lpic_text = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
-                           x: int32, y: int32, s: const str) ->
+    let write_lpic_text = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const u32[],
+                           x: i32, y: i32, s: const str) ->
         let mut nx = x
         let mut ny = y
-        for i in 0..(int32) s.len do
-            let ch = (int32) s[(int64) i]
+        for i in 0..(i32) s.len do
+            let ch = (i32) s[(i64) i]
             if ch == 10 then
                 nx = x
                 ny = ny + 16
@@ -761,10 +761,10 @@ module intermission =
     // Write a number using the big-number pics. `align_right` = true
     // right-aligns the last digit at pixel column `x`; false starts
     // the first digit at x.
-    let write_lpic_number = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
-                             x: int32, y: int32, num: int32, align_right: bool) ->
+    let write_lpic_number = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const u32[],
+                             x: i32, y: i32, num: i32, align_right: bool) ->
         let mut n = if num < 0 then 0 else num
-        let digits = int32[12] {}
+        let digits = i32[12] {}
         let mut count = 0
         if n == 0 then
             digits[0] = 0
@@ -786,15 +786,15 @@ module intermission =
     // 0x7F), BJ portrait on the left (breathing), "floor N completed"
     // caption, bonus / time / par lines, and live kill / secret /
     // treasure ratios animated via tick.
-    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
+    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const u32[],
                   g: game*) ->
         let ox = rc->ui_offset_x
         let bg = pal[0x7F]
         for y in 0..view_h do
             for x in 0..rc->fb_w do
-                rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = bg
+                rc->fb[(i64) y * (i64) rc->fb_w + (i64) x] = bg
 
-        let breathe = ((int32) (g->inter_breathe_timer * 2.0)) % 2
+        let breathe = ((i32) (g->inter_breathe_timer * 2.0)) % 2
         let guy_pic = if breathe == 0 then pics.id.l_guy else pics.id.l_guy2
         pics.draw(rc, vg, pal, guy_pic, ox + 0, 16)
 
@@ -812,7 +812,7 @@ module intermission =
 
         write_lpic_text(rc, vg, pal, ox + 16 * 8, 10 * 8, "TIME")
         write_lpic_text(rc, vg, pal, ox + 16 * 8, 12 * 8, " PAR")
-        let mut sec_total = (int32) g->level_time
+        let mut sec_total = (i32) g->level_time
         if sec_total > 99 * 60 then sec_total = 99 * 60
         let mm = sec_total / 60
         let ss = sec_total % 60
@@ -915,7 +915,7 @@ module episode_end =
     //   "treasure    %"     (6,  18)
     //   ratio percentages right-aligned at column 240
     let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                  pal: const uint32[], f: const font.info*, g: game*) ->
+                  pal: const u32[], f: const font.info*, g: game*) ->
         let ox = rc->ui_offset_x
         // Neutral-grey fill on the 3D viewport area only — leave the
         // HUD strip below alone. Spans the whole framebuffer so
@@ -998,54 +998,54 @@ module endart_screen =
     // isn't a constant here).
     private let text_rows    = 15
 
-    private let is_caret = (b: uint8) -> b == 0x5Eu8           // '^'
-    private let is_p     = (b: uint8) -> b == 0x50u8 || b == 0x70u8   // P / p
-    private let is_e     = (b: uint8) -> b == 0x45u8 || b == 0x65u8   // E / e
-    private let is_digit = (b: uint8) -> b >= 0x30u8 && b <= 0x39u8
+    private let is_caret = (b: u8) -> b == 0x5Eu8           // '^'
+    private let is_p     = (b: u8) -> b == 0x50u8 || b == 0x70u8   // P / p
+    private let is_e     = (b: u8) -> b == 0x45u8 || b == 0x65u8   // E / e
+    private let is_digit = (b: u8) -> b >= 0x30u8 && b <= 0x39u8
 
     // Hex digit -> 0..15, or -1 for non-hex.
-    private let hex_val = (b: uint8) ->
-        if b >= 0x30u8 && b <= 0x39u8 then (int32) b - 0x30
-        else if b >= 0x41u8 && b <= 0x46u8 then (int32) b - 0x41 + 10
-        else if b >= 0x61u8 && b <= 0x66u8 then (int32) b - 0x61 + 10
+    private let hex_val = (b: u8) ->
+        if b >= 0x30u8 && b <= 0x39u8 then (i32) b - 0x30
+        else if b >= 0x41u8 && b <= 0x46u8 then (i32) b - 0x41 + 10
+        else if b >= 0x61u8 && b <= 0x66u8 then (i32) b - 0x61 + 10
         else -1
 
     // Read a base-10 number starting at offset `i`, skipping any
     // leading non-digits. Returns the parsed value plus the byte
     // offset of the first character past the number — matches the
     // shape of the original article parser's number reader.
-    private let read_number = (data: uint8[], i: int32) ->
+    private let read_number = (data: u8[], i: i32) ->
         let mut j = i
         loop
-            if j >= (int32) data.len then break
-            if is_digit(data[(int64) j]) then break
+            if j >= (i32) data.len then break
+            if is_digit(data[(i64) j]) then break
             j = j + 1
         let mut val = 0
         loop
-            if j >= (int32) data.len then break
-            if !is_digit(data[(int64) j]) then break
-            val = val * 10 + (int32) data[(int64) j] - 0x30
+            if j >= (i32) data.len then break
+            if !is_digit(data[(i64) j]) then break
+            val = val * 10 + (i32) data[(i64) j] - 0x30
             j = j + 1
         { val, j }
 
     // Skip the rest of the current line (including the trailing '\n').
-    private let skip_to_eol = (data: uint8[], i: int32) ->
+    private let skip_to_eol = (data: u8[], i: i32) ->
         let mut j = i
         loop
-            if j >= (int32) data.len then break
-            let b = data[(int64) j]
+            if j >= (i32) data.len then break
+            let b = data[(i64) j]
             j = j + 1
             if b == 10u8 then break
         j
 
     // Count ^P pages in the article, stopping at ^E or end of data.
-    let count_pages = (data: uint8[]) ->
+    let count_pages = (data: u8[]) ->
         let mut count = 0
         let mut j = 0
         loop
-            if j >= (int32) data.len - 1 then break
-            if is_caret(data[(int64) j]) then
-                let c = data[(int64) j + 1]
+            if j >= (i32) data.len - 1 then break
+            if is_caret(data[(i64) j]) then
+                let c = data[(i64) j + 1]
                 if is_e(c) then break
                 if is_p(c) then count = count + 1
                 j = j + 2
@@ -1055,17 +1055,17 @@ module endart_screen =
 
     // Cache the byte offset of each ^P (up to `max_pages`) so the
     // renderer can jump straight to the requested page.
-    let collect_page_offsets = (data: uint8[], out: int32[]) ->
+    let collect_page_offsets = (data: u8[], out: i32[]) ->
         let mut idx = 0
         let mut j = 0
         loop
-            if j >= (int32) data.len - 1 then break
-            if idx >= (int32) out.len then break
-            if is_caret(data[(int64) j]) then
-                let c = data[(int64) j + 1]
+            if j >= (i32) data.len - 1 then break
+            if idx >= (i32) out.len then break
+            if is_caret(data[(i64) j]) then
+                let c = data[(i64) j + 1]
                 if is_e(c) then break
                 if is_p(c) then
-                    out[(int64) idx] = j
+                    out[(i64) idx] = j
                     idx = idx + 1
                 j = j + 2
             else
@@ -1075,7 +1075,7 @@ module endart_screen =
     // Begin showing the article for `episode` (0-indexed). Decompresses
     // the chunk, computes page offsets, and arms key_ack so a held
     // press from the previous phase doesn't auto-advance through.
-    let enter = (g: game*, vg: const vgagraph.vgagraph_file*, episode: int32) ->
+    let enter = (g: game*, vg: const vgagraph.vgagraph_file*, episode: i32) ->
         // Both fields are always backed by a real heap slice (the
         // build_game sentinels and decompress_chunk both return a heap
         // allocation, empty included), so free unconditionally — the
@@ -1086,7 +1086,7 @@ module endart_screen =
         let data = vgagraph.decompress_chunk(vg, chunk)
         let total = count_pages(data)
         let cap = if total > max_pages then max_pages else total
-        let offs = alloc(int32[cap] {})!
+        let offs = alloc(i32[cap] {})!
         let _filled = collect_page_offsets(data, offs)
         g->endart_data = data
         g->endart_page_offsets = offs
@@ -1118,43 +1118,43 @@ module endart_screen =
     // per-row margins per render call (^G can shrink them on rows the
     // graphic occupies).
     private struct layout_state =
-        px: int32
-        py: int32
-        rowon: int32
-        fontcolor: int32
-        cursor: int32         // current byte offset into endart_data
+        px: i32
+        py: i32
+        rowon: i32
+        fontcolor: i32
+        cursor: i32         // current byte offset into endart_data
         done: bool
 
     // NewLine: advance to the next row, snap px to that row's left
     // margin. If we ran past the bottom of the page, set done=true so
     // the caller stops processing markup.
-    private let newline = (st: layout_state*, lefts: int32[]) ->
+    private let newline = (st: layout_state*, lefts: i32[]) ->
         st->rowon = st->rowon + 1
         if st->rowon >= text_rows then
             st->done = true
             return
-        st->px = lefts[(int64) st->rowon]
+        st->px = lefts[(i64) st->rowon]
         st->py = st->py + font_height
 
     // Try to draw `word` (length n) at (px, py) in the current font
     // colour. Wraps if it doesn't fit.
-    private let render_word = (rc: render_ctx*, pal: const uint32[],
+    private let render_word = (rc: render_ctx*, pal: const u32[],
                                 f: const font.info*, st: layout_state*,
-                                lefts: int32[], rights: int32[],
-                                word: uint8[], n: int32) ->
+                                lefts: i32[], rights: i32[],
+                                word: u8[], n: i32) ->
         let mut wwidth = 0
         for k in 0..n do
-            let ch = (int32) word[(int64) k]
+            let ch = (i32) word[(i64) k]
             if ch >= 0 && ch < 256 then wwidth = wwidth + f->width[ch]
         loop
             if st->done then break
-            if st->px + wwidth <= rights[(int64) st->rowon] then break
+            if st->px + wwidth <= rights[(i64) st->rowon] then break
             newline(st, lefts)
         if st->done then return
         let color = pal[st->fontcolor]
         let mut cx = st->px
         for k in 0..n do
-            let ch = (int32) word[(int64) k]
+            let ch = (i32) word[(i64) k]
             cx = cx + font.draw_char(rc, f, cx, st->py, ch, color)
         st->px = cx
 
@@ -1162,15 +1162,15 @@ module endart_screen =
     // each page (READHCOLOR, fontnumber 0). Scales the OG x=213
     // position proportionally to fb_w so the page number stays inside
     // the (now-stretched) bottom-info strip's right side.
-    private let draw_page_number = (rc: render_ctx*, pal: const uint32[],
-                                     f: const font.info*, page: int32, total: int32) ->
+    private let draw_page_number = (rc: render_ctx*, pal: const u32[],
+                                     f: const font.info*, page: i32, total: i32) ->
         let color = pal[0x4f]
         let label = "PG %d{page + 1} OF %d{total}"
         let x = 213 * rc->fb_w / 320
         font.draw_text(rc, f, x, 183, label, color)
 
     let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                  pal: const uint32[], f: const font.info*, g: game*) ->
+                  pal: const u32[], f: const font.info*, g: game*) ->
         // Backdrop + window frame.
         let bg = pal[backcolor]
         for i in 0..(rc->fb_w * game_h) do
@@ -1179,10 +1179,10 @@ module endart_screen =
         if g->endart_total_pages == 0 || g->endart_data.len == 0 then return
         let mut page = g->endart_page
         if page >= g->endart_total_pages then page = g->endart_total_pages - 1
-        let start = g->endart_page_offsets[(int64) page]
+        let start = g->endart_page_offsets[(i64) page]
         // Per-row margin arrays — ^G updates the rows it overlaps.
-        let lefts  = int32[18] {}
-        let rights = int32[18] {}
+        let lefts  = i32[18] {}
+        let rights = i32[18] {}
         for i in 0..text_rows do
             lefts[i]  = left_margin
             rights[i] = rc->fb_w - right_margin
@@ -1197,17 +1197,17 @@ module endart_screen =
             done = false
         }
         let data = g->endart_data
-        let dn = (int32) data.len
+        let dn = (i32) data.len
         // Single-word scratch buffer (OG's WORDLIMIT = 80).
-        let word_buf = uint8[80] {}
+        let word_buf = u8[80] {}
         loop
             if st.done then break
             if st.cursor >= dn then break
-            let b = data[(int64) st.cursor]
+            let b = data[(i64) st.cursor]
             // ^X command.
             if is_caret(b) then
                 if st.cursor + 1 >= dn then break
-                let cmd = data[(int64) st.cursor + 1]
+                let cmd = data[(i64) st.cursor + 1]
                 // ^P or ^E ends the page.
                 if is_p(cmd) || is_e(cmd) then break
                 // Advance past '^' + command letter.
@@ -1226,15 +1226,15 @@ module endart_screen =
                         for xx in 0..pw do
                             let dx = px + xx
                             if dx < 0 || dx >= rc->fb_w then continue
-                            rc->fb[(int64) dy * (int64) rc->fb_w + (int64) dx] = bcol
+                            rc->fb[(i64) dy * (i64) rc->fb_w + (i64) dx] = bcol
                 else if cmd == 0x3Bu8 then
                     // ^; comment: skip to end of line.
                     st.cursor = skip_to_eol(data, st.cursor)
                 else if cmd == 0x43u8 || cmd == 0x63u8 then
                     // ^Cnn — two hex digits set the font colour.
                     if st.cursor + 1 < dn then
-                        let h1 = hex_val(data[(int64) st.cursor])
-                        let h2 = hex_val(data[(int64) st.cursor + 1])
+                        let h1 = hex_val(data[(i64) st.cursor])
+                        let h2 = hex_val(data[(i64) st.cursor + 1])
                         if h1 >= 0 && h2 >= 0 then
                             st.fontcolor = (h1 * 16 + h2) & 0xFF
                         st.cursor = st.cursor + 2
@@ -1287,8 +1287,8 @@ module endart_screen =
                                 lefts[r] = new_margin
                         // If the current line's px is now left of the
                         // new left-margin, snap it forward.
-                        if st.px < lefts[(int64) st.rowon] then
-                            st.px = lefts[(int64) st.rowon]
+                        if st.px < lefts[(i64) st.rowon] then
+                            st.px = lefts[(i64) st.rowon]
                 else
                     // Unknown command — eat one char so we don't loop.
                     void()
@@ -1311,11 +1311,11 @@ module endart_screen =
             let mut wlen = 0
             loop
                 if st.cursor >= dn then break
-                let bb = data[(int64) st.cursor]
+                let bb = data[(i64) st.cursor]
                 if bb <= 32u8 then break
                 if is_caret(bb) then break
-                if wlen >= (int32) word_buf.len then break
-                word_buf[(int64) wlen] = bb
+                if wlen >= (i32) word_buf.len then break
+                word_buf[(i64) wlen] = bb
                 wlen = wlen + 1
                 st.cursor = st.cursor + 1
             render_word(rc, pal, f, &st, lefts, rights, word_buf, wlen)
@@ -1323,7 +1323,7 @@ module endart_screen =
             // multi-space layouts (alignment via spaces) survive.
             loop
                 if st.cursor >= dn then break
-                if data[(int64) st.cursor] != 32u8 then break
+                if data[(i64) st.cursor] != 32u8 then break
                 st.px = st.px + space_width
                 st.cursor = st.cursor + 1
         draw_page_number(rc, pal, f, page, g->endart_total_pages)
@@ -1356,7 +1356,7 @@ module title_screen =
     // Local-time fade-in at the start of a sub-phase + fade-out at
     // the end. Black tint, sequential (not cross-fade) — matches
     // the original's fade-out/fade-in pattern between attract phases.
-    private let apply_fade = (rc: render_ctx*, local_t: float64, hold: float64) ->
+    private let apply_fade = (rc: render_ctx*, local_t: f64, hold: f64) ->
         let alpha =
             if local_t < fade_time then 1.0 - local_t / fade_time
             else if local_t > hold - fade_time then (local_t - (hold - fade_time)) / fade_time
@@ -1364,8 +1364,8 @@ module title_screen =
         if alpha > 0.0 then
             overlay.viewport_tint_full(rc, 0x00000000u32, alpha)
 
-    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
-                  f: const font.info*, hs: highscore_ctx*, time: float64) ->
+    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const u32[],
+                  f: const font.info*, hs: highscore_ctx*, time: f64) ->
         if time < title_hold then
             pics.blit_title_bg(rc)
             apply_fade(rc, time, title_hold)
@@ -1374,7 +1374,7 @@ module title_screen =
             // cleanly. `pics.draw` clips silently if the fb is wider
             // than the 320x200 pic.
             for i in 0..(rc->fb_w * rc->fb_h) do
-                rc->fb[(int64) i] = 0xFF000000u32
+                rc->fb[(i64) i] = 0xFF000000u32
             pics.draw(rc, vg, pal, pics.id.credits, rc->ui_offset_x, 0)
             apply_fade(rc, time - title_hold, credits_hold)
         else
@@ -1402,7 +1402,7 @@ module pg13_screen =
     private let bg_index = 0x82
     private let pic_x    = 216
     private let pic_y    = 110
-    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[]) ->
+    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const u32[]) ->
         let bg = pal[bg_index]
         for i in 0..(rc->fb_w * rc->fb_h) do
             rc->fb[i] = bg
@@ -1445,7 +1445,7 @@ module high_scores_screen =
     // Latched on enter so the dismissal handler can pick the right
     // exit. Stored on `game` rather than `highscore_ctx` because it's
     // gameplay-flow state, not screen-buffer state.
-    private let set_source = (g: game*, src: int32) ->
+    private let set_source = (g: game*, src: i32) ->
         g->hs_source = src
 
     // Commit the typed name to the qualifying row, mark the table as
@@ -1454,7 +1454,7 @@ module high_scores_screen =
     let commit_name = (hs: highscore_ctx*) ->
         match hs->edit_index with
         | some(i) ->
-            let nm = (const str) hs->edit_buf[0..(int64) hs->edit_len]
+            let nm = (const str) hs->edit_buf[0..(i64) hs->edit_len]
             highscore.set_name_at(hs->scores, i, nm)
             hs->edit_active = false
             hs->pending_save = true
@@ -1463,24 +1463,24 @@ module high_scores_screen =
     // Clear the edit buffer (zero bytes + len=0). Called on enter
     // before any keystrokes land.
     private let clear_edit_buf = (hs: highscore_ctx*) ->
-        for i in 0..(int32) hs->edit_buf.len do
-            hs->edit_buf[(int64) i] = 0u8
+        for i in 0..(i32) hs->edit_buf.len do
+            hs->edit_buf[(i64) i] = 0u8
         hs->edit_len = 0
 
     // Append a single byte to the edit buffer if there's room.
-    let edit_append = (hs: highscore_ctx*, ch: uint8) ->
-        let cap = (int32) hs->edit_buf.len - 1
+    let edit_append = (hs: highscore_ctx*, ch: u8) ->
+        let cap = (i32) hs->edit_buf.len - 1
         if hs->edit_len >= cap then return
         if hs->edit_len >= highscore.max_name_len then return
-        hs->edit_buf[(int64) hs->edit_len] = ch
+        hs->edit_buf[(i64) hs->edit_len] = ch
         hs->edit_len = hs->edit_len + 1
-        hs->edit_buf[(int64) hs->edit_len] = 0u8
+        hs->edit_buf[(i64) hs->edit_len] = 0u8
 
     // Pop the trailing byte (Backspace).
     let edit_backspace = (hs: highscore_ctx*) ->
         if hs->edit_len <= 0 then return
         hs->edit_len = hs->edit_len - 1
-        hs->edit_buf[(int64) hs->edit_len] = 0u8
+        hs->edit_buf[(i64) hs->edit_len] = 0u8
 
     // Leave the high-scores screen. Persists any pending name edit
     // first, then routes back to the source's natural exit target —
@@ -1507,8 +1507,8 @@ module high_scores_screen =
     // and arm the inline name editor; otherwise the screen is purely
     // informational. `completed` is the level the player finished
     // (1-indexed, matching the original).
-    let enter = (g: game*, hs: highscore_ctx*, source: int32,
-                 score: int32, completed: int32, episode: int32) ->
+    let enter = (g: game*, hs: highscore_ctx*, source: i32,
+                 score: i32, completed: i32, episode: i32) ->
         g->phase = game_phase.high_scores
         g->phase_timer = 0.0
         set_source(g, source)
@@ -1518,7 +1518,7 @@ module high_scores_screen =
         g->key_ack = false
         g->key_ack_handled = true
         clear_edit_buf(hs)
-        hs->edit_index = none(int32)
+        hs->edit_index = none(i32)
         hs->edit_active = false
         hs->pending_save = false
         let n = highscore.qualifies(hs->scores, score, completed)
@@ -1532,15 +1532,15 @@ module high_scores_screen =
             highscore.save(hs->scores)
 
     // Cursor blink at ~3.5 Hz, matching the save-name caret cadence.
-    private let cursor_on = (time: float64) ->
-        ((int32) (time * 3.5)) % 2 == 0
+    private let cursor_on = (time: f64) ->
+        ((i32) (time * 3.5)) % 2 == 0
 
     // Draw the screen. Right-aligned helpers walk strings backward
     // through the font's per-char width table — matches the OG's
     // USL_MeasureString + PrintX = (col*8) - w pattern.
     let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                  pal: const uint32[], f: const font.info*,
-                  hs: highscore_ctx*, time: float64) ->
+                  pal: const u32[], f: const font.info*,
+                  hs: highscore_ctx*, time: f64) ->
         let ox = rc->ui_offset_x
         // Red border-color full-screen fill (matches the menu backdrop)
         // + black stripe + high-scores banner. Same shared helper the
@@ -1567,7 +1567,7 @@ module high_scores_screen =
             // buffer instead while editing this row.
             let name_x = ox + 4 * 8
             if hs->edit_active && hs->edit_index == some(i) then
-                let typed = (const str) hs->edit_buf[0..(int64) hs->edit_len]
+                let typed = (const str) hs->edit_buf[0..(i64) hs->edit_len]
                 font.draw_text(rc, f, name_x, row_y, typed, text_color)
                 if cursor_on(time) then
                     let tw = font.text_width(f, typed)

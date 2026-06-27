@@ -19,121 +19,121 @@
 // Lives at file scope because a `from` C-interop module body permits only
 // extern declarations. Only `refresh_rate` is read; the rest align offsets.
 struct sdl_display_mode =
-    format: uint32
-    w: int32
-    h: int32
-    refresh_rate: int32
+    format: u32
+    w: i32
+    h: i32
+    refresh_rate: i32
     driverdata: any*
 
 module sdl2 from "SDL2/SDL.h" =
     // --- Extern structs ---
     extern struct SDL_Rect as rect =
-        x: int32
-        y: int32
-        w: int32
-        h: int32
+        x: i32
+        y: i32
+        w: i32
+        h: i32
 
     extern struct SDL_Point as point =
-        x: int32
-        y: int32
+        x: i32
+        y: i32
 
     // --- Init flags ---
-    extern SDL_INIT_VIDEO as init_video: uint32
-    extern SDL_INIT_AUDIO as init_audio: uint32
+    extern SDL_INIT_VIDEO as init_video: u32
+    extern SDL_INIT_AUDIO as init_audio: u32
 
     // --- Window flags ---
-    extern SDL_WINDOW_SHOWN as window_shown: uint32
-    extern SDL_WINDOW_FULLSCREEN_DESKTOP as window_fullscreen_desktop: uint32
-    extern SDL_WINDOW_ALLOW_HIGHDPI as window_allow_highdpi: uint32
-    extern SDL_WINDOW_BORDERLESS as window_borderless: uint32
-    extern SDL_WINDOW_RESIZABLE as window_resizable: uint32
-    extern SDL_WINDOWPOS_CENTERED as pos_centered: int32
+    extern SDL_WINDOW_SHOWN as window_shown: u32
+    extern SDL_WINDOW_FULLSCREEN_DESKTOP as window_fullscreen_desktop: u32
+    extern SDL_WINDOW_ALLOW_HIGHDPI as window_allow_highdpi: u32
+    extern SDL_WINDOW_BORDERLESS as window_borderless: u32
+    extern SDL_WINDOW_RESIZABLE as window_resizable: u32
+    extern SDL_WINDOWPOS_CENTERED as pos_centered: i32
 
     // --- Renderer flags ---
-    extern SDL_RENDERER_SOFTWARE as renderer_sw: uint32
-    extern SDL_RENDERER_ACCELERATED as renderer_accel: uint32
-    extern SDL_RENDERER_PRESENTVSYNC as renderer_vsync: uint32
+    extern SDL_RENDERER_SOFTWARE as renderer_sw: u32
+    extern SDL_RENDERER_ACCELERATED as renderer_accel: u32
+    extern SDL_RENDERER_PRESENTVSYNC as renderer_vsync: u32
 
     // --- Blend modes ---
-    extern SDL_BLENDMODE_NONE as blend_none: int32
-    extern SDL_BLENDMODE_BLEND as blend_alpha: int32
-    extern SDL_BLENDMODE_ADD as blend_add: int32
+    extern SDL_BLENDMODE_NONE as blend_none: i32
+    extern SDL_BLENDMODE_BLEND as blend_alpha: i32
+    extern SDL_BLENDMODE_ADD as blend_add: i32
 
     // --- Events ---
-    extern SDL_QUIT as quit_event: int32
-    extern SDL_KEYDOWN as keydown_event: int32
-    extern SDL_KEYUP as keyup_event: int32
-    extern SDL_WINDOWEVENT as windowevent: int32
+    extern SDL_QUIT as quit_event: i32
+    extern SDL_KEYDOWN as keydown_event: i32
+    extern SDL_KEYUP as keyup_event: i32
+    extern SDL_WINDOWEVENT as windowevent: i32
 
     // SDL_WindowEvent subtypes (event.window.event). We only watch
     // SIZE_CHANGED — fires for any drawable size change (user
     // resize, fullscreen toggle, DPI change on cross-monitor move
     // under permonitorv2), making it a single hook for re-picking
     // the supersample factor.
-    extern SDL_WINDOWEVENT_SIZE_CHANGED as windowevent_size_changed: uint8
+    extern SDL_WINDOWEVENT_SIZE_CHANGED as windowevent_size_changed: u8
 
     // --- Keys ---
-    extern SDLK_UP as key_up: int32
-    extern SDLK_DOWN as key_down: int32
-    extern SDLK_LEFT as key_left: int32
-    extern SDLK_RIGHT as key_right: int32
-    extern SDLK_ESCAPE as key_escape: int32
-    extern SDLK_SPACE as key_space: int32
-    extern SDLK_RETURN as key_return: int32
-    extern SDLK_z as key_z: int32
-    extern SDLK_x as key_x: int32
-    extern SDLK_a as key_a: int32
-    extern SDLK_b as key_b: int32
-    extern SDLK_d as key_d: int32
-    extern SDLK_e as key_e: int32
-    extern SDLK_f as key_f: int32
-    extern SDLK_g as key_g: int32
-    extern SDLK_h as key_h: int32
-    extern SDLK_i as key_i: int32
-    extern SDLK_j as key_j: int32
-    extern SDLK_k as key_k: int32
-    extern SDLK_l as key_l: int32
-    extern SDLK_n as key_n: int32
-    extern SDLK_o as key_o: int32
-    extern SDLK_p as key_p: int32
-    extern SDLK_q as key_q: int32
-    extern SDLK_c as key_c: int32
-    extern SDLK_r as key_r: int32
-    extern SDLK_t as key_t: int32
-    extern SDLK_u as key_u: int32
-    extern SDLK_w as key_w: int32
-    extern SDLK_F11 as key_f11: int32
-    extern SDLK_s as key_s: int32
-    extern SDLK_m as key_m: int32
-    extern SDLK_y as key_y: int32
-    extern SDLK_v as key_v: int32
-    extern SDLK_BACKSPACE as key_backspace: int32
-    extern SDLK_PAGEUP as key_pageup: int32
-    extern SDLK_PAGEDOWN as key_pagedown: int32
-    extern SDLK_LSHIFT as key_lshift: int32
-    extern SDLK_TAB as key_tab: int32
-    extern SDLK_LALT as key_lalt: int32
-    extern SDLK_LCTRL as key_lctrl: int32
-    extern SDLK_0 as key_0: int32
-    extern SDLK_1 as key_1: int32
-    extern SDLK_2 as key_2: int32
-    extern SDLK_3 as key_3: int32
-    extern SDLK_4 as key_4: int32
-    extern SDLK_5 as key_5: int32
-    extern SDLK_6 as key_6: int32
-    extern SDLK_7 as key_7: int32
-    extern SDLK_8 as key_8: int32
-    extern SDLK_9 as key_9: int32
+    extern SDLK_UP as key_up: i32
+    extern SDLK_DOWN as key_down: i32
+    extern SDLK_LEFT as key_left: i32
+    extern SDLK_RIGHT as key_right: i32
+    extern SDLK_ESCAPE as key_escape: i32
+    extern SDLK_SPACE as key_space: i32
+    extern SDLK_RETURN as key_return: i32
+    extern SDLK_z as key_z: i32
+    extern SDLK_x as key_x: i32
+    extern SDLK_a as key_a: i32
+    extern SDLK_b as key_b: i32
+    extern SDLK_d as key_d: i32
+    extern SDLK_e as key_e: i32
+    extern SDLK_f as key_f: i32
+    extern SDLK_g as key_g: i32
+    extern SDLK_h as key_h: i32
+    extern SDLK_i as key_i: i32
+    extern SDLK_j as key_j: i32
+    extern SDLK_k as key_k: i32
+    extern SDLK_l as key_l: i32
+    extern SDLK_n as key_n: i32
+    extern SDLK_o as key_o: i32
+    extern SDLK_p as key_p: i32
+    extern SDLK_q as key_q: i32
+    extern SDLK_c as key_c: i32
+    extern SDLK_r as key_r: i32
+    extern SDLK_t as key_t: i32
+    extern SDLK_u as key_u: i32
+    extern SDLK_w as key_w: i32
+    extern SDLK_F11 as key_f11: i32
+    extern SDLK_s as key_s: i32
+    extern SDLK_m as key_m: i32
+    extern SDLK_y as key_y: i32
+    extern SDLK_v as key_v: i32
+    extern SDLK_BACKSPACE as key_backspace: i32
+    extern SDLK_PAGEUP as key_pageup: i32
+    extern SDLK_PAGEDOWN as key_pagedown: i32
+    extern SDLK_LSHIFT as key_lshift: i32
+    extern SDLK_TAB as key_tab: i32
+    extern SDLK_LALT as key_lalt: i32
+    extern SDLK_LCTRL as key_lctrl: i32
+    extern SDLK_0 as key_0: i32
+    extern SDLK_1 as key_1: i32
+    extern SDLK_2 as key_2: i32
+    extern SDLK_3 as key_3: i32
+    extern SDLK_4 as key_4: i32
+    extern SDLK_5 as key_5: i32
+    extern SDLK_6 as key_6: i32
+    extern SDLK_7 as key_7: i32
+    extern SDLK_8 as key_8: i32
+    extern SDLK_9 as key_9: i32
 
     // --- Lifecycle ---
-    extern SDL_Init as init: (uint32) -> int32
+    extern SDL_Init as init: (u32) -> i32
     extern SDL_Quit as quit: () -> void
-    extern SDL_SetHint as set_hint: (const cstr, const cstr) -> int32
+    extern SDL_SetHint as set_hint: (const cstr, const cstr) -> i32
 
     // --- Display ---
-    extern SDL_GetNumVideoDisplays as num_video_displays: () -> int32
-    extern SDL_GetDisplayBounds as get_display_bounds: (int32, rect*) -> int32
-    extern SDL_GetDisplayUsableBounds as get_display_usable_bounds: (int32, rect*) -> int32
+    extern SDL_GetNumVideoDisplays as num_video_displays: () -> i32
+    extern SDL_GetDisplayBounds as get_display_bounds: (i32, rect*) -> i32
+    extern SDL_GetDisplayUsableBounds as get_display_usable_bounds: (i32, rect*) -> i32
     // Active desktop video mode for a display. SDL_DisplayMode is a tagless
     // typedef (`typedef struct { ... } SDL_DisplayMode;`), which FC's
     // `extern struct` can't bind — it always emits `struct <name>`, and there
@@ -143,8 +143,8 @@ module sdl2 from "SDL2/SDL.h" =
     // a `from` C-interop module body permits only extern declarations). Only
     // `refresh_rate` (Hz) is read: the vsync cadence present() is pinned to,
     // for the debug overlay's frame budget. Returns 0 on success.
-    extern SDL_GetWindowDisplayIndex as window_display_index: (any*) -> int32
-    extern SDL_GetCurrentDisplayMode as current_display_mode: (int32, any*) -> int32
+    extern SDL_GetWindowDisplayIndex as window_display_index: (any*) -> i32
+    extern SDL_GetCurrentDisplayMode as current_display_mode: (i32, any*) -> i32
     // Active video backend ("wayland", "x11", …) — set by $SDL_VIDEODRIVER or
     // auto-picked. Diagnostic: native Wayland vs XWayland behave differently
     // under fractional display scaling. Returns NULL before SDL_Init.
@@ -152,109 +152,109 @@ module sdl2 from "SDL2/SDL.h" =
     extern SDL_GetError as get_error: () -> cstr
 
     // --- Window ---
-    extern SDL_CreateWindow as create_window: (const cstr, int32, int32, int32, int32, uint32) -> any*
+    extern SDL_CreateWindow as create_window: (const cstr, i32, i32, i32, i32, u32) -> any*
     extern SDL_DestroyWindow as destroy_window: (any*) -> void
     extern SDL_SetWindowTitle as set_title: (any*, const cstr) -> void
-    extern SDL_SetWindowFullscreen as set_fullscreen: (any*, uint32) -> int32
-    extern SDL_GetWindowSize as get_window_size: (any*, int32*, int32*) -> void
-    extern SDL_SetWindowSize as set_window_size: (any*, int32, int32) -> void
-    extern SDL_SetWindowPosition as set_window_position: (any*, int32, int32) -> void
-    extern SDL_SetWindowBordered as set_bordered: (any*, int32) -> void
-    extern SDL_SetWindowResizable as set_resizable: (any*, int32) -> void
+    extern SDL_SetWindowFullscreen as set_fullscreen: (any*, u32) -> i32
+    extern SDL_GetWindowSize as get_window_size: (any*, i32*, i32*) -> void
+    extern SDL_SetWindowSize as set_window_size: (any*, i32, i32) -> void
+    extern SDL_SetWindowPosition as set_window_position: (any*, i32, i32) -> void
+    extern SDL_SetWindowBordered as set_bordered: (any*, i32) -> void
+    extern SDL_SetWindowResizable as set_resizable: (any*, i32) -> void
     extern SDL_MaximizeWindow as maximize_window: (any*) -> void
     extern SDL_RestoreWindow as restore_window: (any*) -> void
-    extern SDL_ShowCursor as show_cursor: (int32) -> int32
+    extern SDL_ShowCursor as show_cursor: (i32) -> i32
 
     // --- Renderer ---
     extern struct SDL_RendererInfo as renderer_info =
         name: any*
-        flags: uint32
-        num_texture_formats: uint32
-        texture_formats: uint32[16]
-        max_texture_width: int32
-        max_texture_height: int32
+        flags: u32
+        num_texture_formats: u32
+        texture_formats: u32[16]
+        max_texture_width: i32
+        max_texture_height: i32
 
-    extern SDL_CreateRenderer as create_renderer: (any*, int32, uint32) -> any*
+    extern SDL_CreateRenderer as create_renderer: (any*, i32, u32) -> any*
     extern SDL_DestroyRenderer as destroy_renderer: (any*) -> void
-    extern SDL_GetRendererInfo as get_renderer_info: (any*, renderer_info*) -> int32
-    extern SDL_RenderSetLogicalSize as set_logical_size: (any*, int32, int32) -> int32
-    extern SDL_GetRendererOutputSize as get_output_size: (any*, int32*, int32*) -> int32
-    extern SDL_SetRenderDrawColor as set_color: (any*, uint8, uint8, uint8, uint8) -> int32
-    extern SDL_SetRenderDrawBlendMode as set_blend_mode: (any*, int32) -> int32
-    extern SDL_RenderClear as clear: (any*) -> int32
-    extern SDL_RenderFillRect as fill_rect: (any*, const rect*) -> int32
-    extern SDL_RenderDrawRect as draw_rect: (any*, const rect*) -> int32
-    extern SDL_RenderDrawLine as draw_line: (any*, int32, int32, int32, int32) -> int32
-    extern SDL_RenderDrawPoint as draw_point: (any*, int32, int32) -> int32
+    extern SDL_GetRendererInfo as get_renderer_info: (any*, renderer_info*) -> i32
+    extern SDL_RenderSetLogicalSize as set_logical_size: (any*, i32, i32) -> i32
+    extern SDL_GetRendererOutputSize as get_output_size: (any*, i32*, i32*) -> i32
+    extern SDL_SetRenderDrawColor as set_color: (any*, u8, u8, u8, u8) -> i32
+    extern SDL_SetRenderDrawBlendMode as set_blend_mode: (any*, i32) -> i32
+    extern SDL_RenderClear as clear: (any*) -> i32
+    extern SDL_RenderFillRect as fill_rect: (any*, const rect*) -> i32
+    extern SDL_RenderDrawRect as draw_rect: (any*, const rect*) -> i32
+    extern SDL_RenderDrawLine as draw_line: (any*, i32, i32, i32, i32) -> i32
+    extern SDL_RenderDrawPoint as draw_point: (any*, i32, i32) -> i32
     extern SDL_RenderPresent as present: (any*) -> void
 
     // --- Textures ---
-    extern SDL_PIXELFORMAT_ARGB8888 as pixel_argb8888: uint32
-    extern SDL_TEXTUREACCESS_STREAMING as tex_streaming: int32
-    extern SDL_CreateTexture as create_texture: (any*, uint32, int32, int32, int32) -> any*
+    extern SDL_PIXELFORMAT_ARGB8888 as pixel_argb8888: u32
+    extern SDL_TEXTUREACCESS_STREAMING as tex_streaming: i32
+    extern SDL_CreateTexture as create_texture: (any*, u32, i32, i32, i32) -> any*
     extern SDL_DestroyTexture as destroy_texture: (any*) -> void
-    extern SDL_UpdateTexture as update_texture: (any*, any*, const any*, int32) -> int32
-    extern SDL_RenderCopy as render_copy: (any*, any*, any*, any*) -> int32
+    extern SDL_UpdateTexture as update_texture: (any*, any*, const any*, i32) -> i32
+    extern SDL_RenderCopy as render_copy: (any*, any*, any*, any*) -> i32
 
     // --- Timing ---
-    extern SDL_Delay as delay: (uint32) -> void
-    extern SDL_GetTicks as get_ticks: () -> uint32
+    extern SDL_Delay as delay: (u32) -> void
+    extern SDL_GetTicks as get_ticks: () -> u32
     // High-resolution monotonic counter + its tick frequency (ticks/sec),
     // for sub-millisecond frame timing the millisecond GetTicks can't give.
-    extern SDL_GetPerformanceCounter as get_perf_counter: () -> uint64
-    extern SDL_GetPerformanceFrequency as get_perf_frequency: () -> uint64
+    extern SDL_GetPerformanceCounter as get_perf_counter: () -> u64
+    extern SDL_GetPerformanceFrequency as get_perf_frequency: () -> u64
 
     // --- Audio ---
-    extern AUDIO_S16SYS as audio_s16sys: uint16
+    extern AUDIO_S16SYS as audio_s16sys: u16
 
     extern struct SDL_AudioSpec as audio_spec =
-        freq: int32
-        format: uint16
-        channels: uint8
-        silence: uint8
-        samples: uint16
-        padding: uint16
-        size: uint32
+        freq: i32
+        format: u16
+        channels: u8
+        silence: u8
+        samples: u16
+        padding: u16
+        size: u32
         callback: any*
         userdata: any*
 
-    extern SDL_OpenAudioDevice as open_audio: (any*, int32, const audio_spec*, audio_spec*, int32) -> uint32
-    extern SDL_PauseAudioDevice as pause_audio: (uint32, int32) -> void
-    extern SDL_CloseAudioDevice as close_audio: (uint32) -> void
+    extern SDL_OpenAudioDevice as open_audio: (any*, i32, const audio_spec*, audio_spec*, i32) -> u32
+    extern SDL_PauseAudioDevice as pause_audio: (u32, i32) -> void
+    extern SDL_CloseAudioDevice as close_audio: (u32) -> void
     // Name of the driver the audio subsystem actually initialized with
     // (NULL before SDL_Init(SDL_INIT_AUDIO) or after a failed init).
     extern SDL_GetCurrentAudioDriver as get_current_audio_driver: () -> const cstr
     // Preferred spec of the default output device (SDL >= 2.24). The first
     // arg receives a heap-allocated name (char**) — we always pass NULL and
     // skip it. Returns 0 on success; not every backend supports the query.
-    extern SDL_GetDefaultAudioInfo as get_default_audio_info: (any*, audio_spec*, int32) -> int32
+    extern SDL_GetDefaultAudioInfo as get_default_audio_info: (any*, audio_spec*, i32) -> i32
 
     // --- Events ---
     extern struct SDL_Keysym as sdl_keysym =
-        scancode: int32
-        sym: int32
-        mod: uint16
+        scancode: i32
+        sym: i32
+        mod: u16
     extern struct SDL_KeyboardEvent as keyboard_event =
-        type: uint32
-        repeat: uint8
+        type: u32
+        repeat: u8
         keysym: sdl_keysym
     // SDL_WindowEvent — emitted with type == SDL_WINDOWEVENT. The
     // `event` field is the subtype (e.g. SIZE_CHANGED). data1/data2
     // carry payload (new width/height for resize). Padding fields
     // are present in the C struct but FC doesn't need them named.
     extern struct SDL_WindowEvent as window_event =
-        type: uint32
-        timestamp: uint32
-        windowID: uint32
-        event: uint8
-        padding1: uint8
-        padding2: uint8
-        padding3: uint8
-        data1: int32
-        data2: int32
+        type: u32
+        timestamp: u32
+        windowID: u32
+        event: u8
+        padding1: u8
+        padding2: u8
+        padding3: u8
+        data1: i32
+        data2: i32
     extern union SDL_Event as sdl_event =
-        type: uint32
+        type: u32
         key: keyboard_event
         window: window_event
-    extern SDL_PollEvent as poll_event: (sdl_event*) -> int32
+    extern SDL_PollEvent as poll_event: (sdl_event*) -> i32
     extern SDL_PumpEvents as pump_events: () -> void

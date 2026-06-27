@@ -20,13 +20,13 @@ module dir =
     let nodir     = 8
 
     // Unit-vector lookup (wolf-fc game coords: +x east, +y south).
-    let vx = float64[8] { 1.0,  0.7071068,  0.0, -0.7071068, -1.0, -0.7071068,  0.0,  0.7071068 }
-    let vy = float64[8] { 0.0, -0.7071068, -1.0, -0.7071068,  0.0,  0.7071068,  1.0,  0.7071068 }
+    let vx = f64[8] { 1.0,  0.7071068,  0.0, -0.7071068, -1.0, -0.7071068,  0.0,  0.7071068 }
+    let vy = f64[8] { 0.0, -0.7071068, -1.0, -0.7071068,  0.0,  0.7071068,  1.0,  0.7071068 }
     // Integer tile-step lookup (for grid-aligned moves).
-    let dx = int32[8]   { 1,  1,  0, -1, -1, -1,  0,  1 }
-    let dy = int32[8]   { 0, -1, -1, -1,  0,  1,  1,  1 }
+    let dx = i32[8]   { 1,  1,  0, -1, -1, -1,  0,  1 }
+    let dy = i32[8]   { 0, -1, -1, -1,  0,  1,  1,  1 }
     // Opposite direction (for "don't turn straight around first").
-    let opposite = int32[8] { 4, 5, 6, 7, 0, 1, 2, 3 }
+    let opposite = i32[8] { 4, 5, 6, 7, 0, 1, 2, 3 }
 
 
 // ============================================================
@@ -49,7 +49,7 @@ module enemies =
     // interactive runs can seed from sys.time() — see main() for
     // the seed selection.
     let rnd_byte = (g: game*) ->
-        (int32) (random.pcg_random.next_uint32(&g->rng_enemy) & 0xFFu32)
+        (i32) (random.pcg_random.next_u32(&g->rng_enemy) & 0xFFu32)
 
     union enemy_kind =
         | guard
@@ -105,24 +105,24 @@ module enemies =
     // place; the live/dead distinction is `state == dead` (no separate
     // `alive` flag).
     struct enemy =
-        x: float64
-        y: float64
-        tile_x: int32             // integer tile — authoritative for AI / LOS
-        tile_y: int32
+        x: f64
+        y: f64
+        tile_x: i32           // integer tile — authoritative for AI / LOS
+        tile_y: i32
         kind: enemy_kind
         state: enemy_state
-        dir: int32                // 0..7 or 8 (nodir)
-        hp: int32
-        anim_frame: int32         // index into the state's frame list (walk 0-3, shoot 0-2, die 0-3)
-        anim_timer: float64       // seconds until next anim transition
-        move_remaining: float64   // distance (tiles) left to reach the next tile center
-        dist_to_player: float64   // squared distance, used for draw sort
-        dist_flat: float64        // tile-grid distance, used for some AI decisions
-        ambush: bool              // tile 106 (AMBUSH) — don't wake on sound, only LOS
-        notified: bool            // has entered active pursuit at least once (suppresses re-alert sound)
-        reaction_timer: float64   // seconds left between first detection and actual wake; 0 when not yet detected (mirrors the original's sight-delay)
-        last_visible: bool        // refreshed by ai.update_enemies each tick (post-move, like the original's refresh-time FL_VISABLE) when the enemy is on screen; read on the following tick by fire_at_player to pick the steeper hitchance falloff
-        touch_cooldown: float64   // ghost-only: refractory window after a bite. The original steps the ghost physically back out of the player's contact bbox after a hit; our advance_move is grid-based, so we emulate the gap with a short timer.
+        dir: i32              // 0..7 or 8 (nodir)
+        hp: i32
+        anim_frame: i32       // index into the state's frame list (walk 0-3, shoot 0-2, die 0-3)
+        anim_timer: f64       // seconds until next anim transition
+        move_remaining: f64   // distance (tiles) left to reach the next tile center
+        dist_to_player: f64   // squared distance, used for draw sort
+        dist_flat: f64        // tile-grid distance, used for some AI decisions
+        ambush: bool          // tile 106 (AMBUSH) — don't wake on sound, only LOS
+        notified: bool        // has entered active pursuit at least once (suppresses re-alert sound)
+        reaction_timer: f64   // seconds left between first detection and actual wake; 0 when not yet detected (mirrors the original's sight-delay)
+        last_visible: bool    // refreshed by ai.update_enemies each tick (post-move, like the original's refresh-time FL_VISABLE) when the enemy is on screen; read on the following tick by fire_at_player to pick the steeper hitchance falloff
+        touch_cooldown: f64   // ghost-only: refractory window after a bite. The original steps the ghost physically back out of the player's contact bbox after a hit; our advance_move is grid-based, so we emulate the gap with a short timer.
         // Mommy Mode fade-on-death state. Set at the moment kill_enemy
         // (or death_cam pre_replay) transitions the enemy into `die`:
         // mommy_fade_page caches the live sprite page the enemy was
@@ -132,8 +132,8 @@ module enemies =
         // falls back to the regular per-state lookup (so an enemy
         // loaded mid-fade from a save file simply finishes
         // disappearing without the cached angle).
-        mommy_fade_t: float64
-        mommy_fade_page: int32
+        mommy_fade_t: f64
+        mommy_fade_page: i32
 
     // Tunables — see ai.update_enemies for how each is used.
     let max_enemies = 150
@@ -172,7 +172,7 @@ module enemies =
     // across active scenarios) — the closest the slider gets to a
     // pure difficulty knob without an AI rework.
     private let enemy_speed_factor = (g: game*) ->
-        (float64) g->enemy_speed_pct / 100.0
+        (f64) g->enemy_speed_pct / 100.0
 
     // Per-kind sprite-page offsets relative to VSWAP sprite_start. Derived
     // from the original's enemy sprite blocks: guard at 50, dog at 99 (no
@@ -181,24 +181,24 @@ module enemies =
     //   walk_base  : 32 frames = 4 walk phases × 8 angles
     //   pain / die / dead / shoot : single-view pages (no angle variants)
     struct sprite_table =
-        stand_base: int32
-        walk_base: int32
-        pain1: int32
-        pain2: int32
-        die_frames: int32[4]
-        num_die_frames: int32
-        dead_frame: int32
+        stand_base: i32
+        walk_base: i32
+        pain1: i32
+        pain2: i32
+        die_frames: i32[4]
+        num_die_frames: i32
+        dead_frame: i32
         // 9 slots: SS and Fake Hitler have 9-frame shoot cycles in the
         // original. Shorter cycles leave the trailing entries unused —
         // `num_shoot_frames` bounds the iteration.
-        shoot_frames: int32[9]
+        shoot_frames: i32[9]
         // Per-frame hold time in seconds. Mirrors the original's state
         // tables, where each frame's `tictime` varies (typically 6, 8,
         // 10, 20, or 30 tics @ 70Hz). Variable timings preserve the
         // long pre-fire windup before bursts and the short bursts
         // themselves; uniform timings would smear both.
-        shoot_times:  float64[9]
-        num_shoot_frames: int32
+        shoot_times:  f64[9]
+        num_shoot_frames: i32
 
     // True iff this kind uses the 8-angle rotating walk-sprite table
     // (guards, SS, officers, dogs, mutants). Bosses and ghosts are
@@ -214,8 +214,8 @@ module enemies =
     // per-difficulty starting-HP table. Mutants, fake Hitler, and every
     // boss scale up from baby → death incarnate; grunts and dogs are
     // constant across difficulties.
-    let hp_for_kind = (k: enemy_kind, d: int32) ->
-        let diff_pick = (baby: int32, easy: int32, med: int32, hard: int32) ->
+    let hp_for_kind = (k: enemy_kind, d: i32) ->
+        let diff_pick = (baby: i32, easy: i32, med: i32, hard: i32) ->
             if d == 0 then baby else if d == 1 then easy
             else if d == 2 then med else hard
         match k with
@@ -384,10 +384,10 @@ module enemies =
     private let sprites_guard = sprite_table {
         stand_base = 50, walk_base = 58,
         pain1 = 90, pain2 = 94,
-        die_frames = int32[4] { 91, 92, 93, 0 }, num_die_frames = 3,
+        die_frames = i32[4] { 91, 92, 93, 0 }, num_die_frames = 3,
         dead_frame = 95,
-        shoot_frames = int32[9] { 96, 97, 98, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = float64[9] { 20.0/70.0, 20.0/70.0, 20.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[9] { 96, 97, 98, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[9] { 20.0/70.0, 20.0/70.0, 20.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 3
     }
     // Dog jump-bite: JUMP1 → JUMP2 (bite) → JUMP3 → JUMP1 → idle.
@@ -395,10 +395,10 @@ module enemies =
     private let sprites_dog = sprite_table {
         stand_base = 99, walk_base = 99,
         pain1 = 99, pain2 = 99,  // dogs don't show pain
-        die_frames = int32[4] { 131, 132, 133, 0 }, num_die_frames = 3,
+        die_frames = i32[4] { 131, 132, 133, 0 }, num_die_frames = 3,
         dead_frame = 134,
-        shoot_frames = int32[9] { 135, 136, 137, 135, 99, 0, 0, 0, 0 },
-        shoot_times  = float64[9] { 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[9] { 135, 136, 137, 135, 99, 0, 0, 0, 0 },
+        shoot_times  = f64[9] { 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 5
     }
     // SS bounces between SHOOT2/SHOOT3 four times after the initial
@@ -407,10 +407,10 @@ module enemies =
     private let sprites_ss = sprite_table {
         stand_base = 138, walk_base = 146,
         pain1 = 178, pain2 = 182,
-        die_frames = int32[4] { 179, 180, 181, 0 }, num_die_frames = 3,
+        die_frames = i32[4] { 179, 180, 181, 0 }, num_die_frames = 3,
         dead_frame = 183,
-        shoot_frames = int32[9] { 184, 185, 186, 185, 186, 185, 186, 185, 186 },
-        shoot_times  = float64[9] { 20.0/70.0, 20.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0 },
+        shoot_frames = i32[9] { 184, 185, 186, 185, 186, 185, 186, 185, 186 },
+        shoot_times  = f64[9] { 20.0/70.0, 20.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0 },
         num_shoot_frames = 9
     }
     // Mutant fires twice per cycle with no real windup — SHOOT1 (6t)
@@ -419,10 +419,10 @@ module enemies =
     private let sprites_mut = sprite_table {
         stand_base = 187, walk_base = 195,
         pain1 = 227, pain2 = 231,
-        die_frames = int32[4] { 228, 229, 230, 232 }, num_die_frames = 4,
+        die_frames = i32[4] { 228, 229, 230, 232 }, num_die_frames = 4,
         dead_frame = 233,
-        shoot_frames = int32[9] { 234, 235, 236, 237, 0, 0, 0, 0, 0 },
-        shoot_times  = float64[9] { 6.0/70.0, 20.0/70.0, 10.0/70.0, 20.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[9] { 234, 235, 236, 237, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[9] { 6.0/70.0, 20.0/70.0, 10.0/70.0, 20.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 4
     }
     // Officer: short SHOOT1 (6t) windup, long SHOOT2 (20t) fire frame,
@@ -430,10 +430,10 @@ module enemies =
     private let sprites_ofc = sprite_table {
         stand_base = 238, walk_base = 246,
         pain1 = 278, pain2 = 282,
-        die_frames = int32[4] { 279, 280, 281, 283 }, num_die_frames = 4,
+        die_frames = i32[4] { 279, 280, 281, 283 }, num_die_frames = 4,
         dead_frame = 284,
-        shoot_frames = int32[9] { 285, 286, 287, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = float64[9] { 6.0/70.0, 20.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[9] { 285, 286, 287, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[9] { 6.0/70.0, 20.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 3
     }
     // Hans Grosse — chain-gun boss. SHOOT1 windup (30t) then six
@@ -442,20 +442,20 @@ module enemies =
     private let sprites_hans = sprite_table {
         stand_base = 296, walk_base = 296,
         pain1 = 300, pain2 = 300,
-        die_frames = int32[4] { 304, 305, 306, 0 }, num_die_frames = 3,
+        die_frames = i32[4] { 304, 305, 306, 0 }, num_die_frames = 3,
         dead_frame = 303,
-        shoot_frames = int32[9] { 300, 301, 302, 301, 302, 301, 302, 300, 0 },
-        shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0 },
+        shoot_frames = i32[9] { 300, 301, 302, 301, 302, 301, 302, 300, 0 },
+        shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0 },
         num_shoot_frames = 8
     }
     // Schabbs: 30t windup, 10t throw — single needle per cycle.
     private let sprites_schabbs = sprite_table {
         stand_base = 307, walk_base = 307,
         pain1 = 311, pain2 = 311,
-        die_frames = int32[4] { 313, 314, 315, 0 }, num_die_frames = 3,
+        die_frames = i32[4] { 313, 314, 315, 0 }, num_die_frames = 3,
         dead_frame = 316,
-        shoot_frames = int32[9] { 311, 312, 0, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[9] { 311, 312, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 2
     }
     // Fake Hitler: only one SHOOT pose (325); FIRE1/FIRE2 are projectile
@@ -465,10 +465,10 @@ module enemies =
     private let sprites_hitler_fake = sprite_table {
         stand_base = 321, walk_base = 321,
         pain1 = 325, pain2 = 325,
-        die_frames = int32[4] { 328, 329, 330, 331 }, num_die_frames = 4,
+        die_frames = i32[4] { 328, 329, 330, 331 }, num_die_frames = 4,
         dead_frame = 333,
-        shoot_frames = int32[9] { 325, 325, 325, 325, 325, 325, 325, 325, 325 },
-        shoot_times  = float64[9] { 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0 },
+        shoot_frames = i32[9] { 325, 325, 325, 325, 325, 325, 325, 325, 325 },
+        shoot_times  = f64[9] { 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0 },
         num_shoot_frames = 9
     }
     // Mecha Hitler — the armored mech suit. SHOOT1 (30t windup) then
@@ -478,10 +478,10 @@ module enemies =
     private let sprites_mecha_hitler = sprite_table {
         stand_base = 334, walk_base = 334,
         pain1 = 338, pain2 = 338,
-        die_frames = int32[4] { 342, 343, 344, 0 }, num_die_frames = 3,
+        die_frames = i32[4] { 342, 343, 344, 0 }, num_die_frames = 3,
         dead_frame = 341,
-        shoot_frames = int32[9] { 338, 339, 340, 339, 340, 339, 0, 0, 0 },
-        shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[9] { 338, 339, 340, 339, 340, 339, 0, 0, 0 },
+        shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 6
     }
     // Real Hitler — same shoot cadence as Mecha (30/10×5). Has 7 die
@@ -489,20 +489,20 @@ module enemies =
     private let sprites_hitler = sprite_table {
         stand_base = 345, walk_base = 345,
         pain1 = 349, pain2 = 349,
-        die_frames = int32[4] { 353, 354, 355, 356 }, num_die_frames = 4,
+        die_frames = i32[4] { 353, 354, 355, 356 }, num_die_frames = 4,
         dead_frame = 352,
-        shoot_frames = int32[9] { 349, 350, 351, 350, 351, 350, 0, 0, 0 },
-        shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[9] { 349, 350, 351, 350, 351, 350, 0, 0, 0 },
+        shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 6
     }
     // Giftmacher: 30t windup, 10t rocket throw — single rocket per cycle.
     private let sprites_giftmacher = sprite_table {
         stand_base = 360, walk_base = 360,
         pain1 = 364, pain2 = 364,
-        die_frames = int32[4] { 366, 367, 368, 0 }, num_die_frames = 3,
+        die_frames = i32[4] { 366, 367, 368, 0 }, num_die_frames = 3,
         dead_frame = 369,
-        shoot_frames = int32[9] { 364, 365, 0, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[9] { 364, 365, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 2
     }
     // Gretel: same chain-gun cadence as Hans. Sprite block is placed
@@ -510,10 +510,10 @@ module enemies =
     private let sprites_gretel = sprite_table {
         stand_base = 385, walk_base = 385,
         pain1 = 389, pain2 = 389,
-        die_frames = int32[4] { 393, 394, 395, 0 }, num_die_frames = 3,
+        die_frames = i32[4] { 393, 394, 395, 0 }, num_die_frames = 3,
         dead_frame = 392,
-        shoot_frames = int32[9] { 389, 390, 391, 390, 391, 390, 391, 389, 0 },
-        shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0 },
+        shoot_frames = i32[9] { 389, 390, 391, 390, 391, 390, 391, 389, 0 },
+        shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0 },
         num_shoot_frames = 8
     }
     // Fat Face (E6 boss): 4 walk, 4 shoot, 3 die, 1 dead at 396..407.
@@ -524,10 +524,10 @@ module enemies =
     private let sprites_fat = sprite_table {
         stand_base = 396, walk_base = 396,
         pain1 = 400, pain2 = 400,
-        die_frames = int32[4] { 404, 405, 406, 0 }, num_die_frames = 3,
+        die_frames = i32[4] { 404, 405, 406, 0 }, num_die_frames = 3,
         dead_frame = 407,
-        shoot_frames = int32[9] { 400, 401, 402, 403, 402, 403, 0, 0, 0 },
-        shoot_times  = float64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[9] { 400, 401, 402, 403, 402, 403, 0, 0, 0 },
+        shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 6
     }
     // Pacman ghosts: 288..295, 2 walk frames each, no other states.
@@ -536,37 +536,37 @@ module enemies =
     private let sprites_blinky = sprite_table {
         stand_base = 288, walk_base = 288,
         pain1 = 288, pain2 = 289,
-        die_frames = int32[4] { 288, 289, 0, 0 }, num_die_frames = 2,
+        die_frames = i32[4] { 288, 289, 0, 0 }, num_die_frames = 2,
         dead_frame = 289,
-        shoot_frames = int32[9] { 288, 0, 0, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = float64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[9] { 288, 0, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 1
     }
     private let sprites_pinky = sprite_table {
         stand_base = 290, walk_base = 290,
         pain1 = 290, pain2 = 291,
-        die_frames = int32[4] { 290, 291, 0, 0 }, num_die_frames = 2,
+        die_frames = i32[4] { 290, 291, 0, 0 }, num_die_frames = 2,
         dead_frame = 291,
-        shoot_frames = int32[9] { 290, 0, 0, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = float64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[9] { 290, 0, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 1
     }
     private let sprites_clyde = sprite_table {
         stand_base = 292, walk_base = 292,
         pain1 = 292, pain2 = 293,
-        die_frames = int32[4] { 292, 293, 0, 0 }, num_die_frames = 2,
+        die_frames = i32[4] { 292, 293, 0, 0 }, num_die_frames = 2,
         dead_frame = 293,
-        shoot_frames = int32[9] { 292, 0, 0, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = float64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[9] { 292, 0, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 1
     }
     private let sprites_inky = sprite_table {
         stand_base = 294, walk_base = 294,
         pain1 = 294, pain2 = 295,
-        die_frames = int32[4] { 294, 295, 0, 0 }, num_die_frames = 2,
+        die_frames = i32[4] { 294, 295, 0, 0 }, num_die_frames = 2,
         dead_frame = 295,
-        shoot_frames = int32[9] { 294, 0, 0, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = float64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[9] { 294, 0, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 1
     }
 
@@ -594,11 +594,11 @@ module enemies =
     // from the enemy to (px, py) (usually the player): the bearing
     // atan2(e2p_y, e2p_x) minus the enemy's facing, quantized into 8
     // bins with a 22.5° (pi/8) offset.
-    private let angle_sprite = (e: const enemy*, px: float64, py: float64, base: int32) ->
+    private let angle_sprite = (e: const enemy*, px: f64, py: f64, base: i32) ->
         let e2p_x = px - e->x
         let e2p_y = e->y - py      // flip to std-math y-up
         let a_e2p = math.atan2(e2p_y, e2p_x)
-        let a_face = (float64) e->dir * math.pi / 4.0
+        let a_face = (f64) e->dir * math.pi / 4.0
         let mut rel = a_e2p - a_face + math.pi / 8.0
         let two_pi = 2.0 * math.pi
         loop
@@ -607,7 +607,7 @@ module enemies =
         loop
             if rel < two_pi then break
             rel = rel - two_pi
-        let mut bin = (int32) (rel / (math.pi / 4.0))
+        let mut bin = (i32) (rel / (math.pi / 4.0))
         if bin < 0 then bin = 0
         if bin > 7 then bin = 7
         base + bin
@@ -617,7 +617,7 @@ module enemies =
     // table; animation loops for walk states and plays once for die /
     // shoot / pain. Mommy Mode (driven through `mommy_mode_fade`) skips
     // the gory die_frames in favor of the cached last-live sprite.
-    let sprite_page_with_mode = (e: const enemy*, px: float64, py: float64, mommy_mode_fade: bool) ->
+    let sprite_page_with_mode = (e: const enemy*, px: f64, py: f64, mommy_mode_fade: bool) ->
         let sp = sprites_for_kind(e->kind)
         let rotating = kind_is_rotating(e->kind)
         match e->state with
@@ -658,7 +658,7 @@ module enemies =
     // outside this module — callers in `kill_enemy` need the live page
     // captured before the state flips, and that's mommy-mode-irrelevant
     // because the enemy is still in its live state at the call site).
-    let sprite_page = (e: const enemy*, px: float64, py: float64) ->
+    let sprite_page = (e: const enemy*, px: f64, py: f64) ->
         sprite_page_with_mode(e, px, py, false)
 
     // ============================================================
@@ -691,11 +691,11 @@ module enemies =
         // as they crack open, while doors at high tile coords stay
         // opaque longer (~25% open at tile 63). That's the original's
         // quirk, not a bug.
-        let check_line_clear = (lv: const level*, x1: float64, y1: float64, x2: float64, y2: float64) ->
-            let xt1 = (int32) x1
-            let yt1 = (int32) y1
-            let xt2 = (int32) x2
-            let yt2 = (int32) y2
+        let check_line_clear = (lv: const level*, x1: f64, y1: f64, x2: f64, y2: f64) ->
+            let xt1 = (i32) x1
+            let yt1 = (i32) y1
+            let xt2 = (i32) x2
+            let yt2 = (i32) y2
             let mut ok = true
 
             // X-stepping pass: walk tile boundaries in x, sampling the
@@ -703,8 +703,8 @@ module enemies =
             let xdist = if xt2 > xt1 then xt2 - xt1 else xt1 - xt2
             if xdist > 0 then
                 let xstep = if xt2 > xt1 then 1 else -1
-                let partial_x = if xt2 > xt1 then 1.0 - (x1 - (float64) xt1)
-                                             else x1 - (float64) xt1
+                let partial_x = if xt2 > xt1 then 1.0 - (x1 - (f64) xt1)
+                                             else x1 - (f64) xt1
                 let dx_abs = if x2 > x1 then x2 - x1 else x1 - x2
                 let ystep = (y2 - y1) / dx_abs
                 let mut yfrac = y1 + ystep * partial_x
@@ -712,12 +712,12 @@ module enemies =
                 let xt2_end = xt2 + xstep
                 loop
                     if x == xt2_end then break
-                    let y = (int32) yfrac
+                    let y = (i32) yfrac
                     yfrac = yfrac + ystep
                     if x < 0 || x >= map_size || y < 0 || y >= map_size then
                         ok = false
                         break
-                    let t = (int32) lv->tilemap[(int64) x * 64 + (int64) y]
+                    let t = (i32) lv->tilemap[(i64) x * 64 + (i64) y]
                     x = x + xstep
                     if t >= 1 && t <= 63 then
                         ok = false
@@ -734,8 +734,8 @@ module enemies =
             let ydist = if yt2 > yt1 then yt2 - yt1 else yt1 - yt2
             if ydist > 0 then
                 let ystep_dir = if yt2 > yt1 then 1 else -1
-                let partial_y = if yt2 > yt1 then 1.0 - (y1 - (float64) yt1)
-                                             else y1 - (float64) yt1
+                let partial_y = if yt2 > yt1 then 1.0 - (y1 - (f64) yt1)
+                                             else y1 - (f64) yt1
                 let dy_abs = if y2 > y1 then y2 - y1 else y1 - y2
                 let xstep = (x2 - x1) / dy_abs
                 let mut xfrac = x1 + xstep * partial_y
@@ -743,12 +743,12 @@ module enemies =
                 let yt2_end = yt2 + ystep_dir
                 loop
                     if y == yt2_end then break
-                    let x = (int32) xfrac
+                    let x = (i32) xfrac
                     xfrac = xfrac + xstep
                     if x < 0 || x >= map_size || y < 0 || y >= map_size then
                         ok = false
                         break
-                    let t = (int32) lv->tilemap[(int64) x * 64 + (int64) y]
+                    let t = (i32) lv->tilemap[(i64) x * 64 + (i64) y]
                     y = y + ystep_dir
                     if t >= 1 && t <= 63 then
                         ok = false
@@ -804,10 +804,10 @@ module enemies =
         // at its source tile), both commit to the same target tile,
         // and advance_move slides them through each other into the
         // same square.
-        private let tile_passable = (lv: level*, g: game*, self_idx: int32, tx: int32, ty: int32) ->
+        private let tile_passable = (lv: level*, g: game*, self_idx: i32, tx: i32, ty: i32) ->
             if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
             else
-                let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+                let t = (i32) lv->tilemap[(i64) tx * 64 + (i64) ty]
                 let e = &lv->enemies[self_idx]
                 if t >= 1 && t <= 63 then false
                 // Door tiles block kinds that can't open doors unless
@@ -815,7 +815,7 @@ module enemies =
                 // is cleared only when the door is fully open).
                 else if t >= 128 && !kind_opens_doors(e->kind)
                         && lv->doors[t - 128].state != doors.door_state.open then false
-                else if (int32) g->pos_x == tx && (int32) g->pos_y == ty
+                else if (i32) g->pos_x == tx && (i32) g->pos_y == ty
                         && !kind_walks_onto_player(e->kind) then false
                 else
                     let mut blocked = false
@@ -837,14 +837,14 @@ module enemies =
                     for i in 0..lv->num_sprites do
                         let s = &lv->sprites[i]
                         if s->alive && s->blocks
-                           && (int32) s->x == tx && (int32) s->y == ty then blocked = true
+                           && (i32) s->x == tx && (i32) s->y == ty then blocked = true
                     !blocked
 
         // Try to take a step in `d` from this enemy's current tile.
         // For diagonal moves we also insist both orthogonal neighbors
         // are open so enemies don't clip the corner of a wall (matches
         // the original's corner-cutting check).
-        private let try_enemy_walk = (lv: level*, g: game*, self_idx: int32, d: int32) ->
+        private let try_enemy_walk = (lv: level*, g: game*, self_idx: i32, d: i32) ->
             if d == dir.nodir then false
             else
                 let e = &lv->enemies[self_idx]
@@ -864,10 +864,10 @@ module enemies =
         // four cardinals in a random starting order, and finally
         // allows a turnaround. Leaves e->dir at dir.nodir when fully
         // blocked in.
-        private let select_chase_dir = (lv: level*, g: game*, self_idx: int32) ->
+        private let select_chase_dir = (lv: level*, g: game*, self_idx: i32) ->
             let e = &lv->enemies[self_idx]
-            let dxi = (int32) g->pos_x - e->tile_x
-            let dyi = (int32) g->pos_y - e->tile_y
+            let dxi = (i32) g->pos_x - e->tile_x
+            let dyi = (i32) g->pos_y - e->tile_y
             let adx = if dxi < 0 then -dxi else dxi
             let ady = if dyi < 0 then -dyi else dyi
             let old_dir = e->dir
@@ -891,7 +891,7 @@ module enemies =
             if old_dir != dir.nodir && old_dir != turnaround then
                 e->dir = old_dir
                 if try_enemy_walk(lv, g, self_idx, old_dir) then return
-            let cardinals = int32[4] { dir.east, dir.north, dir.west, dir.south }
+            let cardinals = i32[4] { dir.east, dir.north, dir.west, dir.south }
             let start = rnd_byte(g) % 4
             for k in 0..4 do
                 let d = cardinals[(start + k) % 4]
@@ -908,9 +908,9 @@ module enemies =
         // baked into lv->path_arrows), snap to that direction first.
         // If the resulting move is blocked, stop — no wall-bounce
         // fallback. Matches the original's patrol direction logic.
-        let select_path_dir = (lv: level*, g: game*, self_idx: int32) ->
+        let select_path_dir = (lv: level*, g: game*, self_idx: i32) ->
             let e = &lv->enemies[self_idx]
-            let arrow = (int32) lv->path_arrows[(int64) e->tile_x * 64 + (int64) e->tile_y]
+            let arrow = (i32) lv->path_arrows[(i64) e->tile_x * 64 + (i64) e->tile_y]
             if arrow != dir.nodir then e->dir = arrow
             if e->dir == dir.nodir || !try_enemy_walk(lv, g, self_idx, e->dir) then
                 e->dir = dir.nodir
@@ -923,7 +923,7 @@ module enemies =
         // closed or animating door, kicks it to opening (with sound)
         // and pauses at the current tile center until it's fully open
         // — matches the original's chase-step door-open logic.
-        let advance_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, speed: float64, dt: float64, is_chase: bool) ->
+        let advance_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: i32, speed: f64, dt: f64, is_chase: bool) ->
             // Enemy Speed slider — scales every patrol + chase speed.
             // Applied here (the single chokepoint for all enemy
             // movement) so callers stay unaware. 100 = OG-faithful.
@@ -938,24 +938,24 @@ module enemies =
                 let ntx = e->tile_x + dir.dx[e->dir]
                 let nty = e->tile_y + dir.dy[e->dir]
                 if ntx >= 0 && ntx < map_size && nty >= 0 && nty < map_size then
-                    let nt = (int32) lv->tilemap[(int64) ntx * 64 + (int64) nty]
+                    let nt = (i32) lv->tilemap[(i64) ntx * 64 + (i64) nty]
                     if nt >= 128 && lv->doors[nt - 128].state != doors.door_state.open then
                         if kind_opens_doors(e->kind) then
                             if lv->doors[nt - 128].state == doors.door_state.closed then
                                 doors.start_opening(lv, nt - 128, g, ac)
-                            e->x = (float64) e->tile_x + 0.5
-                            e->y = (float64) e->tile_y + 0.5
+                            e->x = (f64) e->tile_x + 0.5
+                            e->y = (f64) e->tile_y + 0.5
                             break
                         else
                             // Door is a solid wall to this kind — abort
                             // the step and force a new direction choice
                             // from the current tile.
-                            e->x = (float64) e->tile_x + 0.5
-                            e->y = (float64) e->tile_y + 0.5
+                            e->x = (f64) e->tile_x + 0.5
+                            e->y = (f64) e->tile_y + 0.5
                             e->dir = dir.nodir
                             break
-                let target_x = (float64) ntx + 0.5
-                let target_y = (float64) nty + 0.5
+                let target_x = (f64) ntx + 0.5
+                let target_y = (f64) nty + 0.5
                 let dx = target_x - e->x
                 let dy = target_y - e->y
                 let dist = math.sqrt(dx * dx + dy * dy)
@@ -995,8 +995,8 @@ module enemies =
         // original where the projectile object itself is what the
         // death-rotation reads, so the swing aims at the impact
         // point rather than the launcher.
-        let damage_player = (g: game*, ac: audio_ctx*, dmg_in: int32, src: damage_source,
-                             kx: float64, ky: float64) ->
+        let damage_player = (g: game*, ac: audio_ctx*, dmg_in: i32, src: damage_source,
+                             kx: f64, ky: f64) ->
             if dmg_in <= 0 then return
             match g->phase with
             | playing -> void()
@@ -1044,7 +1044,7 @@ module enemies =
         // from earlier pickups before growing the list — prevents the
         // array from hitting its cap just because the player has been
         // clearing rooms.
-        private let add_dropped_item = (lv: level*, x: float64, y: float64, page: int32, it: pickups.item_kind) ->
+        private let add_dropped_item = (lv: level*, x: f64, y: f64, page: i32, it: pickups.item_kind) ->
             let mut slot = -1
             for i in 0..lv->num_sprites do
                 if !lv->sprites[i].alive then
@@ -1062,7 +1062,7 @@ module enemies =
         // Pool of guard death screams. The original picks one of eight
         // at random for guard-class enemies so repeated kills don't
         // sound identical.
-        private let guard_death_sounds = int32[8] {
+        private let guard_death_sounds = i32[8] {
             29, 30, 31, 33, 34, 36, 37, 38
             // sfx.id.death_1..9 without #6 — the original reserves #6
             // for a map-9 easter-egg roll (1/256), not part of the
@@ -1115,7 +1115,7 @@ module enemies =
             e->notified       = true
             e->reaction_timer = 0.0
 
-        let kill_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, sprite_start: int32) ->
+        let kill_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, sprite_start: i32) ->
             // Mommy Mode: snapshot whichever live sprite the enemy was
             // showing this tick (walk-angle, shoot-pose, pain frame —
             // whatever sprite_page would resolve to under the current
@@ -1147,7 +1147,7 @@ module enemies =
         // `idx` is the enemy's position in lv->enemies — needed so the
         // death-cam cutscene can reference the corpse after
         // damage_enemy returns.
-        let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, idx: int32, dmg: int32, sprite_start: int32) ->
+        let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, idx: i32, dmg: i32, sprite_start: i32) ->
             match e->state with
             | die | dead -> return
             | _ -> void()
@@ -1215,7 +1215,7 @@ module enemies =
             | hans | schabbs | gretel | giftmacher
             | fat | hitler_fake | mecha_hitler | hitler -> 1
             | blinky | pinky | clyde | inky -> 1
-            (float64) tics / 70.0
+            (f64) tics / 70.0
 
         // True iff a stand / path enemy has detected the player this
         // frame. Mirrors the first-detection half of the original's
@@ -1232,7 +1232,7 @@ module enemies =
         // once spotted by an ambusher, repeat detections behave like
         // a normal guard (sound or sight).
         private let should_wake = (lv: level*, g: game*, e: enemy*) ->
-            let area = (int32) lv->tile_areas[(int64) e->tile_x * 64 + (int64) e->tile_y]
+            let area = (i32) lv->tile_areas[(i64) e->tile_x * 64 + (i64) e->tile_y]
             if area >= areas.num_areas then false
             else if !lv->area_by_player[area] then false
             else if e->ambush then
@@ -1297,8 +1297,8 @@ module enemies =
             | _                       -> sfx.id.nazi_fire
             sfx.trigger_at(snd, ac, g, e->x, e->y)
             if !check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then return
-            let dxi = (int32) g->pos_x - e->tile_x
-            let dyi = (int32) g->pos_y - e->tile_y
+            let dxi = (i32) g->pos_x - e->tile_x
+            let dyi = (i32) g->pos_y - e->tile_y
             let adx = if dxi < 0 then -dxi else dxi
             let ady = if dyi < 0 then -dyi else dyi
             let dist_tiles = if adx > ady then adx else ady
@@ -1323,7 +1323,7 @@ module enemies =
         // Per-frame AI step for one enemy. Dispatches on state;
         // advances animation and moves continuously. Called from
         // update_enemies which does the loop.
-        private let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: int32, dt: float64, sprite_start: int32) ->
+        private let update_enemy = (lv: level*, g: game*, ac: audio_ctx*, self_idx: i32, dt: f64, sprite_start: i32) ->
             let e = &lv->enemies[self_idx]
             e->anim_timer = e->anim_timer - dt
             match e->state with
@@ -1440,13 +1440,13 @@ module enemies =
                     // proportionally so faster enemies actually fire
                     // faster.
                     if check_line_clear(lv, e->x, e->y, g->pos_x, g->pos_y) then
-                        let dxi = (int32) g->pos_x - e->tile_x
-                        let dyi = (int32) g->pos_y - e->tile_y
+                        let dxi = (i32) g->pos_x - e->tile_x
+                        let dyi = (i32) g->pos_y - e->tile_y
                         let adx = if dxi < 0 then -dxi else dxi
                         let ady = if dyi < 0 then -dyi else dyi
                         let dist_tiles = if adx > ady then adx else ady
                         let d = if dist_tiles < 1 then 1 else dist_tiles
-                        let chance = (int32) (dt * 1400.0 * enemy_speed_factor(g)) / d
+                        let chance = (i32) (dt * 1400.0 * enemy_speed_factor(g)) / d
                         if rnd_byte(g) < chance then
                             let sp = sprites_for_kind(e->kind)
                             e->state = enemy_state.shoot
@@ -1503,7 +1503,7 @@ module enemies =
                         return
                     e->anim_timer = sp.shoot_times[e->anim_frame] / enemy_speed_factor(g)
 
-        let update_enemies = (w: world*, dt: float64) ->
+        let update_enemies = (w: world*, dt: f64) ->
             let sprite_start = w->ac->vs->sprite_start
             for i in 0..w->lv->num_enemies do
                 update_enemy(w->lv, w->g, w->ac, i, dt, sprite_start)
@@ -1532,7 +1532,7 @@ module enemies =
         // of a fight still plays its full die-frame cascade and lands
         // on the dead-pose sprite instead of staying stuck on its
         // first die frame.
-        let update_dying_enemies = (lv: level*, g: game*, dt: float64) ->
+        let update_dying_enemies = (lv: level*, g: game*, dt: f64) ->
             for i in 0..lv->num_enemies do
                 let e = &lv->enemies[i]
                 match e->state with
@@ -1567,12 +1567,12 @@ module projectiles =
 
     struct projectile =
         kind: projectile_kind
-        x: float64
-        y: float64
-        angle: float64            // radians, direction of travel
-        alive: bool               // false = slot is free
-        anim_frame: int32         // cycling 0..3 for needle, 0..1 for fire, 0..2 for boom
-        anim_timer: float64       // seconds until next frame
+        x: f64
+        y: f64
+        angle: f64            // radians, direction of travel
+        alive: bool           // false = slot is free
+        anim_frame: i32       // cycling 0..3 for needle, 0..1 for fire, 0..2 for boom
+        anim_timer: f64       // seconds until next frame
 
     let max_projectiles = 32   // generous cap — the original shares actor slots; few projectiles actually fly at once
 
@@ -1598,7 +1598,7 @@ module projectiles =
     // Angle wrap helper. Keeps `a` in [0, 2π).
     private let tau = 6.283185307179586
 
-    private let wrap_angle = (a: float64) ->
+    private let wrap_angle = (a: f64) ->
         let mut r = a
         loop
             if r >= 0.0 then break
@@ -1611,13 +1611,13 @@ module projectiles =
     // VSWAP page for a projectile in its current state. Rockets rotate
     // through 8 angles keyed off travel direction; needle/fire/boom
     // use sequential animation frames from their respective base pages.
-    let sprite_page = (sprite_start: int32, p: projectile*) ->
+    let sprite_page = (sprite_start: i32, p: projectile*) ->
         match p->kind with
         | needle -> sprite_start + hypo_base + (p->anim_frame & 3)
         | rocket ->
             // 8 rotation frames spanning [0, 2π). Quantize angle → frame index.
             let a = wrap_angle(p->angle)
-            let idx = (int32) (a * 8.0 / tau) & 7
+            let idx = (i32) (a * 8.0 / tau) & 7
             sprite_start + rocket_base + idx
         | fire -> sprite_start + fire_base + (p->anim_frame & 1)
         | boom ->
@@ -1663,18 +1663,18 @@ module projectiles =
     // Matches the original's 3x3 tile scan within the projectile
     // radius. Returns true if any tile in the scanned range blocks —
     // walls (1..63) and door tiles that aren't fully open.
-    private let hits_wall = (lv: level*, x: float64, y: float64) ->
-        let xl = (int32) math.floor(x - wall_radius)
-        let yl = (int32) math.floor(y - wall_radius)
-        let xh = (int32) math.floor(x + wall_radius)
-        let yh = (int32) math.floor(y + wall_radius)
+    private let hits_wall = (lv: level*, x: f64, y: f64) ->
+        let xl = (i32) math.floor(x - wall_radius)
+        let yl = (i32) math.floor(y - wall_radius)
+        let xh = (i32) math.floor(x + wall_radius)
+        let yh = (i32) math.floor(y + wall_radius)
         let mut hit = false
         for tx in xl..(xh + 1) do
             for ty in yl..(yh + 1) do
                 if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then
                     hit = true
                 else
-                    let t = (int32) lv->tilemap[(int64) tx * 64 + (int64) ty]
+                    let t = (i32) lv->tilemap[(i64) tx * 64 + (i64) ty]
                     if t >= 1 && t <= 63 then hit = true
                     if t >= 128 then
                         let door_idx = t - 128
@@ -1696,7 +1696,7 @@ module projectiles =
     // steps the position, checks wall/player collision, mutates into
     // a boom sprite on rocket wall-hit, or frees the slot on other
     // terminal events.
-    let update = (lv: level*, g: game*, ac: audio_ctx*, p: projectile*, dt: float64) ->
+    let update = (lv: level*, g: game*, ac: audio_ctx*, p: projectile*, dt: f64) ->
         if !p->alive then return
         let frame_time = match p->kind with
         | boom -> boom_time
@@ -1744,7 +1744,7 @@ module projectiles =
                     enemies.ai.damage_player(g, ac, damage_of(p->kind, g), src, p->x, p->y)
                     p->alive = false
 
-    let update_all = (lv: level*, g: game*, ac: audio_ctx*, dt: float64) ->
+    let update_all = (lv: level*, g: game*, ac: audio_ctx*, dt: f64) ->
         for i in 0..max_projectiles do
             update(lv, g, ac, &lv->projectiles[i], dt)
 
@@ -1832,7 +1832,7 @@ module hitscan =
     // knife reach is ~1.5 tiles). `tile_dist` is the Chebyshev
     // (max-axis) distance in tile units, which is what the gun
     // damage bands key off.
-    private let weapon_damage_roll = (g: game*, weapon: int32, euclid_dist: float64, tile_dist: int32) ->
+    private let weapon_damage_roll = (g: game*, weapon: i32, euclid_dist: f64, tile_dist: i32) ->
         if weapon == 0 then
             // Knife — flat roll within melee reach, zero beyond.
             if euclid_dist > 1.5 then 0
@@ -1874,8 +1874,8 @@ module hitscan =
         let dist = math.sqrt(rx * rx + ry * ry)
         // Tile Chebyshev for the gun damage bands — integer tile coords
         // for both endpoints, max of |dx|, |dy|.
-        let pxi = (int32) g->pos_x
-        let pyi = (int32) g->pos_y
+        let pxi = (i32) g->pos_x
+        let pyi = (i32) g->pos_y
         let adx = if (e->tile_x - pxi) < 0 then pxi - e->tile_x else e->tile_x - pxi
         let ady = if (e->tile_y - pyi) < 0 then pyi - e->tile_y else e->tile_y - pyi
         let tile_dist = if adx > ady then adx else ady

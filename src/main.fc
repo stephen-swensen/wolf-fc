@@ -45,7 +45,7 @@ let fov_factor = 0.7269
 // 1:1 with the graph's instead of beating against it. (The mix/synthesis
 // *rate* is not a constant — it's detected from the default output device
 // at startup and lives on `audio_ctx.sample_rate`; see `audio_rate` in
-// main.) `audio_cb_max_frames` caps the int32 mix scratch
+// main.) `audio_cb_max_frames` caps the i32 mix scratch
 // (`audio_ctx.mix_buf`) well above any buffer the device might hand us.
 // `music_xfade_samples` is the click-killing crossfade applied when a
 // track is swapped — 256 samples ≈ 5.3 ms at 48 kHz, matching the
@@ -64,11 +64,11 @@ let music_xfade_samples = 256
 module episode =
     let levels_per = 10
     let count      = 6
-    let back_to    = int32[6] { 1, 1, 7, 3, 5, 3 }
+    let back_to    = i32[6] { 1, 1, 7, 3, 5, 3 }
 
     // Human-readable episode titles (used by the episode-picker menu
     // and the per-episode victory screen).
-    let title = (ep: int32) ->
+    let title = (ep: i32) ->
         match ep with
         | 0 -> "ESCAPE FROM WOLFENSTEIN"
         | 1 -> "OPERATION EISENFAUST"
@@ -86,7 +86,7 @@ module episode =
     //     secret level (level 9 of current episode).
     //   - Otherwise, level+1 within the same episode (0..7). Level 8
     //     is handled by the episode-end caller, not here.
-    let next_level_num = (level_num: int32, went_secret: bool) ->
+    let next_level_num = (level_num: i32, went_secret: bool) ->
         let ep = level_num / levels_per
         let lvl = level_num % levels_per
         if went_secret then ep * levels_per + 9
@@ -113,7 +113,7 @@ module quit_prompts =
 
     let builtin_count = 27
 
-    let builtin_at = (i: int32) ->
+    let builtin_at = (i: i32) ->
         match i with
         // "For X and Y..." cliffhangers — the mundane life waiting on
         // the other side of the QUIT key.
@@ -146,12 +146,12 @@ module quit_prompts =
         | 25 -> "The coffee is getting cold."
         | _  -> "The laundry has been waiting."
 
-    // Heap-copy a str slice into an owned uint8 buffer. Returned slice
+    // Heap-copy a str slice into an owned u8 buffer. Returned slice
     // is freeable on its own (no shared backing), so the override array
     // can be torn down line-by-line in `free_override`.
     private let dup_str = (s: const str) ->
         let n = s.len
-        let buf = alloc(uint8[n] {})!
+        let buf = alloc(u8[n] {})!
         for i in 0..n do
             buf[i] = s[i]
         (str) buf
@@ -197,13 +197,13 @@ module quit_prompts =
     // Pick the i-th prompt out of either the override pool (when non-
     // empty) or the built-in pool. Caller is responsible for choosing
     // a valid index.
-    let at = (override_pool: const str[], i: int32) ->
+    let at = (override_pool: const str[], i: i32) ->
         if override_pool.len > 0i64 then
-            (const str) override_pool[(int64) i % override_pool.len]
+            (const str) override_pool[(i64) i % override_pool.len]
         else builtin_at(i)
 
     let count = (override_pool: const str[]) ->
-        if override_pool.len > 0i64 then (int32) override_pool.len
+        if override_pool.len > 0i64 then (i32) override_pool.len
         else builtin_count
 
 // ============================================================
@@ -264,12 +264,12 @@ union game_phase =
 
 struct game =
     // Camera / player
-    pos_x: float64
-    pos_y: float64
-    dir_x: float64
-    dir_y: float64
-    plane_x: float64
-    plane_y: float64
+    pos_x: f64
+    pos_y: f64
+    dir_x: f64
+    dir_y: f64
+    plane_x: f64
+    plane_y: f64
 
     // Input
     key_up: bool
@@ -314,7 +314,7 @@ struct game =
     // events (no key-repeat) so a held key can't auto-advance the
     // state machine. While `god_mode` is true, enemies.ai.damage_player early-
     // returns so the player can't lose health (or die).
-    iddqd_progress: int32
+    iddqd_progress: i32
     god_mode: bool
     // Doom-style IDKFA cheat. Same sequence-matching idea as IDDQD, but on
     // the I-D-K-F-A letter sequence. Toggling it on grants all keys, the
@@ -323,7 +323,7 @@ struct game =
     // player.add_score (treasure pickups, enemy kills, intermission bonus).
     // reset_for_life re-grants the gifts on every death so the latch
     // survives dying.
-    idkfa_progress: int32
+    idkfa_progress: i32
     idkfa_mode: bool
     // Original-game TAB+<key> cheats. `key_tab_held` tracks whether TAB is
     // currently pressed; any subsequent keydown while it's true dispatches
@@ -336,12 +336,12 @@ struct game =
     // Wall-scrape sound cooldown (seconds). Prevents the wall-bump cue from firing
     // every frame while the player grinds along a wall. Counts down in
     // player.update; a new bump is only announced when it hits 0.
-    wall_hit_cooldown: float64
+    wall_hit_cooldown: f64
 
     // Game
-    health: int32
-    ammo: int32
-    score: int32
+    health: i32
+    ammo: i32
+    score: i32
     // Score at the start of the current level. Captured at level
     // transition (in `advance_next_level`, after the just-completed
     // level's intermission bonus has been added) and consumed by
@@ -352,27 +352,27 @@ struct game =
     // at time of final death (we never reach restart_current_level
     // on the lethal life), matching the original's handling of the
     // final lethal life.
-    oldscore: int32
-    lives: int32
-    level_num: int32
+    oldscore: i32
+    lives: i32
+    level_num: i32
     has_gold_key: bool
     has_silver_key: bool
     next_level: bool
     // Counts down in playing while `next_level` is latched; when it reaches
     // 0 the intermission phase is entered. Gives the level-done sound
     // ("elevator ding") time to play in the world before the tally screen pops.
-    next_level_delay: float64
-    weapon: int32          // 0=knife, 1=pistol, 2=machine gun, 3=chain gun
-    best_weapon: int32     // highest-tier firearm owned (pistol..chain). When
-                           // ammo runs out we drop to knife; picking ammo up
-                           // again restores this weapon (matches the original).
+    next_level_delay: f64
+    weapon: i32          // 0=knife, 1=pistol, 2=machine gun, 3=chain gun
+    best_weapon: i32     // highest-tier firearm owned (pistol..chain). When
+                         // ammo runs out we drop to knife; picking ammo up
+                         // again restores this weapon (matches the original).
     // Latched when the player uses the alt-elevator switch (plane-0 raw tile
     // 107 underfoot at the moment of activation). advance_next_level reads it
     // to route to the secret level (ep*10+9) instead of the normal next map.
     // Cleared after the routing decision is applied.
     went_secret: bool
-    fire_timer: float64    // cooldown timer (>0 means firing animation)
-    weapon_frame: int32    // animation frame (0=idle, 1-3=firing)
+    fire_timer: f64      // cooldown timer (>0 means firing animation)
+    weapon_frame: i32    // animation frame (0=idle, 1-3=firing)
     // BJ-face HUD animation (matches the original). face_frame picks the
     // A/B/C variant (0..2) of the current health-driven expression row;
     // face_count accumulates ~2 units per 35Hz tick (matching the original's
@@ -380,12 +380,12 @@ struct game =
     // threshold a new variant is rolled (0=25%, 1=50%, 2=25%, the same
     // weighted clamp as the original). Reset to 0 on damage so the new
     // expression appears immediately.
-    face_frame: int32
-    face_count: float64
+    face_frame: i32
+    face_count: f64
     // Player area index: index into level->tile_areas for the tile
     // the player is currently standing on. Used to anchor areas.connect's
     // flood. Refreshed each tick by areas.update_player_area.
-    area_number: int32
+    area_number: i32
     // Latched true when the player fires a non-knife weapon or damages an
     // enemy; consumed by enemies.ai.update_enemies to wake stand / path
     // enemies in the player-connected area set without needing LOS.
@@ -406,16 +406,16 @@ struct game =
     // Spawned at the player's position; follows path-arrow tiles
     // (lv->path_arrows) tile-by-tile for 6 tiles, then jumps 4 frames with
     // YEAHSND on frame 2. See bj_victory.enter / bj_victory.tick.
-    bj_x: float64
-    bj_y: float64
-    bj_tile_x: int32       // current tile (for path-arrow lookup)
-    bj_tile_y: int32
-    bj_dir: int32          // current heading (dir.east..dir.southeast, or dir.nodir)
-    bj_distance: float64   // tiles remaining until BJ reaches next tile center
-    bj_run_tiles_left: int32  // tiles to run before starting the jump (counts down from 6)
-    bj_anim_frame: int32
-    bj_anim_timer: float64
-    bj_phase: int32      // 0 = running, 1 = jumping, 2 = holding final frame
+    bj_x: f64
+    bj_y: f64
+    bj_tile_x: i32     // current tile (for path-arrow lookup)
+    bj_tile_y: i32
+    bj_dir: i32        // current heading (dir.east..dir.southeast, or dir.nodir)
+    bj_distance: f64   // tiles remaining until BJ reaches next tile center
+    bj_run_tiles_left: i32  // tiles to run before starting the jump (counts down from 6)
+    bj_anim_frame: i32
+    bj_anim_timer: f64
+    bj_phase: i32        // 0 = running, 1 = jumping, 2 = holding final frame
     bj_yelled: bool      // YEAHSND latch (fires on entering jump frame 1)
 
     // Per-episode running totals for the episode-end victory screen.
@@ -427,47 +427,47 @@ struct game =
     // — set when the just-finished level was already recorded, so
     // bj_victory + intermission paths don't double-count the boss
     // level. Reset on new game / next episode.
-    ep_kr_total: int32
-    ep_sr_total: int32
-    ep_tr_total: int32
-    ep_time_total: int32
-    ep_levels_played: int32
+    ep_kr_total: i32
+    ep_sr_total: i32
+    ep_tr_total: i32
+    ep_time_total: i32
+    ep_levels_played: i32
     ep_recorded_current: bool
 
     // Per-episode ending text — active only during the endart phase.
     // `endart_data` is the decompressed VGAGRAPH chunk for the current
     // episode (chunks 143..148 hold article-markup). Page offsets are
     // computed once on entry so the renderer can jump to any page in O(1).
-    endart_data: uint8[]
-    endart_page_offsets: int32[]
-    endart_total_pages: int32
-    endart_page: int32         // 0-indexed; final page index = total_pages - 1
+    endart_data: u8[]
+    endart_page_offsets: i32[]
+    endart_total_pages: i32
+    endart_page: i32         // 0-indexed; final page index = total_pages - 1
 
     // High-scores entry source. Latched in `high_scores_screen.enter`
     // so the dismissal handler knows whether to route back to the
     // title (post-death / post-victory) or the main menu (View Scores
     // entry). Values are `high_scores_screen.from_*` constants.
-    hs_source: int32
+    hs_source: i32
 
     // Death-cam cutscene state — active only during death_cam.
     // Sub-phases: 0 = hold on final death frame, 1 = dissolve to black,
     // 2 = taunt "Let's see you in hell!" text screen, 3 = camera teleport +
     // dissolve back in, 4 = replay death animation, 5 = hand off to
     // intermission (transient; update_phase_transitions enters next state).
-    dc_sub: int32
-    dc_timer: float64               // seconds elapsed in current sub-phase
-    dc_boss_idx: int32?             // index of the corpse in lv->enemies
-    dc_kill_x: float64              // player position when the boss died
-    dc_kill_y: float64              // (matches the original's killer position)
-    dc_fade: float64                // 0 = viewport fully visible, 1 = fully
-                                    // black; feeds overlay.dissolve_stipple during
-                                    // fade-out / taunt / fade-in sub-phases
+    dc_sub: i32
+    dc_timer: f64                 // seconds elapsed in current sub-phase
+    dc_boss_idx: i32?             // index of the corpse in lv->enemies
+    dc_kill_x: f64                // player position when the boss died
+    dc_kill_y: f64                // (matches the original's killer position)
+    dc_fade: f64                  // 0 = viewport fully visible, 1 = fully
+                                  // black; feeds overlay.dissolve_stipple during
+                                  // fade-out / taunt / fade-in sub-phases
 
     // Phase state (death / intermission / game-over). Most of tick() skips
     // when phase != playing; rendering paints the appropriate overlay.
     phase: game_phase
-    phase_timer: float64       // seconds spent in current phase (for transitions)
-    damage_flash_timer: float64  // red tint on damage; decays each tick
+    phase_timer: f64       // seconds spent in current phase (for transitions)
+    damage_flash_timer: f64  // red tint on damage; decays each tick
     // Latch set whenever the player's most recent damage came from a
     // Schabbs needle projectile. Cleared by any other damage source
     // and on respawn / new game. Read by hud.render to pick
@@ -481,37 +481,37 @@ struct game =
     // `killer_active` is true between the lethal hit and the moment the
     // swing finishes; cleared on respawn / new game and on the synthetic
     // `kill` test command (no enemy to face).
-    killer_x: float64
-    killer_y: float64
+    killer_x: f64
+    killer_y: f64
     killer_active: bool
     // Red stipple that uncovers back to the new scene after a death-restart.
     // Set to `player.respawn_fade_time` by restart_current_level; decays each tick.
-    respawn_fade_timer: float64
+    respawn_fade_timer: f64
     // "GET PSYCHED!" overlay shown briefly on level entry. Ticks down each
     // frame; while > 0 the world is frozen (tick skips all subsystems) and
     // render_frame paints GETPSYCHEDPIC over a grey background with a
     // progress bar, covering the disk-load pause the original game had.
-    get_psyched_timer: float64
+    get_psyched_timer: f64
 
     // Chain-gun pickup face-slot swap. While > 0, hud.render paints
     // the got-gatling pic in the BJ-face cell instead of the normal face frame
     // (matches the original's face swap while the pickup voice cue plays).
     // Does NOT freeze gameplay.
-    got_gatling_timer: float64
+    got_gatling_timer: f64
 
     // Per-level counters. Totals come from build_level; current values
     // increment during play. All three are displayed on the intermission
     // screen as percentages (matches the original's bonus calculations).
-    kills: int32
-    total_kills: int32
-    secrets: int32
-    total_secrets: int32
-    treasures: int32
-    total_treasures: int32
+    kills: i32
+    total_kills: i32
+    secrets: i32
+    total_secrets: i32
+    treasures: i32
+    total_treasures: i32
 
     // Seconds elapsed in the current level (accumulates in tick during
     // playing). Compared against par_times on intermission.
-    level_time: float64
+    level_time: f64
 
     // Intermission screen animation state. Only meaningful during
     // intermission. Mirrors the original's count-up sequence on the
@@ -522,27 +522,27 @@ struct game =
     //   progress: fractional accumulator that drives counter at a fixed rate
     //   bonus_shown: running "BONUS" line displayed at the top-right
     //   target_timeleft / target_kr / target_sr / target_tr: cached goals
-    inter_stage: int32
-    inter_counter: int32
-    inter_progress: float64
-    inter_bonus_shown: int32
-    inter_target_timeleft: int32
-    inter_target_kr: int32
-    inter_target_sr: int32
-    inter_target_tr: int32
-    inter_breathe_timer: float64   // drives L_GUYPIC/L_GUY2PIC alternation
-    inter_pause_timer: float64     // post-stage pause: holds the just-finished
-                                   // counter's final value on-screen with its
-                                   // end-of-stage sound audible before the
-                                   // next counter starts zipping up. Matches
-                                   // the original's brief gap between the
-                                   // three ratio rounds.
-    inter_end_sound_delay: float64 // time left until the queued end-of-stage
-                                   // sound actually fires. Gives the final
-                                   // bonus-end tick a moment to clear so
-                                   // it doesn't collide with the ring sound —
-                                   // the original used a sound-busy wait for
-                                   // the same purpose.
+    inter_stage: i32
+    inter_counter: i32
+    inter_progress: f64
+    inter_bonus_shown: i32
+    inter_target_timeleft: i32
+    inter_target_kr: i32
+    inter_target_sr: i32
+    inter_target_tr: i32
+    inter_breathe_timer: f64   // drives L_GUYPIC/L_GUY2PIC alternation
+    inter_pause_timer: f64     // post-stage pause: holds the just-finished
+                               // counter's final value on-screen with its
+                               // end-of-stage sound audible before the
+                               // next counter starts zipping up. Matches
+                               // the original's brief gap between the
+                               // three ratio rounds.
+    inter_end_sound_delay: f64 // time left until the queued end-of-stage
+                               // sound actually fires. Gives the final
+                               // bonus-end tick a moment to clear so
+                               // it doesn't collide with the ring sound —
+                               // the original used a sound-busy wait for
+                               // the same purpose.
 
     // Difficulty: 0=Daddy, 1=Don't Hurt Me, 2=Bring 'em On, 3=Death Incarnate.
     // Controls which tile blocks spawn enemies (base/+36/+72 difficulty
@@ -550,7 +550,7 @@ struct game =
     // difficulty-picker default. The picker remembers the last pick within
     // a session via `menu_sel = g->difficulty`; `setdifficulty` dials it
     // externally.
-    difficulty: int32
+    difficulty: i32
 
     // Camera plane length. Combined with `dir_x/dir_y` it sets the
     // raycaster's horizontal FOV: the column at the right edge of the
@@ -560,20 +560,20 @@ struct game =
     // at 384 wide it's 0.66 * 384/320 ≈ 0.792, etc. Read by spawn
     // (which seeds plane_x/plane_y based on facing direction) and by
     // movement / hitscan code.
-    plane_factor: float64
+    plane_factor: f64
 
     // View-mode preference (Change View menu). 0=auto-detect from
     // display, 1=Original 4:3, 2=Widescreen 16:10, 3=Widescreen 16:9.
     // The render geometry (fb_w / plane_factor) is captured at
     // startup from this value. Changing the value mid-session
     // updates the config file but only takes effect on next launch.
-    view_mode: int32
+    view_mode: i32
     // Supersample-factor preference (Change View menu).
     // 0=auto-pick from drawable size (capped by --max-scale), or an
     // explicit 2..12 that bypasses the cap. Read by the resize
     // handler, the initial scale pick, and `apply_view_mode` — when
     // non-zero the auto-pick path is skipped entirely.
-    scale_factor: int32
+    scale_factor: i32
     // Opt-in super-sample anti-aliasing (Change View menu). 0=off,
     // 1=vertical-only 2× (viewport 2× tall, same width), 2=full 2×2
     // (2× tall and wide). The 3D viewport renders into a larger buffer
@@ -582,7 +582,7 @@ struct game =
     // is in effect. Default 0. Vertical-only is the cheap mode: the
     // horizontal axis is already oversampled by the scale factor, so
     // it buys most of the edge-AA at half the cost of full 2×2.
-    ssaa_mode: int32
+    ssaa_mode: i32
 
     // Mommy Mode toggle. Set from the Options menu (persisted in
     // ~/.wolf-fc/config) or from the --mommy-mode CLI flag at launch.
@@ -596,7 +596,7 @@ struct game =
     // both at startup and on view-mode changes — stashed on game
     // so `apply_view_mode` can re-pick the scale when fb_w changes
     // without threading the cap through every call site.
-    max_scale: int32
+    max_scale: i32
     // Shadow Depth (0..100). Controls how dark walls / sprites and
     // the floor / ceiling fills get at long distance — 0 disables
     // distance fading entirely (the OG-faithful default; the original
@@ -604,7 +604,7 @@ struct game =
     // walls), 100 lets things go to full black at the far end. Read
     // every frame by the raycaster (walls + per-row flats) and
     // billboards via `raycaster.shadow_floor_from_depth`.
-    shadow_depth: int32
+    shadow_depth: i32
     // Speed multipliers as percentages (20..200, default 100).
     // bj_speed_pct scales every player movement: forward / back /
     // strafe / turn. enemy_speed_pct scales every patrol + chase
@@ -617,8 +617,8 @@ struct game =
     // feel like a weapon-handling tweak rather than a movement
     // preference. Default 100 keeps OG-faithful behaviour. Persisted
     // in ~/.wolf-fc/config alongside shadow_depth / view_mode.
-    bj_speed_pct: int32
-    enemy_speed_pct: int32
+    bj_speed_pct: i32
+    enemy_speed_pct: i32
     // Top-left automap overlay toggle. Off by default; flipped from
     // the Options menu (persisted in ~/.wolf-fc/config). Read every
     // frame by `render_map_overlay` in the 3D phases of render_frame.
@@ -643,7 +643,7 @@ struct game =
     data_dir: str
 
     // Menu selection state.
-    menu_sel: int32
+    menu_sel: i32
     menu_level: menu.nav
 
     // Save-slot inline name entry. While true, the savelist menu is
@@ -662,7 +662,7 @@ struct game =
     // user toggling between Y/N (well, just looking) sees the same
     // prompt. `quit_prompts_override` is loaded once at startup from
     // ~/.wolf-fc/quit-prompts; an empty slice means "use built-ins".
-    quit_prompt_idx: int32
+    quit_prompt_idx: i32
     quit_prompts_override: str[]
 
     // True once the player has started a game at least once. Controls the
@@ -674,9 +674,9 @@ struct game =
     // hud.show_message; render_frame paints during playing only. msg_buf
     // is a fixed 64-byte buffer alloc'd once at game construction; we
     // never realloc — just copy into the first msg_len bytes.
-    msg_buf: uint8[]
-    msg_len: int32
-    msg_timer: float64    // seconds remaining; decays during playing
+    msg_buf: u8[]
+    msg_len: i32
+    msg_timer: f64    // seconds remaining; decays during playing
 
     // PRNG state. Two pcg32 streams from the same seed but different channels:
     // enemy AI rolls (sight, hit chance, damage) and BJ face idle animation.
@@ -697,7 +697,7 @@ struct game =
 struct level =
     // Column-major 64x64 tile grid: tilemap[x*64 + y].
     // 0 = empty, 1-63 = wall texture, 128+ = door (index = value - 128).
-    tilemap: uint8[]
+    tilemap: u8[]
     // Bitmap: which wall tiles are pushable (marker 98 in plane 1).
     pushwall_tiles: bool[]
     // Bitmap: which tiles are exit markers (plane-1 tile 99). Stepping
@@ -709,19 +709,19 @@ struct level =
     // Per-tile path-arrow override for patrolling enemies (plane-1 tiles
     // 90..97 = path-arrow marker + dir). 0..7 redirects a passing patroller to that
     // dir; dir.nodir (8) means "no arrow at this tile".
-    path_arrows: uint8[]
+    path_arrows: u8[]
     // Static sprite objects spawned from plane-1 tiles 23..72.
     sprites: tilemap.sprite_obj[]
-    num_sprites: int32
+    num_sprites: i32
     // Door objects allocated when their tiles are encountered during build.
     doors: doors.door_obj[]
-    door_pos: float64[]         // 0.0 = closed, 1.0 = open
-    num_doors: int32
+    door_pos: f64[]         // 0.0 = closed, 1.0 = open
+    num_doors: i32
     // Currently-animating push-wall (at most one at a time).
     pushwall: pushwall.pushwall_state
     // Active + dead enemies spawned from plane-1 tiles 108+.
     enemies: enemies.enemy[]
-    num_enemies: int32
+    num_enemies: i32
     // Active enemy-fired projectiles (Schabbs syringes, Giftmacher / Fat
     // rockets + their boom sprites, fake-Hitler flames). Slot-allocated in a
     // fixed-size array; `alive = false` means free. No separate count — the
@@ -732,37 +732,37 @@ struct level =
     // many open doors connect each pair (>0 means connected); a per-area
     // "reachable from player by open doors" flag refreshed by areas.connect
     // on each door transition.
-    tile_areas: uint8[]
-    area_connect: uint8[]
+    tile_areas: u8[]
+    area_connect: u8[]
     area_by_player: bool[]
     // Per-level totals used by the kill / secret / treasure counters.
     // Computed once at build time; `game.total_*` mirrors them. Kept on
     // level so they survive player death (restart reuses these).
-    total_enemies: int32         // live enemies spawned (excludes corpses)
-    total_pushwalls: int32       // plane-1 tile 98 count
-    total_treasures: int32       // treasure pickups (cross/chalice/bible/crown)
+    total_enemies: i32         // live enemies spawned (excludes corpses)
+    total_pushwalls: i32       // plane-1 tile 98 count
+    total_treasures: i32       // treasure pickups (cross/chalice/bible/crown)
 
 // One drawable billboard emitted each frame — a merged queue of static sprites
 // and enemies, sorted back-to-front so farther items draw first and nearer
 // ones paint over them. Kept in a process-wide scratch buffer on render_ctx
 // rather than freshly allocated per frame.
 struct billboard =
-    x: float64
-    y: float64
-    shape_page: int32
+    x: f64
+    y: f64
+    shape_page: i32
     // Perpendicular depth (distance along the view axis), not Euclidean
     // range. This is the metric the original sorts and depth-tests
     // against, and it matches the wall z-buffer so sprite ordering is
     // consistent with sprite-vs-wall clipping. Sorting by Euclidean
     // range instead would mis-order two near-equidistant sprites when
     // one is well off-axis.
-    depth: float64
+    depth: f64
     // Alpha multiplier for the sprite. 1.0 = fully opaque (default for
     // statics, projectiles, live enemies). 0..1 = blended against the
     // existing vbuf pixel — used by Mommy Mode to fade dying enemies
     // out to invisible in place of the original die_frames. 0 = skip
     // drawing entirely.
-    alpha: float64
+    alpha: f64
 
 // Renderer scratch buffers. Process-wide and rewritten every frame; not
 // part of save-state. Held in its own struct so no one reaches for globals.
@@ -774,27 +774,27 @@ struct render_ctx =
     // peripheral world. UI elements live in a 320-wide region centred
     // at `ui_offset_x = (fb_w - 320) / 2`; the 3D viewport (raycaster
     // + billboards) and full-screen fills span 0..fb_w.
-    fb_w: int32
-    fb_h: int32
+    fb_w: i32
+    fb_h: i32
     // Supersample factor in [2..6]. Picked at startup from the renderer
     // output size so dbuf approaches the drawable pixel count. `screen_w`
     // / `screen_h` / `view_render_h` are derived (cached so they don't
     // multiply on every read in hot raycaster loops).
-    scale: int32
-    screen_w: int32        // = scale * fb_w  — dbuf width / texture width
-    screen_h: int32        // = scale * fb_h  — dbuf height / texture height
-    view_render_h: int32   // = scale * view_h — 3D viewport row count in dbuf
+    scale: i32
+    screen_w: i32        // = scale * fb_w  — dbuf width / texture width
+    screen_h: i32        // = scale * fb_h  — dbuf height / texture height
+    view_render_h: i32   // = scale * view_h — 3D viewport row count in dbuf
     // Cached renderer drawable size in real pixels (last known value
     // from SDL_GetRendererOutputSize). Updated on startup and on
     // SDL_WINDOWEVENT_SIZE_CHANGED. Used by the Change View menu to
     // show the full geometry pipeline; not a load-bearing input
     // anywhere — the scale-pick path queries SDL directly.
-    drawable_w: int32
-    drawable_h: int32
-    ui_offset_x: int32
-    fb: uint32[]       // fb_w x fb_h ARGB — primary software-rendered frame
-    dbuf: uint32[]     // screen_w x screen_h ARGB — Nx nearest-neighbor upscale of fb
-    zbuf: float64[]    // per-column wall perp-distance, for sprite clipping
+    drawable_w: i32
+    drawable_h: i32
+    ui_offset_x: i32
+    fb: u32[]      // fb_w x fb_h ARGB — primary software-rendered frame
+    dbuf: u32[]    // screen_w x screen_h ARGB — Nx nearest-neighbor upscale of fb
+    zbuf: f64[]    // per-column wall perp-distance, for sprite clipping
 
     // 3D-viewport render target. The raycaster, billboards, weapon
     // overlay, and death-cam sprite write into `vbuf` (stride
@@ -818,40 +818,40 @@ struct render_ctx =
     // length by ss_v/ss_h so anisotropic (vertical-only) modes keep
     // walls/sprites the right on-screen height. Slice fields + ss_h/ss_v
     // are re-derived by `rebind_vbuf` whenever the buffers are realloc'd.
-    ssaa_mode: int32
-    ss_h: int32            // horizontal supersample: 1 (off/vertical) or 2 (full)
-    ss_v: int32            // vertical supersample: 1 (off) or 2 (vertical/full)
-    ssaa_buf: uint32[]     // vbuf_w x vbuf_h — only allocated when ssaa_mode != 0
-    ssaa_zbuf: float64[]   // vbuf_w — only allocated when ssaa_mode != 0
-    vbuf: uint32[]
-    vzbuf: float64[]
-    vbuf_w: int32
-    vbuf_h: int32
+    ssaa_mode: i32
+    ss_h: i32          // horizontal supersample: 1 (off/vertical) or 2 (full)
+    ss_v: i32          // vertical supersample: 1 (off) or 2 (vertical/full)
+    ssaa_buf: u32[]    // vbuf_w x vbuf_h — only allocated when ssaa_mode != 0
+    ssaa_zbuf: f64[]   // vbuf_w — only allocated when ssaa_mode != 0
+    vbuf: u32[]
+    vzbuf: f64[]
+    vbuf_w: i32
+    vbuf_h: i32
     billboards: billboard[]    // back-to-front draw list (statics + enemies)
-    num_billboards: int32
+    num_billboards: i32
     // Cache of the title screen, pre-decoded and palette-applied at startup.
     // Used as the backdrop for both title and main_menu — without this
     // cache, every menu frame re-Huffman-decompresses the title pic (~64KB of
     // per-bit tree-walk) and re-palettizes 64,000 pixels, which dropped the
     // frame rate enough to underrun the audio queue and kill the music.
-    title_bg: uint32[]
+    title_bg: u32[]
     // Pre-rendered god-mode BJ face: FACE1A palette-applied with the
     // blue iris pixels recolored gold. Built once at startup; the HUD
     // blits it as a plain memcpy while god mode is on, so the recolor
     // doesn't run per frame. 24×32 ARGB.
-    god_face: uint32[]
+    god_face: u32[]
     // Lazy cache of VGAGRAPH pic chunks as pre-palettized ARGB buffers.
     // Indexed by chunk id; `.len == 0` means not yet cached. Populated on
     // first draw via `pics.draw` — turns every subsequent draw of the
     // same chunk (HUD background, digits, face, weapon, intermission
     // L-font, etc.) into a plain memcpy. Palette is fixed for the process
     // lifetime, so caching is safe.
-    pic_cache: uint32[][]
+    pic_cache: u32[][]
     // Rotating screenshot slot counter (wraps at overlay.screenshot_max_slots).
-    screenshot_slot: int32
+    screenshot_slot: i32
     // Per-iteration counter for the main loop's frame-skip optimization
     // (see the should_render predicate in the game loop). Wraps freely.
-    frame_counter: uint64
+    frame_counter: u64
     // One-shot "the next render_frame must paint the full HUD strip"
     // signal. Set by resize_render_ctx after dbuf realloc (zero-init'd
     // memory) and by the screenshot paths (to guarantee full-fidelity
@@ -865,7 +865,7 @@ struct render_ctx =
     // rounds dt to whole multiples of it (see the snap in the game loop), so
     // it IS read by the simulation. The debug overlay also uses it as the
     // fixed denominator its work / drop / jitter readouts are judged against.
-    refresh_interval_ms: float64
+    refresh_interval_ms: f64
     // Debug overlay (TAB+D / --debug) live perf state, updated once per
     // main-loop iteration by debug_update_timing. dbg_fps / dbg_ms track the
     // full loop period (top-of-loop to top-of-loop, including the vsync wait
@@ -882,12 +882,12 @@ struct render_ctx =
     // a moment after a real drop. Purely a display concern — never read by the
     // simulation, so test mode (which doesn't run the main loop) leaves these
     // at zero.
-    dbg_fps: float64
-    dbg_ms: float64
-    dbg_work_ms: float64
-    dbg_jitter_ms: float64
-    dbg_drops: int32
-    dbg_hitch_flash: float64
+    dbg_fps: f64
+    dbg_ms: f64
+    dbg_work_ms: f64
+    dbg_jitter_ms: f64
+    dbg_drops: i32
+    dbg_hitch_flash: f64
 
 // Sound system handle: loaded-asset refs + SFX playback state.
 struct audio_ctx =
@@ -902,20 +902,20 @@ struct audio_ctx =
     // the device is unpaused, so no callback can be running) and thereafter
     // hands new tracks across via `cmd_ring`; it never reads or writes these
     // directly again. `music_prev` is the outgoing track during a swap and
-    // `music_xfade` counts its crossfade-out down. `mix_buf` is the int32
+    // `music_xfade` counts its crossfade-out down. `mix_buf` is the i32
     // accumulation buffer the callback sums sources into before soft-clipping
     // straight to SDL's stream. `music_chunk`, by contrast, is owned by the
     // MAIN thread (the swap-decision in the loop) and never read by the
     // callback — it just records which track we last asked for.
     music: imf.player*?        // current track (none = nothing loaded)
     music_prev: imf.player*?   // outgoing track, crossfading out
-    music_chunk: int32         // AUDIOT chunk last requested (-1 = none)
-    music_xfade: int32         // samples remaining in the crossfade-out
-    mix_buf: int32[]
+    music_chunk: i32           // AUDIOT chunk last requested (-1 = none)
+    music_xfade: i32           // samples remaining in the crossfade-out
+    mix_buf: i32[]
     // Mix/synthesis rate in Hz, detected from the default output device at
     // startup (48000 fallback; see `audio_rate` in main). Immutable after
     // construction, so both threads read it without synchronization.
-    sample_rate: int32
+    sample_rate: i32
     // Lock-free command channel between the main thread (producer) and the
     // SDL audio callback (consumer). `cmd_ring` carries play-sfx / set-music
     // requests main -> audio; the callback drains it at the top of each call
@@ -933,7 +933,7 @@ struct audio_ctx =
     // main loop's diagnostic beat reads it (acquire) to tell a stalled audio
     // thread (cb frozen) from a stalled main thread (beats frozen). Diagnostic
     // only — never read by the simulation.
-    cb_count: int64
+    cb_count: i64
     // Sound submenu toggles. `sfx_on` gates the AdLib SFX fallback path
     // (synthesized FM hits — see sfx.trigger_*). `digi_on` gates the
     // digitized PCM path (Sound Blaster samples). `music_on` gates the
@@ -947,25 +947,25 @@ struct audio_ctx =
     // Per-source level scalars, as integer percentages 10..200. The
     // mixer multiplies its per-frame source gain by `pct / 100.0`. 100
     // is the default mix; 200 pushes a source toward the soft-clip
-    // region in `mixer.soft_clip_to_int16`; 10 attenuates a source to
+    // region in `mixer.soft_clip_to_i16`; 10 attenuates a source to
     // a whisper without silencing it (use the on/off toggle for true
     // silence).
-    sfx_gain_pct: int32
-    digi_gain_pct: int32
-    music_gain_pct: int32
+    sfx_gain_pct: i32
+    digi_gain_pct: i32
+    music_gain_pct: i32
 
 // Save/load menu scratch. One instance per process — only one menu is open
 // at a time, so sharing is fine. `slots` is refreshed by save.refresh_slots
 // on menu entry; the two scratch buffers are reused across renders / writes.
 struct save_menu_ctx =
     slots: save.slot_info[]    // length = save.num_slots
-    label_scratch: uint8[]     // 32-byte reusable buffer for slot-label substrings
-    hex_scratch: uint8[]       // 1-byte buffer for per-nibble save-file writes
+    label_scratch: u8[]        // 32-byte reusable buffer for slot-label substrings
+    hex_scratch: u8[]          // 1-byte buffer for per-nibble save-file writes
     // In-progress slot name during inline save edit. NUL-terminated;
     // `edit_len` holds the byte length without the terminator. Capacity
     // is 32 (matches the original's max input string length).
-    edit_buf: uint8[]
-    edit_len: int32
+    edit_buf: u8[]
+    edit_len: i32
 
 // High-scores screen state — process-wide, persists across games.
 // `scores` is the 7-row table loaded once at startup (or seeded with
@@ -977,10 +977,10 @@ struct save_menu_ctx =
 // until the player presses Enter to commit).
 struct highscore_ctx =
     scores: highscore.entry[]
-    edit_index: int32?
+    edit_index: i32?
     edit_active: bool
-    edit_buf: uint8[]
-    edit_len: int32
+    edit_buf: u8[]
+    edit_len: i32
     // True the frame the player exits the high-scores screen after a
     // qualifying-and-named entry, so the post-screen routing (back to
     // title) can persist the table once. Cleared on next entry.
@@ -1038,7 +1038,7 @@ let grant_extra_life = (g: game*, ac: audio_ctx*) ->
 // The extra-life milestone count uses the capped score so once you're
 // maxed, no more free lives come from further scoring.
 let score_max = 999999
-let add_score = (g: game*, amount: int32, ac: audio_ctx*) ->
+let add_score = (g: game*, amount: i32, ac: audio_ctx*) ->
     if g->idkfa_mode then return
     let before_milestones = g->score / extra_life_score
     g->score = g->score + amount
@@ -1073,12 +1073,12 @@ let give_full_kit = (g: game*) ->
 // constant `if`s. The shift mapping assumes a US QWERTY layout —
 // other layouts will hand back the wrong shifted character for
 // punctuation, but plain letters stay correct.
-let keysym_to_ascii = (k: int32, mods: uint16) ->
+let keysym_to_ascii = (k: i32, mods: u16) ->
     let shift = (mods & 0x0003u16) != 0u16
     if k < 32 || k > 126 then 0u8
     else if shift then
         // Letters → uppercase.
-        if k >= 97 && k <= 122 then (uint8) (k - 32)
+        if k >= 97 && k <= 122 then (u8) (k - 32)
         // Digits + punctuation → US QWERTY shift map.
         else if k == 49 then 33u8     // 1 -> !
         else if k == 50 then 64u8     // 2 -> @
@@ -1101,8 +1101,8 @@ let keysym_to_ascii = (k: int32, mods: uint16) ->
         else if k == 46 then 62u8     // . -> >
         else if k == 47 then 63u8     // / -> ?
         else if k == 96 then 126u8    // ` -> ~
-        else (uint8) k
-    else (uint8) k
+        else (u8) k
+    else (u8) k
 
 
 // ============================================================
@@ -1129,14 +1129,14 @@ let keysym_to_ascii = (k: int32, mods: uint16) ->
 // in vertical + full. These are the single source of truth for the
 // supersample buffer dimensions — build / resize / apply / rebind all go
 // through them so the sizes can never drift out of sync.
-let ssaa_vbuf_w = (mode: int32, screen_w: int32) ->
+let ssaa_vbuf_w = (mode: i32, screen_w: i32) ->
     if mode == 2 then 2 * screen_w else screen_w
-let ssaa_vbuf_h = (mode: int32, view_render_h: int32) ->
+let ssaa_vbuf_h = (mode: i32, view_render_h: i32) ->
     if mode == 0 then view_render_h else 2 * view_render_h
-let ssaa_buf_len = (mode: int32, screen_w: int32, view_render_h: int32) ->
+let ssaa_buf_len = (mode: i32, screen_w: i32, view_render_h: i32) ->
     if mode == 0 then 0
     else ssaa_vbuf_w(mode, screen_w) * ssaa_vbuf_h(mode, view_render_h)
-let ssaa_zbuf_len = (mode: int32, screen_w: int32) ->
+let ssaa_zbuf_len = (mode: i32, screen_w: i32) ->
     if mode == 0 then 0 else ssaa_vbuf_w(mode, screen_w)
 
 let rebind_vbuf = (rc: render_ctx*) ->
@@ -1151,14 +1151,14 @@ let rebind_vbuf = (rc: render_ctx*) ->
     rc->ss_h = if rc->ssaa_mode == 2 then 2 else 1
     rc->ss_v = if rc->ssaa_mode == 0 then 1 else 2
 
-let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
-                        fb_w: int32, fb_h: int32, scale: int32, ssaa_mode: int32) ->
+let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const u32[],
+                        fb_w: i32, fb_h: i32, scale: i32, ssaa_mode: i32) ->
     let screen_w = fb_w * scale
     let view_render_h = view_h * scale
-    let dbuf = alloc(uint32[screen_w * (fb_h * scale)] {})!
-    let zbuf = alloc(float64[screen_w] {})!
-    let ssaa_buf = alloc(uint32[ssaa_buf_len(ssaa_mode, screen_w, view_render_h)] {})!
-    let ssaa_zbuf = alloc(float64[ssaa_zbuf_len(ssaa_mode, screen_w)] {})!
+    let dbuf = alloc(u32[screen_w * (fb_h * scale)] {})!
+    let zbuf = alloc(f64[screen_w] {})!
+    let ssaa_buf = alloc(u32[ssaa_buf_len(ssaa_mode, screen_w, view_render_h)] {})!
+    let ssaa_zbuf = alloc(f64[ssaa_zbuf_len(ssaa_mode, screen_w)] {})!
     let rc = alloc(render_ctx {
         fb_w = fb_w,
         fb_h = fb_h,
@@ -1169,7 +1169,7 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
         drawable_w = 0,
         drawable_h = 0,
         ui_offset_x = (fb_w - 320) / 2,
-        fb = alloc(uint32[fb_w * fb_h] {})!,
+        fb = alloc(u32[fb_w * fb_h] {})!,
         dbuf = dbuf,
         zbuf = zbuf,
         ssaa_mode = ssaa_mode,
@@ -1189,7 +1189,7 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
         num_billboards = 0,
         title_bg = pics.build_title_bg_cache(vg, pal, fb_w, fb_h),
         god_face = pics.build_god_face_cache(vg, pal),
-        pic_cache = alloc(uint32[][vg->num_chunks] {})!,
+        pic_cache = alloc(u32[][vg->num_chunks] {})!,
         screenshot_slot = 0,
         frame_counter = 0u64,
         force_redraw = true,
@@ -1206,7 +1206,7 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
 // only — no use of absolute pixel counts, so DPI scaling doesn't
 // affect this. Test-mode callers should bypass this and just use 320 —
 // SDL isn't initialised in that path.
-let compute_fb_w_for_view_mode = (view_mode: int32) ->
+let compute_fb_w_for_view_mode = (view_mode: i32) ->
     let forced = config.view_mode_to_fb_w(view_mode)
     if forced > 0 then forced
     else
@@ -1214,9 +1214,9 @@ let compute_fb_w_for_view_mode = (view_mode: int32) ->
         sdl2.get_display_bounds(0, &db)
         if db.w <= 0 || db.h <= 0 then 320
         else
-            let display_aspect = (float64) db.w / (float64) db.h
+            let display_aspect = (f64) db.w / (f64) db.h
             let aspect_scale = display_aspect / (4.0 / 3.0)
-            let mut x = (int32) (320.0 * aspect_scale)
+            let mut x = (i32) (320.0 * aspect_scale)
             if x < 320 then x = 320
             if x > 640 then x = 640
             if x % 2 != 0 then x = x + 1
@@ -1229,7 +1229,7 @@ let compute_fb_w_for_view_mode = (view_mode: int32) ->
 // height side ≈ 1/1.2, undoing the VGA pixel-aspect stretch SDL
 // applies via logical-size mismatch, so we pick the largest scale
 // that fits inside the drawable area before SDL's downstream stretch.
-let compute_scale_factor = (out_w: int32, out_h: int32, fb_w: int32, fb_h: int32, max_scale: int32) ->
+let compute_scale_factor = (out_w: i32, out_h: i32, fb_w: i32, fb_h: i32, max_scale: i32) ->
     if out_w <= 0 || out_h <= 0 then 2
     else
         let scale_w = out_w / fb_w
@@ -1243,8 +1243,8 @@ let compute_scale_factor = (out_w: int32, out_h: int32, fb_w: int32, fb_h: int32
 // supersample factor. An explicit non-zero choice (2..12, set from
 // the Change View menu) wins outright and bypasses --max-scale; Auto
 // (0) falls through to the auto-pick which honours the CLI cap.
-let pick_scale_factor = (out_w: int32, out_h: int32, fb_w: int32, fb_h: int32,
-                          max_scale: int32, scale_factor: int32) ->
+let pick_scale_factor = (out_w: i32, out_h: i32, fb_w: i32, fb_h: i32,
+                          max_scale: i32, scale_factor: i32) ->
     if scale_factor != 0 then scale_factor
     else compute_scale_factor(out_w, out_h, fb_w, fb_h, max_scale)
 
@@ -1267,7 +1267,7 @@ let query_refresh_interval_ms = (win: any*) ->
     let disp = sdl2.window_display_index(win)
     let mut mode = default(sdl_display_mode)
     if disp >= 0 && sdl2.current_display_mode(disp, (any*) &mode) == 0 && mode.refresh_rate > 0 then
-        1000.0 / (float64) mode.refresh_rate
+        1000.0 / (f64) mode.refresh_rate
     else 0.0
 
 // Free + realloc the size-dependent buffers (fb if fb_w changed,
@@ -1278,7 +1278,7 @@ let query_refresh_interval_ms = (win: any*) ->
 // the camera plane (only on fb_w change) and whether to recreate the
 // SDL texture (on either change).
 let resize_render_ctx = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                         pal: const uint32[], new_fb_w: int32, new_scale: int32) ->
+                         pal: const u32[], new_fb_w: i32, new_scale: i32) ->
     let fb_w_changed = new_fb_w != rc->fb_w
     let scale_changed = new_scale != rc->scale
     if !fb_w_changed && !scale_changed then false
@@ -1298,13 +1298,13 @@ let resize_render_ctx = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
         rc->view_render_h = view_h * new_scale
         rc->ui_offset_x = (new_fb_w - 320) / 2
         if fb_w_changed then
-            rc->fb = alloc(uint32[new_fb_w * rc->fb_h] {})!
+            rc->fb = alloc(u32[new_fb_w * rc->fb_h] {})!
             rc->title_bg = pics.build_title_bg_cache(vg, pal, new_fb_w, rc->fb_h)
-        rc->dbuf = alloc(uint32[rc->screen_w * rc->screen_h] {})!
-        rc->zbuf = alloc(float64[rc->screen_w] {})!
+        rc->dbuf = alloc(u32[rc->screen_w * rc->screen_h] {})!
+        rc->zbuf = alloc(f64[rc->screen_w] {})!
         if rc->ssaa_mode != 0 then
-            rc->ssaa_buf = alloc(uint32[ssaa_buf_len(rc->ssaa_mode, rc->screen_w, rc->view_render_h)] {})!
-            rc->ssaa_zbuf = alloc(float64[ssaa_zbuf_len(rc->ssaa_mode, rc->screen_w)] {})!
+            rc->ssaa_buf = alloc(u32[ssaa_buf_len(rc->ssaa_mode, rc->screen_w, rc->view_render_h)] {})!
+            rc->ssaa_zbuf = alloc(f64[ssaa_zbuf_len(rc->ssaa_mode, rc->screen_w)] {})!
         rebind_vbuf(rc)
         // Newly-allocated dbuf is zero-initialized — the HUD strip would
         // be black for one frame under the frame-skip optimization
@@ -1321,9 +1321,9 @@ let resize_render_ctx = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
 // magnitude. Returns true if anything actually changed — caller
 // recreates the SDL texture + resets logical size on true.
 let apply_view_mode = (w: world*, vg: const vgagraph.vgagraph_file*,
-                       pal: const uint32[], view_mode: int32) ->
+                       pal: const u32[], view_mode: i32) ->
     let new_fb_w = compute_fb_w_for_view_mode(view_mode)
-    let new_plane_factor = fov_factor * (float64) new_fb_w / 320.0
+    let new_plane_factor = fov_factor * (f64) new_fb_w / 320.0
     let g = w->g
     let rc = w->rc
     let fb_w_was = rc->fb_w
@@ -1347,7 +1347,7 @@ let apply_view_mode = (w: world*, vg: const vgagraph.vgagraph_file*,
 // zbuf at the new size; fb / title_bg / camera plane are unaffected.
 // Returns true on a real change.
 let apply_scale_factor = (w: world*, vg: const vgagraph.vgagraph_file*,
-                          pal: const uint32[], new_scale: int32) ->
+                          pal: const u32[], new_scale: i32) ->
     let changed = resize_render_ctx(w->rc, vg, pal, w->rc->fb_w, new_scale)
     overlay.debug_reset(w->rc)
     changed
@@ -1360,7 +1360,7 @@ let apply_scale_factor = (w: world*, vg: const vgagraph.vgagraph_file*,
 // screen_w / screen_h are unaffected — only the upstream raycaster
 // target changes — so the SDL texture and logical size stay valid
 // across this switch. Returns true on a real change.
-let apply_ssaa_mode = (w: world*, new_mode: int32) ->
+let apply_ssaa_mode = (w: world*, new_mode: i32) ->
     let rc = w->rc
     if new_mode == rc->ssaa_mode then false
     else
@@ -1369,8 +1369,8 @@ let apply_ssaa_mode = (w: world*, new_mode: int32) ->
             free(rc->ssaa_zbuf)
         rc->ssaa_mode = new_mode
         w->g->ssaa_mode = new_mode
-        rc->ssaa_buf = alloc(uint32[ssaa_buf_len(new_mode, rc->screen_w, rc->view_render_h)] {})!
-        rc->ssaa_zbuf = alloc(float64[ssaa_zbuf_len(new_mode, rc->screen_w)] {})!
+        rc->ssaa_buf = alloc(u32[ssaa_buf_len(new_mode, rc->screen_w, rc->view_render_h)] {})!
+        rc->ssaa_zbuf = alloc(f64[ssaa_zbuf_len(new_mode, rc->screen_w)] {})!
         rebind_vbuf(rc)
         overlay.debug_reset(rc)
         true
@@ -1380,9 +1380,9 @@ let apply_ssaa_mode = (w: world*, new_mode: int32) ->
 let build_save_menu_ctx = () ->
     let sm = alloc(save_menu_ctx {
         slots = alloc(save.slot_info[save.num_slots] {})!,
-        label_scratch = alloc(uint8[32] {})!,
-        hex_scratch = alloc(uint8[1] {})!,
-        edit_buf = alloc(uint8[32] {})!,
+        label_scratch = alloc(u8[32] {})!,
+        hex_scratch = alloc(u8[1] {})!,
+        edit_buf = alloc(u8[32] {})!,
         edit_len = 0
     })!
     sm
@@ -1398,9 +1398,9 @@ let build_highscore_ctx = () ->
     highscore.load(scores)
     alloc(highscore_ctx {
         scores       = scores,
-        edit_index   = none(int32),
+        edit_index   = none(i32),
         edit_active  = false,
-        edit_buf     = alloc(uint8[highscore.max_name_len + 1] {})!,
+        edit_buf     = alloc(u8[highscore.max_name_len + 1] {})!,
         edit_len     = 0,
         pending_save = false
     })!
@@ -1408,23 +1408,23 @@ let build_highscore_ctx = () ->
 // Allocate a level from the decoded wolf3d map data. Builds tilemap,
 // spawns static sprites, and marks push-wall tiles. Caller must call
 // free_level when the level is no longer needed.
-let build_level = (lv_data: maps.level*, sprite_start: int32, difficulty: int32, mommy_mode: bool) ->
+let build_level = (lv_data: maps.level*, sprite_start: i32, difficulty: i32, mommy_mode: bool) ->
     let lv = alloc(level {
-        tilemap = alloc(uint8[map_size * map_size] {})!,
+        tilemap = alloc(u8[map_size * map_size] {})!,
         pushwall_tiles = alloc(bool[map_size * map_size] {})!,
         exit_tiles = alloc(bool[map_size * map_size] {})!,
-        path_arrows = alloc(uint8[map_size * map_size] {})!,
+        path_arrows = alloc(u8[map_size * map_size] {})!,
         sprites = alloc(tilemap.sprite_obj[tilemap.max_sprites] {})!,
         num_sprites = 0,
         doors = alloc(doors.door_obj[doors.max_doors] {})!,
-        door_pos = alloc(float64[doors.max_doors] {})!,
+        door_pos = alloc(f64[doors.max_doors] {})!,
         num_doors = 0,
         pushwall = default(pushwall.pushwall_state),
         enemies = alloc(enemies.enemy[enemies.max_enemies] {})!,
         num_enemies = 0,
         projectiles = alloc(projectiles.projectile[projectiles.max_projectiles] {})!,
-        tile_areas = alloc(uint8[map_size * map_size] {})!,
-        area_connect = alloc(uint8[areas.num_areas * areas.num_areas] {})!,
+        tile_areas = alloc(u8[map_size * map_size] {})!,
+        area_connect = alloc(u8[areas.num_areas * areas.num_areas] {})!,
         area_by_player = alloc(bool[areas.num_areas] {})!,
         total_enemies = 0,
         total_pushwalls = 0,
@@ -1535,7 +1535,7 @@ let record_level_for_episode = (g: game*) ->
     g->ep_kr_total = g->ep_kr_total + kr
     g->ep_sr_total = g->ep_sr_total + sr
     g->ep_tr_total = g->ep_tr_total + tr
-    g->ep_time_total = g->ep_time_total + (int32) g->level_time
+    g->ep_time_total = g->ep_time_total + (i32) g->level_time
     g->ep_levels_played = g->ep_levels_played + 1
     g->ep_recorded_current = true
 
@@ -1723,7 +1723,7 @@ let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
 // One simulation tick — runs all per-frame game-state updates in order.
 // Used by both the interactive game loop and the headless test mode so
 // they stay in sync. Add new per-frame systems here, not at each caller.
-let tick = (w: world*, dt: float64) ->
+let tick = (w: world*, dt: f64) ->
     let g = w->g
     // Damage flash and respawn fade decay every frame regardless of phase.
     if g->damage_flash_timer > 0.0 then
@@ -1828,7 +1828,7 @@ let tick = (w: world*, dt: float64) ->
         atomic_store_release(&w->ac->adlib_busy_flag, w->ac->sfx->active)
 
 // Render the full game frame to fb (used before saving a screenshot).
-let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[]) ->
+let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const u32[]) ->
     // HUD-skip predicate for 3D phases (playing / dying / bj_victory /
     // death_cam). The HUD strip in dbuf carries across frames since the
     // 3D pipeline only writes rows 0..view_render_h, so on odd frames we
@@ -1960,7 +1960,7 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const uint32[])
 // Headless test mode — scripted commands for automated testing
 // ============================================================
 
-let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64) ->
+let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
     let g = w->g
     // Apply audio commands a prior command left on the ring (e.g. a `goto`
     // that collected a pickup — it doesn't tick, so nothing pumped it) before
@@ -1971,7 +1971,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         io.write(alloca("bad arg '%s{arg}': expected %s{expected}\n"), stderr)
         void()
     if text.starts_with(arg, "fwd:") then
-        match text.parse_int32(arg[4..arg.len]) with
+        match text.parse_i32(arg[4..arg.len]) with
         | some(n) ->
             g->key_up = true
             for j in 0..n do
@@ -1979,7 +1979,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             g->key_up = false
         | none -> bad("integer tick count")
     else if text.starts_with(arg, "back:") then
-        match text.parse_int32(arg[5..arg.len]) with
+        match text.parse_i32(arg[5..arg.len]) with
         | some(n) ->
             g->key_down = true
             for j in 0..n do
@@ -1987,24 +1987,24 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             g->key_down = false
         | none -> bad("integer tick count")
     else if text.starts_with(arg, "turnr:") then
-        match text.parse_int32(arg[6..arg.len]) with
-        | some(deg) -> player.rotate_camera(g, 0.0 - (float64) deg * 3.14159265 / 180.0)
+        match text.parse_i32(arg[6..arg.len]) with
+        | some(deg) -> player.rotate_camera(g, 0.0 - (f64) deg * 3.14159265 / 180.0)
         | none -> bad("integer degrees")
     else if text.starts_with(arg, "turnl:") then
-        match text.parse_int32(arg[6..arg.len]) with
-        | some(deg) -> player.rotate_camera(g, (float64) deg * 3.14159265 / 180.0)
+        match text.parse_i32(arg[6..arg.len]) with
+        | some(deg) -> player.rotate_camera(g, (f64) deg * 3.14159265 / 180.0)
         | none -> bad("integer degrees")
     else if arg == "run" then
         g->key_shift = !g->key_shift
     else if text.starts_with(arg, "goto:") then
         let coords = text.split(arg[5..arg.len], ",")
         if coords.len >= 2 then
-            match text.parse_int32(coords[0]) with
+            match text.parse_i32(coords[0]) with
             | some(tx) ->
-                match text.parse_int32(coords[1]) with
+                match text.parse_i32(coords[1]) with
                 | some(ty) ->
-                    g->pos_x = (float64) tx + 0.5
-                    g->pos_y = (float64) ty + 0.5
+                    g->pos_x = (f64) tx + 0.5
+                    g->pos_y = (f64) ty + 0.5
                 | none -> bad("integer Y coordinate")
             | none -> bad("integer X coordinate")
         else bad("X,Y coordinate pair")
@@ -2017,15 +2017,15 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         areas.update_player_area(w->lv, g)
         areas.connect(w->lv, g->area_number)
     else if text.starts_with(arg, "sethp:") then
-        match text.parse_int32(arg[6..arg.len]) with
+        match text.parse_i32(arg[6..arg.len]) with
         | some(n) -> g->health = n
         | none -> bad("integer HP value")
     else if text.starts_with(arg, "setweapon:") then
-        match text.parse_int32(arg[10..arg.len]) with
+        match text.parse_i32(arg[10..arg.len]) with
         | some(n) -> g->weapon = n
         | none -> bad("integer weapon index (0-3)")
     else if text.starts_with(arg, "setammo:") then
-        match text.parse_int32(arg[8..arg.len]) with
+        match text.parse_i32(arg[8..arg.len]) with
         | some(n) -> g->ammo = n
         | none -> bad("integer ammo count")
     else if arg == "fire" then
@@ -2039,10 +2039,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         let face_horiz = math.abs(g->dir_x) > math.abs(g->dir_y)
         let cdx = if face_horiz then (if g->dir_x >= 0.0 then 1 else -1) else 0
         let cdy = if face_horiz then 0 else (if g->dir_y >= 0.0 then 1 else -1)
-        let fx = (int32) g->pos_x + cdx
-        let fy = (int32) g->pos_y + cdy
+        let fx = (i32) g->pos_x + cdx
+        let fy = (i32) g->pos_y + cdy
         let ft = if fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
-            (int32) w->lv->tilemap[(int64) fx * 64 + (int64) fy]
+            (i32) w->lv->tilemap[(i64) fx * 64 + (i64) fy]
         else -1
         let nl = if g->next_level then 1 else 0
         io.write("facing=(%d{fx},%d{fy}) tile=%d{ft} next_level=%d{nl}\n", stdout)
@@ -2081,7 +2081,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         g->key_space = false
         g->key_space_handled = false
     else if text.starts_with(arg, "wait:") then
-        match text.parse_int32(arg[5..arg.len]) with
+        match text.parse_i32(arg[5..arg.len]) with
         | some(n) ->
             for j in 0..n do
                 tick(w, dt)
@@ -2097,7 +2097,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // normally pins scale=2 (so screenshot regressions stay
         // bit-stable); this command is for the perf bench harness to
         // probe higher-scale codepaths headlessly.
-        match text.parse_int32(arg[9..arg.len]) with
+        match text.parse_i32(arg[9..arg.len]) with
         | some(n) ->
             if n >= 2 && n <= 8 then
                 apply_scale_factor(w, w->vg, pal, n)
@@ -2109,7 +2109,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // Test mode defaults to off (the regression suite expects
         // bit-stable SSAA-off output); this command lets the perf bench
         // probe the supersampled raycaster + downsample paths headlessly.
-        match text.parse_int32(arg[8..arg.len]) with
+        match text.parse_i32(arg[8..arg.len]) with
         | some(n) ->
             let m = if n < 0 then 0 else if n > 2 then 2 else n
             apply_ssaa_mode(w, m)
@@ -2120,15 +2120,15 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // Drives the raycaster + billboards + overlay pipeline at the
         // current scale. Use after `setscale:N` and a position-setting
         // sequence (e.g. fwd:35) to measure a representative scene.
-        match text.parse_int32(arg[6..arg.len]) with
+        match text.parse_i32(arg[6..arg.len]) with
         | some(n) ->
             let t0 = sys.time()
             for j in 0..n do
                 render_frame(w, w->ac->vs, pal)
             let t1 = sys.time()
             let total_ms = t1 - t0
-            let per_frame = if n > 0 then (float64) total_ms / (float64) n else 0.0
-            let fps = if total_ms > 0 then (float64) n * 1000.0 / (float64) total_ms else 0.0
+            let per_frame = if n > 0 then (f64) total_ms / (f64) n else 0.0
+            let fps = if total_ms > 0 then (f64) n * 1000.0 / (f64) total_ms else 0.0
             io.write("bench scale=%d{w->rc->scale} screen=%d{w->rc->screen_w}x%d{w->rc->screen_h} frames=%d{n} total=%d{total_ms}ms per_frame=%6.3f{per_frame}ms fps=%6.1f{fps}\n", stdout)
             void()
         | none -> bad("integer frame count")
@@ -2137,18 +2137,18 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // and report total / per-sample wall time. Used to compare OPL2
         // emulator perf across implementations (e.g. float vs integer
         // gain pipeline).
-        match text.parse_int32(arg[11..arg.len]) with
+        match text.parse_i32(arg[11..arg.len]) with
         | some(n) ->
             // WONDERIN = music.wonderin = 14, chunk = 261 + 14 = 275.
             // Pinned to 44100 (not the detected device rate) so bench
             // numbers stay comparable across machines.
             let chunk = 261 + 14
             let sample_rate = 44100i32
-            let ms = font.music_load(w->ac->ad, chunk, (float64) sample_rate)
+            let ms = font.music_load(w->ac->ad, chunk, (f64) sample_rate)
             let frames_per_batch = 1024i32
             let total_frames = n * sample_rate
             let batches = total_frames / frames_per_batch
-            let mix_buf = int32[2048] {}
+            let mix_buf = i32[2048] {}
             let t0 = sys.time()
             for j in 0..batches do
                 for k in 0..2048 do
@@ -2158,10 +2158,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             let total_ms = t1 - t0
             let total_samples = batches * frames_per_batch
             let ns_per_sample = if total_samples > 0
-                then (float64) total_ms * 1000000.0 / (float64) total_samples
+                then (f64) total_ms * 1000000.0 / (f64) total_samples
                 else 0.0
             let realtime_x = if total_ms > 0
-                then (float64) n * 1000.0 / (float64) total_ms
+                then (f64) n * 1000.0 / (f64) total_ms
                 else 0.0
             io.write("audiobench n=%d{n}s samples=%d{total_samples} total=%d{total_ms}ms ns/sample=%6.1f{ns_per_sample} realtime=%6.1f{realtime_x}x\n", stdout)
             imf.destroy(ms)
@@ -2173,7 +2173,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // playing-phase routing in render_frame so each piece is
         // measured in isolation. Sums roughly approximate render_frame
         // (small drift from the omitted phase-match overhead).
-        match text.parse_int32(arg[11..arg.len]) with
+        match text.parse_i32(arg[11..arg.len]) with
         | some(n) ->
             let t0 = sys.time()
             for j in 0..n do
@@ -2202,17 +2202,17 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             for j in 0..n do
                 overlay.composite_hud(w->rc)
             let t8 = sys.time()
-            let nf = (float64) n
+            let nf = (f64) n
             io.write("benchparts scale=%d{w->rc->scale} ssaa=%d{w->rc->ssaa_mode} frames=%d{n}\n", stdout)
-            io.write("  clear_view_sentinel : %7.3f{(float64) (t1 - t0) / nf}ms\n", stdout)
-            io.write("  raycaster.walls     : %7.3f{(float64) (t2 - t1) / nf}ms\n", stdout)
-            io.write("  billboards build+ren: %7.3f{(float64) (t3 - t2) / nf}ms\n", stdout)
-            io.write("  render_weapon       : %7.3f{(float64) (t4 - t3) / nf}ms\n", stdout)
-            io.write("  ssaa_downsample     : %7.3f{(float64) (t5 - t4) / nf}ms\n", stdout)
-            io.write("  hud render+msg      : %7.3f{(float64) (t6 - t5) / nf}ms\n", stdout)
-            io.write("  composite view      : %7.3f{(float64) (t7 - t6) / nf}ms\n", stdout)
-            io.write("  composite hud       : %7.3f{(float64) (t8 - t7) / nf}ms\n", stdout)
-            io.write("  total               : %7.3f{(float64) (t8 - t0) / nf}ms\n", stdout)
+            io.write("  clear_view_sentinel : %7.3f{(f64) (t1 - t0) / nf}ms\n", stdout)
+            io.write("  raycaster.walls     : %7.3f{(f64) (t2 - t1) / nf}ms\n", stdout)
+            io.write("  billboards build+ren: %7.3f{(f64) (t3 - t2) / nf}ms\n", stdout)
+            io.write("  render_weapon       : %7.3f{(f64) (t4 - t3) / nf}ms\n", stdout)
+            io.write("  ssaa_downsample     : %7.3f{(f64) (t5 - t4) / nf}ms\n", stdout)
+            io.write("  hud render+msg      : %7.3f{(f64) (t6 - t5) / nf}ms\n", stdout)
+            io.write("  composite view      : %7.3f{(f64) (t7 - t6) / nf}ms\n", stdout)
+            io.write("  composite hud       : %7.3f{(f64) (t8 - t7) / nf}ms\n", stdout)
+            io.write("  total               : %7.3f{(f64) (t8 - t0) / nf}ms\n", stdout)
             void()
         | none -> bad("integer frame count")
     else if arg == "state" then
@@ -2249,7 +2249,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         let rest = arg[9..arg.len]
         let parts = text.split(rest, ",")
         if parts.len >= 2 then
-            match text.parse_int32(parts[0]) with
+            match text.parse_i32(parts[0]) with
             | some(n) ->
                 // Clear the fb black first so metadata is obvious.
                 for i in 0..(w->rc->fb_w * game_h) do
@@ -2280,7 +2280,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
     else if text.starts_with(arg, "vginfo:") then
         // Dump the dimensions of one VGAGRAPH chunk (pic). Useful to verify
         // the decoder produces sane widths/heights after the Huffman expand.
-        match text.parse_int32(arg[7..arg.len]) with
+        match text.parse_i32(arg[7..arg.len]) with
         | some(n) ->
             let { pw, ph } = vgagraph.pic_dims_at(w->vg, n)
             let off = if n < w->vg->num_chunks then w->vg->offsets[n] else -1i64
@@ -2353,7 +2353,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
     else if text.starts_with(arg, "setdifficulty:") then
         // Set difficulty + fully rebuild the current level so spawn filtering
         // reflects it. Useful for testing tier gating (base/+36/+72 tiles).
-        match text.parse_int32(arg[14..arg.len]) with
+        match text.parse_i32(arg[14..arg.len]) with
         | some(n) ->
             g->difficulty = if n < 0 then 0 else if n > 3 then 3 else n
             // Re-run spawn.spawn_enemies on the existing level. Since difficulty
@@ -2372,7 +2372,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             g->kills = 0
         | none -> bad("integer difficulty 0-3")
     else if text.starts_with(arg, "setlevel:") then
-        match text.parse_int32(arg[9..arg.len]) with
+        match text.parse_i32(arg[9..arg.len]) with
         | some(n) ->
             if n < 0 || n >= 60 then bad("level 0..59")
             else
@@ -2389,7 +2389,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
     else if text.starts_with(arg, "setepisode:") then
         // Jump to the start of episode N (level = N*10), preserving
         // score/lives. Wrapper around setlevel.
-        match text.parse_int32(arg[11..arg.len]) with
+        match text.parse_i32(arg[11..arg.len]) with
         | some(n) ->
             if n < 0 || n >= episode.count then bad("episode 0..5")
             else
@@ -2404,7 +2404,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
                 g->phase_timer = 0.0
         | none -> bad("integer episode 0..5")
     else if text.starts_with(arg, "save:") then
-        match text.parse_int32(arg[5..arg.len]) with
+        match text.parse_i32(arg[5..arg.len]) with
         | some(n) ->
             if n < 0 || n >= save.num_slots then bad("slot 0..%d{save.num_slots - 1}")
             else
@@ -2415,7 +2415,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
                 void()
         | none -> bad("integer slot")
     else if text.starts_with(arg, "load:") then
-        match text.parse_int32(arg[5..arg.len]) with
+        match text.parse_i32(arg[5..arg.len]) with
         | some(n) ->
             if n < 0 || n >= save.num_slots then bad("slot 0..%d{save.num_slots - 1}")
             else
@@ -2434,7 +2434,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             else
                 let ep = s->level_num / episode.levels_per + 1
                 let lvl = s->level_num % episode.levels_per + 1
-                let lbl_chars = if s->label.len > 0 then s->label else default(uint8[])
+                let lbl_chars = if s->label.len > 0 then s->label else default(u8[])
                 io.write("slot %d{i}: E%d{ep}M%d{lvl} diff=%d{s->difficulty} score=%d{s->score} label=", stdout)
                 if lbl_chars.len > 0 then io.write(lbl_chars, stdout)
                 io.write("\n", stdout)
@@ -2467,9 +2467,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
                 break
         if comma <= 0 || comma >= body.len - 1 then bad("X,Y world coords")
         else
-            match text.parse_float64(body[0..comma]) with
+            match text.parse_f64(body[0..comma]) with
             | some(kx) ->
-                match text.parse_float64(body[comma+1..body.len]) with
+                match text.parse_f64(body[comma+1..body.len]) with
                 | some(ky) ->
                     g->health = 0
                     g->phase = game_phase.dying
@@ -2484,7 +2484,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // Instant-kill enemy by index (matches enemylist's [N] order).
         // Routes through enemies.ai.damage_enemy with an HP-clearing damage value so
         // score / kills / drops fire the same way a real bullet would.
-        match text.parse_int32(arg[10..arg.len]) with
+        match text.parse_i32(arg[10..arg.len]) with
         | some(n) ->
             if n < 0 || n >= w->lv->num_enemies then bad("enemy index out of range")
             else
@@ -2569,7 +2569,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         let parts = text.split(arg[11..arg.len], ",")
         if parts.len >= 3 then
             let parse = (s: const str) ->
-                match text.parse_int32(s) with
+                match text.parse_i32(s) with
                 | some(v) -> v
                 | none -> 0
             let sc = parse(parts[0])
@@ -2585,12 +2585,12 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // to commit + dismiss.
         if w->hs->edit_active then
             let nm = arg[8..arg.len]
-            for k in 0..(int32) w->hs->edit_buf.len do
-                w->hs->edit_buf[(int64) k] = 0u8
-            let mut n = (int32) nm.len
+            for k in 0..(i32) w->hs->edit_buf.len do
+                w->hs->edit_buf[(i64) k] = 0u8
+            let mut n = (i32) nm.len
             if n > highscore.max_name_len then n = highscore.max_name_len
             for k in 0..n do
-                w->hs->edit_buf[(int64) k] = nm[(int64) k]
+                w->hs->edit_buf[(i64) k] = nm[(i64) k]
             w->hs->edit_len = n
     else if arg == "hs_state" then
         // Dump every row of the high-scores table + the current edit
@@ -2602,7 +2602,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             | none -> -1
         io.write("hs edit=%d{edit} index=%d{idx_disp}", stdout)
         if w->hs->edit_active then
-            let typed = (const str) w->hs->edit_buf[0..(int64) w->hs->edit_len]
+            let typed = (const str) w->hs->edit_buf[0..(i64) w->hs->edit_len]
             io.write(" typed='", stdout)
             if typed.len > 0 then io.write(typed, stdout)
             io.write("'", stdout)
@@ -2671,14 +2671,14 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // enemy within 2 tiles of the player with their distance and tile.
         let px = g->pos_x
         let py = g->pos_y
-        let xl = (int32) (px - player.radius)
-        let xr = (int32) (px + player.radius)
-        let yl = (int32) (py - player.radius)
-        let yh = (int32) (py + player.radius)
+        let xl = (i32) (px - player.radius)
+        let xr = (i32) (px + player.radius)
+        let yl = (i32) (py - player.radius)
+        let yh = (i32) (py + player.radius)
         io.write("probe pos=(%7.3f{px}, %7.3f{py}) bbox_tiles: x[%d{xl}..%d{xr}] y[%d{yl}..%d{yh}]\n", stdout)
         for tx in xl..(xr + 1) do
             for ty in yl..(yh + 1) do
-                let ti = (int32) w->lv->tilemap[(int64) tx * 64 + (int64) ty]
+                let ti = (i32) w->lv->tilemap[(i64) tx * 64 + (i64) ty]
                 let dstate = if ti < 128 then "open"
                     else match w->lv->doors[ti - 128].state with
                     | closed  -> "DOOR:closed"
@@ -2723,7 +2723,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             let d = math.sqrt(dx * dx + dy * dy)
             if d < 2.5 then
                 let bs = if s.blocks then "BLOCKS" else "walk"
-                io.write(alloca("  sprite[%d{i}] tile(%d{(int32) s.x},%d{(int32) s.y}) page=%d{s.shape_page} %s{bs} d=%5.3f{d}\n"), stdout)
+                io.write(alloca("  sprite[%d{i}] tile(%d{(i32) s.x},%d{(i32) s.y}) page=%d{s.shape_page} %s{bs} d=%5.3f{d}\n"), stdout)
         void()
     else if arg == "arrows" then
         // Dump every path-arrow marker tile baked into the level. Lets a
@@ -2731,7 +2731,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         // that enemies.ai.select_path_dir applies the override.
         for y in 0..map_size do
             for x in 0..map_size do
-                let v = (int32) w->lv->path_arrows[(int64) x * 64 + (int64) y]
+                let v = (i32) w->lv->path_arrows[(i64) x * 64 + (i64) y]
                 if v != dir.nodir then
                     io.write("arrow (%d{x},%d{y}) dir=%d{v}\n", stdout)
         void()
@@ -2766,8 +2766,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             | pain  -> "pain"
             | die   -> "die"
             | dead  -> "dead"
-            let area = (int32) w->lv->tile_areas[(int64) e.tile_x * 64 + (int64) e.tile_y]
-            io.write(alloca("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp} area=%d{area} vis=%d{(int32) e.last_visible}\n"), stdout)
+            let area = (i32) w->lv->tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
+            io.write(alloca("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp} area=%d{area} vis=%d{(i32) e.last_visible}\n"), stdout)
         void()
     else if arg == "pickups" then
         // Per-level pickup inventory: dumps every live sprite whose
@@ -2799,8 +2799,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
             | crown       -> "crown"
             | gibs        -> "gibs"
             if ks.len == 0 then continue
-            let tx = (int32) s.x
-            let ty = (int32) s.y
+            let tx = (i32) s.x
+            let ty = (i32) s.y
             io.write(alloca("[%d{i}] (%d{tx},%d{ty}) kind=%s{ks}\n"), stdout)
             count = count + 1
         io.write("pickups: count=%d{count}\n", stdout)
@@ -2812,7 +2812,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
         let mut count = 0
         for y in 0..map_size do
             for x in 0..map_size do
-                if w->lv->exit_tiles[(int64) x * 64 + (int64) y] then
+                if w->lv->exit_tiles[(i64) x * 64 + (i64) y] then
                     io.write("exit: %d{x},%d{y}\n", stdout)
                     count = count + 1
         io.write("exittiles: count=%d{count}\n", stdout)
@@ -2820,8 +2820,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const uint32[], dt: float64)
     else if arg == "enemies" then
         // Summary: counts by kind and by state, for regression checks.
         // Buckets: 0=guard, 1=officer, 2=ss, 3=dog, 4=mutant, 5=boss, 6=ghost.
-        let by_kind = int32[7] { 0, 0, 0, 0, 0, 0, 0 }
-        let by_state = int32[7] { 0, 0, 0, 0, 0, 0, 0 }
+        let by_kind = i32[7] { 0, 0, 0, 0, 0, 0, 0 }
+        let by_state = i32[7] { 0, 0, 0, 0, 0, 0, 0 }
         for i in 0..w->lv->num_enemies do
             let e = w->lv->enemies[i]
             let ki = match e.kind with
@@ -2936,29 +2936,29 @@ let drain_audio_commands = (ac: audio_ctx*) ->
 // only posts requests onto `cmd_ring`, which this callback drains and applies
 // here. That is what lets the whole thing run lock-free — the main loop never
 // blocks on the audio thread. `stream` is the device buffer (interleaved
-// stereo int16) and `len` its size in bytes (4 bytes per stereo frame).
+// stereo i16) and `len` its size in bytes (4 bytes per stereo frame).
 // Non-capturing (references only module-level bindings), so `&audio_callback`
-// yields a plain C function pointer. `stream` is typed uint8* (not any*) so
+// yields a plain C function pointer. `stream` is typed u8* (not any*) so
 // the generated C trampoline matches SDL_AudioCallback's
 // `void(*)(void*, Uint8*, int)` exactly — an any* there trips
 // -Werror=incompatible-pointer-types against the real SDL field.
-let audio_callback = (userdata: any*, stream: uint8*, len: int32) ->
+let audio_callback = (userdata: any*, stream: u8*, len: i32) ->
     let ac = (audio_ctx*) userdata
     // Diagnostic heartbeat: publish that this callback fired (see audio_ctx).
     atomic_store_release(&ac->cb_count, ac->cb_count + 1i64)
     // Apply pending main-thread requests on this (audio) thread.
     drain_audio_commands(ac)
     let mut frames = len / 4
-    let cap = (int32) ac->mix_buf.len / 2
+    let cap = (i32) ac->mix_buf.len / 2
     if frames > cap then frames = cap     // safety net; never trips at 1024
-    let out = int16[] { ptr = (int16*) stream, len = (int64) (frames * 2) }
+    let out = i16[] { ptr = (i16*) stream, len = (i64) (frames * 2) }
     let xfade_before = ac->music_xfade
     ac->music_xfade = mixer.fill_frame(ac->mix_buf, out,
         ac->music, ac->music_prev, atomic_load_acquire(&ac->music_on),
-        (float64) atomic_load_acquire(&ac->music_gain_pct) / 100.0,
+        (f64) atomic_load_acquire(&ac->music_gain_pct) / 100.0,
         ac->music_xfade, music_xfade_samples,
-        ac->sfx,  (float64) atomic_load_acquire(&ac->sfx_gain_pct)  / 100.0,
-        ac->digi, (float64) atomic_load_acquire(&ac->digi_gain_pct) / 100.0,
+        ac->sfx,  (f64) atomic_load_acquire(&ac->sfx_gain_pct)  / 100.0,
+        ac->digi, (f64) atomic_load_acquire(&ac->digi_gain_pct) / 100.0,
         frames, ac->sample_rate)
     // A crossfade that just finished means music_prev is silent and untouched
     // from here on — hand it back to the main thread to free.
@@ -3015,8 +3015,8 @@ let main = (args: str[]) ->
     //                           2 (the OG-doubled raycaster density);
     //                           values below 2 are clamped up.
     let mut test_mode = false
-    let mut start_level = none(int32)
-    let mut start_difficulty = none(int32)
+    let mut start_level = none(i32)
+    let mut start_difficulty = none(i32)
     let mut start_near_boss = false
     let mut start_near_goldkey = false
     let mut start_near_silverkey = false
@@ -3028,8 +3028,8 @@ let main = (args: str[]) ->
     // pre-CLI clamp; --max-scale lets the user move it in either
     // direction. Floor stays at 2 inside compute_scale_factor.
     let mut max_scale = 6
-    for i in 1..(int32) args.len do
-        let a = args[(int64) i]
+    for i in 1..(i32) args.len do
+        let a = args[(i64) i]
         if a == "--mommy-mode" then arg_mommy_mode = true
         if a == "--test" then test_mode = true
         if a == "--near-boss" then start_near_boss = true
@@ -3039,15 +3039,15 @@ let main = (args: str[]) ->
         if a == "--cheat" then arg_cheat = true
         if a == "--debug" then arg_debug = true
         if text.starts_with(a, "--level=") then
-            match text.parse_int32(a[8..a.len]) with
+            match text.parse_i32(a[8..a.len]) with
             | some(n) -> if n >= 0 && n < 60 then start_level = some(n)
             | none    -> void()
         if text.starts_with(a, "--difficulty=") then
-            match text.parse_int32(a[13..a.len]) with
+            match text.parse_i32(a[13..a.len]) with
             | some(n) -> if n >= 0 && n < 4 then start_difficulty = some(n)
             | none    -> void()
         if text.starts_with(a, "--max-scale=") then
-            match text.parse_int32(a[12..a.len]) with
+            match text.parse_i32(a[12..a.len]) with
             | some(n) -> if n >= 2 then max_scale = n
             | none    -> void()
 
@@ -3055,7 +3055,7 @@ let main = (args: str[]) ->
     // reproduce bit-identically; wall-clock milliseconds otherwise. A single
     // seed fans out to two pcg_random channels (enemy AI, face animation)
     // when the game struct is initialised below.
-    let rng_seed = if test_mode then 0u64 else (uint64) sys.time()
+    let rng_seed = if test_mode then 0u64 else (u64) sys.time()
 
     // Resolve the WL6 data directory before loading anything: env override,
     // then ./data, then the compile-time install location. The resulting
@@ -3158,7 +3158,7 @@ let main = (args: str[]) ->
         else
             io.write(alloca("Audio driver: none (%s{(const str) sdl2.get_error()}) — running silent\n"), stdout)
         fb_w = compute_fb_w_for_view_mode(cfg.view_mode)
-        plane_factor = fov_factor * (float64) fb_w / 320.0
+        plane_factor = fov_factor * (f64) fb_w / 320.0
         io.write(alloca("View mode %s{config.view_mode_label(cfg.view_mode)} -> fb %d{fb_w}x200\n"), stdout)
 
     // Assemble the `world` — the handle that groups game state, level data,
@@ -3197,10 +3197,10 @@ let main = (args: str[]) ->
         bj_dir = dir.nodir, bj_distance = 0.0, bj_run_tiles_left = 0,
         bj_anim_frame = 0, bj_anim_timer = 0.0,
         bj_phase = 0, bj_yelled = false,
-        dc_sub = 0, dc_timer = 0.0, dc_boss_idx = none(int32),
+        dc_sub = 0, dc_timer = 0.0, dc_boss_idx = none(i32),
         dc_kill_x = 0.0, dc_kill_y = 0.0, dc_fade = 0.0,
-        endart_data = alloc(uint8[0] {})!,
-        endart_page_offsets = alloc(int32[0] {})!,
+        endart_data = alloc(u8[0] {})!,
+        endart_page_offsets = alloc(i32[0] {})!,
         endart_total_pages = 0, endart_page = 0,
         hs_source = 0,
         ep_kr_total = 0, ep_sr_total = 0, ep_tr_total = 0,
@@ -3247,7 +3247,7 @@ let main = (args: str[]) ->
         quit_prompt_idx = 0,
         quit_prompts_override = quit_prompts.load_override(),
         has_active_game = false,
-        msg_buf = alloc(uint8[256] {})!,
+        msg_buf = alloc(u8[256] {})!,
         msg_len = 0, msg_timer = 0.0,
         rng_enemy = random.pcg_random.make_with_channel(rng_seed, enemies.rng_channel),
         rng_face = random.pcg_random.make_with_channel(rng_seed, hud.rng_channel)
@@ -3266,7 +3266,7 @@ let main = (args: str[]) ->
         ac = alloc(audio_ctx {
             vs = vs,
             ad = ad,
-            sfx = adlib.init((float64) audio_rate),
+            sfx = adlib.init((f64) audio_rate),
             digi = digi.init(vs),
             music = none(imf.player*),
             music_prev = none(imf.player*),
@@ -3274,9 +3274,9 @@ let main = (args: str[]) ->
             music_xfade = 0,
             sample_rate = audio_rate,
             // Sized for the largest plausible SDL callback request (stereo
-            // int32, audio_cb_max_frames per call); the device asks for
+            // i32, audio_cb_max_frames per call); the device asks for
             // 1024 frames, so this never fills.
-            mix_buf = alloc(int32[audio_cb_max_frames * 2] {})!,
+            mix_buf = alloc(i32[audio_cb_max_frames * 2] {})!,
             sfx_on = cfg.sfx_on,
             digi_on = cfg.digi_on,
             music_on = cfg.music_on,
@@ -3367,16 +3367,16 @@ let main = (args: str[]) ->
     // the command loop, we skip anything matching a known flag so it isn't
     // reported as "Unknown test command".
     let mut test_idx = -1
-    for i in 1..(int32) args.len do
-        if test_idx < 0 && args[(int64) i] == "--test" then test_idx = i
+    for i in 1..(i32) args.len do
+        if test_idx < 0 && args[(i64) i] == "--test" then test_idx = i
     if test_mode then
         g->phase = game_phase.playing
         g->has_active_game = true
         let test_dt = 1.0 / 35.0
-        for ti in (test_idx + 1)..(int32) args.len do
-            if args[(int64) ti] == "--mommy-mode" then continue
-            if args[(int64) ti] == "--cheat" then continue
-            run_test_cmd(w, args[(int64) ti], pal, test_dt)
+        for ti in (test_idx + 1)..(i32) args.len do
+            if args[(i64) ti] == "--mommy-mode" then continue
+            if args[(i64) ti] == "--cheat" then continue
+            run_test_cmd(w, args[(i64) ti], pal, test_dt)
         return 0
 
     // (DPI awareness was already declared before the first VIDEO
@@ -3542,15 +3542,15 @@ let main = (args: str[]) ->
     // cmd_ring (see audio_callback), so it never blocks on the audio thread.
     let mut spec = sdl2.audio_spec {
         freq = w->ac->sample_rate, format = sdl2.audio_s16sys,
-        channels = 2u8, silence = 0u8, samples = (uint16) audio_buffer_frames,
+        channels = 2u8, silence = 0u8, samples = (u16) audio_buffer_frames,
         padding = 0u16, size = 0u32,
         callback = &audio_callback, userdata = (any*) w->ac
     }
     let mut obtained = default(sdl2.audio_spec)
     let audio_dev = sdl2.open_audio(default(any*), 0, &spec, &obtained, 0)
     if audio_dev > 0u32 then
-        let buf_ms = (float64) obtained.samples * 1000.0 / (float64) obtained.freq
-        io.write("Audio: %d{obtained.freq} Hz, %d{(int32) obtained.channels} ch, %d{(int32) obtained.samples}-frame buffer (~%4.1f{buf_ms} ms callback latency)\n", stdout)
+        let buf_ms = (f64) obtained.samples * 1000.0 / (f64) obtained.freq
+        io.write("Audio: %d{obtained.freq} Hz, %d{(i32) obtained.channels} ch, %d{(i32) obtained.samples}-frame buffer (~%4.1f{buf_ms} ms callback latency)\n", stdout)
     else
         io.write(alloca("Audio: device open failed (%s{(const str) sdl2.get_error()}) — running silent\n"), stdout)
     // First-frame music = whatever fits the initial phase (title →
@@ -3563,13 +3563,13 @@ let main = (args: str[]) ->
         let adrv = sdl2.get_current_audio_driver()
         let drv = if adrv != default(const cstr) then (const str) adrv else "?"
         diag.mark(diag_file, diag_start,
-            alloca("audio: device opened (driver=%s{drv}, %d{obtained.freq} Hz, %d{(int32) obtained.samples}-frame buffer)"))
+            alloca("audio: device opened (driver=%s{drv}, %d{obtained.freq} Hz, %d{(i32) obtained.samples}-frame buffer)"))
     else
         diag.mark(diag_file, diag_start, "audio: device FAILED — silent")
     if audio_dev > 0u32 then
         let init_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
         if init_chunk < ad->num_chunks then
-            w->ac->music = some(font.music_load(ad, init_chunk, (float64) w->ac->sample_rate))
+            w->ac->music = some(font.music_load(ad, init_chunk, (f64) w->ac->sample_rate))
             w->ac->music_chunk = init_chunk
         sdl2.pause_audio(audio_dev, 0)
         diag.mark(diag_file, diag_start, "audio: unpaused (callback live)")
@@ -3606,7 +3606,7 @@ let main = (args: str[]) ->
 
         // Delta time
         let now = sdl2.get_ticks()
-        let mut dt = (float64) (now - last_ticks) / 1000.0
+        let mut dt = (f64) (now - last_ticks) / 1000.0
         last_ticks = now
         if dt > 0.1 then dt = 0.1    // clamp large spikes
         // Frame-pacing: under vsync the real time between displayed frames is
@@ -3624,9 +3624,9 @@ let main = (args: str[]) ->
         // the refresh rate is known (refresh_interval_ms > 0).
         if w->rc->refresh_interval_ms > 0.0 then
             let interval_s = w->rc->refresh_interval_ms / 1000.0
-            let n = (int32) (dt / interval_s + 0.5)
+            let n = (i32) (dt / interval_s + 0.5)
             if n >= 1 then
-                let snapped = (float64) n * interval_s
+                let snapped = (f64) n * interval_s
                 let err = if dt > snapped then dt - snapped else snapped - dt
                 let snap_tol = interval_s * 0.2
                 if err <= snap_tol then dt = snapped
@@ -3639,7 +3639,7 @@ let main = (args: str[]) ->
         // while prev_work_ms is just the work that filled that period.
         let now_perf = sdl2.get_perf_counter()
         let frame_ms = if perf_freq > 0u64 then
-            (float64) (now_perf - last_perf) / (float64) perf_freq * 1000.0
+            (f64) (now_perf - last_perf) / (f64) perf_freq * 1000.0
         else 0.0
         last_perf = now_perf
         overlay.debug_update_timing(w->rc, frame_ms, prev_work_ms)
@@ -3658,7 +3658,7 @@ let main = (args: str[]) ->
         // Poll events
         loop
             if sdl2.poll_event(&event) == 0 then break
-            let t = (int32) event.type
+            let t = (i32) event.type
             if t == sdl2.quit_event then running = false
             // Drawable-size change (user resize, fullscreen toggle,
             // DPI change on cross-monitor move under permonitorv2).
@@ -3935,8 +3935,8 @@ let main = (args: str[]) ->
                                 // of the test-mode bit-stability contract
                                 // (test mode never reaches the menu).
                                 let n = quit_prompts.count(g->quit_prompts_override)
-                                let r = random.pcg_random.next_bounded_uint32(&g->rng_face, (uint32) n)
-                                g->quit_prompt_idx = (int32) r
+                                let r = random.pcg_random.next_bounded_u32(&g->rng_face, (u32) n)
+                                g->quit_prompt_idx = (i32) r
                                 g->menu_level = menu.nav.quit
                             | _ -> void()
                         else if k == sdl2.key_escape then
@@ -4180,7 +4180,7 @@ let main = (args: str[]) ->
                                 // entirely).
                                 let n = w->sm->edit_len
                                 let label = if n > 0 then
-                                    (const str) w->sm->edit_buf[0..(int64) n]
+                                    (const str) w->sm->edit_buf[0..(i64) n]
                                 else "EMPTY"
                                 save.to_slot(w, g->menu_sel, label)
                                 save.refresh_slots(w->sm)
@@ -4196,20 +4196,20 @@ let main = (args: str[]) ->
                             else if k == sdl2.key_backspace then
                                 if w->sm->edit_len > 0 then
                                     w->sm->edit_len = w->sm->edit_len - 1
-                                    w->sm->edit_buf[(int64) w->sm->edit_len] = 0u8
+                                    w->sm->edit_buf[(i64) w->sm->edit_len] = 0u8
                             else
                                 // Printable-ASCII char → append. Same
                                 // shift-aware mapping as the high-
                                 // scores name editor (the original
                                 // filtered to printable ASCII for both
                                 // screens). Capacity is 32; reserve 1 for NUL.
-                                let cap = (int32) w->sm->edit_buf.len - 1
+                                let cap = (i32) w->sm->edit_buf.len - 1
                                 if w->sm->edit_len < cap then
                                     let ch = keysym_to_ascii(k, event.key.keysym.mod)
                                     if ch != 0u8 then
-                                        w->sm->edit_buf[(int64) w->sm->edit_len] = ch
+                                        w->sm->edit_buf[(i64) w->sm->edit_len] = ch
                                         w->sm->edit_len = w->sm->edit_len + 1
-                                        w->sm->edit_buf[(int64) w->sm->edit_len] = 0u8
+                                        w->sm->edit_buf[(i64) w->sm->edit_len] = 0u8
                         else if k == sdl2.key_up then
                             g->menu_sel = (g->menu_sel + save.num_slots - 1) % save.num_slots
                         else if k == sdl2.key_down then
@@ -4220,11 +4220,11 @@ let main = (args: str[]) ->
                             // a slot doesn't force the user to retype).
                             let s = &w->sm->slots[g->menu_sel]
                             let mut n = if s->empty then 0
-                                else (int32) s->label.len
+                                else (i32) s->label.len
                             if n > 31 then n = 31
                             for i in 0..n do
-                                w->sm->edit_buf[(int64) i] = s->label[(int64) i]
-                            w->sm->edit_buf[(int64) n] = 0u8
+                                w->sm->edit_buf[(i64) i] = s->label[(i64) i]
+                            w->sm->edit_buf[(i64) n] = 0u8
                             w->sm->edit_len = n
                             g->save_edit_active = true
                         else if k == sdl2.key_escape then
@@ -4493,7 +4493,7 @@ let main = (args: str[]) ->
         // race-free.
         let want_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
         if want_chunk != w->ac->music_chunk && audio_dev > 0u32 && want_chunk < ad->num_chunks then
-            let np = font.music_load(ad, want_chunk, (float64) w->ac->sample_rate)
+            let np = font.music_load(ad, want_chunk, (f64) w->ac->sample_rate)
             let posted = spsc.enqueue(w->ac->cmd_ring, audio_q.cmd {
                 kind = audio_q.set_music, sfx_id = 0,
                 pan = 0.0, gain = 0.0, player = some(np) })
@@ -4554,8 +4554,8 @@ let main = (args: str[]) ->
         // letterbox bars need to be black; but when logical aspect
         // matches drawable aspect, render_copy paints every drawable
         // pixel and the clear is wasted bandwidth (~33 MB/frame at 4K).
-        let needs_clear = ((int64) runtime_screen_w * (int64) w->rc->drawable_h)
-            != ((int64) runtime_actual_h * (int64) w->rc->drawable_w)
+        let needs_clear = ((i64) runtime_screen_w * (i64) w->rc->drawable_h)
+            != ((i64) runtime_actual_h * (i64) w->rc->drawable_w)
         if needs_clear then sdl2.clear(ren)
         sdl2.render_copy(ren, tex, default(any*), default(any*))
 
@@ -4566,8 +4566,8 @@ let main = (args: str[]) ->
         // almost nothing, and folding that into the EMA would understate
         // the real cost of the frames the player actually sees.
         if should_render && perf_freq > 0u64 then
-            prev_work_ms = (float64) (sdl2.get_perf_counter() - now_perf)
-                / (float64) perf_freq * 1000.0
+            prev_work_ms = (f64) (sdl2.get_perf_counter() - now_perf)
+                / (f64) perf_freq * 1000.0
         // Breadcrumb the present() boundary: SDL_RenderPresent blocks on vsync
         // and is the one per-frame call that can hang under a wedged GPU /
         // compositor. A trailing "present" with no following beat fingers it.

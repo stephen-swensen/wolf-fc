@@ -129,14 +129,14 @@ module sfx =
     // (The output sample rate is no longer a constant — it's detected from
     // the default output device at startup and lives on
     // `audio_ctx.sample_rate`; all driver chips are constructed at that
-    // rate. The int32-mix + soft-clip finalizer lives in `sound.fc::mixer`.)
+    // rate. The i32-mix + soft-clip finalizer lives in `sound.fc::mixer`.)
 
     // Digi-pack index for each sfx.id.* (-1 = no digitized version).
     // The mapping matches the WL6 branch of the original's digi-map
     // table. Verified entry-by-entry 2026-04-20: every row here
     // matches the original's WL6 digi-map; missing enum entries
     // resolve to -1 too (the sound system then falls back to AdLib).
-    private let digi_slot = int32[76] {
+    private let digi_slot = i32[76] {
          3,   // open_door
          2,   // close_door
          5,   // atk_pistol
@@ -219,7 +219,7 @@ module sfx =
     // AdLib fallback: AUDIOT chunk index relative to the AdLib block
     // base (chunk = 87 + this). -1 to disable. Values match the
     // original's WL6 audio enum.
-    private let adlib_chunk = int32[76] {
+    private let adlib_chunk = i32[76] {
         18,   // open_door
         19,   // close_door
         24,   // atk_pistol
@@ -309,7 +309,7 @@ module sfx =
     // cross→chalice) restart audibly. The "do nothing" hold-rhythm is
     // handled at the call site (see player.fc's use-key handler), not
     // here.
-    private let priority = int32[76] {
+    private let priority = i32[76] {
         1,  // open_door
         1,  // close_door
         1,  // atk_pistol
@@ -418,8 +418,8 @@ module sfx =
     // mutation happen on the audio thread in `apply_trigger`, drained from
     // `ac->cmd_ring`. A full ring just drops the sound (never a stall). The
     // id is validated here so we never enqueue an out-of-range index.
-    private let trigger_panned_gain = (sound_id: int32, ac: audio_ctx*,
-                                pan: float64, gain: float64) ->
+    private let trigger_panned_gain = (sound_id: i32, ac: audio_ctx*,
+                                pan: f64, gain: f64) ->
         if sound_id < 0 || sound_id >= count then return
         spsc.enqueue(ac->cmd_ring, audio_q.cmd {
             kind = audio_q.play_sfx, sfx_id = sound_id,
@@ -431,8 +431,8 @@ module sfx =
     // otherwise the AdLib chunk plays when SOUND EFFECTS is on. Both toggles
     // are written by the main thread, so read them with acquire ordering.
     // `sound_id` is already range-checked by the producer.
-    let apply_trigger = (sound_id: int32, ac: audio_ctx*,
-                         pan: float64, gain: float64) ->
+    let apply_trigger = (sound_id: i32, ac: audio_ctx*,
+                         pan: f64, gain: f64) ->
         let digi_idx = digi_slot[sound_id]
         if digi_idx >= 0 && atomic_load_acquire(&ac->digi_on) then
             digi.play_with_gain(ac->digi, digi_idx, pan, gain)
@@ -444,16 +444,16 @@ module sfx =
         if enum_val >= 0 then
             let chunk = 87 + enum_val   // 87 = AdLib block base in AUDIOT
             if chunk >= 0 && chunk < ac->ad->num_chunks then
-                let off = (int64) audio.chunk_offset(ac->ad, chunk)
+                let off = (i64) audio.chunk_offset(ac->ad, chunk)
                 let len = audio.chunk_length(ac->ad, chunk)
                 if len >= 23 then
                     adlib.play(ac->sfx, adlib.parse(ac->ad->raw, off),
                                priority[sound_id])
 
-    private let trigger_panned = (sound_id: int32, ac: audio_ctx*, pan: float64) ->
+    private let trigger_panned = (sound_id: i32, ac: audio_ctx*, pan: f64) ->
         trigger_panned_gain(sound_id, ac, pan, 1.0)
 
-    let trigger = (sound_id: int32, ac: audio_ctx*) ->
+    let trigger = (sound_id: i32, ac: audio_ctx*) ->
         trigger_panned_gain(sound_id, ac, 0.0, 1.0)
 
     // Center-pan trigger with an explicit gain multiplier. `gain > 1`
@@ -461,7 +461,7 @@ module sfx =
     // clip region; `gain < 1` attenuates a cue that's perceptually
     // too loud against the rest of the mix (doors). 1.0 = same as
     // `trigger`.
-    let trigger_gain = (sound_id: int32, ac: audio_ctx*, gain: float64) ->
+    let trigger_gain = (sound_id: i32, ac: audio_ctx*, gain: f64) ->
         trigger_panned_gain(sound_id, ac, 0.0, gain)
 
     // Spatial variant: pans a source in the stereo field AND attenuates
@@ -480,8 +480,8 @@ module sfx =
     // 15-step attenuation curve, which also silenced sources beyond
     // that radius. Sounds past the cutoff are dropped entirely so
     // distant enemies don't eat mix slots.
-    let trigger_at = (sound_id: int32, ac: audio_ctx*, g: game*,
-                       x: float64, y: float64) ->
+    let trigger_at = (sound_id: i32, ac: audio_ctx*, g: game*,
+                       x: f64, y: f64) ->
         let dx = x - g->pos_x
         let dy = y - g->pos_y
         let dist_sq = dx * dx + dy * dy

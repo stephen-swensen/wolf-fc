@@ -39,25 +39,25 @@ module imf =
 
     struct player =
         chip: opl2.chip*
-        data: const uint8[]     // non-owning reference into the AUDIOT blob
-        pos: int64
-        start_pos: int64        // loop point (start of actual music data)
-        seq_len: int64
-        remaining: int64
-        tick_accum: float64
-        time_count: int32       // current tick counter (for delay comparisons)
-        hack_time: int32        // tick at which the next event fires
-        fade_in: int32          // samples remaining in start/loop fade-in ramp
-        fade_out: int32         // samples remaining in pre-loop-wrap fade-out
-        wrap_pending: bool      // set when remaining<=0; consumed when fade_out hits 0
+        data: const u8[]       // non-owning reference into the AUDIOT blob
+        pos: i64
+        start_pos: i64         // loop point (start of actual music data)
+        seq_len: i64
+        remaining: i64
+        tick_accum: f64
+        time_count: i32        // current tick counter (for delay comparisons)
+        hack_time: i32         // tick at which the next event fires
+        fade_in: i32           // samples remaining in start/loop fade-in ramp
+        fade_out: i32          // samples remaining in pre-loop-wrap fade-out
+        wrap_pending: bool     // set when remaining<=0; consumed when fade_out hits 0
 
     // Build a player over the AUDIOT bytes starting at `offset` with chunk
-    // `length`. Some music chunks prefix the data with a uint16 length
+    // `length`. Some music chunks prefix the data with a u16 length
     // header; we detect that by checking if the first word is non-zero.
-    let init_from_chunk = (bytes: const uint8[], offset: int64, length: int64,
-                           sample_rate: float64) ->
-        let first_word = (int64) bytes[offset] |
-                         ((int64) bytes[offset + 1] << 8)
+    let init_from_chunk = (bytes: const u8[], offset: i64, length: i64,
+                           sample_rate: f64) ->
+        let first_word = (i64) bytes[offset] |
+                         ((i64) bytes[offset + 1] << 8)
         let mut d_off = offset
         let mut d_len = length
         if first_word != 0 then
@@ -85,10 +85,10 @@ module imf =
                     p->fade_out = fade_samples
                 break
             if p->hack_time > p->time_count then break
-            let reg = (int32) p->data[p->pos]
-            let val = (int32) p->data[p->pos + 1]
-            let delay = (int32) p->data[p->pos + 2] |
-                        ((int32) p->data[p->pos + 3] << 8)
+            let reg = (i32) p->data[p->pos]
+            let val = (i32) p->data[p->pos + 1]
+            let delay = (i32) p->data[p->pos + 2] |
+                        ((i32) p->data[p->pos + 3] << 8)
             opl2.write(p->chip, reg, val)
             p->pos = p->pos + 4
             p->remaining = p->remaining - 4
@@ -105,20 +105,20 @@ module imf =
     // newly-silent chip. Both ramps pass through 0 so the transition
     // is continuous in amplitude and the chip can't click from
     // key-on-vs-sustaining-voice mid-fade-in.
-    let fill = (p: player*, buf: int32[], count: int32, sample_rate: int32,
-                user_gain: float64) ->
-        let samples_per_tick = (float64) sample_rate / (float64) tick_rate
+    let fill = (p: player*, buf: i32[], count: i32, sample_rate: i32,
+                user_gain: f64) ->
+        let samples_per_tick = (f64) sample_rate / (f64) tick_rate
         let scale = if user_gain < 0.0 then 0.0 else user_gain
-        let fade_len_f = (float64) fade_samples
+        let fade_len_f = (f64) fade_samples
         for i in 0..count do
             let s = opl2.sample(p->chip)
             let fade_scalar = if p->fade_out > 0 then
-                (float64) p->fade_out / fade_len_f
+                (f64) p->fade_out / fade_len_f
             else if p->fade_in > 0 then
-                (fade_len_f - (float64) p->fade_in) / fade_len_f
+                (fade_len_f - (f64) p->fade_in) / fade_len_f
             else 1.0
-            let scaled = (int32) ((float64) s * scale * fade_scalar)
-            let li = (int64) i * 2
+            let scaled = (i32) ((f64) s * scale * fade_scalar)
+            let li = (i64) i * 2
             let ri = li + 1
             buf[li] = buf[li] + scaled
             buf[ri] = buf[ri] + scaled
@@ -152,16 +152,16 @@ module imf =
     // player is being retired, so further register writes don't matter.
     // Returns the remaining-sample count after this batch (0 once the fade
     // completes); the caller stores it back for the next callback.
-    let fill_xfade_out = (p: player*, buf: int32[], count: int32,
-                          user_gain: float64, remaining: int32, total: int32) ->
+    let fill_xfade_out = (p: player*, buf: i32[], count: i32,
+                          user_gain: f64, remaining: i32, total: i32) ->
         let scale = if user_gain < 0.0 then 0.0 else user_gain
-        let total_f = (float64) total
+        let total_f = (f64) total
         let mut rem = remaining
         for i in 0..count do
             let s = opl2.sample(p->chip)
-            let ramp = if rem > 0 then (float64) rem / total_f else 0.0
-            let scaled = (int32) ((float64) s * scale * ramp)
-            let li = (int64) i * 2
+            let ramp = if rem > 0 then (f64) rem / total_f else 0.0
+            let scaled = (i32) ((f64) s * scale * ramp)
+            let li = (i64) i * 2
             let ri = li + 1
             buf[li] = buf[li] + scaled
             buf[ri] = buf[ri] + scaled
@@ -186,10 +186,10 @@ module imf =
 // One voice at a time. Owns a dedicated OPL2 chip.
 //
 // AdLibSound chunk layout (little-endian):
-//   offset 0..3   : uint32 length     — number of note-data bytes
-//   offset 4..5   : uint16 priority   — preempt priority (unused here)
+//   offset 0..3   : u32 length     — number of note-data bytes
+//   offset 4..5   : u16 priority   — preempt priority (unused here)
 //   offset 6..21  : 16-byte Instrument block (11 meaningful + 5 padding)
-//   offset 22     : uint8  block      — octave for the F-number (0..7)
+//   offset 22     : u8  block      — octave for the F-number (0..7)
 //   offset 23+    : length bytes of data
 //
 // Instrument fields (offsets within the 16-byte block):
@@ -229,44 +229,44 @@ module adlib =
     // Parsed AdLibSound header. `bytes` is a non-owning reference back
     // into the AUDIOT buffer; do not free it through this struct.
     struct sfx_data =
-        bytes: const uint8[]
-        data_off: int64
-        data_len: int64
-        m_char: int32
-        c_char: int32
-        m_scale: int32
-        c_scale: int32
-        m_atk: int32
-        c_atk: int32
-        m_sus: int32
-        c_sus: int32
-        m_wave: int32
-        c_wave: int32
-        n_conn: int32
-        block: int32
+        bytes: const u8[]
+        data_off: i64
+        data_len: i64
+        m_char: i32
+        c_char: i32
+        m_scale: i32
+        c_scale: i32
+        m_atk: i32
+        c_atk: i32
+        m_sus: i32
+        c_sus: i32
+        m_wave: i32
+        c_wave: i32
+        n_conn: i32
+        block: i32
 
     // Parse an AdLibSound chunk starting at `offset` in `bytes`.
-    let parse = (bytes: const uint8[], offset: int64) ->
-        let len = (int64) ((uint32) bytes[offset] |
-                           ((uint32) bytes[offset + 1] << 8) |
-                           ((uint32) bytes[offset + 2] << 16) |
-                           ((uint32) bytes[offset + 3] << 24))
+    let parse = (bytes: const u8[], offset: i64) ->
+        let len = (i64) ((u32) bytes[offset] |
+                           ((u32) bytes[offset + 1] << 8) |
+                           ((u32) bytes[offset + 2] << 16) |
+                           ((u32) bytes[offset + 3] << 24))
         sfx_data {
             bytes = bytes,
             data_off = offset + 23,
             data_len = len,
-            m_char  = (int32) bytes[offset + 6],
-            c_char  = (int32) bytes[offset + 7],
-            m_scale = (int32) bytes[offset + 8],
-            c_scale = (int32) bytes[offset + 9],
-            m_atk   = (int32) bytes[offset + 10],
-            c_atk   = (int32) bytes[offset + 11],
-            m_sus   = (int32) bytes[offset + 12],
-            c_sus   = (int32) bytes[offset + 13],
-            m_wave  = (int32) bytes[offset + 14],
-            c_wave  = (int32) bytes[offset + 15],
-            n_conn  = (int32) bytes[offset + 16],
-            block   = (int32) bytes[offset + 22]
+            m_char  = (i32) bytes[offset + 6],
+            c_char  = (i32) bytes[offset + 7],
+            m_scale = (i32) bytes[offset + 8],
+            c_scale = (i32) bytes[offset + 9],
+            m_atk   = (i32) bytes[offset + 10],
+            c_atk   = (i32) bytes[offset + 11],
+            m_sus   = (i32) bytes[offset + 12],
+            c_sus   = (i32) bytes[offset + 13],
+            m_wave  = (i32) bytes[offset + 14],
+            c_wave  = (i32) bytes[offset + 15],
+            n_conn  = (i32) bytes[offset + 16],
+            block   = (i32) bytes[offset + 22]
         }
 
     // Per-sound playback state. Owns a dedicated OPL2 chip so effects
@@ -274,22 +274,22 @@ module adlib =
     struct sfx_state =
         chip: opl2.chip*
         active: bool
-        data: const uint8[]
-        data_end: int64
-        pos: int64
-        block: int32
-        tick_accum: float64
+        data: const u8[]
+        data_end: i64
+        pos: i64
+        block: i32
+        tick_accum: f64
         // Priority of the currently-playing chunk. New triggers with a
         // strictly lower priority are skipped — a wall bump shouldn't
         // override an in-flight pickup confirmation. Equal or greater
         // preempts.
-        priority: int32
+        priority: i32
 
     // Allocate a fresh sfx_state with its own OPL2 chip at sample_rate Hz.
-    let init = (sample_rate: float64) ->
+    let init = (sample_rate: f64) ->
         alloc(sfx_state {
             chip = opl2.init(sample_rate),
-            active = false, data = default(uint8[]),
+            active = false, data = default(u8[]),
             data_end = 0, pos = 0, block = 0, tick_accum = 0.0,
             priority = 0
         })!
@@ -300,7 +300,7 @@ module adlib =
     // greater preempts — so rapid pickup retriggers (cross→cross or
     // cross→chalice) restart audibly, while incidental low-priority
     // sounds (wall bump, "do nothing") never trample a deliberate event.
-    let play = (st: sfx_state*, s: sfx_data, priority: int32) ->
+    let play = (st: sfx_state*, s: sfx_data, priority: i32) ->
         if st->active && priority < st->priority then return
         opl2.note_off(st->chip, 0)
         opl2.load_instrument(st->chip, 0,
@@ -324,7 +324,7 @@ module adlib =
             opl2.note_off(st->chip, 0)
             st->active = false
         else
-            let b = (int32) st->data[st->pos]
+            let b = (i32) st->data[st->pos]
             st->pos = st->pos + 1
             if b == 0 then opl2.note_off(st->chip, 0)
             else opl2.note_on(st->chip, 0, st->block, b)
@@ -334,8 +334,8 @@ module adlib =
     // user_gain` so the single-voice SFX comes through at a perceptually
     // fair level against multi-voice music (see chip_gain comment), and
     // the Sound submenu's Gain slider layers on top.
-    let fill = (st: sfx_state*, buf: int32[], count: int32, sample_rate: int32,
-                user_gain: float64) ->
+    let fill = (st: sfx_state*, buf: i32[], count: i32, sample_rate: i32,
+                user_gain: f64) ->
         opl2.fill_ticked_vol(st->chip, buf, count, sample_rate, tick_rate,
             &st->tick_accum,
             () -> advance_tick(st),
@@ -375,22 +375,22 @@ module digi =
     let pcm_scale = 100
 
     struct slot =
-        data: const uint8[]  // non-owning reference into player.cache
-        pos: float64         // current source-sample position
+        data: const u8[]  // non-owning reference into player.cache
+        pos: f64          // current source-sample position
         playing: bool
-        sound_num: int32     // VSWAP digi index — used to dedup retriggers
-                             // of the same sound (matches the original's
-                             // same-channel reuse policy). -1 means
-                             // "slot has never held a sound."
-        gain_l: float64      // per-channel multiplier computed from pan
-        gain_r: float64
+        sound_num: i32    // VSWAP digi index — used to dedup retriggers
+                          // of the same sound (matches the original's
+                          // same-channel reuse policy). -1 means
+                          // "slot has never held a sound."
+        gain_l: f64       // per-channel multiplier computed from pan
+        gain_r: f64
 
     // One cache entry per digi sound_num. `data` holds the reassembled
     // 8-bit PCM buffer (digi sounds span multiple VSWAP pages, so we copy
     // into a contiguous buffer at load time). Length 0 means the sound's
     // length was 0 in the info table (unused slot).
     struct cached_sound =
-        data: uint8[]
+        data: u8[]
 
     struct player =
         slots: slot[4]
@@ -402,10 +402,10 @@ module digi =
     // digi sound count.
     let init = (vs: const vswap.vswap_file*) ->
         let info_page = vs->num_chunks - 1
-        let count = (int64) vswap.page_length(vs, info_page) / 4
+        let count = (i64) vswap.page_length(vs, info_page) / 4
         let cache = alloc(cached_sound[count] {})!
         for i in 0..count do
-            cache[i] = cached_sound { data = load_sound(vs, (int32) i) }
+            cache[i] = cached_sound { data = load_sound(vs, (i32) i) }
         let p = alloc(player { cache = cache })!
         for i in 0..max_slots do
             p->slots[i].sound_num = -1
@@ -416,20 +416,20 @@ module digi =
     // owns). `sound_num` is the digi-pack index (0..45 in the original),
     // NOT the sound-enum value — see the digi-mapping table in sfx.fc
     // for the conversion.
-    let load_sound = (vs: const vswap.vswap_file*, sound_num: int32) ->
+    let load_sound = (vs: const vswap.vswap_file*, sound_num: i32) ->
         let info_page = vs->num_chunks - 1
         let info_off = vswap.page_offset(vs, info_page)
-        let start_pg = (int32) bytes.u16(vs->raw, info_off + (int64) sound_num * 4)
-        let snd_len = (int32) bytes.u16(vs->raw, info_off + (int64) sound_num * 4 + 2)
-        if snd_len == 0 then return alloc(uint8[0] {})!
-        let buf = alloc(uint8[(int64) snd_len] {})!
+        let start_pg = (i32) bytes.u16(vs->raw, info_off + (i64) sound_num * 4)
+        let snd_len = (i32) bytes.u16(vs->raw, info_off + (i64) sound_num * 4 + 2)
+        if snd_len == 0 then return alloc(u8[0] {})!
+        let buf = alloc(u8[(i64) snd_len] {})!
         let mut written = 0i64
         let mut pg = vs->sound_start + start_pg
         loop
-            if written >= (int64) snd_len then break
+            if written >= (i64) snd_len then break
             let pg_off = vswap.page_offset(vs, pg)
-            let pg_len = (int64) vswap.page_length(vs, pg)
-            let remain = (int64) snd_len - written
+            let pg_len = (i64) vswap.page_length(vs, pg)
+            let remain = (i64) snd_len - written
             let copy_len = if pg_len < remain then pg_len else remain
             for j in 0..copy_len do
                 buf[written + j] = vs->raw[pg_off + j]
@@ -456,12 +456,12 @@ module digi =
     // channels; panning taper only attenuates the off-side (no equal-power
     // -3dB dip at center). This matches the original Sound Blaster
     // loudness — classic digi SFX like the level-done cue need the full
-    // int16 headroom to hit with the "bang" players remember.
+    // i16 headroom to hit with the "bang" players remember.
     // Primary entry: pan + a per-call gain multiplier. gain > 1.0 boosts the
     // slot into the mixer's soft-clip region (see mixer.soft_clip_sample) so
     // one-off "bam!" sounds can punch harder than the ambient mixer
     // loudness without hard-clipping.
-    let play_with_gain = (p: player*, sound_num: int32, pan: float64, gain: float64) ->
+    let play_with_gain = (p: player*, sound_num: i32, pan: f64, gain: f64) ->
         let mut pp = pan
         if pp < -1.0 then pp = -1.0
         if pp > 1.0 then pp = 1.0
@@ -491,42 +491,42 @@ module digi =
             gain_r = gr
         }
 
-    let play_panned = (p: player*, sound_num: int32, pan: float64) ->
+    let play_panned = (p: player*, sound_num: i32, pan: f64) ->
         play_with_gain(p, sound_num, pan, 1.0)
 
     // Back-compat: center-panned play.
-    let play = (p: player*, sound_num: int32) ->
+    let play = (p: player*, sound_num: i32) ->
         play_with_gain(p, sound_num, 0.0, 1.0)
 
     // Mix up to `max_slots` simultaneous 8-bit sounds into `buf` (stereo
     // interleaved L,R,L,R…), resampling nearest-neighbor from 7042 Hz to
     // `sample_rate`. Per-slot pan yields independent L/R gains. Marks a
     // slot as not playing when its source buffer is exhausted. No per-stage
-    // clipping — buf is int32 so sums freely overshoot int16; the main loop
+    // clipping — buf is i32 so sums freely overshoot i16; the main loop
     // soft-clips the final mix at the end of the pipeline.
-    let fill = (p: player*, buf: int32[], count: int32, sample_rate: int32,
-                user_gain: float64) ->
-        let resample_ratio = src_rate / (float64) sample_rate
+    let fill = (p: player*, buf: i32[], count: i32, sample_rate: i32,
+                user_gain: f64) ->
+        let resample_ratio = src_rate / (f64) sample_rate
         // Hoist the per-frame scale outside the inner loop. `user_gain`
         // is the Sound submenu's Gain slider (1.0 = default mix).
-        let pcm_scale_f = (float64) pcm_scale * user_gain
+        let pcm_scale_f = (f64) pcm_scale * user_gain
         for i in 0..count do
-            let li = (int64) i * 2
+            let li = (i64) i * 2
             let ri = li + 1
             let mut sl = buf[li]
             let mut sr = buf[ri]
             for s in 0..max_slots do
                 if p->slots[s].playing then
-                    let src_pos = (int32) p->slots[s].pos
-                    if src_pos < (int32) p->slots[s].data.len then
+                    let src_pos = (i32) p->slots[s].pos
+                    if src_pos < (i32) p->slots[s].data.len then
                         // 8-bit unsigned PCM → signed (-128..+127) → scaled
                         // to match the OPL2 driver's peak output so digi and
                         // AdLib SFX sit at roughly equal loudness (default
                         // mix from the original game's SB hardware mixer).
-                        let raw = (int32) p->slots[s].data[(int64) src_pos] - 128
-                        let raw_f = (float64) raw * pcm_scale_f
-                        sl = sl + (int32) (raw_f * p->slots[s].gain_l)
-                        sr = sr + (int32) (raw_f * p->slots[s].gain_r)
+                        let raw = (i32) p->slots[s].data[(i64) src_pos] - 128
+                        let raw_f = (f64) raw * pcm_scale_f
+                        sl = sl + (i32) (raw_f * p->slots[s].gain_l)
+                        sr = sr + (i32) (raw_f * p->slots[s].gain_r)
                         p->slots[s].pos = p->slots[s].pos + resample_ratio
                     else
                         p->slots[s].playing = false
@@ -539,8 +539,8 @@ module digi =
 // ============================================================
 //
 // Orchestrates one audio-fill cycle: zero → music → AdLib SFX → digi PCM,
-// all summed into an int32 scratch buffer, then soft-clipped into the
-// int16 output buffer the caller hands to SDL. Using an int32 intermediate
+// all summed into an i32 scratch buffer, then soft-clipped into the
+// i16 output buffer the caller hands to SDL. Using an i32 intermediate
 // buffer lets the three source fills sum without the per-stage clamping
 // that would otherwise starve later stages of headroom (digi, last in
 // line, was the biggest loser).
@@ -566,33 +566,33 @@ module mixer =
     let knee  = 24000
     let range = 8767     // 32767 - knee; the asymptote reaches max_out
 
-    let soft_clip_sample = (s: int32) ->
+    let soft_clip_sample = (s: i32) ->
         let abs_s = if s < 0 then 0 - s else s
         if abs_s <= knee then
             s
         else
             let over = abs_s - knee
-            // int64 promotion before the multiply: `over * range`
-            // overflows int32 once |s| crosses ~245k, which is
+            // i64 promotion before the multiply: `over * range`
+            // overflows i32 once |s| crosses ~245k, which is
             // reachable when a loud digi (gain>1, e.g. the level-done
             // cue at 1.8×) stacks with both OPL2 chips at their peaks.
             // The divided result is bounded by `range` (8767), so it
-            // fits int32 trivially — only the intermediate multiply
+            // fits i32 trivially — only the intermediate multiply
             // needs the wider type.
-            let num = (int64) over * (int64) range
-            let den = (int64) (range + over)
-            let mag = knee + (int32) (num / den)
+            let num = (i64) over * (i64) range
+            let den = (i64) (range + over)
+            let mag = knee + (i32) (num / den)
             if s < 0 then 0 - mag else mag
 
-    // Apply the soft-clip curve elementwise, converting the int32 mix
-    // buffer into the int16 queue buffer. `count` is the total sample
+    // Apply the soft-clip curve elementwise, converting the i32 mix
+    // buffer into the i16 queue buffer. `count` is the total sample
     // count (stereo frames × 2), matching the buffer lengths.
-    let soft_clip_to_int16 = (src: int32[], dst: int16[], count: int32) ->
+    let soft_clip_to_i16 = (src: i32[], dst: i16[], count: i32) ->
         for i in 0..count do
-            dst[i] = (int16) soft_clip_sample(src[(int64) i])
+            dst[i] = (i16) soft_clip_sample(src[(i64) i])
 
-    // One audio-fill cycle: clear the int32 mix buffer, add each active
-    // source, and soft-clip into the int16 output buffer. `frames` is the
+    // One audio-fill cycle: clear the i32 mix buffer, add each active
+    // source, and soft-clip into the i16 output buffer. `frames` is the
     // stereo frame count (e.g. 1024); buffers must hold at least
     // `frames * 2` slots. `music` may be none (no track loaded) or
     // silenced via `music_on=false`; both paths skip the imf.fill step.
@@ -602,13 +602,13 @@ module mixer =
     // once the crossfade is done); the caller stores it back. The three
     // `*_gain` scalars are the Sound submenu's per-source Gain sliders
     // (1.0 = default mix; 0.1..2.0 in practice).
-    let fill_frame = (mix_buf: int32[], out_buf: int16[],
+    let fill_frame = (mix_buf: i32[], out_buf: i16[],
                       music: imf.player*?, music_prev: imf.player*?,
-                      music_on: bool, music_gain: float64,
-                      xfade_rem: int32, xfade_total: int32,
-                      sfx: adlib.sfx_state*, sfx_gain: float64,
-                      dg: digi.player*, digi_gain: float64,
-                      frames: int32, sample_rate: int32) ->
+                      music_on: bool, music_gain: f64,
+                      xfade_rem: i32, xfade_total: i32,
+                      sfx: adlib.sfx_state*, sfx_gain: f64,
+                      dg: digi.player*, digi_gain: f64,
+                      frames: i32, sample_rate: i32) ->
         let samples = frames * 2
         for i in 0..samples do
             mix_buf[i] = 0i32
@@ -627,7 +627,7 @@ module mixer =
                 new_rem = if xfade_rem > frames then xfade_rem - frames else 0
         adlib.fill(sfx, mix_buf, frames, sample_rate, sfx_gain)
         digi.fill(dg, mix_buf, frames, sample_rate, digi_gain)
-        soft_clip_to_int16(mix_buf, out_buf, samples)
+        soft_clip_to_i16(mix_buf, out_buf, samples)
         new_rem
 
 // Lock-free single-producer / single-consumer ring buffer. One thread
@@ -648,11 +648,11 @@ module spsc =
 
     // Allocate a ring with `cap` slots. The element type appears nowhere in
     // the arguments, so call sites name it explicitly: `spsc.make<audio_q.cmd>(64)`.
-    let make = <'a>(cap: int64) ->
+    let make = <'a>(cap: i64) ->
         let r = alloc(ring<'a>)!
         r->buf = alloc('a[cap] { })!
-        r->head = 0u
-        r->tail = 0u
+        r->head = 0usize
+        r->tail = 0usize
         r
 
     // Producer side. Returns false when the ring is full (caller drops the
@@ -664,7 +664,7 @@ module spsc =
         if t - h == cap then false
         else
             r->buf[t % cap] = v
-            atomic_store_release(&r->tail, t + 1u)
+            atomic_store_release(&r->tail, t + 1usize)
             true
 
     // Consumer side. Returns none when the ring is empty.
@@ -675,7 +675,7 @@ module spsc =
         if t == h then none('a)
         else
             let v = r->buf[h % cap]
-            atomic_store_release(&r->head, h + 1u)
+            atomic_store_release(&r->head, h + 1usize)
             some(v)
 
 // One audio command, carried main-thread -> audio-thread over an spsc.ring.
@@ -690,8 +690,8 @@ module audio_q =
     let set_music = 1    // player is set; install it as the new track
 
     struct cmd =
-        kind: int32
-        sfx_id: int32
-        pan: float64
-        gain: float64
+        kind: i32
+        sfx_id: i32
+        pan: f64
+        gain: f64
         player: imf.player*?

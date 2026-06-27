@@ -50,7 +50,7 @@ module music =
     // Per-level music: songs[episode * 10 + level] = music track id.
     // Indexed by the running `g->level_num` (0..59). Used by
     // font.music_chunk_for_phase to pick the gameplay-phase track.
-    let songs = int32[60] {
+    let songs = i32[60] {
         getthem,  searchn,  pow,      suspense, getthem,  searchn,  pow,      suspense, warmarch, corner,
         nazi_omi, pregnant, goingaft, headache, nazi_omi, pregnant, headache, goingaft, warmarch, dungeon,
         introcw3, nazi_rap, twelfth,  zerohour, introcw3, nazi_rap, twelfth,  zerohour, ultimate, pacman,
@@ -225,8 +225,8 @@ module pics =
     // VGAGRAPH images don't use transparency (only sprites do). First
     // call for a given chunk decodes + palette-applies into
     // rc->pic_cache; subsequent calls are a plain ARGB memcpy.
-    let draw = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
-                chunk: int32, dst_x: int32, dst_y: int32) ->
+    let draw = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const u32[],
+                chunk: i32, dst_x: i32, dst_y: i32) ->
         draw_clipped_top(rc, vg, pal, chunk, dst_x, dst_y, 0)
 
     // Same as draw, but skips the first `src_top_skip` rows of the source
@@ -234,18 +234,18 @@ module pics =
     // border-color padding that would otherwise overwrite the menu
     // window's bottom bevel.
     let draw_clipped_top = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                            pal: const uint32[], chunk: int32,
-                            dst_x: int32, dst_y: int32, src_top_skip: int32) ->
-        if chunk < 0 || chunk >= (int32) rc->pic_cache.len then return
+                            pal: const u32[], chunk: i32,
+                            dst_x: i32, dst_y: i32, src_top_skip: i32) ->
+        if chunk < 0 || chunk >= (i32) rc->pic_cache.len then return
         if rc->pic_cache[chunk].len == 0 then
             let pic = vgagraph.load_pic(vg, chunk)
             defer free(pic)
             if pic.len == 0 then return
             let { w, h } = vgagraph.pic_dims_at(vg, chunk)
             if w <= 0 || h <= 0 then return
-            let buf = alloc(uint32[w * h] {})!
+            let buf = alloc(u32[w * h] {})!
             for i in 0..(w * h) do
-                buf[(int64) i] = pal[(int32) pic[(int64) i]]
+                buf[(i64) i] = pal[(i32) pic[(i64) i]]
             rc->pic_cache[chunk] = buf
         let buf = rc->pic_cache[chunk]
         let { w, h } = vgagraph.pic_dims_at(vg, chunk)
@@ -256,7 +256,7 @@ module pics =
             for x in 0..w do
                 let dx = dst_x + x
                 if dx < 0 || dx >= rc->fb_w then continue
-                rc->fb[(int64) dy * (int64) rc->fb_w + (int64) dx] = buf[(int64) y * (int64) w + (int64) x]
+                rc->fb[(i64) dy * (i64) rc->fb_w + (i64) dx] = buf[(i64) y * (i64) w + (i64) x]
 
     // "GET PSYCHED!" level-load overlay. Matches the original's
     // preload-graphics screen: fill the 3D view area with the
@@ -268,9 +268,9 @@ module pics =
     // embellishment on top of the original (which pins the bar at
     // 100% the whole second).
     let render_get_psyched_overlay = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                                       pal: const uint32[],
-                                       timer_remaining: float64,
-                                       timer_total: float64) ->
+                                       pal: const u32[],
+                                       timer_remaining: f64,
+                                       timer_total: f64) ->
         // Blank the 3D viewport with the grey border color. Leave the
         // status bar (y >= view_h) untouched.
         let bg = pal[get_psyched_bg_index]
@@ -303,10 +303,10 @@ module pics =
         // Filled portion: 0 → 100% as timer_remaining goes from total → 0.
         let elapsed = timer_total - timer_remaining
         let frac = if timer_total <= 0.0 then 1.0 else elapsed / timer_total
-        let fill_w_f = frac * (float64) bar_full_w
+        let fill_w_f = frac * (f64) bar_full_w
         let fill_w = if fill_w_f < 0.0 then 0
-            else if fill_w_f > (float64) bar_full_w then bar_full_w
-            else (int32) fill_w_f
+            else if fill_w_f > (f64) bar_full_w then bar_full_w
+            else (i32) fill_w_f
         for by in 0..2 do
             let row = (bar_y + by) * rc->fb_w
             let col = if by == 0 then bar_hilight else bar_col
@@ -320,12 +320,12 @@ module pics =
     // Letterboxed at native size (320×200) and centred; side panels
     // in widescreen are plain black. Returns a heap slice the caller
     // must hold for the process lifetime.
-    let build_title_bg_cache = (vg: const vgagraph.vgagraph_file*, pal: const uint32[],
-                                fb_w: int32, fb_h: int32) ->
-        let buf = alloc(uint32[fb_w * fb_h] {})!
+    let build_title_bg_cache = (vg: const vgagraph.vgagraph_file*, pal: const u32[],
+                                fb_w: i32, fb_h: i32) ->
+        let buf = alloc(u32[fb_w * fb_h] {})!
         // Black side panels (in 4:3 the pic covers everything anyway).
         for i in 0..(fb_w * fb_h) do
-            buf[(int64) i] = 0xFF000000u32
+            buf[(i64) i] = 0xFF000000u32
         let pic = vgagraph.load_pic(vg, id.title)
         defer free(pic)
         if pic.len == 0 then return buf
@@ -337,11 +337,11 @@ module pics =
         let off_x = (fb_w - dst_w) / 2
         let off_y = (fb_h - dst_h) / 2
         for py in 0..dst_h do
-            let sy = (int64) py * (int64) h / (int64) dst_h
+            let sy = (i64) py * (i64) h / (i64) dst_h
             for px in 0..dst_w do
-                let sx = (int64) px * (int64) w / (int64) dst_w
-                let pix = pic[sy * (int64) w + sx]
-                buf[(int64) (off_y + py) * (int64) fb_w + (int64) (off_x + px)] = pal[(int32) pix]
+                let sx = (i64) px * (i64) w / (i64) dst_w
+                let pix = pic[sy * (i64) w + sx]
+                buf[(i64) (off_y + py) * (i64) fb_w + (i64) (off_x + px)] = pal[(i32) pix]
         buf
 
     // Pre-render the god-mode BJ face: decode FACE1A (full-health,
@@ -349,21 +349,21 @@ module pics =
     // every blue iris pixel gold. Done once at startup so the HUD
     // blit during god mode is a plain memcpy. Returns a heap slice
     // the caller must hold for the process lifetime.
-    let build_god_face_cache = (vg: const vgagraph.vgagraph_file*, pal: const uint32[]) ->
+    let build_god_face_cache = (vg: const vgagraph.vgagraph_file*, pal: const u32[]) ->
         let chunk = id.face_base
         let pic = vgagraph.load_pic(vg, chunk)
         defer free(pic)
         let { w, h } = vgagraph.pic_dims_at(vg, chunk)
         let n = if w > 0 && h > 0 then w * h else 0
-        let buf = alloc(uint32[n] {})!
+        let buf = alloc(u32[n] {})!
         if pic.len == 0 || n == 0 then return buf
         let gold = 0xFFFFD700u32
         for i in 0..n do
-            let pix = pal[(int32) pic[(int64) i]]
+            let pix = pal[(i32) pic[(i64) i]]
             let r  = (pix >> 16) & 0xFFu32
             let gc = (pix >> 8)  & 0xFFu32
             let b  =  pix        & 0xFFu32
-            buf[(int64) i] = if b > 100u32 && r < 50u32 && gc < 50u32 then gold else pix
+            buf[(i64) i] = if b > 100u32 && r < 50u32 && gc < 50u32 then gold else pix
         buf
 
     // Blit the pre-built god-mode face (see build_god_face_cache)
@@ -371,7 +371,7 @@ module pics =
     // skips the chunk-id lookup and pic_cache check — `god_face` is
     // populated unconditionally at startup.
     let blit_god_face = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                         dst_x: int32, dst_y: int32) ->
+                         dst_x: i32, dst_y: i32) ->
         let buf = rc->god_face
         if buf.len == 0 then return
         let { w, h } = vgagraph.pic_dims_at(vg, id.face_base)
@@ -382,7 +382,7 @@ module pics =
             for x in 0..w do
                 let dx = dst_x + x
                 if dx < 0 || dx >= rc->fb_w then continue
-                rc->fb[(int64) dy * (int64) rc->fb_w + (int64) dx] = buf[(int64) y * (int64) w + (int64) x]
+                rc->fb[(i64) dy * (i64) rc->fb_w + (i64) dx] = buf[(i64) y * (i64) w + (i64) x]
 
     // Draw a pic with horizontal stretch (nearest-neighbor) to a
     // target width; vertical scale is 1:1. Used for widescreen
@@ -392,9 +392,9 @@ module pics =
     // so a chunk that hasn't been drawn yet gets decoded here on
     // first use.
     let draw_stretched_h = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                             pal: const uint32[], chunk: int32,
-                             dst_x: int32, dst_y: int32, dst_w: int32) ->
-        if chunk < 0 || chunk >= (int32) rc->pic_cache.len then return
+                             pal: const u32[], chunk: i32,
+                             dst_x: i32, dst_y: i32, dst_w: i32) ->
+        if chunk < 0 || chunk >= (i32) rc->pic_cache.len then return
         if rc->pic_cache[chunk].len == 0 then
             // Force a decode by drawing once off-screen.
             let pic = vgagraph.load_pic(vg, chunk)
@@ -402,9 +402,9 @@ module pics =
             if pic.len == 0 then return
             let { w, h } = vgagraph.pic_dims_at(vg, chunk)
             if w <= 0 || h <= 0 then return
-            let buf = alloc(uint32[w * h] {})!
+            let buf = alloc(u32[w * h] {})!
             for i in 0..(w * h) do
-                buf[(int64) i] = pal[(int32) pic[(int64) i]]
+                buf[(i64) i] = pal[(i32) pic[(i64) i]]
             rc->pic_cache[chunk] = buf
         let buf = rc->pic_cache[chunk]
         let { src_w, src_h } = vgagraph.pic_dims_at(vg, chunk)
@@ -412,13 +412,13 @@ module pics =
         for y in 0..src_h do
             let dy = dst_y + y
             if dy < 0 || dy >= rc->fb_h then continue
-            let src_row = (int64) y * (int64) src_w
-            let dst_row = (int64) dy * (int64) rc->fb_w
+            let src_row = (i64) y * (i64) src_w
+            let dst_row = (i64) dy * (i64) rc->fb_w
             for x in 0..dst_w do
-                let sx = (int64) x * (int64) src_w / (int64) dst_w
+                let sx = (i64) x * (i64) src_w / (i64) dst_w
                 let dx = dst_x + x
                 if dx < 0 || dx >= rc->fb_w then continue
-                rc->fb[dst_row + (int64) dx] = buf[src_row + sx]
+                rc->fb[dst_row + (i64) dx] = buf[src_row + sx]
 
     // Four-piece help-window border, stretched to fill the
     // framebuffer in widescreen. Top + bottom strips scale to fb_w;
@@ -427,7 +427,7 @@ module pics =
     // only appropriate for paged-article screens (today: endart).
     let draw_help_window = (rc: render_ctx*,
                              vg: const vgagraph.vgagraph_file*,
-                             pal: const uint32[]) ->
+                             pal: const u32[]) ->
         draw_stretched_h(rc, vg, pal, id.h_topwindow,    0,             0,   rc->fb_w)
         draw         (rc, vg, pal, id.h_leftwindow,                 0,   8)
         draw         (rc, vg, pal, id.h_rightwindow,    rc->fb_w - 8,    8)
@@ -443,25 +443,25 @@ module pics =
     // pixel format.
     let extend_pic_horizontally = (rc: render_ctx*,
                                     vg: const vgagraph.vgagraph_file*,
-                                    pic_x: int32, pic_y: int32, chunk: int32) ->
+                                    pic_x: i32, pic_y: i32, chunk: i32) ->
         let { pw, ph } = vgagraph.pic_dims_at(vg, chunk)
         if pw <= 0 || ph <= 0 then return
-        let stride = (int64) rc->fb_w
+        let stride = (i64) rc->fb_w
         let left_x = if pic_x >= 0 then pic_x else 0
         for r in 0..ph do
             let dy = pic_y + r
             if dy < 0 || dy >= rc->fb_h then continue
-            let row = (int64) dy * stride
-            let left_px = rc->fb[row + (int64) left_x]
+            let row = (i64) dy * stride
+            let left_px = rc->fb[row + (i64) left_x]
             let mut x = 0
             loop
                 if x >= pic_x then break
-                rc->fb[row + (int64) x] = left_px
+                rc->fb[row + (i64) x] = left_px
                 x = x + 1
             x = pic_x + pw
             loop
                 if x >= rc->fb_w then break
-                rc->fb[row + (int64) x] = left_px
+                rc->fb[row + (i64) x] = left_px
                 x = x + 1
 
     // Blit the cached title backdrop into the framebuffer.
@@ -476,9 +476,9 @@ module pics =
 // ============================================================
 //
 // The bitmap font in VGAGRAPH has this layout (after Huffman expand):
-//   int16 height
-//   int16 location[256]   — offset from struct start to each char's pixels
-//   int8  width[256]      — pixel width per char (0 for unused glyphs)
+//   i16 height
+//   i16 location[256]   — offset from struct start to each char's pixels
+//   i8  width[256]      — pixel width per char (0 for unused glyphs)
 //   ...pixel bytes (non-zero = ink, 0 = background)
 //
 // Characters are stored column-major within their glyph: a glyph of
@@ -490,31 +490,31 @@ module pics =
 module font =
 
     struct info =
-        height: int32
-        location: int32[256]
-        width: int32[256]
-        pixels: uint8[]       // original decoded font chunk, held for glyph reads
+        height: i32
+        location: i32[256]
+        width: i32[256]
+        pixels: u8[]       // original decoded font chunk, held for glyph reads
 
-    let load = (vg: const vgagraph.vgagraph_file*, chunk: int32) ->
+    let load = (vg: const vgagraph.vgagraph_file*, chunk: i32) ->
         // VGAGRAPH fonts are raw (not planar). The decompressed chunk is
         // the font header (height + per-char location/width tables)
         // followed by pixel data.
         let raw = vgagraph.decompress_chunk(vg, chunk)
         if raw.len < 4 then return alloc(info {
             height = 8,
-            location = int32[256] {},
-            width = int32[256] {},
+            location = i32[256] {},
+            width = i32[256] {},
             pixels = raw
         })!
-        let h = (int32) bytes.u16(raw, 0i64)
-        let loc = int32[256] {}
-        let wdt = int32[256] {}
+        let h = (i32) bytes.u16(raw, 0i64)
+        let loc = i32[256] {}
+        let wdt = i32[256] {}
         for i in 0..256 do
-            // location[] is 256 uint16 entries starting at offset 2.
-            loc[i] = (int32) bytes.u16(raw, 2i64 + (int64) i * 2)
-            // width[] is 256 uint8 entries starting after the location
+            // location[] is 256 u16 entries starting at offset 2.
+            loc[i] = (i32) bytes.u16(raw, 2i64 + (i64) i * 2)
+            // width[] is 256 u8 entries starting after the location
             // array (offset 2 + 512 = 514).
-            wdt[i] = (int32) raw[514i64 + (int64) i]
+            wdt[i] = (i32) raw[514i64 + (i64) i]
         alloc(info {
             height = h,
             location = loc,
@@ -525,41 +525,41 @@ module font =
     // Draw one character from the VGAGRAPH font. Returns the advance
     // width. Glyph pixels are row-major: byte at (col, row) =
     // pixels[row * width + col].
-    let draw_char = (rc: render_ctx*, f: const info*, x: int32, y: int32,
-                     ch: int32, color: uint32) ->
+    let draw_char = (rc: render_ctx*, f: const info*, x: i32, y: i32,
+                     ch: i32, color: u32) ->
         if ch < 0 || ch >= 256 then return 0
         let cw = f->width[ch]
         if cw <= 0 then return 0
         let ch_h = f->height
-        let src_off = (int64) f->location[ch]
+        let src_off = (i64) f->location[ch]
         for row in 0..ch_h do
             for col in 0..cw do
-                let px = f->pixels[src_off + (int64) row * (int64) cw + (int64) col]
+                let px = f->pixels[src_off + (i64) row * (i64) cw + (i64) col]
                 if px != 0u8 then
                     let dx = x + col
                     let dy = y + row
                     if dx >= 0 && dx < rc->fb_w && dy >= 0 && dy < game_h then
-                        rc->fb[(int64) dy * (int64) rc->fb_w + (int64) dx] = color
+                        rc->fb[(i64) dy * (i64) rc->fb_w + (i64) dx] = color
         cw
 
     let draw_text = (rc: render_ctx*, f: const info*,
-                     x: int32, y: int32, s: const str, color: uint32) ->
+                     x: i32, y: i32, s: const str, color: u32) ->
         let mut cx = x
-        for i in 0..(int32) s.len do
-            let ch = (int32) s[(int64) i]
+        for i in 0..(i32) s.len do
+            let ch = (i32) s[(i64) i]
             let advance = draw_char(rc, f, cx, y, ch, color)
             cx = cx + advance
 
     // Measure a string's rendered pixel width (for centering).
     let text_width = (f: const info*, s: const str) ->
         let mut w = 0
-        for i in 0..(int32) s.len do
-            let ch = (int32) s[(int64) i]
+        for i in 0..(i32) s.len do
+            let ch = (i32) s[(i64) i]
             if ch >= 0 && ch < 256 then w = w + f->width[ch]
         w
 
     let draw_centered = (rc: render_ctx*, f: const info*,
-                         y: int32, s: const str, color: uint32) ->
+                         y: i32, s: const str, color: u32) ->
         let w = text_width(f, s)
         draw_text(rc, f, (rc->fb_w - w) / 2, y, s, color)
 
@@ -567,10 +567,10 @@ module font =
     // `sample_rate` Hz (interactive callers pass the detected device rate,
     // `audio_ctx.sample_rate`). Grouped with font because it reuses the
     // VGAGRAPH-pipeline approach — a better home may emerge later.
-    let music_load = (ad: audio.audio_data*, chunk: int32, sample_rate: float64) ->
-        let off = (int64) audio.chunk_offset(ad, chunk)
-        let len = (int64) audio.chunk_length(ad, chunk)
-        imf.init_from_chunk(ad->raw, off, (int64) len, sample_rate)
+    let music_load = (ad: audio.audio_data*, chunk: i32, sample_rate: f64) ->
+        let off = (i64) audio.chunk_offset(ad, chunk)
+        let len = (i64) audio.chunk_length(ad, chunk)
+        imf.init_from_chunk(ad->raw, off, (i64) len, sample_rate)
 
     // Pick the AUDIOT chunk number that should be playing for the
     // current phase. The intro song plays continuously through the
@@ -580,7 +580,7 @@ module font =
     // Intermission uses the end-level track. Per-episode victory
     // screens get the victory track. All other phases (playing,
     // dying) use the per-level song table.
-    let music_chunk_for_phase = (phase: game_phase, level_num: int32) ->
+    let music_chunk_for_phase = (phase: game_phase, level_num: i32) ->
         let mus = match phase with
         | pg13 | title         -> music.nazi_nor      // intro song
         | main_menu            -> music.wonderin      // menu music
@@ -616,11 +616,11 @@ module hud =
     // the timer on chaingun acquire; hud.update_face reads it.
     let got_gatling_time = 2.2
 
-    // 3x5 pixel bitmap font (packed into int32: 5 rows of 3 bits).
+    // 3x5 pixel bitmap font (packed into i32: 5 rows of 3 bits).
     // Supports digits 0-9 and uppercase A-Z. Distinct from the
     // VGAGRAPH `font` module above — `hud`'s font is a tiny in-module
     // font used for HP/ammo digits and test-mode overlays.
-    private let char_glyph = (ch: int32) ->
+    private let char_glyph = (ch: i32) ->
         // Digits
         if ch == 48 then 7 | (5 << 3) | (5 << 6) | (5 << 9) | (7 << 12)       // 0
         else if ch == 49 then 2 | (6 << 3) | (2 << 6) | (2 << 9) | (7 << 12)  // 1
@@ -656,9 +656,9 @@ module hud =
         else if ch == 89 then 5 | (5 << 3) | (2 << 6) | (2 << 9) | (2 << 12)  // Y
         else 0  // space or unknown
 
-    private let digit_glyph = (d: int32) -> char_glyph(d + 48)
+    private let digit_glyph = (d: i32) -> char_glyph(d + 48)
 
-    private let draw_digit = (rc: render_ctx*, x: int32, y: int32, d: int32, color: uint32, scale: int32) ->
+    private let draw_digit = (rc: render_ctx*, x: i32, y: i32, d: i32, color: u32, scale: i32) ->
         let g = digit_glyph(d)
         for row in 0..5 do
             let bits = (g >> (row * 3)) & 7
@@ -669,12 +669,12 @@ module hud =
                             let px = x + col * scale + sx
                             let py = y + row * scale + sy
                             if px >= 0 && px < rc->fb_w && py >= 0 && py < game_h then
-                                rc->fb[(int64) py * (int64) rc->fb_w + (int64) px] = color
+                                rc->fb[(i64) py * (i64) rc->fb_w + (i64) px] = color
 
-    let draw_number = (rc: render_ctx*, x: int32, y: int32, num: int32, color: uint32, scale: int32) ->
+    let draw_number = (rc: render_ctx*, x: i32, y: i32, num: i32, color: u32, scale: i32) ->
         let mut n = num
         if n < 0 then n = 0
-        let digits = int32[8] { 0, 0, 0, 0, 0, 0, 0, 0 }
+        let digits = i32[8] { 0, 0, 0, 0, 0, 0, 0, 0 }
         let mut count = 0
         if n == 0 then
             digits[0] = 0
@@ -692,9 +692,9 @@ module hud =
             draw_digit(rc, dx, y, digits[i], color, scale)
 
     // Draw a string using the 3x5 bitmap font.
-    let draw_text = (rc: render_ctx*, x: int32, y: int32, s: const str, color: uint32, scale: int32) ->
-        for ci in 0..(int32) s.len do
-            let ch = (int32) s[(int64) ci]
+    let draw_text = (rc: render_ctx*, x: i32, y: i32, s: const str, color: u32, scale: i32) ->
+        for ci in 0..(i32) s.len do
+            let ch = (i32) s[(i64) ci]
             let gl = char_glyph(ch)
             if gl != 0 then
                 let cx = x + ci * (3 * scale + scale)
@@ -707,14 +707,14 @@ module hud =
                                     let px = cx + col * scale + sx
                                     let py = y + row * scale + sy
                                     if px >= 0 && px < rc->fb_w && py >= 0 && py < game_h then
-                                        rc->fb[(int64) py * (int64) rc->fb_w + (int64) px] = color
+                                        rc->fb[(i64) py * (i64) rc->fb_w + (i64) px] = color
 
     // Draw a filled rectangle in the framebuffer.
-    private let fill_rect = (rc: render_ctx*, x0: int32, y0: int32, x1: int32, y1: int32, color: uint32) ->
+    private let fill_rect = (rc: render_ctx*, x0: i32, y0: i32, x1: i32, y1: i32, color: u32) ->
         for y in y0..y1 do
             for x in x0..x1 do
                 if x >= 0 && x < rc->fb_w && y >= 0 && y < game_h then
-                    rc->fb[(int64) y * (int64) rc->fb_w + (int64) x] = color
+                    rc->fb[(i64) y * (i64) rc->fb_w + (i64) x] = color
 
     // Pick the BJ face chunk from health + animation frame. The
     // original picks the expression row from `(100-health)/16`
@@ -723,7 +723,7 @@ module hud =
     // separately by the caller, which swaps in the dead-face pic
     // (or the mutant-BJ pic on needle-death). `frame` is clamped to
     // 0..2 by the caller.
-    private let face_chunk_for = (health: int32, frame: int32, mommy_mode: bool) ->
+    private let face_chunk_for = (health: i32, frame: i32, mommy_mode: bool) ->
         let mut h = health
         if h > 100 then h = 100
         if h < 1 then h = 1
@@ -737,7 +737,7 @@ module hud =
     // struct game) so HUD rendering doesn't perturb the enemy RNG
     // stream that scripted tests rely on.
     private let face_rnd_byte = (g: game*) ->
-        (int32) (random.pcg_random.next_uint32(&g->rng_face) & 0xFFu32)
+        (i32) (random.pcg_random.next_u32(&g->rng_face) & 0xFFu32)
 
     // Face update: accumulate tics into the face counter; when it
     // exceeds a random 0..255 threshold, roll a new face frame. The
@@ -754,11 +754,11 @@ module hud =
     // chances and cycle the face visibly faster. Gate the reroll on
     // the accumulator crossing a new integer-tic boundary, so the
     // check rate is ≤ 70Hz no matter the refresh.
-    let update_face = (g: game*, dt: float64) ->
+    let update_face = (g: game*, dt: f64) ->
         let old_count = g->face_count
         g->face_count = g->face_count + dt * 70.0
-        if (int64) g->face_count > (int64) old_count then
-            if g->face_count > (float64) face_rnd_byte(g) then
+        if (i64) g->face_count > (i64) old_count then
+            if g->face_count > (f64) face_rnd_byte(g) then
                 let roll = face_rnd_byte(g) / 64       // 0..3
                 let frame = if roll == 3 then 1 else roll
                 g->face_frame = frame
@@ -770,10 +770,10 @@ module hud =
     // right-aligned HUD number layout. `px`/`py` is the top-left
     // of the LEFTMOST cell.
     // Each cell is 8x16.
-    private let draw_vg_number = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[],
-                          px: int32, py: int32, digits: int32, num: int32) ->
+    private let draw_vg_number = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const u32[],
+                          px: i32, py: i32, digits: i32, num: i32) ->
         let mut n = if num < 0 then 0 else num
-        let out_digits = int32[16] {}
+        let out_digits = i32[16] {}
         let mut count = 0
         if n == 0 then
             out_digits[0] = 0
@@ -792,7 +792,7 @@ module hud =
                 else pics.id.n_blank
             pics.draw(rc, vg, pal, chunk, x, py)
 
-    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const uint32[], g: game*) ->
+    let render = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const u32[], g: game*) ->
         let bar_top = view_h                         // 160
         // Hor+ widescreen: the 3D viewport above renders fullscreen
         // (0..fb_w), but the status-bar graphic is 320 wide and we
@@ -807,9 +807,9 @@ module hud =
             for y in bar_top..rc->fb_h do
                 let row = y * rc->fb_w
                 for x in 0..ox do
-                    rc->fb[(int64) (row + x)] = fill
+                    rc->fb[(i64) (row + x)] = fill
                 for x in (ox + 320)..rc->fb_w do
-                    rc->fb[(int64) (row + x)] = fill
+                    rc->fb[(i64) (row + x)] = fill
         // Full Wolf3D status-bar graphic: all the cell outlines +
         // labels are pre-rendered into a single 320x40 image. We
         // paint it, then stamp digits / face / keys / weapon-icon
@@ -876,7 +876,7 @@ module hud =
     // Duration is the original 3 seconds — long enough to read,
     // short enough to not stack up during a fight.
     let show_message = (g: game*, text: const str) ->
-        let mut n = (int32) text.len
+        let mut n = (i32) text.len
         if n > 255 then n = 255
         for i in 0..n do
             g->msg_buf[i] = text[i]
@@ -891,7 +891,7 @@ module hud =
         if g->msg_timer <= 0.0 || g->msg_len <= 0 then return
         // Foreground color brightens/fades.
         let t = if g->msg_timer > 0.5 then 1.0 else g->msg_timer / 0.5
-        let bright = (uint32) (255.0 * t)
+        let bright = (u32) (255.0 * t)
         let color = 0xFF000000u32 | (bright << 16) | (bright << 8) | bright
         // Walk msg_buf one line at a time, breaking on '\n'. Empty
         // lines (from "\n\n" in the source text) render as a blank
@@ -907,11 +907,11 @@ module hud =
                 // Measure + render the slice [line_start .. i).
                 let mut w = 0
                 for j in line_start..i do
-                    let ch = (int32) g->msg_buf[j]
+                    let ch = (i32) g->msg_buf[j]
                     if ch >= 0 && ch < 256 then w = w + f->width[ch]
                 let mut cx = (rc->fb_w - w) / 2
                 for j in line_start..i do
-                    cx = cx + font.draw_char(rc, f, cx, y, (int32) g->msg_buf[j], color)
+                    cx = cx + font.draw_char(rc, f, cx, y, (i32) g->msg_buf[j], color)
                 y = y + line_h
                 line_start = i + 1
                 if at_end then break

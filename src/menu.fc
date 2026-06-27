@@ -65,7 +65,7 @@ module menu =
     // title screen ("Back to Demo" — we don't ship an attract-mode
     // demo, but the original's attract cycle landed on the title pic
     // between demo plays anyway, so the title is the correct destination).
-    let main_label = (i: int32, has_active_game: bool) ->
+    let main_label = (i: i32, has_active_game: bool) ->
         match i with
         | 0 -> "New Game"
         | 1 -> "Sound"
@@ -81,7 +81,7 @@ module menu =
     // Only SAVE GAME locks without a running game; row 7 is always
     // selectable since both labels (Back to Game / Back to Demo) have
     // a sensible target.
-    let main_is_locked = (i: int32, has_active_game: bool) ->
+    let main_is_locked = (i: i32, has_active_game: bool) ->
         i == 4 && !has_active_game
 
     // Sound submenu — three sections (SOUND EFFECTS / DIGITIZED SOUND
@@ -91,8 +91,8 @@ module menu =
     // above each sub-window for the original-game visual frame; the
     // toggle behaviour is wolf-fc's simpler ←/→ or Enter cycle.
     let sound_len = 6
-    let sound_section = (row: int32) -> row / 2
-    let sound_is_toggle = (row: int32) -> (row % 2) == 0
+    let sound_section = (row: i32) -> row / 2
+    let sound_is_toggle = (row: i32) -> (row % 2) == 0
 
     // Options submenu — wolf-fc mods. Grow this list as new toggles /
     // sliders land; matched by `render_options_list` and by main.fc's
@@ -115,7 +115,7 @@ module menu =
         | action    // row commits on Enter (options Reset)
 
     // Per-row metadata: kind (toggle / slider / action) + label.
-    private let option_label = (i: int32) ->
+    private let option_label = (i: i32) ->
         match i with
         | 0 -> "Mommy Mode"
         | 1 -> "Shadow Depth"
@@ -125,7 +125,7 @@ module menu =
         | 5 -> "Reset to Defaults"
         | _ -> ""
 
-    let row_kind = (i: int32) ->
+    let row_kind = (i: i32) ->
         match i with
         | 0 -> option_kind.toggle
         | 1 -> option_kind.slider
@@ -139,7 +139,7 @@ module menu =
     // row-typed menus. `none` means a drilling / navigation menu (main,
     // episode, difficulty, save/load lists, quit confirm) — no
     // setting-changed cue applies there.
-    let current_row_kind = (level: nav, sel: int32) ->
+    let current_row_kind = (level: nav, sel: i32) ->
         match level with
         | sound ->
             if sound_is_toggle(sel) then some(option_kind.toggle)
@@ -148,7 +148,7 @@ module menu =
         | changeview -> some(option_kind.slider)
         | _ -> none(option_kind)
 
-    private let diff_label = (i: int32) ->
+    private let diff_label = (i: i32) ->
         match i with
         | 0 -> "Can I play, Daddy?"
         | 1 -> "Don't hurt me."
@@ -156,7 +156,7 @@ module menu =
         | 3 -> "I am Death incarnate!"
         | _ -> ""
 
-    private let diff_card = (i: int32) ->
+    private let diff_card = (i: i32) ->
         match i with
         | 0 -> pics.id.c_baby
         | 1 -> pics.id.c_easy
@@ -164,7 +164,7 @@ module menu =
         | 3 -> pics.id.c_hard
         | _ -> -1
 
-    private let episode_label = (i: int32) ->
+    private let episode_label = (i: i32) ->
         match i with
         | 0 -> "Escape from Wolfenstein"
         | 1 -> "Operation: Eisenfaust"
@@ -174,7 +174,7 @@ module menu =
         | 5 -> "Confrontation"
         | _ -> ""
 
-    private let episode_card = (i: int32) ->
+    private let episode_card = (i: i32) ->
         match i with
         | 0 -> pics.id.c_episode1
         | 1 -> pics.id.c_episode2
@@ -189,7 +189,7 @@ module menu =
     // ============================================================
 
     // Filled rect [x0, x1) x [y0, y1) in framebuffer ARGB.
-    private let fill_rect = (rc: render_ctx*, x0: int32, y0: int32, x1: int32, y1: int32, c: uint32) ->
+    private let fill_rect = (rc: render_ctx*, x0: i32, y0: i32, x1: i32, y1: i32, c: u32) ->
         let mut yy = y0
         loop
             if yy >= y1 then break
@@ -198,15 +198,15 @@ module menu =
                 loop
                     if xx >= x1 then break
                     if xx >= 0 && xx < rc->fb_w then
-                        rc->fb[(int64) yy * (int64) rc->fb_w + (int64) xx] = c
+                        rc->fb[(i64) yy * (i64) rc->fb_w + (i64) xx] = c
                     xx = xx + 1
             yy = yy + 1
 
     // Menu window: solid fill plus a two-tone outline (top + left
     // in `c_top`, bottom + right in `c_bot`) — gives the box the
     // beveled look the original menus have.
-    private let draw_window = (rc: render_ctx*, pal: const uint32[],
-                                x: int32, y: int32, w: int32, h: int32) ->
+    private let draw_window = (rc: render_ctx*, pal: const u32[],
+                                x: i32, y: i32, w: i32, h: i32) ->
         fill_rect(rc, x, y, x + w, y + h, pal[pal_bkgd])
         let c_top = pal[pal_deactive]
         let c_bot = pal[pal_bord2]
@@ -223,7 +223,7 @@ module menu =
     // width (rather than the OG's 320) so the centered title pic sits
     // on a continuous strip even in widescreen — same approach the
     // high-scores screen uses. Public so high_scores_screen can share.
-    let draw_stripes = (rc: render_ctx*, pal: const uint32[], y: int32) ->
+    let draw_stripes = (rc: render_ctx*, pal: const u32[], y: i32) ->
         fill_rect(rc, 0, y, rc->fb_w, y + 24, pal[0x00])
         fill_rect(rc, 0, y + 22, rc->fb_w, y + 23, pal[pal_stripe])
 
@@ -233,16 +233,16 @@ module menu =
     // is added per-menu because the original only draws it on the
     // main and load/save screens (where a header pic floats over it);
     // the episode / difficulty / sound menus skip it.
-    private let draw_backdrop = (rc: render_ctx*, pal: const uint32[]) ->
+    private let draw_backdrop = (rc: render_ctx*, pal: const u32[]) ->
         fill_rect(rc, 0, 0, rc->fb_w, rc->fb_h, pal[pal_bordcolor])
 
     // Cursor blink at ~3.5 Hz alternating two cursor pics.
-    private let cursor_chunk = (time: float64) ->
-        let on = ((int32) (time * 3.5)) % 2 == 0
+    private let cursor_chunk = (time: f64) ->
+        let on = ((i32) (time * 3.5)) % 2 == 0
         if on then pics.id.c_cursor1 else pics.id.c_cursor2
 
     private let draw_cursor = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                               pal: const uint32[], x: int32, y: int32, time: float64) ->
+                               pal: const u32[], x: i32, y: i32, time: f64) ->
         pics.draw(rc, vg, pal, cursor_chunk(time), x, y)
 
     // Bottom-of-screen help art. The original draws the mouse-hint
@@ -253,13 +253,13 @@ module menu =
     // the menu window's bottom bevel (the visible glyphs stay at
     // the same screen y).
     private let draw_help_pic = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                                 pal: const uint32[]) ->
+                                 pal: const u32[]) ->
         pics.draw_clipped_top(rc, vg, pal, pics.id.c_mouselback,
             rc->ui_offset_x + 112, 187, 3)
 
     // Pick a row's text colour given selected / locked flags. Matches
     // the original's normal / highlight color tables.
-    private let row_color = (pal: const uint32[], is_sel: bool, is_locked: bool) ->
+    private let row_color = (pal: const u32[], is_sel: bool, is_locked: bool) ->
         if is_locked then pal[pal_deactive]
         else if is_sel then pal[pal_highlight]
         else pal[pal_text]
@@ -275,8 +275,8 @@ module menu =
     private let row_h       = 13
 
     private let render_main_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                                    pal: const uint32[], f: const font.info*,
-                                    g: game*, time: float64) ->
+                                    pal: const u32[], f: const font.info*,
+                                    g: game*, time: f64) ->
         let ox = rc->ui_offset_x
         // Full-width stripe + native-size header pic centered on top
         // (the original's main menu reuses the options-header pic
@@ -316,8 +316,8 @@ module menu =
     // ============================================================
 
     private let render_episode_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                                        pal: const uint32[], f: const font.info*,
-                                        g: game*, time: float64) ->
+                                        pal: const u32[], f: const font.info*,
+                                        g: game*, time: f64) ->
         // Episode picker geometry (matches the original): x=10, y=23,
         // width=300, height≈154. Cards drawn at x+32 + i*26.
         // ui_offset_x recentres the 320-grid coords inside a wider
@@ -354,8 +354,8 @@ module menu =
     // ============================================================
 
     private let render_difficulty_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                                           pal: const uint32[], f: const font.info*,
-                                           g: game*, time: float64) ->
+                                           pal: const u32[], f: const font.info*,
+                                           g: game*, time: f64) ->
         // Original-matching geometry: x=50, y=100, w=225, h=67 (4
         // text rows at row_h=13). The selected difficulty's face card
         // (24x32) is drawn separately at (x+185, y+7) — only the
@@ -395,8 +395,8 @@ module menu =
     // path per source so a toggle suffices, and the Gain selector is a
     // wolf-fc-only addition.
     private let render_sound_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                                      pal: const uint32[], f: const font.info*,
-                                      g: game*, ac: audio_ctx*, time: float64) ->
+                                      pal: const u32[], f: const font.info*,
+                                      g: game*, ac: audio_ctx*, time: f64) ->
         let ox       = rc->ui_offset_x
         let sect_x   = ox + 40
         let sect_w   = 240
@@ -407,7 +407,7 @@ module menu =
         let x_cursor  = sect_x + 8
         let x_label   = sect_x + 32
         let x_value   = sect_x + sect_w - 56
-        let section_pic = (s: int32) ->
+        let section_pic = (s: i32) ->
             match s with
             | 0 -> pics.id.c_fx_title
             | 1 -> pics.id.c_digi_title
@@ -456,8 +456,8 @@ module menu =
     // ============================================================
 
     private let render_options_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                                        pal: const uint32[], f: const font.info*,
-                                        g: game*, time: float64) ->
+                                        pal: const u32[], f: const font.info*,
+                                        g: game*, time: f64) ->
         font.draw_centered(rc, f, 28, "Options", pal[pal_readh])
         let op_x = rc->ui_offset_x + 40
         let op_y = 48
@@ -514,8 +514,8 @@ module menu =
     let changeview_ssaa_row   = 2
 
     private let render_changeview_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                                           pal: const uint32[], f: const font.info*,
-                                           g: game*, time: float64) ->
+                                           pal: const u32[], f: const font.info*,
+                                           g: game*, time: f64) ->
         font.draw_centered(rc, f, 22, "Change View", pal[pal_readh])
         let cv_x = rc->ui_offset_x + 36
         let cv_y = 50
@@ -640,9 +640,9 @@ module menu =
         g->menu_level == nav.savelist && g->save_edit_active
 
     private let render_slot = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
-                       pal: const uint32[], f: const font.info*,
-                       g: game*, sm: save_menu_ctx*, header_pic: int32,
-                       sel: int32, load_mode: bool, time: float64) ->
+                       pal: const u32[], f: const font.info*,
+                       g: game*, sm: save_menu_ctx*, header_pic: i32,
+                       sel: i32, load_mode: bool, time: f64) ->
         let ox = rc->ui_offset_x
         let lsm_x_off = ox + lsm_x   // ui-offset-aware base x
         // Full-width stripe + native-size 216x48 header pic centered on
@@ -654,7 +654,7 @@ module menu =
         let win_h = save.num_slots * lsm_row_h + 10
         draw_window(rc, pal, lsm_x_off - 10, lsm_y - 5, lsm_w, win_h)
         let editing = is_editing_save(g)
-        let cursor_blink = ((int32) (time * 3.5)) % 2 == 0
+        let cursor_blink = ((i32) (time * 3.5)) % 2 == 0
         for i in 0..save.num_slots do
             let s = &sm->slots[i]
             let row_y = lsm_y + i * lsm_row_h
@@ -693,12 +693,12 @@ module menu =
                     placeholder, color)
             else
                 if s->label.len > 0 then
-                    let mut limit = (int32) s->label.len
+                    let mut limit = (i32) s->label.len
                     if limit > 22 then limit = 22
                     for j in 0..limit do
                         sm->label_scratch[j] = s->label[j]
                     sm->label_scratch[limit] = 0u8
-                    let slab = (const str) sm->label_scratch[0..(int64) limit]
+                    let slab = (const str) sm->label_scratch[0..(i64) limit]
                     font.draw_text(rc, f, text_x, text_y, slab, color)
                 else
                     let ep = s->level_num / episode.levels_per + 1
@@ -721,7 +721,7 @@ module menu =
     // while the modal is up.
     private let render_quit_modal = (rc: render_ctx*,
                                       vg: const vgagraph.vgagraph_file*,
-                                      pal: const uint32[],
+                                      pal: const u32[],
                                       f: const font.info*, g: game*,
                                       ac: audio_ctx*) ->
         render_main_list(rc, vg, pal, f, g, g->phase_timer)
@@ -755,7 +755,7 @@ module menu =
         font.draw_centered(rc, f, box_y + pad + line_h,    hint,   text_color)
 
     let render_main = (rc: render_ctx*, sm: save_menu_ctx*,
-                       vg: const vgagraph.vgagraph_file*, pal: const uint32[],
+                       vg: const vgagraph.vgagraph_file*, pal: const u32[],
                        f: const font.info*, g: game*, ac: audio_ctx*) ->
         draw_backdrop(rc, pal)
         let time = g->phase_timer

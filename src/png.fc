@@ -8,55 +8,55 @@ module png =
     import io from std::
 
     // CRC-32 (IEEE 802.3) over buf[start..start+len].
-    let crc32 = (buf: const uint8[], start: int64, len: int64) ->
+    let crc32 = (buf: const u8[], start: i64, len: i64) ->
         let mut c = 0xFFFFFFFFu32
         for i in 0..len do
-            c = c ^ (uint32) buf[start + i]
+            c = c ^ (u32) buf[start + i]
             for k in 0..8 do
                 c = if (c & 1u32) != 0u32 then 0xEDB88320u32 ^ (c >> 1)
                     else c >> 1
         c ^ 0xFFFFFFFFu32
 
     // Adler-32 checksum over buf[start..start+len] (for zlib wrapper).
-    let adler32 = (buf: const uint8[], start: int64, len: int64) ->
+    let adler32 = (buf: const u8[], start: i64, len: i64) ->
         let mut s1 = 1u32
         let mut s2 = 0u32
         for i in 0..len do
-            s1 = (s1 + (uint32) buf[start + i]) % 65521u32
+            s1 = (s1 + (u32) buf[start + i]) % 65521u32
             s2 = (s2 + s1) % 65521u32
         (s2 << 16) | s1
 
-    // Write a big-endian uint32 to buf[pos..pos+4].
-    let put_be32 = (buf: uint8[], pos: int64, v: uint32) ->
-        buf[pos] = (uint8) (v >> 24)
-        buf[pos + 1] = (uint8) (v >> 16)
-        buf[pos + 2] = (uint8) (v >> 8)
-        buf[pos + 3] = (uint8) v
+    // Write a big-endian u32 to buf[pos..pos+4].
+    let put_be32 = (buf: u8[], pos: i64, v: u32) ->
+        buf[pos] = (u8) (v >> 24)
+        buf[pos + 1] = (u8) (v >> 16)
+        buf[pos + 2] = (u8) (v >> 8)
+        buf[pos + 3] = (u8) v
 
     // Write an ARGB framebuffer as a PNG file.
     //
-    // `fb` holds width*height uint32 values; the low 24 bits are used as
+    // `fb` holds width*height u32 values; the low 24 bits are used as
     // R (bits 16–23), G (bits 8–15), B (bits 0–7). The alpha byte is
     // ignored (PNG color type 2 is RGB-only).
     //
     // `metadata`, if non-empty, is embedded as a tEXt chunk with keyword
     // `"Wolf-FC"`. Pass `""` to skip metadata.
-    let write = (path: const str, fb: const uint32[], w: int32, h: int32,
+    let write = (path: const str, fb: const u32[], w: i32, h: i32,
                  metadata: const str) ->
-        let row_bytes = 1i64 + (int64) w * 3
-        let raw_size = (int64) h * row_bytes
+        let row_bytes = 1i64 + (i64) w * 3
+        let raw_size = (i64) h * row_bytes
 
         // Build raw scanline data: 1 filter byte (0 = None) + RGB per pixel.
-        let raw = alloc(uint8[raw_size] {})!
+        let raw = alloc(u8[raw_size] {})!
         defer free(raw)
         for y in 0..h do
-            raw[(int64) y * row_bytes] = 0u8
+            raw[(i64) y * row_bytes] = 0u8
             for x in 0..w do
-                let c = fb[(int64) y * (int64) w + (int64) x]
-                let o = (int64) y * row_bytes + 1 + (int64) x * 3
-                raw[o] = (uint8) (c >> 16)
-                raw[o + 1] = (uint8) (c >> 8)
-                raw[o + 2] = (uint8) c
+                let c = fb[(i64) y * (i64) w + (i64) x]
+                let o = (i64) y * row_bytes + 1 + (i64) x * 3
+                raw[o] = (u8) (c >> 16)
+                raw[o + 1] = (u8) (c >> 8)
+                raw[o + 2] = (u8) c
 
         let adler = adler32(raw, 0, raw_size)
 
@@ -70,7 +70,7 @@ module png =
         let meta_key = "Wolf-FC"
         let has_meta = metadata.len > 0
         let text_data_size = if has_meta then
-            (int64) meta_key.len + 1 + metadata.len
+            (i64) meta_key.len + 1 + metadata.len
         else 0i64
 
         let total_size = 8                            // signature
@@ -79,7 +79,7 @@ module png =
                        + (12 + idat_data_size)        // IDAT
                        + 12                           // IEND
 
-        let out = alloc(uint8[total_size] {})!
+        let out = alloc(u8[total_size] {})!
         defer free(out)
         let mut pos = 0i64
 
@@ -100,9 +100,9 @@ module png =
         let ihdr_type_start = pos
         put_be32(out, pos, 0x49484452u32)    // "IHDR"
         pos = pos + 4
-        put_be32(out, pos, (uint32) w)
+        put_be32(out, pos, (u32) w)
         pos = pos + 4
-        put_be32(out, pos, (uint32) h)
+        put_be32(out, pos, (u32) h)
         pos = pos + 4
         out[pos] = 8u8        // bit depth
         out[pos + 1] = 2u8    // color type: 2 = RGB
@@ -115,14 +115,14 @@ module png =
 
         // tEXt chunk (optional): "Wolf-FC\0<metadata>"
         if has_meta then
-            put_be32(out, pos, (uint32) text_data_size)
+            put_be32(out, pos, (u32) text_data_size)
             pos = pos + 4
             let text_type_start = pos
             put_be32(out, pos, 0x74455874u32)    // "tEXt"
             pos = pos + 4
-            for i in 0..(int64) meta_key.len do
+            for i in 0..(i64) meta_key.len do
                 out[pos + i] = meta_key[i]
-            pos = pos + (int64) meta_key.len
+            pos = pos + (i64) meta_key.len
             out[pos] = 0u8    // keyword/text separator
             pos = pos + 1
             for i in 0..metadata.len do
@@ -132,7 +132,7 @@ module png =
             pos = pos + 4
 
         // IDAT chunk
-        put_be32(out, pos, (uint32) idat_data_size)
+        put_be32(out, pos, (u32) idat_data_size)
         pos = pos + 4
         let idat_type_start = pos
         put_be32(out, pos, 0x49444154u32)    // "IDAT"
@@ -149,13 +149,13 @@ module png =
             out[pos] = if b == block_count - 1 then 1u8 else 0u8
             pos = pos + 1
             // LEN (little-endian)
-            out[pos] = (uint8) block_size
-            out[pos + 1] = (uint8) (block_size >> 8)
+            out[pos] = (u8) block_size
+            out[pos + 1] = (u8) (block_size >> 8)
             pos = pos + 2
             // NLEN = ~LEN (little-endian)
-            let nlen = ((uint16) block_size) ^ 0xFFFFu16
-            out[pos] = (uint8) nlen
-            out[pos + 1] = (uint8) (nlen >> 8)
+            let nlen = ((u16) block_size) ^ 0xFFFFu16
+            out[pos] = (u8) nlen
+            out[pos + 1] = (u8) (nlen >> 8)
             pos = pos + 2
             // Raw data
             for i in 0..block_size do
