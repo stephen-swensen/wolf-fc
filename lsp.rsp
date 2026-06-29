@@ -1,0 +1,29 @@
+// wolf-fc — LSP compilation unit.
+//
+// Mirrors the Makefile's `fcc $(SRCS_FC) $(GEN_FC) $(SRCS_STDLIB)` so the editor
+// (fcc --lsp) resolves names identically to the build. Paths resolve relative to
+// THIS file (the project root); the server discovers it by walking up from the
+// open file. When present this file is authoritative: no sibling-directory glob
+// and no blanket stdlib feed, so the analysis unit is exactly what's listed here.
+
+// Project sources — all of src/ (the same set the Makefile lists explicitly).
+src/*.fc
+
+// Generated install-path constant. Present after `make`; before the first build
+// this pattern matches nothing and is silently skipped (only `install_path` then
+// reads as undefined — the same state as with no lsp.rsp at all).
+build/*/install_path.fc
+
+// Standard-library subset actually imported (io, text, sys, math, random).
+// These point at the INSTALLED stdlib — the same one the build resolves: run.sh
+// calls `make`, whose Makefile derives the stdlib from `command -v fcc`
+// ($(FCC_PREFIX)/share/fcc/stdlib). Pinning the installed path makes the editor
+// resolve names identically to `make`/`run.sh`. Listing the exact 5-module subset
+// (not *.fc) mirrors the Makefile's SRCS_STDLIB and keeps the unit lean.
+// If you install under a non-default PREFIX or set FCC_STDLIB, update these to
+// match (or point them at ../fc-lang/stdlib to track the dev compiler instead).
+/usr/local/share/fcc/stdlib/io.fc
+/usr/local/share/fcc/stdlib/text.fc
+/usr/local/share/fcc/stdlib/sys.fc
+/usr/local/share/fcc/stdlib/math.fc
+/usr/local/share/fcc/stdlib/random.fc
