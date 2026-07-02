@@ -192,13 +192,13 @@ module opl2 =
 
     let init = (sample_rate: f64) ->
         let c = alloc(chip)!
-        c->rate = sample_rate
-        c->counter = 0u64
+        c.rate = sample_rate
+        c.counter = 0u64
         for i in 0..18 do
-            c->op_tl[i] = 63
-            c->op_mult[i] = 1
-            c->op_env[i] = env_max
-            c->op_stage[i] = envelope_stage.off
+            c.op_tl[i] = 63
+            c.op_mult[i] = 1
+            c.op_env[i] = env_max
+            c.op_stage[i] = envelope_stage.off
         let pi = 3.14159265358979323846
         // First-quadrant log-sin in 1/16 env units (0.01172 dB per
         // unit). See the field comment for the chip-precision rationale.
@@ -207,7 +207,7 @@ module opl2 =
             let x = ((f64) i + 0.5) * pi / 512.0
             let s = math.sin(x)
             let atten = 0.0 - 20.0 * math.log10(s) / fine_unit_db
-            c->logsin_table[i] = (i32) atten
+            c.logsin_table[i] = (i32) atten
         // Gain table at 1/16 env-unit resolution. Each entry is the
         // linear amplitude after the given attenuation in fine units.
         // Past i≈6400 the value rounds to 0 (inaudibly quiet) but we
@@ -215,7 +215,7 @@ module opl2 =
         for i in 0..16384 do
             let atten_db = (f64) i * fine_unit_db
             let amp = (f64) op_peak * math.pow(10.0, 0.0 - atten_db / 20.0)
-            c->gain_table[i] = (i32) amp
+            c.gain_table[i] = (i32) amp
         c
 
     // ============================================================
@@ -322,37 +322,37 @@ module opl2 =
 
     // Advance one operator's envelope by one sample.
     let env_advance = (c: chip*, idx: i32) ->
-        match c->op_stage[idx] with
+        match c.op_stage[idx] with
         | off | sustain -> void()
         | attack ->
-            let inc = rate_step(c->counter, c->op_eff_ar[idx])
-            let new_env = attack_step(c->op_env[idx], inc)
-            c->op_env[idx] = new_env
+            let inc = rate_step(c.counter, c.op_eff_ar[idx])
+            let new_env = attack_step(c.op_env[idx], inc)
+            c.op_env[idx] = new_env
             if new_env <= 0 then
-                c->op_env[idx] = 0
-                c->op_stage[idx] = envelope_stage.decay
+                c.op_env[idx] = 0
+                c.op_stage[idx] = envelope_stage.decay
         | decay ->
-            let inc = rate_step(c->counter, c->op_eff_dr[idx])
-            let new_env = linear_step(c->op_env[idx], inc)
-            c->op_env[idx] = new_env
+            let inc = rate_step(c.counter, c.op_eff_dr[idx])
+            let new_env = linear_step(c.op_env[idx], inc)
+            c.op_env[idx] = new_env
             // Decay target. SL=15 is special-cased to silence (matches
             // YM3812 spec); SL 0..14 maps to 0..42 dB in 3 dB steps =
             // 16 env units per SL step.
-            let target = if c->op_sl[idx] == 15 then env_max else c->op_sl[idx] * 16
+            let target = if c.op_sl[idx] == 15 then env_max else c.op_sl[idx] * 16
             if new_env >= target then
-                c->op_env[idx] = target
+                c.op_env[idx] = target
                 // EGT=1 holds at sustain; EGT=0 continues releasing
                 // (percussive). This is what makes percussive AdLib SFX
                 // die away cleanly instead of hanging at sustain.
-                c->op_stage[idx] = if c->op_egt[idx] then envelope_stage.sustain
+                c.op_stage[idx] = if c.op_egt[idx] then envelope_stage.sustain
                                    else envelope_stage.release
         | release ->
-            let inc = rate_step(c->counter, c->op_eff_rr[idx])
-            let new_env = linear_step(c->op_env[idx], inc)
-            c->op_env[idx] = new_env
+            let inc = rate_step(c.counter, c.op_eff_rr[idx])
+            let new_env = linear_step(c.op_env[idx], inc)
+            c.op_env[idx] = new_env
             if new_env >= env_max then
-                c->op_env[idx] = env_max
-                c->op_stage[idx] = envelope_stage.off
+                c.op_env[idx] = env_max
+                c.op_stage[idx] = envelope_stage.off
 
     // ============================================================
     // KSL (key-scale level)
@@ -381,9 +381,9 @@ module opl2 =
         else 64
 
     let recompute_op_ksl = (c: chip*, idx: i32, block: i32, fnum: i32) ->
-        let ksl = c->op_ksl[idx]
+        let ksl = c.op_ksl[idx]
         if ksl == 0 then
-            c->op_ksl_atten[idx] = 0
+            c.op_ksl_atten[idx] = 0
         else
             let fnum_msb4 = (fnum >> 6) & 15
             let raw = ksl_rom(fnum_msb4) - (7 - block) * 8
@@ -397,23 +397,23 @@ module opl2 =
             let env_units = if ksl == 1 then units
                 else if ksl == 2 then units * 2
                 else units * 4
-            c->op_ksl_atten[idx] = env_units
+            c.op_ksl_atten[idx] = env_units
 
     // ============================================================
     // Rate cache invalidation
     // ============================================================
 
     let recompute_op_rates = (c: chip*, idx: i32, ks: i32) ->
-        c->op_eff_ar[idx] = effective_rate(c->op_ar[idx], c->op_ksr[idx], ks)
-        c->op_eff_dr[idx] = effective_rate(c->op_dr[idx], c->op_ksr[idx], ks)
-        c->op_eff_rr[idx] = effective_rate(c->op_rr[idx], c->op_ksr[idx], ks)
+        c.op_eff_ar[idx] = effective_rate(c.op_ar[idx], c.op_ksr[idx], ks)
+        c.op_eff_dr[idx] = effective_rate(c.op_dr[idx], c.op_ksr[idx], ks)
+        c.op_eff_rr[idx] = effective_rate(c.op_rr[idx], c.op_ksr[idx], ks)
 
     let refresh_channel_ops = (c: chip*, ch: i32) ->
-        let ks = key_scale(c->ch_block[ch], c->ch_fnum[ch])
+        let ks = key_scale(c.ch_block[ch], c.ch_fnum[ch])
         recompute_op_rates(c, ch * 2, ks)
         recompute_op_rates(c, ch * 2 + 1, ks)
-        recompute_op_ksl(c, ch * 2, c->ch_block[ch], c->ch_fnum[ch])
-        recompute_op_ksl(c, ch * 2 + 1, c->ch_block[ch], c->ch_fnum[ch])
+        recompute_op_ksl(c, ch * 2, c.ch_block[ch], c.ch_fnum[ch])
+        recompute_op_ksl(c, ch * 2 + 1, c.ch_block[ch], c.ch_fnum[ch])
 
     // ============================================================
     // Register write
@@ -434,81 +434,81 @@ module opl2 =
         if op_base == 0x20 then
             let idx = op_idx(off)
             if idx >= 0 then
-                c->op_mult[idx] = val & 15
-                c->op_ksr[idx]  = (val & 16) != 0
-                c->op_egt[idx]  = (val & 32) != 0
-                c->op_vib[idx]  = (val & 64) != 0
-                c->op_am[idx]   = (val & 128) != 0
+                c.op_mult[idx] = val & 15
+                c.op_ksr[idx]  = (val & 16) != 0
+                c.op_egt[idx]  = (val & 32) != 0
+                c.op_vib[idx]  = (val & 64) != 0
+                c.op_am[idx]   = (val & 128) != 0
                 let ch = idx / 2
-                let ks = key_scale(c->ch_block[ch], c->ch_fnum[ch])
+                let ks = key_scale(c.ch_block[ch], c.ch_fnum[ch])
                 recompute_op_rates(c, idx, ks)
         // 0x40–0x55: KSL / TL
         if op_base == 0x40 then
             let idx = op_idx(off)
             if idx >= 0 then
-                c->op_tl[idx]  = val & 63
-                c->op_ksl[idx] = (val >> 6) & 3
+                c.op_tl[idx]  = val & 63
+                c.op_ksl[idx] = (val >> 6) & 3
                 let ch = idx / 2
-                recompute_op_ksl(c, idx, c->ch_block[ch], c->ch_fnum[ch])
+                recompute_op_ksl(c, idx, c.ch_block[ch], c.ch_fnum[ch])
         // 0x60–0x75: Attack / Decay rate
         if op_base == 0x60 then
             let idx = op_idx(off)
             if idx >= 0 then
-                c->op_ar[idx] = (val >> 4) & 15
-                c->op_dr[idx] = val & 15
+                c.op_ar[idx] = (val >> 4) & 15
+                c.op_dr[idx] = val & 15
                 let ch = idx / 2
-                let ks = key_scale(c->ch_block[ch], c->ch_fnum[ch])
+                let ks = key_scale(c.ch_block[ch], c.ch_fnum[ch])
                 recompute_op_rates(c, idx, ks)
         // 0x80–0x95: Sustain level / Release rate
         if op_base == 0x80 then
             let idx = op_idx(off)
             if idx >= 0 then
-                c->op_sl[idx] = (val >> 4) & 15
-                c->op_rr[idx] = val & 15
+                c.op_sl[idx] = (val >> 4) & 15
+                c.op_rr[idx] = val & 15
                 let ch = idx / 2
-                let ks = key_scale(c->ch_block[ch], c->ch_fnum[ch])
+                let ks = key_scale(c.ch_block[ch], c.ch_fnum[ch])
                 recompute_op_rates(c, idx, ks)
         // 0xE0–0xF5: Waveform select
         if op_base == 0xE0 then
             let idx = op_idx(off)
-            if idx >= 0 then c->op_wf[idx] = val & 3
+            if idx >= 0 then c.op_wf[idx] = val & 3
         let ci = reg & 15
         // 0xA0–0xA8: fnum low byte
         if ch_base == 0xA0 && ci < 9 then
-            c->ch_fnum[ci] = (c->ch_fnum[ci] & 0x300) | (val & 255)
+            c.ch_fnum[ci] = (c.ch_fnum[ci] & 0x300) | (val & 255)
             refresh_channel_ops(c, ci)
         // 0xB0–0xB8: fnum high 2 bits, block, key-on bit
         if ch_base == 0xB0 && ci < 9 then
-            c->ch_fnum[ci] = (c->ch_fnum[ci] & 0xFF) | ((val & 3) << 8)
-            c->ch_block[ci] = (val >> 2) & 7
+            c.ch_fnum[ci] = (c.ch_fnum[ci] & 0xFF) | ((val & 3) << 8)
+            c.ch_block[ci] = (val >> 2) & 7
             refresh_channel_ops(c, ci)
             let new_key = (val & 32) != 0
-            if new_key && !c->ch_key[ci] then
+            if new_key && !c.ch_key[ci] then
                 // Key-on: reset phase and start attack. DON'T reset
                 // env — real OPL2 preserves it, which matters for
                 // rapid retriggers tighter than the release time.
-                c->op_stage[ci * 2] = envelope_stage.attack
-                c->op_phase[ci * 2] = 0.0
-                c->op_stage[ci * 2 + 1] = envelope_stage.attack
-                c->op_phase[ci * 2 + 1] = 0.0
-                c->ch_prev0[ci] = 0
-                c->ch_prev1[ci] = 0
-            if !new_key && c->ch_key[ci] then
+                c.op_stage[ci * 2] = envelope_stage.attack
+                c.op_phase[ci * 2] = 0.0
+                c.op_stage[ci * 2 + 1] = envelope_stage.attack
+                c.op_phase[ci * 2 + 1] = 0.0
+                c.ch_prev0[ci] = 0
+                c.ch_prev1[ci] = 0
+            if !new_key && c.ch_key[ci] then
                 // Key-off: drop to release on any still-live op.
-                if c->op_stage[ci * 2] != envelope_stage.off then
-                    c->op_stage[ci * 2] = envelope_stage.release
-                if c->op_stage[ci * 2 + 1] != envelope_stage.off then
-                    c->op_stage[ci * 2 + 1] = envelope_stage.release
-            c->ch_key[ci] = new_key
+                if c.op_stage[ci * 2] != envelope_stage.off then
+                    c.op_stage[ci * 2] = envelope_stage.release
+                if c.op_stage[ci * 2 + 1] != envelope_stage.off then
+                    c.op_stage[ci * 2 + 1] = envelope_stage.release
+            c.ch_key[ci] = new_key
         // 0xC0–0xC8: Feedback / Connection
         if ch_base == 0xC0 && ci < 9 then
-            c->ch_fb[ci] = (val >> 1) & 7
-            c->ch_add[ci] = (val & 1) != 0
+            c.ch_fb[ci] = (val >> 1) & 7
+            c.ch_add[ci] = (val & 1) != 0
         // 0xBD: LFO depths + rhythm mode. We honor DAM and DVB; rhythm
         // mode (bit 5) is unused by Wolf3D.
         if reg == 0xBD then
-            c->dam = (val & 128) != 0
-            c->dvb = (val & 64) != 0
+            c.dam = (val & 128) != 0
+            c.dvb = (val & 64) != 0
         return
 
     // ============================================================
@@ -553,24 +553,24 @@ module opl2 =
             // Combine attenuation contributions in fine units: shift the
             // env-unit total_atten (env + TL*4 + KSL + AM) left by 4 to
             // match the 1/16-unit precision of log_sin, then add.
-            let sin_atten = c->logsin_table[table_idx]
+            let sin_atten = c.logsin_table[table_idx]
             let total_fine = (total_atten << 4) + sin_atten
             let amp = if total_fine >= 16384 || total_fine < 0 then 0
-                else c->gain_table[total_fine]
+                else c.gain_table[total_fine]
             if positive then amp else 0 - amp
 
     // Produce one output sample. Advances the global counter, both
     // LFOs, and every active channel's envelopes and phase generators.
     let sample = (c: chip*) ->
-        c->counter = c->counter + 1u64
+        c.counter = c.counter + 1u64
         // LFO advance. Tremolo at 3.7 Hz and vibrato at 6.1 Hz per the
         // Adlib programmer's manual. We approximate the chip's
         // staircase patterns with smooth sin curves of the same period
         // and amplitude.
-        c->lfo_am_phase = c->lfo_am_phase + 3.7 / c->rate
-        if c->lfo_am_phase >= 1.0 then c->lfo_am_phase = c->lfo_am_phase - 1.0
-        c->lfo_vib_phase = c->lfo_vib_phase + 6.1 / c->rate
-        if c->lfo_vib_phase >= 1.0 then c->lfo_vib_phase = c->lfo_vib_phase - 1.0
+        c.lfo_am_phase = c.lfo_am_phase + 3.7 / c.rate
+        if c.lfo_am_phase >= 1.0 then c.lfo_am_phase = c.lfo_am_phase - 1.0
+        c.lfo_vib_phase = c.lfo_vib_phase + 6.1 / c.rate
+        if c.lfo_vib_phase >= 1.0 then c.lfo_vib_phase = c.lfo_vib_phase - 1.0
         // Tremolo as a triangle wave: 0 → peak → 0 over one LFO cycle
         // (3.7 Hz, ~0.27 s). Peak attenuation is 1.0 dB (DAM=0) or
         // 4.8 dB (DAM=1), which works out to ~5 or ~26 env units.
@@ -578,27 +578,27 @@ module opl2 =
         // would double the modulation frequency (because |sin| has
         // period π) and introduce cusps at zero crossings that
         // alias into audible buzz on AM-enabled voices.
-        let am_unit = if c->lfo_am_phase < 0.5 then c->lfo_am_phase * 2.0
-            else 2.0 - c->lfo_am_phase * 2.0
-        let am_peak = if c->dam then 25.6 else 5.33
+        let am_unit = if c.lfo_am_phase < 0.5 then c.lfo_am_phase * 2.0
+            else 2.0 - c.lfo_am_phase * 2.0
+        let am_peak = if c.dam then 25.6 else 5.33
         let am_atten = (i32) (am_unit * am_peak)
         // Vibrato as a frequency multiplier (~±7 or ±14 cents).
-        let vib_cents = if c->dvb then 0.00811 else 0.00405
-        let vib_mul = 1.0 + math.sin(c->lfo_vib_phase * two_pi) * vib_cents
+        let vib_cents = if c.dvb then 0.00811 else 0.00405
+        let vib_mul = 1.0 + math.sin(c.lfo_vib_phase * two_pi) * vib_cents
 
         let mut sum = 0i32
         for ch in 0..9 do
             let mi = ch * 2
             let ci = ch * 2 + 1
             // Skip channels with both ops idle — no audible output.
-            if c->op_stage[ci] == envelope_stage.off && c->op_stage[mi] == envelope_stage.off then continue
+            if c.op_stage[ci] == envelope_stage.off && c.op_stage[mi] == envelope_stage.off then continue
             // Envelopes advance every sample for active stages.
             env_advance(c, mi)
             env_advance(c, ci)
             // If carrier is silent after this advance, skip the rest.
-            if c->op_stage[ci] == envelope_stage.off then continue
-            let fnum = c->ch_fnum[ch]
-            let block = c->ch_block[ch]
+            if c.op_stage[ci] == envelope_stage.off then continue
+            let fnum = c.ch_fnum[ch]
+            let block = c.ch_block[ch]
             // YM3812 frequency formula: f = fnum * 2^(block-1) * 49716 / 2^19.
             let base_freq = (f64) fnum * math.pow(2.0, (f64) (block - 1))
                 * 49716.0 / 524288.0
@@ -606,14 +606,14 @@ module opl2 =
             // floor wrap (not a single subtract) so per-sample advances
             // > 1 cycle stay bounded — possible at block=7 / mult=15 /
             // high fnum where mf can exceed the output sample rate.
-            let m_vib_mul = if c->op_vib[mi] then vib_mul else 1.0
-            let mf = base_freq * mult_val(c->op_mult[mi]) * m_vib_mul
-            c->op_phase[mi] = c->op_phase[mi] + mf / c->rate
-            if c->op_phase[mi] >= 1.0 then
-                c->op_phase[mi] = c->op_phase[mi] - math.floor(c->op_phase[mi])
-            let m_total_atten = c->op_env[mi] + c->op_tl[mi] * 4
-                + c->op_ksl_atten[mi]
-                + (if c->op_am[mi] then am_atten else 0)
+            let m_vib_mul = if c.op_vib[mi] then vib_mul else 1.0
+            let mf = base_freq * mult_val(c.op_mult[mi]) * m_vib_mul
+            c.op_phase[mi] = c.op_phase[mi] + mf / c.rate
+            if c.op_phase[mi] >= 1.0 then
+                c.op_phase[mi] = c.op_phase[mi] - math.floor(c.op_phase[mi])
+            let m_total_atten = c.op_env[mi] + c.op_tl[mi] * 4
+                + c.op_ksl_atten[mi]
+                + (if c.op_am[mi] then am_atten else 0)
             // Feedback: per the YM3812 spec, the chip sums the
             // modulator's two most recent outputs (NOT pre-averaged)
             // and right-shifts by (9-fb). Adlib programmer's manual
@@ -624,31 +624,31 @@ module opl2 =
             // entries per cycle, giving 4096/1024 = 4 cycles per unit.
             // So divisor 2^(7-fb) * op_peak / 1024 = 2^(9-fb) / 1 sums
             // cleanly to (sum_int / 2^(9-fb) / 1024) cycles.
-            let fb = c->ch_fb[ch]
+            let fb = c.ch_fb[ch]
             let mut fb_phase_offset = 0.0
             if fb > 0 then
-                let sum_int = c->ch_prev0[ch] + c->ch_prev1[ch]
+                let sum_int = c.ch_prev0[ch] + c.ch_prev1[ch]
                 fb_phase_offset = (f64) sum_int
                     / math.pow(2.0, (f64) (9 - fb))
                     / 1024.0
-            let mout = wave_sample(c, c->op_phase[mi] + fb_phase_offset,
-                c->op_wf[mi], m_total_atten)
-            c->ch_prev1[ch] = c->ch_prev0[ch]
-            c->ch_prev0[ch] = mout
+            let mout = wave_sample(c, c.op_phase[mi] + fb_phase_offset,
+                c.op_wf[mi], m_total_atten)
+            c.ch_prev1[ch] = c.ch_prev0[ch]
+            c.ch_prev0[ch] = mout
             // Carrier phase advance (with vibrato if enabled). Same
             // floor-wrap rationale as the modulator above.
-            let c_vib_mul = if c->op_vib[ci] then vib_mul else 1.0
-            let cf = base_freq * mult_val(c->op_mult[ci]) * c_vib_mul
-            c->op_phase[ci] = c->op_phase[ci] + cf / c->rate
-            if c->op_phase[ci] >= 1.0 then
-                c->op_phase[ci] = c->op_phase[ci] - math.floor(c->op_phase[ci])
-            let c_total_atten = c->op_env[ci] + c->op_tl[ci] * 4
-                + c->op_ksl_atten[ci]
-                + (if c->op_am[ci] then am_atten else 0)
-            if c->ch_add[ch] then
+            let c_vib_mul = if c.op_vib[ci] then vib_mul else 1.0
+            let cf = base_freq * mult_val(c.op_mult[ci]) * c_vib_mul
+            c.op_phase[ci] = c.op_phase[ci] + cf / c.rate
+            if c.op_phase[ci] >= 1.0 then
+                c.op_phase[ci] = c.op_phase[ci] - math.floor(c.op_phase[ci])
+            let c_total_atten = c.op_env[ci] + c.op_tl[ci] * 4
+                + c.op_ksl_atten[ci]
+                + (if c.op_am[ci] then am_atten else 0)
+            if c.ch_add[ch] then
                 // Additive connection: both ops play independently and
                 // sum into the channel output.
-                let cout = wave_sample(c, c->op_phase[ci], c->op_wf[ci], c_total_atten)
+                let cout = wave_sample(c, c.op_phase[ci], c.op_wf[ci], c_total_atten)
                 sum = sum + mout + cout
             else
                 // FM: per YM3812 spec, modulator output (signed 13-bit
@@ -657,8 +657,8 @@ module opl2 =
                 // wavelengths (β = 8π rad). In our normalized phase
                 // (1.0 = 1 cycle), that's mout / 1024.
                 let fm_offset = (f64) mout / 1024.0
-                let cout = wave_sample(c, c->op_phase[ci] + fm_offset,
-                    c->op_wf[ci], c_total_atten)
+                let cout = wave_sample(c, c.op_phase[ci] + fm_offset,
+                    c.op_wf[ci], c_total_atten)
                 sum = sum + cout
         // Scale the per-channel sum into mix-buffer units. No per-chip
         // clamp here: the chip is allowed to produce a wide i32 that
@@ -719,13 +719,13 @@ module opl2 =
     // produce an audible click.
     let silence_voices = (c: chip*) ->
         for i in 0..18 do
-            c->op_env[i] = env_max
-            c->op_stage[i] = envelope_stage.off
-            c->op_phase[i] = 0.0
+            c.op_env[i] = env_max
+            c.op_stage[i] = envelope_stage.off
+            c.op_phase[i] = 0.0
         for i in 0..9 do
-            c->ch_key[i] = false
-            c->ch_prev0[i] = 0
-            c->ch_prev1[i] = 0
+            c.ch_key[i] = false
+            c.ch_prev0[i] = 0
+            c.ch_prev1[i] = 0
 
     // ============================================================
     // Ticked sample producer

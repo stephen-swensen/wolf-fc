@@ -101,9 +101,9 @@ module doors =
     let passable = (lv: const level*, x: i32, y: i32) ->
         if x < 0 || x >= map_size || y < 0 || y >= map_size then false
         else
-            let t = (i32) lv->tilemap[(i64) x * 64 + (i64) y]
+            let t = (i32) lv.tilemap[(i64) x * 64 + (i64) y]
             if t < 128 then false
-            else lv->doors[t - 128].state == door_state.open
+            else lv.doors[t - 128].state == door_state.open
 
     // Try to open a door at the given tile position. Returns what
     // happened — the caller owns the locked-door cue so it can
@@ -112,15 +112,15 @@ module doors =
     let try_open = (lv: level*, x: i32, y: i32, g: game*, ac: audio_ctx*) ->
         if x < 0 || x >= map_size || y < 0 || y >= map_size then door_action.no_door
         else
-            let t = (i32) lv->tilemap[(i64) x * 64 + (i64) y]
+            let t = (i32) lv.tilemap[(i64) x * 64 + (i64) y]
             if t < 128 then door_action.no_door
             else
                 let dn = t - 128
-                if lv->doors[dn].state != door_state.closed then door_action.no_door
+                if lv.doors[dn].state != door_state.closed then door_action.no_door
                 else
-                    match lv->doors[dn].lock_type with
-                    | gold_key when (!g->has_gold_key)     -> door_action.door_locked
-                    | silver_key when (!g->has_silver_key) -> door_action.door_locked
+                    match lv.doors[dn].lock_type with
+                    | gold_key when (!g.has_gold_key)     -> door_action.door_locked
+                    | silver_key when (!g.has_silver_key) -> door_action.door_locked
                     | _ ->
                         start_opening(lv, dn, g, ac)
                         door_action.door_opened
@@ -135,21 +135,21 @@ module doors =
     // area-connect bump that fires only on the closed→opening
     // transition (first frame from 0).
     let start_opening = (lv: level*, di: i32, g: game*, ac: audio_ctx*) ->
-        let d = &lv->doors[di]
-        if d->area1 >= 0 && d->area1 < areas.num_areas
-           && d->area2 >= 0 && d->area2 < areas.num_areas then
-            let i1 = (i64) d->area1
-            let i2 = (i64) d->area2
+        let d = &lv.doors[di]
+        if d.area1 >= 0 && d.area1 < areas.num_areas
+           && d.area2 >= 0 && d.area2 < areas.num_areas then
+            let i1 = (i64) d.area1
+            let i2 = (i64) d.area2
             let n  = (i64) areas.num_areas
-            lv->area_connect[i1 * n + i2] = lv->area_connect[i1 * n + i2] + 1u8
-            lv->area_connect[i2 * n + i1] = lv->area_connect[i2 * n + i1] + 1u8
-            areas.connect(lv, g->area_number)
-        d->state = door_state.opening
+            lv.area_connect[i1 * n + i2] = lv.area_connect[i1 * n + i2] + 1u8
+            lv.area_connect[i2 * n + i1] = lv.area_connect[i2 * n + i1] + 1u8
+            areas.connect(lv, g.area_number)
+        d.state = door_state.opening
         // Matches original-game behavior: the door-open SFX only plays
         // when the just-connected area is reachable from the player
         // through open doors. Otherwise distant enemies opening doors
         // spam the SFX channel.
-        if d->area1 >= 0 && d->area1 < areas.num_areas && lv->area_by_player[d->area1] then
+        if d.area1 >= 0 && d.area1 < areas.num_areas && lv.area_by_player[d.area1] then
             // Doors play at -3 dB vs the rest of the digi sounds. Wolf3D's
             // door samples were recorded with hot peaks (relative to other
             // digi cues), and at our standard digi gain they overpowered
@@ -161,17 +161,17 @@ module doors =
     // circular module reference (player.blocked_by_map uses
     // doors.passable, so doors mustn't depend back on module player).
     let update = (lv: level*, g: game*, dt: f64, ac: audio_ctx*, player_radius: f64) ->
-        for i in 0..lv->num_doors do
-            match lv->doors[i].state with
+        for i in 0..lv.num_doors do
+            match lv.doors[i].state with
             | opening ->
-                lv->door_pos[i] = lv->door_pos[i] + speed * dt
-                if lv->door_pos[i] >= 1.0 then
-                    lv->door_pos[i] = 1.0
-                    lv->doors[i].state = door_state.open
-                    lv->doors[i].open_timer = 0.0
+                lv.door_pos[i] = lv.door_pos[i] + speed * dt
+                if lv.door_pos[i] >= 1.0 then
+                    lv.door_pos[i] = 1.0
+                    lv.doors[i].state = door_state.open
+                    lv.doors[i].open_timer = 0.0
             | open ->
-                lv->doors[i].open_timer = lv->doors[i].open_timer + dt
-                if lv->doors[i].open_timer >= stay_time then
+                lv.doors[i].open_timer = lv.doors[i].open_timer + dt
+                if lv.doors[i].open_timer >= stay_time then
                     // Don't close if the player's BBOX (not just
                     // center tile) overlaps the door tile. Without
                     // this, a player who walks through a door and
@@ -183,19 +183,19 @@ module doors =
                     // move. The original avoids this because its
                     // tile-based collision is coarser than our
                     // per-axis bbox test.
-                    let px = g->pos_x
-                    let py = g->pos_y
-                    let dx = lv->doors[i].tile_x
-                    let dy = lv->doors[i].tile_y
+                    let px = g.pos_x
+                    let py = g.pos_y
+                    let dx = lv.doors[i].tile_x
+                    let dy = lv.doors[i].tile_y
                     let bbox_x_in = (i32) (px - player_radius) <= dx && (i32) (px + player_radius) >= dx
                     let bbox_y_in = (i32) (py - player_radius) <= dy && (i32) (py + player_radius) >= dy
                     if !(bbox_x_in && bbox_y_in) then
-                        lv->doors[i].state = door_state.closing
+                        lv.doors[i].state = door_state.closing
                         // Matches original-game behavior: the
                         // door-close SFX only plays when the door's
                         // area is player-reachable.
-                        let a1 = lv->doors[i].area1
-                        if a1 >= 0 && a1 < areas.num_areas && lv->area_by_player[a1] then
+                        let a1 = lv.doors[i].area1
+                        if a1 >= 0 && a1 < areas.num_areas && lv.area_by_player[a1] then
                             // See open_door above re: door_gain.
                             sfx.trigger_gain(sfx.id.close_door, ac, door_gain)
             | closing ->
@@ -203,31 +203,31 @@ module doors =
                 // back into our tile during the close (original
                 // behaviour). Without this, a player rushing through a
                 // half-closed door gets pinched off.
-                let px = g->pos_x
-                let py = g->pos_y
-                let dx = lv->doors[i].tile_x
-                let dy = lv->doors[i].tile_y
+                let px = g.pos_x
+                let py = g.pos_y
+                let dx = lv.doors[i].tile_x
+                let dy = lv.doors[i].tile_y
                 let bbox_x_in = (i32) (px - player_radius) <= dx && (i32) (px + player_radius) >= dx
                 let bbox_y_in = (i32) (py - player_radius) <= dy && (i32) (py + player_radius) >= dy
                 if bbox_x_in && bbox_y_in then
-                    lv->doors[i].state = door_state.opening
+                    lv.doors[i].state = door_state.opening
                 else
-                    lv->door_pos[i] = lv->door_pos[i] - speed * dt
-                    if lv->door_pos[i] <= 0.0 then
-                        lv->door_pos[i] = 0.0
-                        lv->doors[i].state = door_state.closed
+                    lv.door_pos[i] = lv.door_pos[i] - speed * dt
+                    if lv.door_pos[i] <= 0.0 then
+                        lv.door_pos[i] = 0.0
+                        lv.doors[i].state = door_state.closed
                         // Door fully closed → disconnect the two
                         // areas (decrement their area-connection
                         // count), matching the original at position 0.
-                        let d = &lv->doors[i]
-                        if d->area1 >= 0 && d->area1 < areas.num_areas
-                           && d->area2 >= 0 && d->area2 < areas.num_areas then
-                            let i1 = (i64) d->area1
-                            let i2 = (i64) d->area2
+                        let d = &lv.doors[i]
+                        if d.area1 >= 0 && d.area1 < areas.num_areas
+                           && d.area2 >= 0 && d.area2 < areas.num_areas then
+                            let i1 = (i64) d.area1
+                            let i2 = (i64) d.area2
                             let n  = (i64) areas.num_areas
-                            lv->area_connect[i1 * n + i2] = lv->area_connect[i1 * n + i2] - 1u8
-                            lv->area_connect[i2 * n + i1] = lv->area_connect[i2 * n + i1] - 1u8
-                            areas.connect(lv, g->area_number)
+                            lv.area_connect[i1 * n + i2] = lv.area_connect[i1 * n + i2] - 1u8
+                            lv.area_connect[i2 * n + i1] = lv.area_connect[i2 * n + i1] - 1u8
+                            areas.connect(lv, g.area_number)
             | closed -> void()
 
 
@@ -251,13 +251,13 @@ module pushwall =
 
     let try_push = (lv: level*, x: i32, y: i32, dx: i32, dy: i32) ->
         if x < 0 || x >= map_size || y < 0 || y >= map_size then false
-        else if lv->pushwall.active then false  // only one at a time
+        else if lv.pushwall.active then false  // only one at a time
         else
             let idx = (i64) x * 64 + (i64) y
-            let t = (i32) lv->tilemap[idx]
+            let t = (i32) lv.tilemap[idx]
             if t < 1 || t > 63 then false
             else
-                let is_pw = lv->pushwall_tiles[idx]
+                let is_pw = lv.pushwall_tiles[idx]
                 if !is_pw then false
                 else
                     // Check that the 2 tiles in push direction are empty
@@ -268,17 +268,17 @@ module pushwall =
                     if t1x < 0 || t1x >= map_size || t1y < 0 || t1y >= map_size then false
                     else if t2x < 0 || t2x >= map_size || t2y < 0 || t2y >= map_size then false
                     else
-                        let t1 = (i32) lv->tilemap[(i64) t1x * 64 + (i64) t1y]
-                        let t2 = (i32) lv->tilemap[(i64) t2x * 64 + (i64) t2y]
+                        let t1 = (i32) lv.tilemap[(i64) t1x * 64 + (i64) t1y]
+                        let t2 = (i32) lv.tilemap[(i64) t2x * 64 + (i64) t2y]
                         if t1 != 0 || t2 != 0 then false
                         else
-                            lv->pushwall.active = true
-                            lv->pushwall.tile_x = x
-                            lv->pushwall.tile_y = y
-                            lv->pushwall.dir_x = dx
-                            lv->pushwall.dir_y = dy
-                            lv->pushwall.progress = 0.0
-                            lv->pushwall.orig_tile = (u8) t
+                            lv.pushwall.active = true
+                            lv.pushwall.tile_x = x
+                            lv.pushwall.tile_y = y
+                            lv.pushwall.dir_x = dx
+                            lv.pushwall.dir_y = dy
+                            lv.pushwall.progress = 0.0
+                            lv.pushwall.orig_tile = (u8) t
                             true
 
     // Advance an active push-wall by one simulation step. `progress`
@@ -291,23 +291,23 @@ module pushwall =
     // fraction (progress - floor(progress)) is what the raycaster
     // uses to render the wall smoothly sliding between cells.
     let update = (lv: level*, dt: f64) ->
-        if !lv->pushwall.active then return
-        let prev = lv->pushwall.progress
+        if !lv.pushwall.active then return
+        let prev = lv.pushwall.progress
         let cap = 2.0
         let mut cur = prev + speed * dt
         if cur > cap then cur = cap
-        lv->pushwall.progress = cur
+        lv.pushwall.progress = cur
         let prev_floor = (i32) math.floor(prev)
         let cur_floor = (i32) math.floor(cur)
         if cur_floor > prev_floor then
             let steps = cur_floor - prev_floor
             for i in 0..steps do
-                lv->tilemap[(i64) lv->pushwall.tile_x * 64 + (i64) lv->pushwall.tile_y] = 0u8
-                lv->pushwall.tile_x = lv->pushwall.tile_x + lv->pushwall.dir_x
-                lv->pushwall.tile_y = lv->pushwall.tile_y + lv->pushwall.dir_y
-                lv->tilemap[(i64) lv->pushwall.tile_x * 64 + (i64) lv->pushwall.tile_y] = lv->pushwall.orig_tile
+                lv.tilemap[(i64) lv.pushwall.tile_x * 64 + (i64) lv.pushwall.tile_y] = 0u8
+                lv.pushwall.tile_x = lv.pushwall.tile_x + lv.pushwall.dir_x
+                lv.pushwall.tile_y = lv.pushwall.tile_y + lv.pushwall.dir_y
+                lv.tilemap[(i64) lv.pushwall.tile_x * 64 + (i64) lv.pushwall.tile_y] = lv.pushwall.orig_tile
         if cur >= cap then
-            lv->pushwall.active = false
+            lv.pushwall.active = false
 
 
 // ============================================================
@@ -360,102 +360,102 @@ module pickups =
         | _ -> item_kind.decoration
 
     let check = (lv: level*, g: game*, ac: audio_ctx*) ->
-        let px = (i32) g->pos_x
-        let py = (i32) g->pos_y
-        for i in 0..lv->num_sprites do
-            if !lv->sprites[i].alive then continue
-            let sx = (i32) lv->sprites[i].x
-            let sy = (i32) lv->sprites[i].y
+        let px = (i32) g.pos_x
+        let py = (i32) g.pos_y
+        for i in 0..lv.num_sprites do
+            if !lv.sprites[i].alive then continue
+            let sx = (i32) lv.sprites[i].x
+            let sy = (i32) lv.sprites[i].y
             if px != sx || py != sy then continue
-            let it = lv->sprites[i].item_type
+            let it = lv.sprites[i].item_type
             // Health/ammo items return false at full health/ammo so
             // the sprite stays on the floor for later instead of being
             // wasted.
             let picked_up = match it with
             | decoration -> false
-            | dog_food | food | first_aid when (g->health >= 100) -> false
+            | dog_food | food | first_aid when (g.health >= 100) -> false
             | dog_food ->
-                g->health = g->health + 4
-                if g->health > 100 then g->health = 100
+                g.health = g.health + 4
+                if g.health > 100 then g.health = 100
                 true
             | food ->
-                g->health = g->health + 10
-                if g->health > 100 then g->health = 100
+                g.health = g.health + 10
+                if g.health > 100 then g.health = 100
                 true
             | first_aid ->
-                g->health = g->health + 25
-                if g->health > 100 then g->health = 100
+                g.health = g.health + 25
+                if g.health > 100 then g.health = 100
                 true
             // Gibs heal a single point only when the player is already
             // hurting — the original refuses the pickup above 10 HP so
             // the remains stay on the floor as emergency rations.
-            | gibs when (g->health > 10) -> false
+            | gibs when (g.health > 10) -> false
             | gibs ->
-                g->health = g->health + 1
-                if g->health > 100 then g->health = 100
+                g.health = g.health + 1
+                if g.health > 100 then g.health = 100
                 true
             | extra_life ->
                 // Full heal, +25 ammo, +1 life, and counts against
                 // the intermission treasure tally.
-                g->health = 100
-                g->ammo = g->ammo + 25
-                if g->ammo > 99 then g->ammo = 99
-                g->treasures = g->treasures + 1
+                g.health = 100
+                g.ammo = g.ammo + 25
+                if g.ammo > 99 then g.ammo = 99
+                g.treasures = g.treasures + 1
                 grant_extra_life(g, ac)
                 true
-            | clip | clip_small when (g->ammo >= 99) -> false
+            | clip | clip_small when (g.ammo >= 99) -> false
             | clip ->
                 // If player was out of ammo (dropped to knife),
                 // restore their best firearm when the clip comes in.
-                if g->ammo == 0 && g->weapon == 0 then g->weapon = g->best_weapon
-                g->ammo = g->ammo + 8
-                if g->ammo > 99 then g->ammo = 99
+                if g.ammo == 0 && g.weapon == 0 then g.weapon = g.best_weapon
+                g.ammo = g.ammo + 8
+                if g.ammo > 99 then g.ammo = 99
                 true
             | clip_small ->
                 // Enemy drops — half the ammo of a map-placed clip
                 // (matches the original's small-clip pickup).
-                if g->ammo == 0 && g->weapon == 0 then g->weapon = g->best_weapon
-                g->ammo = g->ammo + 4
-                if g->ammo > 99 then g->ammo = 99
+                if g.ammo == 0 && g.weapon == 0 then g.weapon = g.best_weapon
+                g.ammo = g.ammo + 4
+                if g.ammo > 99 then g.ammo = 99
                 true
             | machine_gun ->
-                if g->ammo == 0 && g->weapon == 0 then g->weapon = 2
-                g->ammo = g->ammo + 6
-                if g->ammo > 99 then g->ammo = 99
-                if g->weapon < 2 then g->weapon = 2
-                if g->best_weapon < 2 then g->best_weapon = 2
+                if g.ammo == 0 && g.weapon == 0 then g.weapon = 2
+                g.ammo = g.ammo + 6
+                if g.ammo > 99 then g.ammo = 99
+                if g.weapon < 2 then g.weapon = 2
+                if g.best_weapon < 2 then g.best_weapon = 2
                 true
             | chain_gun ->
-                if g->ammo == 0 && g->weapon == 0 then g->weapon = 3
-                g->ammo = g->ammo + 6
-                if g->ammo > 99 then g->ammo = 99
-                if g->weapon < 3 then g->weapon = 3
-                if g->best_weapon < 3 then g->best_weapon = 3
+                if g.ammo == 0 && g.weapon == 0 then g.weapon = 3
+                g.ammo = g.ammo + 6
+                if g.ammo > 99 then g.ammo = 99
+                if g.weapon < 3 then g.weapon = 3
+                if g.best_weapon < 3 then g.best_weapon = 3
                 true
             | gold_key ->
-                g->has_gold_key = true
+                g.has_gold_key = true
                 true
             | silver_key ->
-                g->has_silver_key = true
+                g.has_silver_key = true
                 true
             | cross ->
                 add_score(g, 100, ac)
-                g->treasures = g->treasures + 1
+                g.treasures = g.treasures + 1
                 true
             | chalice ->
                 add_score(g, 500, ac)
-                g->treasures = g->treasures + 1
+                g.treasures = g.treasures + 1
                 true
             | bible ->
                 add_score(g, 1000, ac)
-                g->treasures = g->treasures + 1
+                g.treasures = g.treasures + 1
                 true
             | crown ->
                 add_score(g, 5000, ac)
-                g->treasures = g->treasures + 1
+                g.treasures = g.treasures + 1
                 true
             if !picked_up then continue
-            lv->sprites[i].alive = false
+            lv.sprites[i].alive = false
             // Per-kind pickup SFX. Matches the original — no HUD
             // banner, just a score bump and a sound. Health pickups
             // have their own health1/health2 cue; dog_food / food and
@@ -472,8 +472,8 @@ module pickups =
                 // the pickup voice cue plays. Gated on !test_mode so
                 // scripted pickups don't hold the pic across
                 // subsequent test commands.
-                if !g->test_mode then
-                    g->got_gatling_timer = hud.got_gatling_time
+                if !g.test_mode then
+                    g.got_gatling_timer = hud.got_gatling_time
             | clip | clip_small     -> sfx.trigger(sfx.id.get_ammo, ac)
             | gibs                  -> sfx.trigger(sfx.id.slurpie, ac)
             | cross                 -> sfx.trigger(sfx.id.bonus1, ac)
@@ -507,33 +507,33 @@ module tilemap =
     //   1-63     = wall (texture index)
     //   128+     = door (128 + door_index)
     let build = (lv: level*, lv_data: maps.level*, sprite_start: i32) ->
-        lv->num_doors = 0
+        lv.num_doors = 0
         for y in 0..map_size do
             for x in 0..map_size do
-                let tile = (i32) lv_data->walls[(i64) y * 64 + (i64) x]
+                let tile = (i32) lv_data.walls[(i64) y * 64 + (i64) x]
                 let idx = (i64) x * 64 + (i64) y
                 if tile >= 1 && tile <= 63 then
-                    lv->tilemap[idx] = (u8) tile
-                else if tile >= 90 && tile <= 101 && lv->num_doors < doors.max_doors then
+                    lv.tilemap[idx] = (u8) tile
+                else if tile >= 90 && tile <= 101 && lv.num_doors < doors.max_doors then
                     let is_vert = tile % 2 == 0
-                    lv->doors[lv->num_doors] = doors.door_obj {
+                    lv.doors[lv.num_doors] = doors.door_obj {
                         tile_x = x, tile_y = y,
                         vertical = is_vert,
                         lock_type = doors.lock_from_tile(tile),
                         state = doors.door_state.closed, open_timer = 0.0,
                         area1 = -1, area2 = -1     // filled in by areas.build
                     }
-                    lv->door_pos[lv->num_doors] = 0.0
-                    lv->tilemap[idx] = (u8) (128 + lv->num_doors)
-                    lv->num_doors = lv->num_doors + 1
+                    lv.door_pos[lv.num_doors] = 0.0
+                    lv.tilemap[idx] = (u8) (128 + lv.num_doors)
+                    lv.num_doors = lv.num_doors + 1
                 else
-                    lv->tilemap[idx] = 0u8
+                    lv.tilemap[idx] = 0u8
 
     // Check if a tile is a wall (solid, not a door).
     let tile_solid = (lv: const level*, x: i32, y: i32) ->
         if x < 0 || x >= map_size || y < 0 || y >= map_size then true
         else
-            let t = (i32) lv->tilemap[(i64) x * 64 + (i64) y]
+            let t = (i32) lv.tilemap[(i64) x * 64 + (i64) y]
             t >= 1 && t <= 63
 
     // Check if tile is a door (for collision — doors block unless
@@ -541,7 +541,7 @@ module tilemap =
     let tile_is_door = (lv: const level*, x: i32, y: i32) ->
         if x < 0 || x >= map_size || y < 0 || y >= map_size then false
         else
-            let t = (i32) lv->tilemap[(i64) x * 64 + (i64) y]
+            let t = (i32) lv.tilemap[(i64) x * 64 + (i64) y]
             t >= 128
 
     // Static-sprite blocking flags. Matches the original's per-sprite
@@ -597,7 +597,7 @@ module areas =
     let raw_at = (lv_data: maps.level*, x: i32, y: i32) ->
         if x < 0 || x >= map_size || y < 0 || y >= map_size then -1
         else
-            let raw = (i32) lv_data->walls[(i64) y * 64 + (i64) x]
+            let raw = (i32) lv_data.walls[(i64) y * 64 + (i64) x]
             let a = raw - area_tile
             if a >= 0 && a < num_areas then a else -1
 
@@ -612,10 +612,10 @@ module areas =
         for y in 0..map_size do
             for x in 0..map_size do
                 let idx = (i64) x * 64 + (i64) y
-                let raw = (i32) lv_data->walls[(i64) y * 64 + (i64) x]
+                let raw = (i32) lv_data.walls[(i64) y * 64 + (i64) x]
                 let a = raw - area_tile
                 if a >= 0 && a < num_areas then
-                    lv->tile_areas[idx] = (u8) a
+                    lv.tile_areas[idx] = (u8) a
                 else if raw >= 90 && raw <= 101 then
                     // Door tile in plane 0: inherit from a single
                     // adjacent floor. Vertical door (raw even) takes
@@ -623,33 +623,33 @@ module areas =
                     // door-spawn rule); horizontal from y-1.
                     let inherit = if raw % 2 == 0 then raw_at(lv_data, x - 1, y)
                                   else raw_at(lv_data, x, y - 1)
-                    lv->tile_areas[idx] = if inherit >= 0 then (u8) inherit
+                    lv.tile_areas[idx] = if inherit >= 0 then (u8) inherit
                                            else (u8) no_area
                 else
-                    lv->tile_areas[idx] = (u8) no_area
+                    lv.tile_areas[idx] = (u8) no_area
         // Now that floor + door areas are assigned, give each door its
         // two connected areas (the cells perpendicular to the door
         // axis).
-        for di in 0..lv->num_doors do
-            let d = &lv->doors[di]
-            let a1 = if d->vertical then raw_at(lv_data, d->tile_x + 1, d->tile_y)
-                     else raw_at(lv_data, d->tile_x, d->tile_y + 1)
-            let a2 = if d->vertical then raw_at(lv_data, d->tile_x - 1, d->tile_y)
-                     else raw_at(lv_data, d->tile_x, d->tile_y - 1)
-            d->area1 = a1
-            d->area2 = a2
+        for di in 0..lv.num_doors do
+            let d = &lv.doors[di]
+            let a1 = if d.vertical then raw_at(lv_data, d.tile_x + 1, d.tile_y)
+                     else raw_at(lv_data, d.tile_x, d.tile_y + 1)
+            let a2 = if d.vertical then raw_at(lv_data, d.tile_x - 1, d.tile_y)
+                     else raw_at(lv_data, d.tile_x, d.tile_y - 1)
+            d.area1 = a1
+            d.area2 = a2
 
     // Player area lookup — matches the original's per-frame player-
     // area refresh. Returns the area of the tile the player is
     // standing on, or -1 if outside the area system.
     let update_player_area = (lv: level*, g: game*) ->
-        let tx = (i32) g->pos_x
-        let ty = (i32) g->pos_y
+        let tx = (i32) g.pos_x
+        let ty = (i32) g.pos_y
         if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then
-            g->area_number = -1
+            g.area_number = -1
         else
-            let a = (i32) lv->tile_areas[(i64) tx * 64 + (i64) ty]
-            g->area_number = if a >= num_areas then -1 else a
+            let a = (i32) lv.tile_areas[(i64) tx * 64 + (i64) ty]
+            g.area_number = if a >= num_areas then -1 else a
 
     // Recompute area_by_player from area_connect via fixed-point
     // flood from the player's current area. Matches the original's
@@ -661,19 +661,19 @@ module areas =
     // on bare player movement).
     let connect = (lv: level*, player_area: i32) ->
         for i in 0..num_areas do
-            lv->area_by_player[i] = false
+            lv.area_by_player[i] = false
         if player_area < 0 || player_area >= num_areas then return
-        lv->area_by_player[player_area] = true
+        lv.area_by_player[player_area] = true
         let mut changed = true
         loop
             if !changed then break
             changed = false
             for a in 0..num_areas do
-                if !lv->area_by_player[a] then continue
+                if !lv.area_by_player[a] then continue
                 for b in 0..num_areas do
-                    if lv->area_by_player[b] then continue
-                    if lv->area_connect[(i64) a * (i64) num_areas + (i64) b] > 0u8 then
-                        lv->area_by_player[b] = true
+                    if lv.area_by_player[b] then continue
+                    if lv.area_connect[(i64) a * (i64) num_areas + (i64) b] > 0u8 then
+                        lv.area_by_player[b] = true
                         changed = true
 
 
@@ -705,41 +705,41 @@ module spawn =
     let find_player_start = (lv: maps.level*, g: game*) ->
         for y in 0..map_size do
             for x in 0..map_size do
-                let obj = (i32) lv->objects[(i64) y * 64 + (i64) x]
+                let obj = (i32) lv.objects[(i64) y * 64 + (i64) x]
                 if obj >= 19 && obj <= 22 then
-                    g->pos_x = (f64) x + 0.5
-                    g->pos_y = (f64) y + 0.5
+                    g.pos_x = (f64) x + 0.5
+                    g.pos_y = (f64) y + 0.5
                     // 0=N, 1=E, 2=S, 3=W
                     match obj - 19 with
                     | 0 ->
-                        g->dir_x = 0.0
-                        g->dir_y = -1.0
-                        g->plane_x = g->plane_factor
-                        g->plane_y = 0.0
+                        g.dir_x = 0.0
+                        g.dir_y = -1.0
+                        g.plane_x = g.plane_factor
+                        g.plane_y = 0.0
                     | 1 ->
-                        g->dir_x = 1.0
-                        g->dir_y = 0.0
-                        g->plane_x = 0.0
-                        g->plane_y = g->plane_factor
+                        g.dir_x = 1.0
+                        g.dir_y = 0.0
+                        g.plane_x = 0.0
+                        g.plane_y = g.plane_factor
                     | 2 ->
-                        g->dir_x = 0.0
-                        g->dir_y = 1.0
-                        g->plane_x = 0.0 - g->plane_factor
-                        g->plane_y = 0.0
+                        g.dir_x = 0.0
+                        g.dir_y = 1.0
+                        g.plane_x = 0.0 - g.plane_factor
+                        g.plane_y = 0.0
                     | 3 ->
-                        g->dir_x = -1.0
-                        g->dir_y = 0.0
-                        g->plane_x = 0.0
-                        g->plane_y = 0.0 - g->plane_factor
+                        g.dir_x = -1.0
+                        g.dir_y = 0.0
+                        g.plane_x = 0.0
+                        g.plane_y = 0.0 - g.plane_factor
                     | _ -> void()  // unreachable per obj==19..22 guard above
                     return
         // Fallback if no spawn found
-        g->pos_x = 1.5
-        g->pos_y = 1.5
-        g->dir_x = 1.0
-        g->dir_y = 0.0
-        g->plane_x = 0.0
-        g->plane_y = g->plane_factor
+        g.pos_x = 1.5
+        g.pos_y = 1.5
+        g.dir_x = 1.0
+        g.dir_y = 0.0
+        g.plane_x = 0.0
+        g.plane_y = g.plane_factor
 
     // Drop the player on an open floor tile adjacent to
     // (target_x, target_y), facing the target. Candidate offsets
@@ -749,7 +749,7 @@ module spawn =
     // doors are skipped so the teleport doesn't park on one. No-op if
     // no candidate is free.
     private let place_player_adjacent = (lv: level*, g: game*, target_x: i32, target_y: i32) ->
-        let pf = g->plane_factor
+        let pf = g.plane_factor
         // Each candidate row: (tile offset dx,dy) (facing dx,dy)
         // (camera plane x,y). Preference order south/north first, then
         // 1-tile, then east/west — gives a clean "stand in front of"
@@ -770,14 +770,14 @@ module spawn =
                 let ty = target_y + off[1]
                 let in_bounds = tx >= 0 && tx < map_size && ty >= 0 && ty < map_size
                 if in_bounds then
-                    let t = (i32) lv->tilemap[(i64) tx * 64 + (i64) ty]
+                    let t = (i32) lv.tilemap[(i64) tx * 64 + (i64) ty]
                     if t == 0 then
-                        g->pos_x = (f64) tx + 0.5
-                        g->pos_y = (f64) ty + 0.5
-                        g->dir_x = face[0]
-                        g->dir_y = face[1]
-                        g->plane_x = plane[0]
-                        g->plane_y = plane[1]
+                        g.pos_x = (f64) tx + 0.5
+                        g.pos_y = (f64) ty + 0.5
+                        g.dir_x = face[0]
+                        g.dir_y = face[1]
+                        g.plane_x = plane[0]
+                        g.plane_y = plane[1]
                         placed = true
 
     // Move the player to an open tile adjacent to the level's boss
@@ -789,19 +789,19 @@ module spawn =
     let near_boss = (lv: level*, g: game*) ->
         let mut bx = -1
         let mut by = -1
-        for i in 0..lv->num_enemies do
+        for i in 0..lv.num_enemies do
             if bx < 0 then
-                let e = &lv->enemies[i]
+                let e = &lv.enemies[i]
                 // Episode-ending bosses only. hitler_fake decoys on
                 // E3M9 are intentionally excluded — the fight target
                 // there is Mecha Hitler, not the flamethrower clones.
-                let is_boss = match e->kind with
+                let is_boss = match e.kind with
                 | hans | schabbs | gretel | giftmacher | fat
                 | mecha_hitler | hitler -> true
                 | _ -> false
                 if is_boss then
-                    bx = e->tile_x
-                    by = e->tile_y
+                    bx = e.tile_x
+                    by = e.tile_y
         if bx < 0 then return
         place_player_adjacent(lv, g, bx, by)
 
@@ -811,12 +811,12 @@ module spawn =
     let near_goldkey = (lv: level*, g: game*) ->
         let mut kx = -1
         let mut ky = -1
-        for i in 0..lv->num_sprites do
-            if kx < 0 && lv->sprites[i].alive then
-                match lv->sprites[i].item_type with
+        for i in 0..lv.num_sprites do
+            if kx < 0 && lv.sprites[i].alive then
+                match lv.sprites[i].item_type with
                 | gold_key ->
-                    kx = (i32) lv->sprites[i].x
-                    ky = (i32) lv->sprites[i].y
+                    kx = (i32) lv.sprites[i].x
+                    ky = (i32) lv.sprites[i].y
                 | _ -> void()
         if kx < 0 then return
         place_player_adjacent(lv, g, kx, ky)
@@ -826,12 +826,12 @@ module spawn =
     let near_silverkey = (lv: level*, g: game*) ->
         let mut kx = -1
         let mut ky = -1
-        for i in 0..lv->num_sprites do
-            if kx < 0 && lv->sprites[i].alive then
-                match lv->sprites[i].item_type with
+        for i in 0..lv.num_sprites do
+            if kx < 0 && lv.sprites[i].alive then
+                match lv.sprites[i].item_type with
                 | silver_key ->
-                    kx = (i32) lv->sprites[i].x
-                    ky = (i32) lv->sprites[i].y
+                    kx = (i32) lv.sprites[i].x
+                    ky = (i32) lv.sprites[i].y
                 | _ -> void()
         if kx < 0 then return
         place_player_adjacent(lv, g, kx, ky)
@@ -842,12 +842,12 @@ module spawn =
     let near_gibs = (lv: level*, g: game*) ->
         let mut kx = -1
         let mut ky = -1
-        for i in 0..lv->num_sprites do
-            if kx < 0 && lv->sprites[i].alive then
-                match lv->sprites[i].item_type with
+        for i in 0..lv.num_sprites do
+            if kx < 0 && lv.sprites[i].alive then
+                match lv.sprites[i].item_type with
                 | gibs ->
-                    kx = (i32) lv->sprites[i].x
-                    ky = (i32) lv->sprites[i].y
+                    kx = (i32) lv.sprites[i].x
+                    ky = (i32) lv.sprites[i].y
                 | _ -> void()
         if kx < 0 then return
         place_player_adjacent(lv, g, kx, ky)
@@ -855,14 +855,14 @@ module spawn =
     // Populate sprite list from level plane 1 data.
     // Tile values 23-72 are static objects. Shape = 2 + (tile - 23).
     let sprites = (lv: level*, lv_data: maps.level*, sprite_start: i32) ->
-        lv->num_sprites = 0
+        lv.num_sprites = 0
         for y in 0..map_size do
             for x in 0..map_size do
-                let obj = (i32) lv_data->objects[(i64) y * 64 + (i64) x]
-                if obj >= 23 && obj <= 72 && lv->num_sprites < tilemap.max_sprites then
+                let obj = (i32) lv_data.objects[(i64) y * 64 + (i64) x]
+                if obj >= 23 && obj <= 72 && lv.num_sprites < tilemap.max_sprites then
                     let shape = 2 + obj - 23
                     let page = sprite_start + shape
-                    lv->sprites[lv->num_sprites] = tilemap.sprite_obj {
+                    lv.sprites[lv.num_sprites] = tilemap.sprite_obj {
                         x = (f64) x + 0.5,
                         y = (f64) y + 0.5,
                         shape_page = page,
@@ -871,7 +871,7 @@ module spawn =
                         alive = true,
                         blocks = tilemap.tile_blocks_player(obj)
                     }
-                    lv->num_sprites = lv->num_sprites + 1
+                    lv.num_sprites = lv.num_sprites + 1
 
     // Map a plane-1 tile value to (kind, is_patrol, dir, dead, tier)
     // for enemy spawning. Returns none for tiles that don't encode an
@@ -992,7 +992,7 @@ module spawn =
     // east/north/west/south; multiplied by 2 to land on the cardinal
     // dirs of the 8-dir direction encoding.
     private let one_enemy = (lv: level*, tx: i32, ty: i32, info: enemy_spawn_info, difficulty: i32) ->
-        if lv->num_enemies >= enemies.max_enemies then return
+        if lv.num_enemies >= enemies.max_enemies then return
         let dir8 = info.dir4 * 2   // 0,2,4,6
         let is_ghost = enemies.kind_is_ghost(info.kind)
         // Pacman ghosts (E1M10) start in chase, never sleep — matches
@@ -1019,7 +1019,7 @@ module spawn =
             else if is_boss then dir.nodir
             else if is_ghost then dir.nodir
             else dir8
-        lv->enemies[lv->num_enemies] = enemies.enemy {
+        lv.enemies[lv.num_enemies] = enemies.enemy {
             x = (f64) tx + 0.5,
             y = (f64) ty + 0.5,
             tile_x = tx,
@@ -1041,7 +1041,7 @@ module spawn =
             mommy_fade_t = 0.0,
             mommy_fade_page = -1
         }
-        lv->num_enemies = lv->num_enemies + 1
+        lv.num_enemies = lv.num_enemies + 1
 
     // The original's spawn rules gate by tier: base always; +36 at
     // >= medium; +72 at >= hard. Mirror the same check here so
@@ -1053,10 +1053,10 @@ module spawn =
         else diff >= difficulty.hard
 
     let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: i32, mommy_mode: bool) ->
-        lv->num_enemies = 0
+        lv.num_enemies = 0
         for y in 0..map_size do
             for x in 0..map_size do
-                let obj = (i32) lv_data->objects[(i64) y * 64 + (i64) x]
+                let obj = (i32) lv_data.objects[(i64) y * 64 + (i64) x]
                 if obj == 0 then continue
                 match classify_enemy_tile(obj) with
                 | none -> void()
@@ -1066,18 +1066,18 @@ module spawn =
                         | _   -> false
                     if mommy_mode && is_dog then continue
                     if info.dead || tier_allowed(info.tier, difficulty) then
-                        let before = lv->num_enemies
+                        let before = lv.num_enemies
                         one_enemy(lv, x, y, info, difficulty)
-                        if lv->num_enemies > before then
+                        if lv.num_enemies > before then
                             // Promote the just-spawned enemy to
                             // ambush if its tile is the ambush
                             // marker, and patch tile_areas to the
                             // first cardinal neighbor with a real
                             // area (matches the east/north/south/west
                             // scan in the original's spawn routine).
-                            let raw = (i32) lv_data->walls[(i64) y * 64 + (i64) x]
+                            let raw = (i32) lv_data.walls[(i64) y * 64 + (i64) x]
                             if raw == ambush_tile then
-                                lv->enemies[before].ambush = true
+                                lv.enemies[before].ambush = true
                                 let inherit =
                                     let e = areas.raw_at(lv_data, x + 1, y)
                                     if e >= 0 then e
@@ -1089,7 +1089,7 @@ module spawn =
                                             if s >= 0 then s
                                             else areas.raw_at(lv_data, x - 1, y)
                                 if inherit >= 0 then
-                                    lv->tile_areas[(i64) x * 64 + (i64) y] = (u8) inherit
+                                    lv.tile_areas[(i64) x * 64 + (i64) y] = (u8) inherit
 
     // Mark push-wall tiles from plane-1 data during tilemap build.
     // Tile value 98 in plane 1 marks the wall at that position as
@@ -1097,8 +1097,8 @@ module spawn =
     let mark_pushwalls = (lv: level*, lv_data: maps.level*) ->
         for y in 0..map_size do
             for x in 0..map_size do
-                let obj = (i32) lv_data->objects[(i64) y * 64 + (i64) x]
-                lv->pushwall_tiles[(i64) x * 64 + (i64) y] = obj == 98
+                let obj = (i32) lv_data.objects[(i64) y * 64 + (i64) x]
+                lv.pushwall_tiles[(i64) x * 64 + (i64) y] = obj == 98
 
     // Mark exit-tile markers from plane-1 data. Plane-1 tile 99 is
     // the floor-level "step on me to end the level" marker that sits
@@ -1108,8 +1108,8 @@ module spawn =
     let mark_exit_tiles = (lv: level*, lv_data: maps.level*) ->
         for y in 0..map_size do
             for x in 0..map_size do
-                let obj = (i32) lv_data->objects[(i64) y * 64 + (i64) x]
-                lv->exit_tiles[(i64) x * 64 + (i64) y] = obj == 99
+                let obj = (i32) lv_data.objects[(i64) y * 64 + (i64) x]
+                lv.exit_tiles[(i64) x * 64 + (i64) y] = obj == 99
 
     // Plane-1 tiles 90..97 are path-arrow markers. When a patrolling
     // enemy crosses a tile carrying one, the original's patrol-dir
@@ -1119,9 +1119,9 @@ module spawn =
     let mark_path_arrows = (lv: level*, lv_data: maps.level*) ->
         for y in 0..map_size do
             for x in 0..map_size do
-                let obj = (i32) lv_data->objects[(i64) y * 64 + (i64) x]
+                let obj = (i32) lv_data.objects[(i64) y * 64 + (i64) x]
                 let idx = (i64) x * 64 + (i64) y
                 if obj >= 90 && obj <= 97 then
-                    lv->path_arrows[idx] = (u8) (obj - 90)
+                    lv.path_arrows[idx] = (u8) (obj - 90)
                 else
-                    lv->path_arrows[idx] = (u8) dir.nodir
+                    lv.path_arrows[idx] = (u8) dir.nodir

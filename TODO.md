@@ -63,12 +63,12 @@ and the respawn key-clear is inert in test mode):
   key held when the death animation ends no longer walks the respawned
   player. Mirrors `advance_next_level` and id's `Died → IN_ClearKeysDown`
   (`WL_GAME.C:1199`).
-- **[player-4]** — the bare `g->weapon = 0..3` number-key handler
+- **[player-4]** — the bare `g.weapon = 0..3` number-key handler
   (`main.fc:4149`) now mirrors id's `CheckWeaponChange` (`WL_AGENT.C:117`):
-  it switches only while playing, only when `g->fire_timer <= 0.0` (id's
+  it switches only while playing, only when `g.fire_timer <= 0.0` (id's
   `T_Attack` never calls `CheckWeaponChange`, so the OG can't switch
   mid-attack — this was the real cause of the audit's "attack-frame
-  desync"), only with `g->ammo > 0`, and only up to `g->best_weapon`
+  desync"), only with `g.ammo > 0`, and only up to `g.best_weapon`
   (so `4` no longer selects an unowned chain gun). The `setweapon:` test
   command stays ungated on purpose.
 
@@ -86,7 +86,7 @@ old **[needs OG source]** tag is retired — `../wolf3d` is now present.)
   (view-mode/aspect-derived; `view_mode` lives in config, not the slot),
   so saving in 4:3 and loading in widescreen (or vice-versa) keeps the
   stale FOV until the next CHANGE VIEW. Fix: after restoring dir+plane,
-  renormalize the plane to `|plane| == g->plane_factor` (its direction is
+  renormalize the plane to `|plane| == g.plane_factor` (its direction is
   already perpendicular to dir). No-op in test mode (view mode pinned) →
   test-safe.
 
@@ -126,7 +126,7 @@ old **[needs OG source]** tag is retired — `../wolf3d` is now present.)
 - **[main-5] `--level` launch doesn't pin `oldscore`**
   (`main.fc:3170-3179`), unlike `setlevel:` (`:2331`/`:2348`). No-op today
   (score is 0 and `oldscore` inits to 0) but makes the death-rewind
-  baseline well-defined. Fix: add `g->oldscore = g->score` in the
+  baseline well-defined. Fix: add `g.oldscore = g.score` in the
   `some(lvl)` branch. Test-safe.
 
 ### Dead code — each needs a keep-or-delete call

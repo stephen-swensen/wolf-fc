@@ -83,34 +83,34 @@ module player =
     // health / ammo / weapon reset to pistol with starter ammo —
     // matches the original's player respawn on death.
     let reset_for_life = (g: game*) ->
-        g->health = 100
-        g->ammo = 8
-        g->weapon = 1
-        g->best_weapon = 1
-        g->fire_timer = 0.0
-        g->weapon_frame = 0
-        g->face_frame = 0
-        g->face_count = 0.0
-        g->has_gold_key = false
-        g->has_silver_key = false
-        g->next_level = false
-        g->next_level_delay = 0.0
-        g->made_noise = false
-        g->damage_flash_timer = 0.0
-        g->last_hit_needle = false
-        g->killer_active = false
-        g->respawn_fade_timer = 0.0
-        g->wall_hit_cooldown = 0.0
+        g.health = 100
+        g.ammo = 8
+        g.weapon = 1
+        g.best_weapon = 1
+        g.fire_timer = 0.0
+        g.weapon_frame = 0
+        g.face_frame = 0
+        g.face_count = 0.0
+        g.has_gold_key = false
+        g.has_silver_key = false
+        g.next_level = false
+        g.next_level_delay = 0.0
+        g.made_noise = false
+        g.damage_flash_timer = 0.0
+        g.last_hit_needle = false
+        g.killer_active = false
+        g.respawn_fade_timer = 0.0
+        g.wall_hit_cooldown = 0.0
         // IDKFA latch persists across deaths — re-grant the full kit so
         // the player doesn't have to re-cheat after a respawn.
-        if g->idkfa_mode then give_full_kit(g)
+        if g.idkfa_mode then give_full_kit(g)
 
     // Full reset triggered by "press space" on the game-over screen.
     // Lives and score reset to the starting configuration on top of
     // the per-life reset.
     let reset_for_new_game = (g: game*) ->
-        g->score = 0
-        g->lives = 3
+        g.score = 0
+        g.lives = 3
         reset_for_life(g)
 
     // Clear held gameplay-input flags. Called on ack-screen exits
@@ -122,15 +122,15 @@ module player =
     // the next_level_delay → intermission → next-level freeze and
     // leak a phantom gatling burst into the new map's first frames.
     let clear_input_keys = (g: game*) ->
-        g->key_up = false
-        g->key_down = false
-        g->key_left = false
-        g->key_right = false
-        g->key_fire = false
-        g->key_space = false
-        g->key_space_handled = false
-        g->fire_timer = 0.0
-        g->weapon_frame = 0
+        g.key_up = false
+        g.key_down = false
+        g.key_left = false
+        g.key_right = false
+        g.key_fire = false
+        g.key_space = false
+        g.key_space_handled = false
+        g.fire_timer = 0.0
+        g.weapon_frame = 0
 
     // True if the player's bbox at (px, py) overlaps a wall, closed
     // door, or a blocking static sprite. Does NOT check enemy
@@ -154,11 +154,11 @@ module player =
             // sprite_block_half.
             let reach = radius + sprite_block_half
             let mut hit = false
-            for i in 0..lv->num_sprites do
-                let s = &lv->sprites[i]
-                if s->alive && s->blocks then
-                    let dx = px - s->x
-                    let dy = py - s->y
+            for i in 0..lv.num_sprites do
+                let s = &lv.sprites[i]
+                if s.alive && s.blocks then
+                    let dx = px - s.x
+                    let dy = py - s.y
                     let adx = if dx < 0.0 then 0.0 - dx else dx
                     let ady = if dy < 0.0 then 0.0 - dy else dy
                     if adx < reach && ady < reach then hit = true
@@ -174,17 +174,17 @@ module player =
     private let move_blocked_by_enemy = (lv: level*, cur_x: f64, cur_y: f64,
                                  nx: f64, ny: f64) ->
         let mut hit = false
-        for i in 0..lv->num_enemies do
-            let e = &lv->enemies[i]
-            match e->state with
+        for i in 0..lv.num_enemies do
+            let e = &lv.enemies[i]
+            match e.state with
             | dead | die -> void()
             | _ ->
-                let new_dx = e->x - nx
-                let new_dy = e->y - ny
+                let new_dx = e.x - nx
+                let new_dy = e.y - ny
                 let new_d2 = new_dx * new_dx + new_dy * new_dy
                 if new_d2 < enemy_block_r2 then
-                    let cur_dx = e->x - cur_x
-                    let cur_dy = e->y - cur_y
+                    let cur_dx = e.x - cur_x
+                    let cur_dy = e.y - cur_y
                     let cur_d2 = cur_dx * cur_dx + cur_dy * cur_dy
                     if new_d2 < cur_d2 then hit = true
         hit
@@ -204,36 +204,36 @@ module player =
     // allowed, which is what prevents the mutual-deadlock when an
     // enemy walks onto the player from their side.
     private let try_move = (lv: level*, g: game*, dx: f64, dy: f64) ->
-        let cur_x = g->pos_x
-        let cur_y = g->pos_y
+        let cur_x = g.pos_x
+        let cur_y = g.pos_y
         let nx = cur_x + dx
         let ny = cur_y + dy
-        if g->noclip then
-            g->pos_x = nx
-            g->pos_y = ny
+        if g.noclip then
+            g.pos_x = nx
+            g.pos_y = ny
             false
         else
             let mut blocked_x = true
             let mut blocked_y = true
             if !blocked_by_map(lv, nx, cur_y)
                && !move_blocked_by_enemy(lv, cur_x, cur_y, nx, cur_y) then
-                g->pos_x = nx
+                g.pos_x = nx
                 blocked_x = false
-            if !blocked_by_map(lv, g->pos_x, ny)
-               && !move_blocked_by_enemy(lv, g->pos_x, cur_y, g->pos_x, ny) then
-                g->pos_y = ny
+            if !blocked_by_map(lv, g.pos_x, ny)
+               && !move_blocked_by_enemy(lv, g.pos_x, cur_y, g.pos_x, ny) then
+                g.pos_y = ny
                 blocked_y = false
             blocked_x && blocked_y
 
     let rotate_camera = (g: game*, angle: f64) ->
         let c = math.cos(angle)
         let s = math.sin(angle)
-        let od = g->dir_x
-        g->dir_x = od * c + g->dir_y * s
-        g->dir_y = od * (0.0 - s) + g->dir_y * c
-        let op = g->plane_x
-        g->plane_x = op * c + g->plane_y * s
-        g->plane_y = op * (0.0 - s) + g->plane_y * c
+        let od = g.dir_x
+        g.dir_x = od * c + g.dir_y * s
+        g.dir_y = od * (0.0 - s) + g.dir_y * c
+        let op = g.plane_x
+        g.plane_x = op * c + g.plane_y * s
+        g.plane_y = op * (0.0 - s) + g.plane_y * c
 
     // Death-cam swing — rotate the player's heading toward the
     // killer's position at a fixed angular rate during the dying
@@ -251,24 +251,24 @@ module player =
     // sense. With α = atan2(cross, dot) being the signed arc from
     // dir → target, we pass `-step` to drive `dir` toward target.
     let update_death_swing = (g: game*, dt: f64) ->
-        if !g->killer_active then return
-        let tdx = g->killer_x - g->pos_x
-        let tdy = g->killer_y - g->pos_y
+        if !g.killer_active then return
+        let tdx = g.killer_x - g.pos_x
+        let tdy = g.killer_y - g.pos_y
         let len2 = tdx * tdx + tdy * tdy
         if len2 < 1e-6 then
-            g->killer_active = false
+            g.killer_active = false
             return
         let inv_len = 1.0 / math.sqrt(len2)
         let txn = tdx * inv_len
         let tyn = tdy * inv_len
-        let dot   = g->dir_x * txn + g->dir_y * tyn
-        let cross = g->dir_x * tyn - g->dir_y * txn
+        let dot   = g.dir_x * txn + g.dir_y * tyn
+        let cross = g.dir_x * tyn - g.dir_y * txn
         let alpha = math.atan2(cross, dot)
         let max_step = death_swing_rate * dt
         let abs_a = if alpha < 0.0 then 0.0 - alpha else alpha
         if abs_a <= max_step then
             rotate_camera(g, 0.0 - alpha)
-            g->killer_active = false
+            g.killer_active = false
         else
             let step = if alpha > 0.0 then max_step else 0.0 - max_step
             rotate_camera(g, 0.0 - step)
@@ -287,13 +287,13 @@ module player =
 
         let apply_mli = (g: game*) ->
             give_full_kit(g)
-            g->score = 0
+            g.score = 0
             hud.show_message(g, "You now have 100% Health,\n99 Ammo and both Keys!\n\nNote that you have basically\neliminated your chances of\ngetting a high score!")
-            g->msg_timer = msg_time
+            g.msg_timer = msg_time
 
         let apply_bat = (g: game*) ->
             hud.show_message(g, "Commander Keen is also\navailable from Apogee, but\nthen, you already know\nthat - right, Cheatmeister?!")
-            g->msg_timer = msg_time
+            g.msg_timer = msg_time
 
         // IDDQD — Doom-style god-mode toggle. Flips invulnerability
         // and pops a banner naming the source. Health is bumped to
@@ -301,9 +301,9 @@ module player =
         // (matches Doom's IDDQD); deactivation leaves the current
         // health alone.
         let apply_iddqd = (g: game*) ->
-            g->god_mode = !g->god_mode
-            if g->god_mode then
-                g->health = 100
+            g.god_mode = !g.god_mode
+            if g.god_mode then
+                g.health = 100
                 hud.show_message(g, "A Doom fan, eh?\n\nGod mode ON")
             else
                 hud.show_message(g, "God mode OFF")
@@ -321,13 +321,13 @@ module player =
         // like "IDIDDQD" still arrive at the cheat.
         let advance_iddqd = (g: game*, k: i32) ->
             if k != sdl2.key_i && k != sdl2.key_d && k != sdl2.key_q then return
-            if k == iddqd_sequence[g->iddqd_progress] then
-                g->iddqd_progress = g->iddqd_progress + 1
-                if g->iddqd_progress >= 5 then
+            if k == iddqd_sequence[g.iddqd_progress] then
+                g.iddqd_progress = g.iddqd_progress + 1
+                if g.iddqd_progress >= 5 then
                     apply_iddqd(g)
-                    g->iddqd_progress = 0
+                    g.iddqd_progress = 0
             else
-                g->iddqd_progress = if k == iddqd_sequence[0] then 1 else 0
+                g.iddqd_progress = if k == iddqd_sequence[0] then 1 else 0
 
         // IDKFA — Doom-style "give me everything" toggle. Activating it
         // grants both keys, the chain gun with 99 ammo, and latches
@@ -336,8 +336,8 @@ module player =
         // the gifts in the inventory but re-enables ammo drain and
         // score accumulation.
         let apply_idkfa = (g: game*) ->
-            g->idkfa_mode = !g->idkfa_mode
-            if g->idkfa_mode then
+            g.idkfa_mode = !g.idkfa_mode
+            if g.idkfa_mode then
                 give_full_kit(g)
                 hud.show_message(g, "A Doom fan, eh?\n\nIDKFA mode ON\n\nAll keys, full ammo,\nchain gun, and locked score!")
             else
@@ -354,13 +354,13 @@ module player =
         let advance_idkfa = (g: game*, k: i32) ->
             if k != sdl2.key_i && k != sdl2.key_d
                && k != sdl2.key_k && k != sdl2.key_f && k != sdl2.key_a then return
-            if k == idkfa_sequence[g->idkfa_progress] then
-                g->idkfa_progress = g->idkfa_progress + 1
-                if g->idkfa_progress >= 5 then
+            if k == idkfa_sequence[g.idkfa_progress] then
+                g.idkfa_progress = g.idkfa_progress + 1
+                if g.idkfa_progress >= 5 then
                     apply_idkfa(g)
-                    g->idkfa_progress = 0
+                    g.idkfa_progress = 0
             else
-                g->idkfa_progress = if k == idkfa_sequence[0] then 1 else 0
+                g.idkfa_progress = if k == idkfa_sequence[0] then 1 else 0
 
         // Original-game TAB+<key> cheats. The original exposed these
         // behind a command-line `-debugmode` flag; we keep them always
@@ -371,10 +371,10 @@ module player =
         // the two cheats stack coherently), but with a plain "God mode
         // ON/OFF" banner rather than IDDQD's Doom-reference nod.
         let apply_tab_g = (g: game*) ->
-            g->god_mode = !g->god_mode
-            if g->god_mode then hud.show_message(g, "God mode ON")
+            g.god_mode = !g.god_mode
+            if g.god_mode then hud.show_message(g, "God mode ON")
             else hud.show_message(g, "God mode OFF")
-            g->msg_timer = msg_time
+            g.msg_timer = msg_time
 
         // TAB+I — the original's "free items": heal up to 100, +50 ammo
         // (capped at 99), bump to the next weapon tier if below chain
@@ -383,25 +383,25 @@ module player =
         // audio_ctx because add_score may fire the extra-life SFX at a
         // 40k milestone crossed by this +100k bump.
         let apply_tab_i = (g: game*, ac: audio_ctx*) ->
-            g->health = g->health + 99
-            if g->health > 100 then g->health = 100
-            g->ammo = g->ammo + 50
-            if g->ammo > 99 then g->ammo = 99
-            if g->best_weapon < 3 then
-                g->best_weapon = g->best_weapon + 1
-                g->weapon = g->best_weapon
+            g.health = g.health + 99
+            if g.health > 100 then g.health = 100
+            g.ammo = g.ammo + 50
+            if g.ammo > 99 then g.ammo = 99
+            if g.best_weapon < 3 then
+                g.best_weapon = g.best_weapon + 1
+                g.weapon = g.best_weapon
             add_score(g, 100000, ac)
             hud.show_message(g, "Free items!")
-            g->msg_timer = msg_time
+            g.msg_timer = msg_time
 
         // TAB+N — toggle no-clip. player.try_move consults g->noclip
         // and skips its collision checks while on. Raycasting and
         // enemy AI are untouched.
         let apply_tab_n = (g: game*) ->
-            g->noclip = !g->noclip
-            if g->noclip then hud.show_message(g, "No clipping ON")
+            g.noclip = !g.noclip
+            if g.noclip then hud.show_message(g, "No clipping ON")
             else hud.show_message(g, "No clipping OFF")
-            g->msg_timer = msg_time
+            g.msg_timer = msg_time
 
         // TAB+E — debug "level done" skip. On a regular floor (and on
         // the secret floor) it arms the elevator-switch path so the
@@ -413,12 +413,12 @@ module player =
         // and call episode_end directly — TAB+E is a level-done
         // shortcut, not a cinematic trigger.
         let apply_tab_e = (g: game*) ->
-            if g->level_num % episode.levels_per == 8 then
+            if g.level_num % episode.levels_per == 8 then
                 record_level_for_episode(g)
                 episode_end.enter(g)
-            else if !g->next_level then
-                g->next_level = true
-                g->next_level_delay = 0.0
+            else if !g.next_level then
+                g.next_level = true
+                g.next_level_delay = 0.0
 
         // Called per-frame from the interactive game loop while
         // playing. Checks whether all three keys of each chord
@@ -427,26 +427,26 @@ module player =
         // is released, so a held combo doesn't retrigger every
         // frame).
         let check_chords = (g: game*) ->
-            let mli_all = g->key_m_held && g->key_l_held && g->key_i_held
-            if mli_all && !g->cheat_mli_latched then
+            let mli_all = g.key_m_held && g.key_l_held && g.key_i_held
+            if mli_all && !g.cheat_mli_latched then
                 apply_mli(g)
-                g->cheat_mli_latched = true
-            if !mli_all then g->cheat_mli_latched = false
-            let bat_all = g->key_b_held && g->key_a_held && g->key_t_held
-            if bat_all && !g->cheat_bat_latched then
+                g.cheat_mli_latched = true
+            if !mli_all then g.cheat_mli_latched = false
+            let bat_all = g.key_b_held && g.key_a_held && g.key_t_held
+            if bat_all && !g.cheat_bat_latched then
                 apply_bat(g)
-                g->cheat_bat_latched = true
-            if !bat_all then g->cheat_bat_latched = false
+                g.cheat_bat_latched = true
+            if !bat_all then g.cheat_bat_latched = false
 
         // Wipe latched cheat modes + sequence-machine progress.
         // Called when a new game starts or a save is loaded so cheats
         // from a prior session don't leak into the new one.
         let clear_modes = (g: game*) ->
-            g->god_mode = false
-            g->idkfa_mode = false
-            g->noclip = false
-            g->iddqd_progress = 0
-            g->idkfa_progress = 0
+            g.god_mode = false
+            g.idkfa_mode = false
+            g.noclip = false
+            g.iddqd_progress = 0
+            g.idkfa_progress = 0
 
     // ============================================================
     // Player update (movement, input, use-action dispatch)
@@ -455,9 +455,9 @@ module player =
     let update = (lv: level*, g: game*, dt: f64, ac: audio_ctx*) ->
         // BJ Speed slider — scales every player movement (forward /
         // back / strafe / turn). 100 = OG-faithful.
-        let bj_mult = (f64) g->bj_speed_pct / 100.0
-        let spd = move_speed * dt * bj_mult * (if g->key_shift then run_mult else 1.0)
-        let rot = turn_speed * dt * bj_mult * (if g->key_shift then run_mult else 1.0)
+        let bj_mult = (f64) g.bj_speed_pct / 100.0
+        let spd = move_speed * dt * bj_mult * (if g.key_shift then run_mult else 1.0)
+        let rot = turn_speed * dt * bj_mult * (if g.key_shift then run_mult else 1.0)
 
         // Player-running check (matches the original's enemy-fire
         // dodge gate): picks the base-160 "player can dodge"
@@ -465,9 +465,9 @@ module player =
         // is actually attempting a move (fwd/back, or alt+left/right
         // strafe). Turning in place doesn't count — neither does
         // holding shift without a direction.
-        g->player_running = g->key_shift && (
-            g->key_up || g->key_down ||
-            (g->key_alt && (g->key_left || g->key_right)))
+        g.player_running = g.key_shift && (
+            g.key_up || g.key_down ||
+            (g.key_alt && (g.key_left || g.key_right)))
 
         // Track whether any attempted move was fully blocked — if so
         // and the AdLib SFX chip is idle, play the wall-bump sound
@@ -476,21 +476,21 @@ module player =
         let back_spd   = spd * back_mult
         let strafe_spd = spd * strafe_mult
         let mut wall_hit = false
-        if g->key_up && try_move(lv, g, g->dir_x * spd, g->dir_y * spd) then wall_hit = true
-        if g->key_down && try_move(lv, g, 0.0 - g->dir_x * back_spd, 0.0 - g->dir_y * back_spd) then wall_hit = true
+        if g.key_up && try_move(lv, g, g.dir_x * spd, g.dir_y * spd) then wall_hit = true
+        if g.key_down && try_move(lv, g, 0.0 - g.dir_x * back_spd, 0.0 - g.dir_y * back_spd) then wall_hit = true
 
-        if g->key_alt then
-            if g->key_left && try_move(lv, g, 0.0 - g->plane_x * strafe_spd, 0.0 - g->plane_y * strafe_spd) then wall_hit = true
-            if g->key_right && try_move(lv, g, g->plane_x * strafe_spd, g->plane_y * strafe_spd) then wall_hit = true
+        if g.key_alt then
+            if g.key_left && try_move(lv, g, 0.0 - g.plane_x * strafe_spd, 0.0 - g.plane_y * strafe_spd) then wall_hit = true
+            if g.key_right && try_move(lv, g, g.plane_x * strafe_spd, g.plane_y * strafe_spd) then wall_hit = true
         else
-            if g->key_left then rotate_camera(g, rot)
-            if g->key_right then rotate_camera(g, 0.0 - rot)
+            if g.key_left then rotate_camera(g, rot)
+            if g.key_right then rotate_camera(g, 0.0 - rot)
 
-        if g->wall_hit_cooldown > 0.0 then
-            g->wall_hit_cooldown = g->wall_hit_cooldown - dt
-        if wall_hit && g->wall_hit_cooldown <= 0.0 then
+        if g.wall_hit_cooldown > 0.0 then
+            g.wall_hit_cooldown = g.wall_hit_cooldown - dt
+        if wall_hit && g.wall_hit_cooldown <= 0.0 then
             sfx.trigger(sfx.id.hit_wall, ac)
-            g->wall_hit_cooldown = 0.4   // ~400 ms before we'll re-announce
+            g.wall_hit_cooldown = 0.4   // ~400 ms before we'll re-announce
 
         // Use-action dispatch — mirrors the original's use-key handler.
         //   • Push-wall runs every frame while space is held;
@@ -510,9 +510,9 @@ module player =
         //     frame rate. The priority field on the sound (sfx.fc)
         //     keeps it from trampling pickups or other deliberate
         //     events.
-        if g->key_space then
-            let edge = !g->key_space_handled
-            g->key_space_handled = true
+        if g.key_space then
+            let edge = !g.key_space_handled
+            g.key_space_handled = true
             // Quantize the heading to a single cardinal direction the
             // way the original's Cmd_Use does: the dominant axis wins
             // (the 45° quadrant split), so the use target is ALWAYS the
@@ -524,17 +524,17 @@ module player =
             // try_push a diagonal (dx,dy), sliding a secret wall through
             // cell corners into a slot that stranded the rest of the
             // secret. Exactly one of push_dx/push_dy is non-zero.
-            let face_horiz = math.abs(g->dir_x) > math.abs(g->dir_y)
-            let push_dx = if face_horiz then (if g->dir_x >= 0.0 then 1 else -1) else 0
-            let push_dy = if face_horiz then 0 else (if g->dir_y >= 0.0 then 1 else -1)
-            let fx = (i32) g->pos_x + push_dx
-            let fy = (i32) g->pos_y + push_dy
+            let face_horiz = math.abs(g.dir_x) > math.abs(g.dir_y)
+            let push_dx = if face_horiz then (if g.dir_x >= 0.0 then 1 else -1) else 0
+            let push_dy = if face_horiz then 0 else (if g.dir_y >= 0.0 then 1 else -1)
+            let fx = (i32) g.pos_x + push_dx
+            let fy = (i32) g.pos_y + push_dy
             let mut did_anything = false
             // Push-wall first so sliding a held space along a wall
             // activates secret tiles even when an edge event isn't fresh.
             if pushwall.try_push(lv, fx, fy, push_dx, push_dy) then
                 sfx.trigger(sfx.id.push_wall, ac)
-                g->secrets = g->secrets + 1
+                g.secrets = g.secrets + 1
                 did_anything = true
             // Elevator + door fire once per press. Tile 21 is the
             // elevator switch; standing on the alt-elevator tile
@@ -544,13 +544,13 @@ module player =
             // press during the elevator-wait window doesn't restack
             // the level-done cue.
             if edge && fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
-                let face_tile = (i32) lv->tilemap[(i64) fx * 64 + (i64) fy]
-                if face_tile == 21 && !g->next_level then
-                    let stand_area = (i32) lv->tile_areas[
-                        (i64) ((i32) g->pos_x) * 64 + (i64) ((i32) g->pos_y)]
-                    if stand_area == 0 then g->went_secret = true
-                    g->next_level = true
-                    g->next_level_delay = elevator_wait_time
+                let face_tile = (i32) lv.tilemap[(i64) fx * 64 + (i64) fy]
+                if face_tile == 21 && !g.next_level then
+                    let stand_area = (i32) lv.tile_areas[
+                        (i64) ((i32) g.pos_x) * 64 + (i64) ((i32) g.pos_y)]
+                    if stand_area == 0 then g.went_secret = true
+                    g.next_level = true
+                    g.next_level_delay = elevator_wait_time
                     // Boost the level-done cue into the mixer's
                     // soft-clip region so the elevator-switch "bam!"
                     // lands the way it did on original Sound Blaster
@@ -580,11 +580,11 @@ module player =
         // gold-key door so you have to kill the boss + grab the
         // dropped key first. Skipped while next_level is already
         // latched to avoid double-triggering on the same step.
-        if !g->next_level then
-            let ptx = (i32) g->pos_x
-            let pty = (i32) g->pos_y
+        if !g.next_level then
+            let ptx = (i32) g.pos_x
+            let pty = (i32) g.pos_y
             if ptx >= 0 && ptx < map_size && pty >= 0 && pty < map_size then
-                if lv->exit_tiles[(i64) ptx * 64 + (i64) pty] then
+                if lv.exit_tiles[(i64) ptx * 64 + (i64) pty] then
                     bj_victory.enter(g, ac)
 
     // ============================================================
@@ -613,37 +613,37 @@ module player =
 
     // Per-frame weapon-animation pump.
     let update_weapon = (w: world*, dt: f64) ->
-        let g = w->g
-        let ac = w->ac
-        if g->fire_timer > 0.0 then
-            g->fire_timer = g->fire_timer - dt
+        let g = w.g
+        let ac = w.ac
+        if g.fire_timer > 0.0 then
+            g.fire_timer = g.fire_timer - dt
             // Advance animation frames across the fire_rate window
             // (4 phases).
-            if g->fire_timer <= 0.0 then
-                g->weapon_frame = 0
-                g->fire_timer = 0.0
+            if g.fire_timer <= 0.0 then
+                g.weapon_frame = 0
+                g.fire_timer = 0.0
                 // The original auto-switches to the knife at the end
                 // of an attack if ammo ran out.
-                if g->weapon > 0 && g->ammo == 0 then g->weapon = 0
+                if g.weapon > 0 && g.ammo == 0 then g.weapon = 0
             else
-                let total = fire_rate[g->weapon]
-                let progress = 1.0 - g->fire_timer / total
-                g->weapon_frame = if progress < 0.25 then 1
+                let total = fire_rate[g.weapon]
+                let progress = 1.0 - g.fire_timer / total
+                g.weapon_frame = if progress < 0.25 then 1
                     else if progress < 0.5 then 2
                     else if progress < 0.75 then 3
                     else 4
-        if g->key_fire && g->fire_timer <= 0.0 then
-            if g->weapon == 0 then
+        if g.key_fire && g.fire_timer <= 0.0 then
+            if g.weapon == 0 then
                 // Knife — no ammo needed
-                g->fire_timer = fire_rate[0]
-                g->weapon_frame = 1
+                g.fire_timer = fire_rate[0]
+                g.weapon_frame = 1
                 sfx.trigger(weapon_fire_snd[0], ac)
                 hitscan.fire_player(w)
-            else if g->ammo > 0 then
-                if !g->idkfa_mode then g->ammo = g->ammo - 1
-                g->fire_timer = fire_rate[g->weapon]
-                g->weapon_frame = 1
-                sfx.trigger(weapon_fire_snd[g->weapon], ac)
+            else if g.ammo > 0 then
+                if !g.idkfa_mode then g.ammo = g.ammo - 1
+                g.fire_timer = fire_rate[g.weapon]
+                g.weapon_frame = 1
+                sfx.trigger(weapon_fire_snd[g.weapon], ac)
                 hitscan.fire_player(w)
 
     // Draw a t_compshape sprite as a HUD overlay, stretched to
@@ -664,42 +664,42 @@ module player =
         // Caller is expected to pass dst coords / sizes already
         // measured in vbuf-cell units (see compute_sprite_layout /
         // render_weapon).
-        let sw = (i64) rc->vbuf_w
-        let view_render_h = rc->vbuf_h
+        let sw = (i64) rc.vbuf_w
+        let view_render_h = rc.vbuf_h
         for sc in hdr.left_pix..(hdr.right_pix + 1) do
             let sx0 = dst_x + sc * dst_w / 64
             let sx1 = dst_x + (sc + 1) * dst_w / 64
-            if sx1 <= 0 || sx0 >= rc->vbuf_w then continue
+            if sx1 <= 0 || sx0 >= rc.vbuf_w then continue
             let data_off = (i64) hdr.col_offsets[sc]
             let mut off = base + data_off
             loop
-                let endy_raw = (i32) bytes.u16(vs->raw, off)
+                let endy_raw = (i32) bytes.u16(vs.raw, off)
                 if endy_raw == 0 then break
-                let newstart = (i64) (i16) bytes.u16(vs->raw, off + 2)
-                let starty_raw = (i32) bytes.u16(vs->raw, off + 4)
+                let newstart = (i64) (i16) bytes.u16(vs.raw, off + 2)
+                let starty_raw = (i32) bytes.u16(vs.raw, off + 4)
                 off = off + 6
                 let row_start = starty_raw / 2
                 let row_end = endy_raw / 2
                 for row in row_start..row_end do
-                    let pix = vs->raw[base + newstart + (i64) row]
+                    let pix = vs.raw[base + newstart + (i64) row]
                     let color = pal[(i32) pix]
                     let sy0 = dst_y + row * dst_h / 64
                     let sy1 = dst_y + (row + 1) * dst_h / 64
                     let y0 = if sy0 < 0 then 0 else sy0
                     let y1 = if sy1 > view_render_h then view_render_h else sy1
                     for sx in sx0..sx1 do
-                        if sx < 0 || sx >= rc->vbuf_w then continue
+                        if sx < 0 || sx >= rc.vbuf_w then continue
                         for sy in y0..y1 do
-                            rc->vbuf[(i64) sy * sw + (i64) sx] = color
+                            rc.vbuf[(i64) sy * sw + (i64) sx] = color
 
     // Draw the currently-held weapon sprite centered at the bottom
     // of the 3D viewport. Sprite page =
     // sprite_start + weapon_sprite_base[weapon] + frame, where
     // frame 0 is "ready" and 1..4 are the attack frames.
     let render_weapon = (rc: render_ctx*, vs: const vswap.vswap_file*, pal: const u32[], g: game*) ->
-        let frame = g->weapon_frame
-        let sprite_idx = weapon_sprite_base[g->weapon] + frame
-        let page = vs->sprite_start + sprite_idx
+        let frame = g.weapon_frame
+        let sprite_idx = weapon_sprite_base[g.weapon] + frame
+        let page = vs.sprite_start + sprite_idx
         // Scale the 64×64 source to fill the viewport height,
         // centered. Source transparency covers the upper rows so
         // only the bottom portion of the weapon is actually drawn.
@@ -716,8 +716,8 @@ module player =
         // buffer is 2× tall but 1× wide, so dw must NOT double — else the
         // gun would render twice as wide. Off / full: ss_h == ss_v so
         // dw == dh == vbuf_h, identical to the prior square sizing.
-        let dw = rc->view_render_h * rc->ss_h
-        let dh = rc->vbuf_h
-        let dx = (rc->vbuf_w - dw) / 2
-        let dy = rc->vbuf_h - dh
+        let dw = rc.view_render_h * rc.ss_h
+        let dh = rc.vbuf_h
+        let dx = (rc.vbuf_w - dw) / 2
+        let dy = rc.vbuf_h - dh
         draw_hud_sprite(rc, vs, pal, page, dx, dy, dw, dh)

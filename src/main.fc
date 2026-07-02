@@ -1025,7 +1025,7 @@ let extra_life_score = 40000
 // score-milestone crossing and from the 1UP pickup branch in
 // pickups.check.
 let grant_extra_life = (g: game*, ac: audio_ctx*) ->
-    if g->lives < 9 then g->lives = g->lives + 1
+    if g.lives < 9 then g.lives = g.lives + 1
     sfx.trigger(sfx.id.bonus1up, ac)
 
 // Add `amount` to the score, honoring the IDKFA score lock. Single
@@ -1039,11 +1039,11 @@ let grant_extra_life = (g: game*, ac: audio_ctx*) ->
 // maxed, no more free lives come from further scoring.
 let score_max = 999999
 let add_score = (g: game*, amount: i32, ac: audio_ctx*) ->
-    if g->idkfa_mode then return
-    let before_milestones = g->score / extra_life_score
-    g->score = g->score + amount
-    if g->score > score_max || g->score < 0 then g->score = score_max
-    let after_milestones = g->score / extra_life_score
+    if g.idkfa_mode then return
+    let before_milestones = g.score / extra_life_score
+    g.score = g.score + amount
+    if g.score > score_max || g.score < 0 then g.score = score_max
+    let after_milestones = g.score / extra_life_score
     let mut n = before_milestones
     loop
         if n >= after_milestones then break
@@ -1055,12 +1055,12 @@ let add_score = (g: game*, amount: i32, ac: audio_ctx*) ->
 // activation, the --cheat launch flag, and reset_for_life's IDKFA
 // restock on respawn.
 let give_full_kit = (g: game*) ->
-    g->health = 100
-    g->ammo = 99
-    g->weapon = 3
-    g->best_weapon = 3
-    g->has_gold_key = true
-    g->has_silver_key = true
+    g.health = 100
+    g.ammo = 99
+    g.weapon = 3
+    g.best_weapon = 3
+    g.has_gold_key = true
+    g.has_silver_key = true
 
 // Map an SDL keysym + modifier mask to the ASCII byte the user
 // intended to type, or 0 if the key has no printable mapping.
@@ -1140,16 +1140,16 @@ let ssaa_zbuf_len = (mode: i32, screen_w: i32) ->
     if mode == 0 then 0 else ssaa_vbuf_w(mode, screen_w)
 
 let rebind_vbuf = (rc: render_ctx*) ->
-    if rc->ssaa_mode == 0 then
-        rc->vbuf = rc->dbuf
-        rc->vzbuf = rc->zbuf
+    if rc.ssaa_mode == 0 then
+        rc.vbuf = rc.dbuf
+        rc.vzbuf = rc.zbuf
     else
-        rc->vbuf = rc->ssaa_buf
-        rc->vzbuf = rc->ssaa_zbuf
-    rc->vbuf_w = ssaa_vbuf_w(rc->ssaa_mode, rc->screen_w)
-    rc->vbuf_h = ssaa_vbuf_h(rc->ssaa_mode, rc->view_render_h)
-    rc->ss_h = if rc->ssaa_mode == 2 then 2 else 1
-    rc->ss_v = if rc->ssaa_mode == 0 then 1 else 2
+        rc.vbuf = rc.ssaa_buf
+        rc.vzbuf = rc.ssaa_zbuf
+    rc.vbuf_w = ssaa_vbuf_w(rc.ssaa_mode, rc.screen_w)
+    rc.vbuf_h = ssaa_vbuf_h(rc.ssaa_mode, rc.view_render_h)
+    rc.ss_h = if rc.ssaa_mode == 2 then 2 else 1
+    rc.ss_v = if rc.ssaa_mode == 0 then 1 else 2
 
 let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const u32[],
                         fb_w: i32, fb_h: i32, scale: i32, ssaa_mode: i32) ->
@@ -1189,7 +1189,7 @@ let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const u32[],
         num_billboards = 0,
         title_bg = pics.build_title_bg_cache(vg, pal, fb_w, fb_h),
         god_face = pics.build_god_face_cache(vg, pal),
-        pic_cache = alloc(u32[][vg->num_chunks] {})!,
+        pic_cache = alloc(u32[][vg.num_chunks] {})!,
         screenshot_slot = 0,
         frame_counter = 0u64,
         force_redraw = true,
@@ -1279,37 +1279,37 @@ let query_refresh_interval_ms = (win: any*) ->
 // SDL texture (on either change).
 let resize_render_ctx = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                          pal: const u32[], new_fb_w: i32, new_scale: i32) ->
-    let fb_w_changed = new_fb_w != rc->fb_w
-    let scale_changed = new_scale != rc->scale
+    let fb_w_changed = new_fb_w != rc.fb_w
+    let scale_changed = new_scale != rc.scale
     if !fb_w_changed && !scale_changed then false
     else
         if fb_w_changed then
-            free(rc->fb)
-            free(rc->title_bg)
-        free(rc->dbuf)
-        free(rc->zbuf)
-        if rc->ssaa_mode != 0 then
-            free(rc->ssaa_buf)
-            free(rc->ssaa_zbuf)
-        rc->fb_w = new_fb_w
-        rc->scale = new_scale
-        rc->screen_w = new_fb_w * new_scale
-        rc->screen_h = rc->fb_h * new_scale
-        rc->view_render_h = view_h * new_scale
-        rc->ui_offset_x = (new_fb_w - 320) / 2
+            free(rc.fb)
+            free(rc.title_bg)
+        free(rc.dbuf)
+        free(rc.zbuf)
+        if rc.ssaa_mode != 0 then
+            free(rc.ssaa_buf)
+            free(rc.ssaa_zbuf)
+        rc.fb_w = new_fb_w
+        rc.scale = new_scale
+        rc.screen_w = new_fb_w * new_scale
+        rc.screen_h = rc.fb_h * new_scale
+        rc.view_render_h = view_h * new_scale
+        rc.ui_offset_x = (new_fb_w - 320) / 2
         if fb_w_changed then
-            rc->fb = alloc(u32[new_fb_w * rc->fb_h] {})!
-            rc->title_bg = pics.build_title_bg_cache(vg, pal, new_fb_w, rc->fb_h)
-        rc->dbuf = alloc(u32[rc->screen_w * rc->screen_h] {})!
-        rc->zbuf = alloc(f64[rc->screen_w] {})!
-        if rc->ssaa_mode != 0 then
-            rc->ssaa_buf = alloc(u32[ssaa_buf_len(rc->ssaa_mode, rc->screen_w, rc->view_render_h)] {})!
-            rc->ssaa_zbuf = alloc(f64[ssaa_zbuf_len(rc->ssaa_mode, rc->screen_w)] {})!
+            rc.fb = alloc(u32[new_fb_w * rc.fb_h] {})!
+            rc.title_bg = pics.build_title_bg_cache(vg, pal, new_fb_w, rc.fb_h)
+        rc.dbuf = alloc(u32[rc.screen_w * rc.screen_h] {})!
+        rc.zbuf = alloc(f64[rc.screen_w] {})!
+        if rc.ssaa_mode != 0 then
+            rc.ssaa_buf = alloc(u32[ssaa_buf_len(rc.ssaa_mode, rc.screen_w, rc.view_render_h)] {})!
+            rc.ssaa_zbuf = alloc(f64[ssaa_zbuf_len(rc.ssaa_mode, rc.screen_w)] {})!
         rebind_vbuf(rc)
         // Newly-allocated dbuf is zero-initialized — the HUD strip would
         // be black for one frame under the frame-skip optimization
         // without forcing a full repaint on the next render_frame.
-        rc->force_redraw = true
+        rc.force_redraw = true
         true
 
 // Apply a view-mode change on the fly. Picks the new fb_w from the
@@ -1324,22 +1324,22 @@ let apply_view_mode = (w: world*, vg: const vgagraph.vgagraph_file*,
                        pal: const u32[], view_mode: i32) ->
     let new_fb_w = compute_fb_w_for_view_mode(view_mode)
     let new_plane_factor = fov_factor * (f64) new_fb_w / 320.0
-    let g = w->g
-    let rc = w->rc
-    let fb_w_was = rc->fb_w
-    let new_scale = pick_scale_factor(rc->drawable_w, rc->drawable_h,
-                                        new_fb_w, rc->fb_h, g->max_scale, g->scale_factor)
+    let g = w.g
+    let rc = w.rc
+    let fb_w_was = rc.fb_w
+    let new_scale = pick_scale_factor(rc.drawable_w, rc.drawable_h,
+                                        new_fb_w, rc.fb_h, g.max_scale, g.scale_factor)
     let changed = resize_render_ctx(rc, vg, pal, new_fb_w, new_scale)
     if new_fb_w != fb_w_was then
         // Rescale the player's camera plane to the new FOV magnitude
         // while preserving direction. Plane is always perpendicular
         // to dir with magnitude == plane_factor; multiplying by the
         // ratio keeps that invariant after the change.
-        let plane_scale = new_plane_factor / g->plane_factor
-        g->plane_x = g->plane_x * plane_scale
-        g->plane_y = g->plane_y * plane_scale
-        g->plane_factor = new_plane_factor
-    g->view_mode = view_mode
+        let plane_scale = new_plane_factor / g.plane_factor
+        g.plane_x = g.plane_x * plane_scale
+        g.plane_y = g.plane_y * plane_scale
+        g.plane_factor = new_plane_factor
+    g.view_mode = view_mode
     overlay.debug_reset(rc)
     changed
 
@@ -1348,8 +1348,8 @@ let apply_view_mode = (w: world*, vg: const vgagraph.vgagraph_file*,
 // Returns true on a real change.
 let apply_scale_factor = (w: world*, vg: const vgagraph.vgagraph_file*,
                           pal: const u32[], new_scale: i32) ->
-    let changed = resize_render_ctx(w->rc, vg, pal, w->rc->fb_w, new_scale)
-    overlay.debug_reset(w->rc)
+    let changed = resize_render_ctx(w.rc, vg, pal, w.rc.fb_w, new_scale)
+    overlay.debug_reset(w.rc)
     changed
 
 // Switch the SSAA mode (0=off, 1=vertical-only 2×, 2=full 2×2). Frees
@@ -1361,16 +1361,16 @@ let apply_scale_factor = (w: world*, vg: const vgagraph.vgagraph_file*,
 // target changes — so the SDL texture and logical size stay valid
 // across this switch. Returns true on a real change.
 let apply_ssaa_mode = (w: world*, new_mode: i32) ->
-    let rc = w->rc
-    if new_mode == rc->ssaa_mode then false
+    let rc = w.rc
+    if new_mode == rc.ssaa_mode then false
     else
-        if rc->ssaa_mode != 0 then
-            free(rc->ssaa_buf)
-            free(rc->ssaa_zbuf)
-        rc->ssaa_mode = new_mode
-        w->g->ssaa_mode = new_mode
-        rc->ssaa_buf = alloc(u32[ssaa_buf_len(new_mode, rc->screen_w, rc->view_render_h)] {})!
-        rc->ssaa_zbuf = alloc(f64[ssaa_zbuf_len(new_mode, rc->screen_w)] {})!
+        if rc.ssaa_mode != 0 then
+            free(rc.ssaa_buf)
+            free(rc.ssaa_zbuf)
+        rc.ssaa_mode = new_mode
+        w.g.ssaa_mode = new_mode
+        rc.ssaa_buf = alloc(u32[ssaa_buf_len(new_mode, rc.screen_w, rc.view_render_h)] {})!
+        rc.ssaa_zbuf = alloc(f64[ssaa_zbuf_len(new_mode, rc.screen_w)] {})!
         rebind_vbuf(rc)
         overlay.debug_reset(rc)
         true
@@ -1440,41 +1440,41 @@ let build_level = (lv_data: maps.level*, sprite_start: i32, difficulty: i32, mom
     // Tally totals for the intermission screen (enemies that are not
     // pre-dead corpses; push-wall marker tiles; treasure pickups).
     let mut enemies_live = 0
-    for i in 0..lv->num_enemies do
-        match lv->enemies[i].state with
+    for i in 0..lv.num_enemies do
+        match lv.enemies[i].state with
         | dead -> void()
         | _ -> enemies_live = enemies_live + 1
-    lv->total_enemies = enemies_live
+    lv.total_enemies = enemies_live
     let mut pw = 0
     for i in 0..(map_size * map_size) do
-        if lv->pushwall_tiles[i] then pw = pw + 1
-    lv->total_pushwalls = pw
+        if lv.pushwall_tiles[i] then pw = pw + 1
+    lv.total_pushwalls = pw
     // The original game counts the 1-UP among a level's treasures: both
     // the per-level treasure total and the collected-treasure tally
     // include the four bonus items AND the full-heal pickup. Counting
     // extra_life only in the numerator (pickups.check) without the
     // denominator here would let a 1-UP map read over 100%.
     let mut treas = 0
-    for i in 0..lv->num_sprites do
-        match lv->sprites[i].item_type with
+    for i in 0..lv.num_sprites do
+        match lv.sprites[i].item_type with
         | cross | chalice | bible | crown | extra_life -> treas = treas + 1
         | _ -> void()
-    lv->total_treasures = treas
+    lv.total_treasures = treas
     lv
 
 let free_level = (lv: level*) ->
-    free(lv->tilemap)
-    free(lv->pushwall_tiles)
-    free(lv->exit_tiles)
-    free(lv->path_arrows)
-    free(lv->sprites)
-    free(lv->doors)
-    free(lv->door_pos)
-    free(lv->enemies)
-    free(lv->projectiles)
-    free(lv->tile_areas)
-    free(lv->area_connect)
-    free(lv->area_by_player)
+    free(lv.tilemap)
+    free(lv.pushwall_tiles)
+    free(lv.exit_tiles)
+    free(lv.path_arrows)
+    free(lv.sprites)
+    free(lv.doors)
+    free(lv.door_pos)
+    free(lv.enemies)
+    free(lv.projectiles)
+    free(lv.tile_areas)
+    free(lv.area_connect)
+    free(lv.area_by_player)
     free(lv)
 
 // ============================================================
@@ -1484,29 +1484,29 @@ let free_level = (lv: level*) ->
 // Mirror level totals into g and zero the current-progress counters. Called
 // on every level entry (initial load, elevator transition, death restart).
 let reset_level_counters = (g: game*, lv: level*) ->
-    g->kills = 0
-    g->secrets = 0
-    g->treasures = 0
-    g->total_kills = lv->total_enemies
-    g->total_secrets = lv->total_pushwalls
-    g->total_treasures = lv->total_treasures
-    g->level_time = 0.0
+    g.kills = 0
+    g.secrets = 0
+    g.treasures = 0
+    g.total_kills = lv.total_enemies
+    g.total_secrets = lv.total_pushwalls
+    g.total_treasures = lv.total_treasures
+    g.level_time = 0.0
 
 // Free the current level + lv_data and load + build the level at level_num.
 // Shared by every transition path (next-level / restart / new-game). After
 // this runs, the player still needs position + per-level state set — caller
 // does that for its specific semantics.
 let reload_level_data = (w: world*, vs: const vswap.vswap_file*) ->
-    free_level(w->lv)
-    free(w->lv_data->walls)
-    free(w->lv_data->objects)
-    free(w->lv_data)
-    let p_maphead = data_path.wl6(w->g->data_dir, "MAPHEAD.WL6")
+    free_level(w.lv)
+    free(w.lv_data.walls)
+    free(w.lv_data.objects)
+    free(w.lv_data)
+    let p_maphead = data_path.wl6(w.g.data_dir, "MAPHEAD.WL6")
     defer free(p_maphead)
-    let p_gamemaps = data_path.wl6(w->g->data_dir, "GAMEMAPS.WL6")
+    let p_gamemaps = data_path.wl6(w.g.data_dir, "GAMEMAPS.WL6")
     defer free(p_gamemaps)
-    w->lv_data = maps.load(p_maphead, p_gamemaps, w->g->level_num)
-    w->lv = build_level(w->lv_data, vs->sprite_start, w->g->difficulty, w->g->mommy_mode)
+    w.lv_data = maps.load(p_maphead, p_gamemaps, w.g.level_num)
+    w.lv = build_level(w.lv_data, vs.sprite_start, w.g.difficulty, w.g.mommy_mode)
 
 // Clear held gameplay-input flags. Called on ack-screen exits (intermission /
 // episode-end advance) so the "any key" press that dismissed the screen
@@ -1523,33 +1523,33 @@ let reload_level_data = (w: world*, vs: const vswap.vswap_file*) ->
 // bj_victory.enter call this, but only the first one for a given
 // level actually adds.
 let record_level_for_episode = (g: game*) ->
-    if g->ep_recorded_current then return
+    if g.ep_recorded_current then return
     // A category with no items to find counts as 0% — same convention
     // the per-level intermission uses (cutscenes.compute_ratio). The
     // original game computes each ratio once with a zero-total guard,
     // displays it, and folds that same value into the per-episode
     // average, so an empty category contributes 0 to both, not 100.
-    let kr = if g->total_kills > 0 then 100 * g->kills / g->total_kills else 0
-    let sr = if g->total_secrets > 0 then 100 * g->secrets / g->total_secrets else 0
-    let tr = if g->total_treasures > 0 then 100 * g->treasures / g->total_treasures else 0
-    g->ep_kr_total = g->ep_kr_total + kr
-    g->ep_sr_total = g->ep_sr_total + sr
-    g->ep_tr_total = g->ep_tr_total + tr
-    g->ep_time_total = g->ep_time_total + (i32) g->level_time
-    g->ep_levels_played = g->ep_levels_played + 1
-    g->ep_recorded_current = true
+    let kr = if g.total_kills > 0 then 100 * g.kills / g.total_kills else 0
+    let sr = if g.total_secrets > 0 then 100 * g.secrets / g.total_secrets else 0
+    let tr = if g.total_treasures > 0 then 100 * g.treasures / g.total_treasures else 0
+    g.ep_kr_total = g.ep_kr_total + kr
+    g.ep_sr_total = g.ep_sr_total + sr
+    g.ep_tr_total = g.ep_tr_total + tr
+    g.ep_time_total = g.ep_time_total + (i32) g.level_time
+    g.ep_levels_played = g.ep_levels_played + 1
+    g.ep_recorded_current = true
 
 // Wipe the running totals at the start of a new episode / game.
 let reset_episode_totals = (g: game*) ->
-    g->ep_kr_total = 0
-    g->ep_sr_total = 0
-    g->ep_tr_total = 0
-    g->ep_time_total = 0
-    g->ep_levels_played = 0
-    g->ep_recorded_current = false
+    g.ep_kr_total = 0
+    g.ep_sr_total = 0
+    g.ep_tr_total = 0
+    g.ep_time_total = 0
+    g.ep_levels_played = 0
+    g.ep_recorded_current = false
 
 let advance_next_level = (w: world*, vs: const vswap.vswap_file*) ->
-    let g = w->g
+    let g = w.g
     // Capture the score-at-start-of-the-next-level for the OG-style
     // death-rewind. By the time we get here the just-completed
     // level's intermission bonus has already landed in `score`
@@ -1559,26 +1559,26 @@ let advance_next_level = (w: world*, vs: const vswap.vswap_file*) ->
     // into the next level". A subsequent death on the new level
     // will rewind here in `restart_current_level`. Mirrors the
     // original's "snapshot score at level completion" behavior.
-    g->oldscore = g->score
-    g->level_num = episode.next_level_num(g->level_num, g->went_secret)
-    g->went_secret = false
+    g.oldscore = g.score
+    g.level_num = episode.next_level_num(g.level_num, g.went_secret)
+    g.went_secret = false
     // Wolf3D clears keys between levels — but IDKFA's "all keys"
     // promise outranks that, so the latch keeps them across the
     // transition (otherwise IDKFA-locked players hit a locked door
     // on the next floor with no recourse).
-    if !g->idkfa_mode then
-        g->has_gold_key = false
-        g->has_silver_key = false
+    if !g.idkfa_mode then
+        g.has_gold_key = false
+        g.has_silver_key = false
     // Re-arm per-episode recording for the upcoming level.
-    g->ep_recorded_current = false
+    g.ep_recorded_current = false
     reload_level_data(w, vs)
-    spawn.find_player_start(w->lv_data, g)
-    reset_level_counters(g, w->lv)
-    areas.update_player_area(w->lv, g)
-    areas.connect(w->lv, g->area_number)
-    g->phase = game_phase.playing
-    g->phase_timer = 0.0
-    g->made_noise = false
+    spawn.find_player_start(w.lv_data, g)
+    reset_level_counters(g, w.lv)
+    areas.update_player_area(w.lv, g)
+    areas.connect(w.lv, g.area_number)
+    g.phase = game_phase.playing
+    g.phase_timer = 0.0
+    g.made_noise = false
     player.clear_input_keys(g)
     pics.trigger_get_psyched(g)
 
@@ -1588,12 +1588,12 @@ let advance_next_level = (w: world*, vs: const vswap.vswap_file*) ->
 // Used by the endart phase exit + by the test-mode `advance` command
 // when leaving episode_end / endart.
 let return_to_menu_post_episode = (g: game*) ->
-    g->phase = game_phase.main_menu
-    g->menu_level = menu.nav.main
-    g->menu_sel = 0     // NEW GAME row — game ended, BACK TO GAME locked
-    g->has_active_game = false
-    g->has_gold_key = false
-    g->has_silver_key = false
+    g.phase = game_phase.main_menu
+    g.menu_level = menu.nav.main
+    g.menu_sel = 0     // NEW GAME row — game ended, BACK TO GAME locked
+    g.has_active_game = false
+    g.has_gold_key = false
+    g.has_silver_key = false
 
 // Restart the current level (death with lives remaining). Resets player
 // health / ammo / weapon, rewinds score to the start-of-this-level value
@@ -1603,38 +1603,38 @@ let return_to_menu_post_episode = (g: game*) ->
 // life is handled by the caller routing to `high_scores_screen.enter`
 // instead of here, so the high-scores entry sees the un-rewound score.
 let restart_current_level = (w: world*, vs: const vswap.vswap_file*) ->
-    let g = w->g
-    g->score = g->oldscore
+    let g = w.g
+    g.score = g.oldscore
     // Re-arm episode recording so re-finishing the level still
     // contributes to the running totals.
-    g->ep_recorded_current = false
+    g.ep_recorded_current = false
     reload_level_data(w, vs)
-    spawn.find_player_start(w->lv_data, g)
-    reset_level_counters(g, w->lv)
+    spawn.find_player_start(w.lv_data, g)
+    reset_level_counters(g, w.lv)
     player.reset_for_life(g)
     // Clear any movement key still held when the death animation ended,
     // so the respawned player doesn't walk off on its own. Mirrors
     // advance_next_level, which clears held keys the same way the
     // original does on respawn.
     player.clear_input_keys(g)
-    areas.update_player_area(w->lv, g)
-    areas.connect(w->lv, g->area_number)
-    g->phase = game_phase.playing
-    g->phase_timer = 0.0
+    areas.update_player_area(w.lv, g)
+    areas.connect(w.lv, g.area_number)
+    g.phase = game_phase.playing
+    g.phase_timer = 0.0
     // Seed the respawn uncover: the new scene renders under a full red
     // stipple that thins out rapidly, rather than a hard cut to gameplay.
-    g->respawn_fade_timer = player.respawn_fade_time
+    g.respawn_fade_timer = player.respawn_fade_time
     pics.trigger_get_psyched(g)
 
 // Start a new game at the current level_num (set by the episode picker).
 // Resets player state (3 lives, score 0, full HP, pistol 8 ammo) +
 // rebuilds the level + clears per-episode running totals.
 let start_new_game_here = (w: world*, vs: const vswap.vswap_file*) ->
-    let g = w->g
+    let g = w.g
     reset_episode_totals(g)
     reload_level_data(w, vs)
-    spawn.find_player_start(w->lv_data, g)
-    reset_level_counters(g, w->lv)
+    spawn.find_player_start(w.lv_data, g)
+    reset_level_counters(g, w.lv)
     // A new game starts cheat-free regardless of what the prior session
     // had latched. Clear before reset_for_new_game — reset_for_life
     // re-grants the IDKFA full kit if idkfa_mode is still latched, which
@@ -1644,20 +1644,20 @@ let start_new_game_here = (w: world*, vs: const vswap.vswap_file*) ->
     // reset_for_new_game zeros `score`; mirror that into `oldscore`
     // so the death-rewind has a sane baseline (rewinds to 0, not
     // whatever score the previous game ended on).
-    g->oldscore = 0
+    g.oldscore = 0
     // Consume the BOSS FIGHT latch: teleport to the boss if the map has one.
     // Done after spawn.find_player_start + reset_level_counters so the teleport
     // overrides the map's default spawn while the level state is otherwise
     // fresh. areas.update_player_area / areas.connect below anchor the flood to
     // the post-teleport tile.
-    if g->want_near_boss then
-        spawn.near_boss(w->lv, g)
-        g->want_near_boss = false
-    areas.update_player_area(w->lv, g)
-    areas.connect(w->lv, g->area_number)
-    g->phase = game_phase.playing
-    g->phase_timer = 0.0
-    g->went_secret = false
+    if g.want_near_boss then
+        spawn.near_boss(w.lv, g)
+        g.want_near_boss = false
+    areas.update_player_area(w.lv, g)
+    areas.connect(w.lv, g.area_number)
+    g.phase = game_phase.playing
+    g.phase_timer = 0.0
+    g.went_secret = false
     pics.trigger_get_psyched(g)
 
 // Game-state phase transitions triggered by timers / flags. Called every
@@ -1672,23 +1672,23 @@ let start_new_game_here = (w: world*, vs: const vswap.vswap_file*) ->
 // Intermission / high-scores ack keys are handled by the caller (they
 // need input access), not by this function.
 let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
-    let g = w->g
+    let g = w.g
     let mut level_changed = false
-    if g->next_level && g->phase == game_phase.playing
-       && g->next_level_delay <= 0.0 then
-        g->next_level = false
+    if g.next_level && g.phase == game_phase.playing
+       && g.next_level_delay <= 0.0 then
+        g.next_level = false
         // Boss-map exits route through BJ victory; everything else goes
         // through the regular intermission → advance flow. In normal
         // play boss maps fire BJ via the exit-tile check in player.update
         // (which doesn't set next_level), so this branch is reached only
         // by the synthetic `endepisode` test command on a boss map.
-        if g->level_num % episode.levels_per == 8 then
-            bj_victory.enter(g, w->ac)
+        if g.level_num % episode.levels_per == 8 then
+            bj_victory.enter(g, w.ac)
         else
-            intermission.enter(g, w->ac)
-    if g->phase == game_phase.dying && g->phase_timer >= player.death_anim_time then
-        if g->lives > 0 then
-            g->lives = g->lives - 1
+            intermission.enter(g, w.ac)
+    if g.phase == game_phase.dying && g.phase_timer >= player.death_anim_time then
+        if g.lives > 0 then
+            g.lives = g.lives - 1
             restart_current_level(w, vs)
             level_changed = true
         else
@@ -1699,9 +1699,9 @@ let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
             // title (see the high_scores keydown handler in the main
             // loop). The level is intentionally NOT reloaded — the
             // next NEW GAME / LOAD GAME will rebuild as needed.
-            high_scores_screen.enter(g, w->hs, high_scores_screen.from_death,
-                g->score, g->level_num + 1, g->level_num / episode.levels_per)
-            g->has_active_game = false
+            high_scores_screen.enter(g, w.hs, high_scores_screen.from_death,
+                g.score, g.level_num + 1, g.level_num / episode.levels_per)
+            g.has_active_game = false
     // Death-cam cutscene has finished its replay hold; hand off
     // straight to the episode-end Victory screen — the original
     // skips the per-level tally on a victorious episode end, so
@@ -1709,52 +1709,52 @@ let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
     // screen. Mirror the bj_victory finalisation: award the
     // level-completion bonus and record the boss level into the
     // per-episode totals so it shows up in the averages.
-    if g->phase == game_phase.death_cam && g->dc_sub == death_cam.sub.done then
-        add_score(g, intermission.compute_level_bonus(g), w->ac)
+    if g.phase == game_phase.death_cam && g.dc_sub == death_cam.sub.done then
+        add_score(g, intermission.compute_level_bonus(g), w.ac)
         record_level_for_episode(g)
         episode_end.enter(g)
     // PG-13 splash auto-advances to the title after a short hold so a
     // walked-away player doesn't come back to a stuck splash. Any keypress
     // also advances (handled in the main loop, not here).
-    if g->phase == game_phase.pg13 && g->phase_timer >= pg13_screen.auto_advance_time then
-        g->phase = game_phase.title
-        g->phase_timer = 0.0
+    if g.phase == game_phase.pg13 && g.phase_timer >= pg13_screen.auto_advance_time then
+        g.phase = game_phase.title
+        g.phase_timer = 0.0
     level_changed
 // One simulation tick — runs all per-frame game-state updates in order.
 // Used by both the interactive game loop and the headless test mode so
 // they stay in sync. Add new per-frame systems here, not at each caller.
 let tick = (w: world*, dt: f64) ->
-    let g = w->g
+    let g = w.g
     // Damage flash and respawn fade decay every frame regardless of phase.
-    if g->damage_flash_timer > 0.0 then
-        g->damage_flash_timer = g->damage_flash_timer - dt
-        if g->damage_flash_timer < 0.0 then g->damage_flash_timer = 0.0
-    if g->respawn_fade_timer > 0.0 then
-        g->respawn_fade_timer = g->respawn_fade_timer - dt
-        if g->respawn_fade_timer < 0.0 then g->respawn_fade_timer = 0.0
+    if g.damage_flash_timer > 0.0 then
+        g.damage_flash_timer = g.damage_flash_timer - dt
+        if g.damage_flash_timer < 0.0 then g.damage_flash_timer = 0.0
+    if g.respawn_fade_timer > 0.0 then
+        g.respawn_fade_timer = g.respawn_fade_timer - dt
+        if g.respawn_fade_timer < 0.0 then g.respawn_fade_timer = 0.0
     // Same for the message-banner timer.
-    if g->msg_timer > 0.0 then
-        g->msg_timer = g->msg_timer - dt
-        if g->msg_timer < 0.0 then g->msg_timer = 0.0
+    if g.msg_timer > 0.0 then
+        g.msg_timer = g.msg_timer - dt
+        if g.msg_timer < 0.0 then g.msg_timer = 0.0
     // "Got Gatling!" face swap decays regardless of phase — the face cell
     // keeps refreshing even during frozen phases; the original gated on
     // its sound-busy check, which we approximate with this timer.
-    if g->got_gatling_timer > 0.0 then
-        g->got_gatling_timer = g->got_gatling_timer - dt
-        if g->got_gatling_timer < 0.0 then g->got_gatling_timer = 0.0
+    if g.got_gatling_timer > 0.0 then
+        g.got_gatling_timer = g.got_gatling_timer - dt
+        if g.got_gatling_timer < 0.0 then g.got_gatling_timer = 0.0
     // Outside playing only phase_timer advances + the phase-transition
     // handler runs (so death collapse → restart, etc. can fire). Enemies,
     // doors, pickups, weapon, player: all frozen.
-    match g->phase with
+    match g.phase with
     | playing ->
         // "GET PSYCHED!" load overlay: freeze everything while visible so
         // the player can't walk into a wall on the first frame after a
         // level transition. Processed before `next_level` so a player who
         // hits the elevator during the overlay (impossible, but defensive)
         // still sees the level-done flow resume cleanly once it finishes.
-        if g->get_psyched_timer > 0.0 then
-            g->get_psyched_timer = g->get_psyched_timer - dt
-            if g->get_psyched_timer < 0.0 then g->get_psyched_timer = 0.0
+        if g.get_psyched_timer > 0.0 then
+            g.get_psyched_timer = g.get_psyched_timer - dt
+            if g.get_psyched_timer < 0.0 then g.get_psyched_timer = 0.0
         // Elevator-switch pre-intermission wait: freeze all gameplay for
         // `next_level_delay` seconds so the level-done sound plays out in
         // the world before the tally screen takes over. update_phase_transitions
@@ -1763,69 +1763,69 @@ let tick = (w: world*, dt: f64) ->
         // on the tick where delay reaches 0) so the phase transition fires
         // cleanly at end of tick without one stray gameplay frame sneaking
         // in.
-        else if g->next_level then
-            if g->next_level_delay > 0.0 then
-                g->next_level_delay = g->next_level_delay - dt
-                if g->next_level_delay < 0.0 then g->next_level_delay = 0.0
+        else if g.next_level then
+            if g.next_level_delay > 0.0 then
+                g.next_level_delay = g.next_level_delay - dt
+                if g.next_level_delay < 0.0 then g.next_level_delay = 0.0
             // Even with the rest of gameplay frozen, dying actors keep
             // animating so anything mid-die when the elevator switch fired
             // finishes its death cascade before the tally screen.
-            enemies.ai.update_dying_enemies(w->lv, w->g, dt)
+            enemies.ai.update_dying_enemies(w.lv, w.g, dt)
         else
             // The original resets its "made noise" flag at the top of each
             // frame; we follow suit so noise from one tick only wakes
             // enemies on the same tick. update_weapon raises it again when
             // the player fires a gun, and enemies.ai.damage_enemy raises
             // it on a knife hit.
-            g->made_noise = false
-            g->level_time = g->level_time + dt
-            player.update(w->lv, g, dt, w->ac)
-            doors.update(w->lv, g, dt, w->ac, player.radius)
-            pushwall.update(w->lv, dt)
+            g.made_noise = false
+            g.level_time = g.level_time + dt
+            player.update(w.lv, g, dt, w.ac)
+            doors.update(w.lv, g, dt, w.ac, player.radius)
+            pushwall.update(w.lv, dt)
             player.update_weapon(w, dt)
             enemies.ai.update_enemies(w, dt)
-            projectiles.update_all(w->lv, g, w->ac, dt)
-            pickups.check(w->lv, g, w->ac)
+            projectiles.update_all(w.lv, g, w.ac, dt)
+            pickups.check(w.lv, g, w.ac)
             hud.update_face(g, dt)
     | _ ->
-        g->phase_timer = g->phase_timer + dt
-        if g->phase == game_phase.title
-                && g->phase_timer >= title_screen.cycle_total then
-            g->phase_timer = g->phase_timer - title_screen.cycle_total
-        if g->phase == game_phase.dying then
+        g.phase_timer = g.phase_timer + dt
+        if g.phase == game_phase.title
+                && g.phase_timer >= title_screen.cycle_total then
+            g.phase_timer = g.phase_timer - title_screen.cycle_total
+        if g.phase == game_phase.dying then
             // Swing the heading toward whoever just killed us, like
             // the original's death rotation. No-op once aligned (or
             // when no killer was latched, e.g. the synthetic `kill`
             // test command).
             player.update_death_swing(g, dt)
-        else if g->phase == game_phase.intermission then
-            intermission.tick(g, w->ac, dt)
-        else if g->phase == game_phase.bj_victory then
-            bj_victory.tick(w->lv, g, w->ac, dt)
+        else if g.phase == game_phase.intermission then
+            intermission.tick(g, w.ac, dt)
+        else if g.phase == game_phase.bj_victory then
+            bj_victory.tick(w.lv, g, w.ac, dt)
             // Boss corpse + any other dying actors keep animating during
             // the BJ run so the player sees the death animation finish
             // (not just the first die frame freeze-framed under BJ).
-            enemies.ai.update_dying_enemies(w->lv, w->g, dt)
-        else if g->phase == game_phase.death_cam then
+            enemies.ai.update_dying_enemies(w.lv, w.g, dt)
+        else if g.phase == game_phase.death_cam then
             // Pump the dying boss's animation frames before the phase
             // logic inspects e->state — death_cam.sub.pre_fade and
             // death_cam.sub.replay_hold both advance on the die → dead
             // transition, so the tick order matters.
-            enemies.ai.update_dying_enemies(w->lv, w->g, dt)
-            death_cam.tick(w->lv, g, w->ac, dt)
+            enemies.ai.update_dying_enemies(w.lv, w.g, dt)
+            death_cam.tick(w.lv, g, w.ac, dt)
     // Phase transitions (death collapse → restart / game-over). Main loop
     // layers music switching on top of this; test mode doesn't need music
     // so it can ignore the return value.
-    let _changed = update_phase_transitions(w, w->ac->vs)
+    let _changed = update_phase_transitions(w, w.ac.vs)
     // Headless test mode has no audio thread to drain cmd_ring, so pump it
     // synchronously each tick: this runs the real producer -> ring -> consumer
     // path (not a bypass) and keeps digi / sfx state observable to the test
     // harness. Per-tick so a long `wait:N` can't overflow the ring. Gated on
     // test_mode because the interactive game drains on the audio thread, and
     // the ring is single-consumer.
-    if w->g->test_mode then
-        drain_audio_commands(w->ac)
-        atomic_store_release(&w->ac->adlib_busy_flag, w->ac->sfx->active)
+    if w.g.test_mode then
+        drain_audio_commands(w.ac)
+        atomic_store_release(&w.ac.adlib_busy_flag, w.ac.sfx.active)
 
 // Render the full game frame to fb (used before saving a screenshot).
 let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const u32[]) ->
@@ -1843,51 +1843,51 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const u32[]) ->
     // fb's viewport region (rows < view_h) must run every frame because
     // composite_view_overlay always runs and would otherwise miss them
     // — e.g. hud.render_message stays outside the skip.
-    let force = w->rc->force_redraw
-    w->rc->force_redraw = false
-    let skip_hud = (w->rc->frame_counter & 1u64) != 0u64
+    let force = w.rc.force_redraw
+    w.rc.force_redraw = false
+    let skip_hud = (w.rc.frame_counter & 1u64) != 0u64
                    && !force
-                   && !w->g->next_level
-    match w->g->phase with
+                   && !w.g.next_level
+    match w.g.phase with
     | pg13 ->
-        pg13_screen.render(w->rc, w->vg, pal)
-        overlay.upscale_nx(w->rc)
+        pg13_screen.render(w.rc, w.vg, pal)
+        overlay.upscale_nx(w.rc)
         return
     | title ->
-        title_screen.render(w->rc, w->vg, pal, w->font, w->hs, w->g->phase_timer)
-        overlay.upscale_nx(w->rc)
+        title_screen.render(w.rc, w.vg, pal, w.font, w.hs, w.g.phase_timer)
+        overlay.upscale_nx(w.rc)
         return
     | main_menu ->
-        menu.render_main(w->rc, w->sm, w->vg, pal, w->font, w->g, w->ac)
-        overlay.upscale_nx(w->rc)
+        menu.render_main(w.rc, w.sm, w.vg, pal, w.font, w.g, w.ac)
+        overlay.upscale_nx(w.rc)
         return
     | intermission ->
-        intermission.render(w->rc, w->vg, pal, w->g)
-        overlay.upscale_nx(w->rc)
+        intermission.render(w.rc, w.vg, pal, w.g)
+        overlay.upscale_nx(w.rc)
         return
     | episode_end ->
-        episode_end.render(w->rc, w->vg, pal, w->font, w->g)
-        overlay.upscale_nx(w->rc)
+        episode_end.render(w.rc, w.vg, pal, w.font, w.g)
+        overlay.upscale_nx(w.rc)
         return
     | endart ->
-        endart_screen.render(w->rc, w->vg, pal, w->font, w->g)
-        overlay.upscale_nx(w->rc)
+        endart_screen.render(w.rc, w.vg, pal, w.font, w.g)
+        overlay.upscale_nx(w.rc)
         return
     | high_scores ->
-        high_scores_screen.render(w->rc, w->vg, pal, w->font, w->hs, w->g->phase_timer)
-        overlay.upscale_nx(w->rc)
+        high_scores_screen.render(w.rc, w.vg, pal, w.font, w.hs, w.g.phase_timer)
+        overlay.upscale_nx(w.rc)
         return
     | death_cam ->
         // Pre-clear fb's top region: low-res viewport overlays (banner
         // text, etc.) draw into fb at alpha=0xFF; the composite step
         // skips alpha=0 sentinel pixels so the high-res raycaster
         // content shows through everywhere else.
-        overlay.clear_view_sentinel(w->rc)
-        death_cam.render(w, vs, pal, w->vg)
-        if !skip_hud then hud.render(w->rc, w->vg, pal, w->g)
-        overlay.render_map(w->rc, w->lv, w->g)
-        overlay.composite_view_overlay(w->rc)
-        if !skip_hud then overlay.composite_hud(w->rc)
+        overlay.clear_view_sentinel(w.rc)
+        death_cam.render(w, vs, pal, w.vg)
+        if !skip_hud then hud.render(w.rc, w.vg, pal, w.g)
+        overlay.render_map(w.rc, w.lv, w.g)
+        overlay.composite_view_overlay(w.rc)
+        if !skip_hud then overlay.composite_hud(w.rc)
         return
     | _ -> void()
     // 3D phases (playing / dying / bj_victory): raycaster and
@@ -1895,43 +1895,43 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const u32[]) ->
     // (SSAA off) or a 2× ssaa_buf that gets box-filtered into dbuf
     // after the weapon render (SSAA on). HUD and low-res viewport
     // overlays go to fb and are composited afterward.
-    overlay.clear_view_sentinel(w->rc)
-    raycaster.render_walls(w->lv, w->rc, w->g, vs, pal)
-    billboards.build(w->lv, w->rc, w->g, vs->sprite_start)
-    billboards.render(w->rc, w->g, vs, pal)
-    player.render_weapon(w->rc, vs, pal, w->g)
+    overlay.clear_view_sentinel(w.rc)
+    raycaster.render_walls(w.lv, w.rc, w.g, vs, pal)
+    billboards.build(w.lv, w.rc, w.g, vs.sprite_start)
+    billboards.render(w.rc, w.g, vs, pal)
+    player.render_weapon(w.rc, vs, pal, w.g)
     // Resolve SSAA buffer into dbuf's viewport region before any
     // viewport tints / dissolves run — those operate on dbuf so we
     // want the downsample to land first. No-op when SSAA is off.
-    overlay.ssaa_downsample(w->rc)
+    overlay.ssaa_downsample(w.rc)
     // Damage / death red overlays — applied over the 3D view, under the HUD.
     // Phase-filtered renderers above return early, so this block only runs
     // during playing or dying. Damage flash is a brief uniform alpha
     // blend; the longer death + respawn transitions use a spatial-hash
     // stipple so the scene fills / clears as speckled grains of red.
     let red_tint = 0x00C00000u32
-    let flash_a = if w->g->damage_flash_timer > 0.0 then
-        w->g->damage_flash_timer / player.damage_flash_time * 0.45
+    let flash_a = if w.g.damage_flash_timer > 0.0 then
+        w.g.damage_flash_timer / player.damage_flash_time * 0.45
     else 0.0
-    if flash_a > 0.0 then overlay.viewport_tint(w->rc, red_tint, flash_a)
-    let stipple_progress = match w->g->phase with
+    if flash_a > 0.0 then overlay.viewport_tint(w.rc, red_tint, flash_a)
+    let stipple_progress = match w.g.phase with
     | dying ->
         // Ramp 0 → 1 over player.death_fade_time, then hold at 1 until
         // player.death_anim_time elapses and the phase transition fires.
-        let t = w->g->phase_timer / player.death_fade_time
+        let t = w.g.phase_timer / player.death_fade_time
         if t > 1.0 then 1.0 else t
     | _ ->
         // Quick uncover back to the new scene on respawn.
-        if w->g->respawn_fade_timer > 0.0 then
-            w->g->respawn_fade_timer / player.respawn_fade_time
+        if w.g.respawn_fade_timer > 0.0 then
+            w.g.respawn_fade_timer / player.respawn_fade_time
         else 0.0
-    overlay.dissolve_stipple(w->rc, red_tint, stipple_progress)
-    if !skip_hud then hud.render(w->rc, w->vg, pal, w->g)
+    overlay.dissolve_stipple(w.rc, red_tint, stipple_progress)
+    if !skip_hud then hud.render(w.rc, w.vg, pal, w.g)
     // hud.render_message writes to fb's viewport region, not the HUD
     // strip — it's composited via composite_view_overlay (always runs),
     // so it must paint every frame or the banner blinks.
-    hud.render_message(w->rc, w->font, w->g)
-    overlay.render_map(w->rc, w->lv, w->g)
+    hud.render_message(w.rc, w.font, w.g)
+    overlay.render_map(w.rc, w.lv, w.g)
     // "GET PSYCHED!" level-entry overlay. The original fills the 3D
     // viewport with the standard background grey (palette 0x7f), draws
     // the pic centered, and paints a progress bar across the bottom of
@@ -1939,21 +1939,21 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const u32[]) ->
     // 0→100% over the hold duration so it reads as genuine progress
     // rather than a static always-full bar. Drawn AFTER hud.render so
     // the status bar stays visible underneath, matching the original.
-    if w->g->get_psyched_timer > 0.0 then
-        pics.render_get_psyched_overlay(w->rc, w->vg, pal,
-            w->g->get_psyched_timer, pics.get_psyched_time)
-    overlay.composite_view_overlay(w->rc)
-    if !skip_hud then overlay.composite_hud(w->rc)
+    if w.g.get_psyched_timer > 0.0 then
+        pics.render_get_psyched_overlay(w.rc, w.vg, pal,
+            w.g.get_psyched_timer, pics.get_psyched_time)
+    overlay.composite_view_overlay(w.rc)
+    if !skip_hud then overlay.composite_hud(w.rc)
     // Pre-intermission fade-to-black: while `next_level` is latched and
     // gameplay is frozen, darken the entire frame linearly as next_level_delay
     // ticks down. Gives the player immediate visual feedback that the
     // elevator/boss activation registered, rather than a silent 1s hitch
     // followed by a sudden jump to the tally screen. Applied AFTER
     // composite so both viewport and HUD fade as one unit.
-    if w->g->next_level && player.elevator_wait_time > 0.0 then
-        let frac = 1.0 - w->g->next_level_delay / player.elevator_wait_time
+    if w.g.next_level && player.elevator_wait_time > 0.0 then
+        let frac = 1.0 - w.g.next_level_delay / player.elevator_wait_time
         let alpha = if frac < 0.0 then 0.0 else if frac > 1.0 then 1.0 else frac
-        overlay.dbuf_tint_full(w->rc, 0x000000u32, alpha)
+        overlay.dbuf_tint_full(w.rc, 0x000000u32, alpha)
 
 
 // ============================================================
@@ -1961,30 +1961,30 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const u32[]) ->
 // ============================================================
 
 let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
-    let g = w->g
+    let g = w.g
     // Apply audio commands a prior command left on the ring (e.g. a `goto`
     // that collected a pickup — it doesn't tick, so nothing pumped it) before
     // this command runs, so audio probes observe them. Ticking commands pump
     // per tick already; this just covers the non-ticking enqueuers.
-    drain_audio_commands(w->ac)
+    drain_audio_commands(w.ac)
     let bad = (expected: const str) ->
         io.write(alloca("bad arg '%s{arg}': expected %s{expected}\n"), stderr)
         void()
     if text.starts_with(arg, "fwd:") then
         match text.parse_i32(arg[4..arg.len]) with
         | some(n) ->
-            g->key_up = true
+            g.key_up = true
             for j in 0..n do
                 tick(w, dt)
-            g->key_up = false
+            g.key_up = false
         | none -> bad("integer tick count")
     else if text.starts_with(arg, "back:") then
         match text.parse_i32(arg[5..arg.len]) with
         | some(n) ->
-            g->key_down = true
+            g.key_down = true
             for j in 0..n do
                 tick(w, dt)
-            g->key_down = false
+            g.key_down = false
         | none -> bad("integer tick count")
     else if text.starts_with(arg, "turnr:") then
         match text.parse_i32(arg[6..arg.len]) with
@@ -1995,7 +1995,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         | some(deg) -> player.rotate_camera(g, (f64) deg * 3.14159265 / 180.0)
         | none -> bad("integer degrees")
     else if arg == "run" then
-        g->key_shift = !g->key_shift
+        g.key_shift = !g.key_shift
     else if text.starts_with(arg, "goto:") then
         let coords = text.split(arg[5..arg.len], ",")
         if coords.len >= 2 then
@@ -2003,53 +2003,53 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             | some(tx) ->
                 match text.parse_i32(coords[1]) with
                 | some(ty) ->
-                    g->pos_x = (f64) tx + 0.5
-                    g->pos_y = (f64) ty + 0.5
+                    g.pos_x = (f64) tx + 0.5
+                    g.pos_y = (f64) ty + 0.5
                 | none -> bad("integer Y coordinate")
             | none -> bad("integer X coordinate")
         else bad("X,Y coordinate pair")
         free(coords)
-        pickups.check(w->lv, g, w->ac)
+        pickups.check(w.lv, g, w.ac)
         // Teleporting bypasses door traversal, so the player's area + the
         // door-connectivity flood would otherwise stay anchored to the spawn
         // area. Recompute both, equivalent to "treat the jump as if the
         // player legally walked here through every open door."
-        areas.update_player_area(w->lv, g)
-        areas.connect(w->lv, g->area_number)
+        areas.update_player_area(w.lv, g)
+        areas.connect(w.lv, g.area_number)
     else if text.starts_with(arg, "sethp:") then
         match text.parse_i32(arg[6..arg.len]) with
-        | some(n) -> g->health = n
+        | some(n) -> g.health = n
         | none -> bad("integer HP value")
     else if text.starts_with(arg, "setweapon:") then
         match text.parse_i32(arg[10..arg.len]) with
-        | some(n) -> g->weapon = n
+        | some(n) -> g.weapon = n
         | none -> bad("integer weapon index (0-3)")
     else if text.starts_with(arg, "setammo:") then
         match text.parse_i32(arg[8..arg.len]) with
-        | some(n) -> g->ammo = n
+        | some(n) -> g.ammo = n
         | none -> bad("integer ammo count")
     else if arg == "fire" then
-        g->key_fire = true
+        g.key_fire = true
         tick(w, dt)
-        g->key_fire = false
+        g.key_fire = false
     else if arg == "facetile" then
         // Mirror the use-key's cardinal quantization (dominant axis
         // wins) so this reports the actual door/elevator/push-wall
         // target, not the raw-heading neighbour.
-        let face_horiz = math.abs(g->dir_x) > math.abs(g->dir_y)
-        let cdx = if face_horiz then (if g->dir_x >= 0.0 then 1 else -1) else 0
-        let cdy = if face_horiz then 0 else (if g->dir_y >= 0.0 then 1 else -1)
-        let fx = (i32) g->pos_x + cdx
-        let fy = (i32) g->pos_y + cdy
+        let face_horiz = math.abs(g.dir_x) > math.abs(g.dir_y)
+        let cdx = if face_horiz then (if g.dir_x >= 0.0 then 1 else -1) else 0
+        let cdy = if face_horiz then 0 else (if g.dir_y >= 0.0 then 1 else -1)
+        let fx = (i32) g.pos_x + cdx
+        let fy = (i32) g.pos_y + cdy
         let ft = if fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
-            (i32) w->lv->tilemap[(i64) fx * 64 + (i64) fy]
+            (i32) w.lv.tilemap[(i64) fx * 64 + (i64) fy]
         else -1
-        let nl = if g->next_level then 1 else 0
+        let nl = if g.next_level then 1 else 0
         io.write("facing=(%d{fx},%d{fy}) tile=%d{ft} next_level=%d{nl}\n", stdout)
         void()
     else if arg == "givekeys" then
-        g->has_gold_key = true
-        g->has_silver_key = true
+        g.has_gold_key = true
+        g.has_silver_key = true
     else if arg == "mli" then
         // Direct-fire the M+L+I cheat effect. In interactive play this is
         // triggered by holding those three keys; test mode has no keyboard,
@@ -2068,18 +2068,18 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         // Force the GET PSYCHED overlay timer so a following ss: captures
         // the full-screen load graphic. Bypasses the normal test_mode gate
         // in pics.trigger_get_psyched.
-        g->get_psyched_timer = pics.get_psyched_time
+        g.get_psyched_timer = pics.get_psyched_time
     else if arg == "gotgatling" then
         // Force the got-gatling face-cell swap so ss: can capture it.
         // Bypasses test_mode. The pic replaces the BJ face in hud.render
         // while the timer is active.
-        g->got_gatling_timer = hud.got_gatling_time
+        g.got_gatling_timer = hud.got_gatling_time
     else if arg == "space" then
-        g->key_space = true
-        g->key_space_handled = false
+        g.key_space = true
+        g.key_space_handled = false
         tick(w, dt)
-        g->key_space = false
-        g->key_space_handled = false
+        g.key_space = false
+        g.key_space_handled = false
     else if text.starts_with(arg, "wait:") then
         match text.parse_i32(arg[5..arg.len]) with
         | some(n) ->
@@ -2087,8 +2087,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                 tick(w, dt)
         | none -> bad("integer tick count")
     else if text.starts_with(arg, "ss:") then
-        w->rc->force_redraw = true
-        render_frame(w, w->ac->vs, pal)
+        w.rc.force_redraw = true
+        render_frame(w, w.ac.vs, pal)
         overlay.save_png(w, arg[3..arg.len])
         io.write(alloca("Saved %s{arg[3..arg.len]}\n"), stdout)
         void()
@@ -2100,7 +2100,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         match text.parse_i32(arg[9..arg.len]) with
         | some(n) ->
             if n >= 2 && n <= 8 then
-                apply_scale_factor(w, w->vg, pal, n)
+                apply_scale_factor(w, w.vg, pal, n)
                 void()
             else bad("scale in [2,8]")
         | none -> bad("integer scale factor")
@@ -2124,12 +2124,12 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         | some(n) ->
             let t0 = sys.time()
             for j in 0..n do
-                render_frame(w, w->ac->vs, pal)
+                render_frame(w, w.ac.vs, pal)
             let t1 = sys.time()
             let total_ms = t1 - t0
             let per_frame = if n > 0 then (f64) total_ms / (f64) n else 0.0
             let fps = if total_ms > 0 then (f64) n * 1000.0 / (f64) total_ms else 0.0
-            io.write("bench scale=%d{w->rc->scale} screen=%d{w->rc->screen_w}x%d{w->rc->screen_h} frames=%d{n} total=%d{total_ms}ms per_frame=%6.3f{per_frame}ms fps=%6.1f{fps}\n", stdout)
+            io.write("bench scale=%d{w.rc.scale} screen=%d{w.rc.screen_w}x%d{w.rc.screen_h} frames=%d{n} total=%d{total_ms}ms per_frame=%6.3f{per_frame}ms fps=%6.1f{fps}\n", stdout)
             void()
         | none -> bad("integer frame count")
     else if text.starts_with(arg, "audiobench:") then
@@ -2144,7 +2144,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             // numbers stay comparable across machines.
             let chunk = 261 + 14
             let sample_rate = 44100i32
-            let ms = font.music_load(w->ac->ad, chunk, (f64) sample_rate)
+            let ms = font.music_load(w.ac.ad, chunk, (f64) sample_rate)
             let frames_per_batch = 1024i32
             let total_frames = n * sample_rate
             let batches = total_frames / frames_per_batch
@@ -2177,33 +2177,33 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         | some(n) ->
             let t0 = sys.time()
             for j in 0..n do
-                overlay.clear_view_sentinel(w->rc)
+                overlay.clear_view_sentinel(w.rc)
             let t1 = sys.time()
             for j in 0..n do
-                raycaster.render_walls(w->lv, w->rc, w->g, w->ac->vs, pal)
+                raycaster.render_walls(w.lv, w.rc, w.g, w.ac.vs, pal)
             let t2 = sys.time()
             for j in 0..n do
-                billboards.build(w->lv, w->rc, w->g, w->ac->vs->sprite_start)
-                billboards.render(w->rc, w->g, w->ac->vs, pal)
+                billboards.build(w.lv, w.rc, w.g, w.ac.vs.sprite_start)
+                billboards.render(w.rc, w.g, w.ac.vs, pal)
             let t3 = sys.time()
             for j in 0..n do
-                player.render_weapon(w->rc, w->ac->vs, pal, w->g)
+                player.render_weapon(w.rc, w.ac.vs, pal, w.g)
             let t4 = sys.time()
             for j in 0..n do
-                overlay.ssaa_downsample(w->rc)
+                overlay.ssaa_downsample(w.rc)
             let t5 = sys.time()
             for j in 0..n do
-                hud.render(w->rc, w->vg, pal, w->g)
-                hud.render_message(w->rc, w->font, w->g)
+                hud.render(w.rc, w.vg, pal, w.g)
+                hud.render_message(w.rc, w.font, w.g)
             let t6 = sys.time()
             for j in 0..n do
-                overlay.composite_view_overlay(w->rc)
+                overlay.composite_view_overlay(w.rc)
             let t7 = sys.time()
             for j in 0..n do
-                overlay.composite_hud(w->rc)
+                overlay.composite_hud(w.rc)
             let t8 = sys.time()
             let nf = (f64) n
-            io.write("benchparts scale=%d{w->rc->scale} ssaa=%d{w->rc->ssaa_mode} frames=%d{n}\n", stdout)
+            io.write("benchparts scale=%d{w.rc.scale} ssaa=%d{w.rc.ssaa_mode} frames=%d{n}\n", stdout)
             io.write("  clear_view_sentinel : %7.3f{(f64) (t1 - t0) / nf}ms\n", stdout)
             io.write("  raycaster.walls     : %7.3f{(f64) (t2 - t1) / nf}ms\n", stdout)
             io.write("  billboards build+ren: %7.3f{(f64) (t3 - t2) / nf}ms\n", stdout)
@@ -2216,17 +2216,17 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             void()
         | none -> bad("integer frame count")
     else if arg == "state" then
-        io.write("pos=(%8.4f{g->pos_x}, %8.4f{g->pos_y}) dir=(%8.4f{g->dir_x}, %8.4f{g->dir_y})\n", stdout)
-        io.write("health=%d{g->health} ammo=%d{g->ammo} score=%d{g->score} lives=%d{g->lives} level=%d{g->level_num} weapon=%d{g->weapon} best=%d{g->best_weapon}\n", stdout)
-        let gk = if g->has_gold_key then 1 else 0
-        let sk = if g->has_silver_key then 1 else 0
-        let gm = if g->god_mode then 1 else 0
-        let ik = if g->idkfa_mode then 1 else 0
+        io.write("pos=(%8.4f{g.pos_x}, %8.4f{g.pos_y}) dir=(%8.4f{g.dir_x}, %8.4f{g.dir_y})\n", stdout)
+        io.write("health=%d{g.health} ammo=%d{g.ammo} score=%d{g.score} lives=%d{g.lives} level=%d{g.level_num} weapon=%d{g.weapon} best=%d{g.best_weapon}\n", stdout)
+        let gk = if g.has_gold_key then 1 else 0
+        let sk = if g.has_silver_key then 1 else 0
+        let gm = if g.god_mode then 1 else 0
+        let ik = if g.idkfa_mode then 1 else 0
         io.write("keys: gold=%d{gk} silver=%d{sk} god=%d{gm} idkfa=%d{ik}\n", stdout)
         void()
     else if arg == "counters" then
         // Kill / secret / treasure counters + level time / par / phase.
-        let phase_s = match g->phase with
+        let phase_s = match g.phase with
         | pg13         -> "pg13"
         | title        -> "title"
         | main_menu    -> "menu"
@@ -2238,10 +2238,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         | episode_end  -> "episode_end"
         | endart       -> "endart"
         | high_scores  -> "high_scores"
-        let par = if g->level_num < 60 then intermission.par_times[g->level_num] else 0
-        io.write(alloca("phase=%s{phase_s} difficulty=%d{g->difficulty}\n"), stdout)
-        io.write("kills=%d{g->kills}/%d{g->total_kills} secrets=%d{g->secrets}/%d{g->total_secrets} treasures=%d{g->treasures}/%d{g->total_treasures}\n", stdout)
-        io.write("time=%6.2f{g->level_time} par=%d{par}\n", stdout)
+        let par = if g.level_num < 60 then intermission.par_times[g.level_num] else 0
+        io.write(alloca("phase=%s{phase_s} difficulty=%d{g.difficulty}\n"), stdout)
+        io.write("kills=%d{g.kills}/%d{g.total_kills} secrets=%d{g.secrets}/%d{g.total_secrets} treasures=%d{g.treasures}/%d{g.total_treasures}\n", stdout)
+        io.write("time=%6.2f{g.level_time} par=%d{par}\n", stdout)
         void()
     else if text.starts_with(arg, "vgrender:") then
         // Render one VGAGRAPH pic to the framebuffer and take a screenshot.
@@ -2252,10 +2252,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             match text.parse_i32(parts[0]) with
             | some(n) ->
                 // Clear the fb black first so metadata is obvious.
-                for i in 0..(w->rc->fb_w * game_h) do
-                    w->rc->fb[i] = 0xFF000000u32
-                pics.draw(w->rc, w->vg, pal, n, 0, 0)
-                png.write(parts[1], w->rc->fb, w->rc->fb_w, game_h, "vg")
+                for i in 0..(w.rc.fb_w * game_h) do
+                    w.rc.fb[i] = 0xFF000000u32
+                pics.draw(w.rc, w.vg, pal, n, 0, 0)
+                png.write(parts[1], w.rc.fb, w.rc.fb_w, game_h, "vg")
                 io.write(alloca("Saved %s{parts[1]}\n"), stdout)
                 void()
             | none -> bad("integer chunk number")
@@ -2264,17 +2264,17 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
     else if text.starts_with(arg, "vgrenderfont:") then
         // Render the entire font ASCII range onto the fb and save. Useful
         // for verifying the font loader extracts correct glyphs.
-        for i in 0..(w->rc->fb_w * game_h) do
-            w->rc->fb[i] = 0xFF000000u32
+        for i in 0..(w.rc.fb_w * game_h) do
+            w.rc.fb[i] = 0xFF000000u32
         let mut py = 8
         let mut px = 8
         for ch in 32..127 do
-            let adv = font.draw_char(w->rc, w->font, px, py, ch, 0xFFFFFFFFu32)
+            let adv = font.draw_char(w.rc, w.font, px, py, ch, 0xFFFFFFFFu32)
             px = px + adv + 1
-            if px > w->rc->fb_w - 16 then
+            if px > w.rc.fb_w - 16 then
                 px = 8
-                py = py + w->font->height + 2
-        png.write(arg[13..arg.len], w->rc->fb, w->rc->fb_w, game_h, "font")
+                py = py + w.font.height + 2
+        png.write(arg[13..arg.len], w.rc.fb, w.rc.fb_w, game_h, "font")
         io.write(alloca("Saved %s{arg[13..arg.len]}\n"), stdout)
         void()
     else if text.starts_with(arg, "vginfo:") then
@@ -2282,64 +2282,64 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         // the decoder produces sane widths/heights after the Huffman expand.
         match text.parse_i32(arg[7..arg.len]) with
         | some(n) ->
-            let { pw, ph } = vgagraph.pic_dims_at(w->vg, n)
-            let off = if n < w->vg->num_chunks then w->vg->offsets[n] else -1i64
+            let { pw, ph } = vgagraph.pic_dims_at(w.vg, n)
+            let off = if n < w.vg.num_chunks then w.vg.offsets[n] else -1i64
             io.write("vgchunk %d{n}: offset=%d{off} width=%d{pw} height=%d{ph}\n", stdout)
             void()
         | none -> bad("integer chunk number")
     else if arg == "vgtable" then
         // Dump the entire picture-dimensions table (STRUCTPIC / chunk 0).
-        for i in 0..w->vg->num_pics do
-            let pw = w->vg->pic_dims[i].width
-            let ph = w->vg->pic_dims[i].height
+        for i in 0..w.vg.num_pics do
+            let pw = w.vg.pic_dims[i].width
+            let ph = w.vg.pic_dims[i].height
             if pw > 0 || ph > 0 then
                 let ch = i + vgagraph.start_pics
                 io.write("pic %d{ch}: %d{pw}x%d{ph}\n", stdout)
         void()
     else if arg == "level_stats" then
         // Dump total enemy/pushwall/treasure counts as counted by build_level.
-        io.write("level_stats: enemies=%d{w->lv->total_enemies} pushwalls=%d{w->lv->total_pushwalls} treasures=%d{w->lv->total_treasures}\n", stdout)
+        io.write("level_stats: enemies=%d{w.lv.total_enemies} pushwalls=%d{w.lv.total_pushwalls} treasures=%d{w.lv.total_treasures}\n", stdout)
         void()
     else if arg == "advance" then
         // Simulates the "press space" that dismisses an intermission /
         // game-over / episode-end / victory screen. Test-mode equivalent of
         // the interactive space-bar path, but collapses animation-skip +
         // advance into one step so scripted tests don't need two hops.
-        if g->phase == game_phase.intermission then
-            if g->inter_stage < 4 then intermission.finish_anim(g)
-            if g->level_num % episode.levels_per == 8 then
+        if g.phase == game_phase.intermission then
+            if g.inter_stage < 4 then intermission.finish_anim(g)
+            if g.level_num % episode.levels_per == 8 then
                 episode_end.enter(g)
             else
-                advance_next_level(w, w->ac->vs)
-        else if g->phase == game_phase.bj_victory then
+                advance_next_level(w, w.ac.vs)
+        else if g.phase == game_phase.bj_victory then
             // BJ cutscene collapses straight to the episode-end screen.
             // Interactive mode auto-advances on its own after the final
             // hold, but tests skip to the end so scripted sequences don't
             // need to pad with wait:200.
             episode_end.enter(g)
-        else if g->phase == game_phase.death_cam then
+        else if g.phase == game_phase.death_cam then
             // Death-cam collapses straight to the episode-end screen,
             // mirroring the natural death_cam.sub.done transition (which
             // skips intermission for boss kills, matching the original's
             // victorious-episode handling).
-            add_score(g, intermission.compute_level_bonus(g), w->ac)
+            add_score(g, intermission.compute_level_bonus(g), w.ac)
             record_level_for_episode(g)
             episode_end.enter(g)
-        else if g->phase == game_phase.episode_end then
+        else if g.phase == game_phase.episode_end then
             // Test-mode advance from episode_end → endart, matching the
             // interactive ack flow. Use `endartnext` / `endart_state` to
             // step pages within the article.
-            let ep = g->level_num / episode.levels_per
-            endart_screen.enter(g, w->vg, ep)
-        else if g->phase == game_phase.endart then
+            let ep = g.level_num / episode.levels_per
+            endart_screen.enter(g, w.vg, ep)
+        else if g.phase == game_phase.endart then
             // Test-mode advance from endart → high-scores screen,
             // matching the interactive Esc / past-last-page flow
             // (which routes through the high-scores check on the
             // way back to the menu in the original).
-            let ep = g->level_num / episode.levels_per
-            high_scores_screen.enter(g, w->hs, high_scores_screen.from_endart,
-                g->score, g->level_num + 1, ep)
-        else if g->phase == game_phase.high_scores then
+            let ep = g.level_num / episode.levels_per
+            high_scores_screen.enter(g, w.hs, high_scores_screen.from_endart,
+                g.score, g.level_num + 1, ep)
+        else if g.phase == game_phase.high_scores then
             // Test-mode advance from high-scores → its source's
             // dismissal target. Death / endart flows return to the
             // title screen (matching the original's title/demo cycle); the
@@ -2347,44 +2347,44 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             // Commits any pending name buffer first so a script that
             // types into hs_name + advance behaves the same as the
             // interactive Enter (which commits + dismisses in one).
-            if w->hs->edit_active then
-                high_scores_screen.commit_name(w->hs)
-            high_scores_screen.dismiss(g, w->hs)
+            if w.hs.edit_active then
+                high_scores_screen.commit_name(w.hs)
+            high_scores_screen.dismiss(g, w.hs)
     else if text.starts_with(arg, "setdifficulty:") then
         // Set difficulty + fully rebuild the current level so spawn filtering
         // reflects it. Useful for testing tier gating (base/+36/+72 tiles).
         match text.parse_i32(arg[14..arg.len]) with
         | some(n) ->
-            g->difficulty = if n < 0 then 0 else if n > 3 then 3 else n
+            g.difficulty = if n < 0 then 0 else if n > 3 then 3 else n
             // Re-run spawn.spawn_enemies on the existing level. Since difficulty
             // only affects which plane-1 enemy tiles spawn, we can clear
             // lv->num_enemies and re-scan without rebuilding the tilemap.
-            w->lv->num_enemies = 0
-            spawn.spawn_enemies(w->lv, w->lv_data, g->difficulty, g->mommy_mode)
+            w.lv.num_enemies = 0
+            spawn.spawn_enemies(w.lv, w.lv_data, g.difficulty, g.mommy_mode)
             // Recount total_enemies so the counters tally correctly.
             let mut alive = 0
-            for i in 0..w->lv->num_enemies do
-                match w->lv->enemies[i].state with
+            for i in 0..w.lv.num_enemies do
+                match w.lv.enemies[i].state with
                 | dead -> void()
                 | _ -> alive = alive + 1
-            w->lv->total_enemies = alive
-            g->total_kills = alive
-            g->kills = 0
+            w.lv.total_enemies = alive
+            g.total_kills = alive
+            g.kills = 0
         | none -> bad("integer difficulty 0-3")
     else if text.starts_with(arg, "setlevel:") then
         match text.parse_i32(arg[9..arg.len]) with
         | some(n) ->
             if n < 0 || n >= 60 then bad("level 0..59")
             else
-                g->level_num = n
-                g->oldscore = g->score   // pin start-of-level for death rewind
-                reload_level_data(w, w->ac->vs)
-                spawn.find_player_start(w->lv_data, g)
-                reset_level_counters(g, w->lv)
-                areas.update_player_area(w->lv, g)
-                areas.connect(w->lv, g->area_number)
-                g->phase = game_phase.playing
-                g->phase_timer = 0.0
+                g.level_num = n
+                g.oldscore = g.score   // pin start-of-level for death rewind
+                reload_level_data(w, w.ac.vs)
+                spawn.find_player_start(w.lv_data, g)
+                reset_level_counters(g, w.lv)
+                areas.update_player_area(w.lv, g)
+                areas.connect(w.lv, g.area_number)
+                g.phase = game_phase.playing
+                g.phase_timer = 0.0
         | none -> bad("integer level")
     else if text.starts_with(arg, "setepisode:") then
         // Jump to the start of episode N (level = N*10), preserving
@@ -2393,15 +2393,15 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         | some(n) ->
             if n < 0 || n >= episode.count then bad("episode 0..5")
             else
-                g->level_num = n * episode.levels_per
-                g->oldscore = g->score   // pin start-of-level for death rewind
-                reload_level_data(w, w->ac->vs)
-                spawn.find_player_start(w->lv_data, g)
-                reset_level_counters(g, w->lv)
-                areas.update_player_area(w->lv, g)
-                areas.connect(w->lv, g->area_number)
-                g->phase = game_phase.playing
-                g->phase_timer = 0.0
+                g.level_num = n * episode.levels_per
+                g.oldscore = g.score   // pin start-of-level for death rewind
+                reload_level_data(w, w.ac.vs)
+                spawn.find_player_start(w.lv_data, g)
+                reset_level_counters(g, w.lv)
+                areas.update_player_area(w.lv, g)
+                areas.connect(w.lv, g.area_number)
+                g.phase = game_phase.playing
+                g.phase_timer = 0.0
         | none -> bad("integer episode 0..5")
     else if text.starts_with(arg, "save:") then
         match text.parse_i32(arg[5..arg.len]) with
@@ -2419,23 +2419,23 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         | some(n) ->
             if n < 0 || n >= save.num_slots then bad("slot 0..%d{save.num_slots - 1}")
             else
-                let ok = save.from_slot(w, w->ac->vs, n)
+                let ok = save.from_slot(w, w.ac.vs, n)
                 io.write(alloca("load slot %d{n}: %s{if ok then "ok" else "failed"}\n"), stdout)
                 void()
         | none -> bad("integer slot")
     else if arg == "listsaves" then
         // Dump the on-disk save slots (label + level + score).
-        save.refresh_slots(w->sm)
+        save.refresh_slots(w.sm)
         for i in 0..save.num_slots do
-            let s = &w->sm->slots[i]
-            if s->empty then
+            let s = &w.sm.slots[i]
+            if s.empty then
                 io.write("slot %d{i}: EMPTY\n", stdout)
                 void()
             else
-                let ep = s->level_num / episode.levels_per + 1
-                let lvl = s->level_num % episode.levels_per + 1
-                let lbl_chars = if s->label.len > 0 then s->label else default(u8[])
-                io.write("slot %d{i}: E%d{ep}M%d{lvl} diff=%d{s->difficulty} score=%d{s->score} label=", stdout)
+                let ep = s.level_num / episode.levels_per + 1
+                let lvl = s.level_num % episode.levels_per + 1
+                let lbl_chars = if s.label.len > 0 then s.label else default(u8[])
+                io.write("slot %d{i}: E%d{ep}M%d{lvl} diff=%d{s.difficulty} score=%d{s.score} label=", stdout)
                 if lbl_chars.len > 0 then io.write(lbl_chars, stdout)
                 io.write("\n", stdout)
                 void()
@@ -2443,18 +2443,18 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
     else if arg == "endepisode" then
         // Force the episode-end path: sets next_level on level 8 of the
         // current episode so the intermission → episode-end flow runs.
-        g->next_level = true
+        g.next_level = true
     else if arg == "kill" then
         // Instant-kill the player (skips the pain sound, goes straight to
         // dying). Mostly used by the regression suite to exercise the
         // death → restart → game-over flow without waiting for the enemy
         // AI to roll a lethal hit. Leaves killer_active false, so the
         // dying-phase camera swing is a no-op.
-        g->health = 0
-        g->phase = game_phase.dying
-        g->phase_timer = 0.0
-        g->killer_active = false
-        sfx.trigger(sfx.id.death_1, w->ac)
+        g.health = 0
+        g.phase = game_phase.dying
+        g.phase_timer = 0.0
+        g.killer_active = false
+        sfx.trigger(sfx.id.death_1, w.ac)
     else if text.starts_with(arg, "killby:") then
         // Like `kill`, but latches a killer position so the dying-phase
         // camera swing has a target to rotate toward. Args are world
@@ -2471,13 +2471,13 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             | some(kx) ->
                 match text.parse_f64(body[comma+1..body.len]) with
                 | some(ky) ->
-                    g->health = 0
-                    g->phase = game_phase.dying
-                    g->phase_timer = 0.0
-                    g->killer_x = kx
-                    g->killer_y = ky
-                    g->killer_active = true
-                    sfx.trigger(sfx.id.death_1, w->ac)
+                    g.health = 0
+                    g.phase = game_phase.dying
+                    g.phase_timer = 0.0
+                    g.killer_x = kx
+                    g.killer_y = ky
+                    g.killer_active = true
+                    sfx.trigger(sfx.id.death_1, w.ac)
                 | none -> bad("X,Y world coords")
             | none -> bad("X,Y world coords")
     else if text.starts_with(arg, "killenemy:") then
@@ -2486,60 +2486,60 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         // score / kills / drops fire the same way a real bullet would.
         match text.parse_i32(arg[10..arg.len]) with
         | some(n) ->
-            if n < 0 || n >= w->lv->num_enemies then bad("enemy index out of range")
+            if n < 0 || n >= w.lv.num_enemies then bad("enemy index out of range")
             else
-                let e = &w->lv->enemies[n]
-                enemies.ai.damage_enemy(w->lv, g, w->ac, e, n, e->hp + 1, w->ac->vs->sprite_start)
+                let e = &w.lv.enemies[n]
+                enemies.ai.damage_enemy(w.lv, g, w.ac, e, n, e.hp + 1, w.ac.vs.sprite_start)
         | none -> bad("integer enemy index")
     else if text.starts_with(arg, "setphase:") then
         // Force a phase transition for test-mode screenshot coverage.
         let p = arg[9..arg.len]
         if p == "pg13" then
-            g->phase = game_phase.pg13
-            g->phase_timer = 0.0
-        else if p == "title" then g->phase = game_phase.title
+            g.phase = game_phase.pg13
+            g.phase_timer = 0.0
+        else if p == "title" then g.phase = game_phase.title
         else if p == "menu" then
-            g->phase = game_phase.main_menu
-            g->menu_level = menu.nav.main
+            g.phase = game_phase.main_menu
+            g.menu_level = menu.nav.main
         else if p == "diffmenu" then
-            g->phase = game_phase.main_menu
-            g->menu_level = menu.nav.difficulty
+            g.phase = game_phase.main_menu
+            g.menu_level = menu.nav.difficulty
         else if p == "epmenu" then
-            g->phase = game_phase.main_menu
-            g->menu_level = menu.nav.episode
+            g.phase = game_phase.main_menu
+            g.menu_level = menu.nav.episode
         else if p == "soundmenu" then
-            g->phase = game_phase.main_menu
-            g->menu_level = menu.nav.sound
+            g.phase = game_phase.main_menu
+            g.menu_level = menu.nav.sound
         else if p == "optionsmenu" then
-            g->phase = game_phase.main_menu
-            g->menu_level = menu.nav.options
+            g.phase = game_phase.main_menu
+            g.menu_level = menu.nav.options
         else if p == "changeview" then
-            g->phase = game_phase.main_menu
-            g->menu_level = menu.nav.changeview
+            g.phase = game_phase.main_menu
+            g.menu_level = menu.nav.changeview
         else if p == "savemenu" then
-            g->phase = game_phase.main_menu
-            g->menu_level = menu.nav.savelist
-            save.refresh_slots(w->sm)
+            g.phase = game_phase.main_menu
+            g.menu_level = menu.nav.savelist
+            save.refresh_slots(w.sm)
         else if p == "loadmenu" then
-            g->phase = game_phase.main_menu
-            g->menu_level = menu.nav.loadlist
-            save.refresh_slots(w->sm)
+            g.phase = game_phase.main_menu
+            g.menu_level = menu.nav.loadlist
+            save.refresh_slots(w.sm)
         else if p == "quitprompt" then
-            g->phase = game_phase.main_menu
-            g->menu_level = menu.nav.quit
-            g->quit_prompt_idx = 0     // deterministic for screenshots
-        else if p == "playing" then g->phase = game_phase.playing
+            g.phase = game_phase.main_menu
+            g.menu_level = menu.nav.quit
+            g.quit_prompt_idx = 0     // deterministic for screenshots
+        else if p == "playing" then g.phase = game_phase.playing
         else if p == "endart" then
             // Enter the per-episode ending article for whichever
             // episode the current level belongs to. The article is
             // already loaded by enter(); tests can drive it via
             // `endartnext` to step pages or `advance` to skip.
-            let ep = g->level_num / episode.levels_per
-            endart_screen.enter(g, w->vg, ep)
+            let ep = g.level_num / episode.levels_per
+            endart_screen.enter(g, w.vg, ep)
         else if p == "viewscores" then
             // High-scores screen reached via the View Scores main-
             // menu entry. Pure display — no insertion, no edit.
-            high_scores_screen.enter(g, w->hs, high_scores_screen.from_menu,
+            high_scores_screen.enter(g, w.hs, high_scores_screen.from_menu,
                 -1, 0, 0)
         else bad("pg13/title/menu/epmenu/diffmenu/soundmenu/optionsmenu/savemenu/loadmenu/playing/endart/viewscores")
     else if arg == "endartnext" then
@@ -2547,17 +2547,17 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         // this is a no-op — matches the interactive forward-past-last
         // behaviour (only Esc / `endartexit` actually leaves the
         // article).
-        if g->phase == game_phase.endart then
+        if g.phase == game_phase.endart then
             endart_screen.next_page(g)
     else if arg == "endartexit" then
         // Simulate Esc on the endart article: returns to the main
         // menu (the only way out of the article in the OG flow).
-        if g->phase == game_phase.endart then
+        if g.phase == game_phase.endart then
             return_to_menu_post_episode(g)
     else if arg == "endart_state" then
         // Dump current article state (page + total). Useful for tests
         // that want to verify the parser found N pages.
-        io.write("endart page=%d{g->endart_page + 1} of %d{g->endart_total_pages}\n", stdout)
+        io.write("endart page=%d{g.endart_page + 1} of %d{g.endart_total_pages}\n", stdout)
         void()
     else if text.starts_with(arg, "hs_qualify:") then
         // Drive the high-scores entry path with a synthetic
@@ -2575,7 +2575,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             let sc = parse(parts[0])
             let lv = parse(parts[1])
             let ep = parse(parts[2])
-            high_scores_screen.enter(g, w->hs, high_scores_screen.from_death, sc, lv, ep)
+            high_scores_screen.enter(g, w.hs, high_scores_screen.from_death, sc, lv, ep)
         else bad("SCORE,LEVEL,EPISODE")
         free(parts)
     else if text.starts_with(arg, "hs_name:") then
@@ -2583,39 +2583,39 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         // any previously-typed bytes). Only meaningful while the screen
         // is in edit mode — does nothing otherwise. Followed by `advance`
         // to commit + dismiss.
-        if w->hs->edit_active then
+        if w.hs.edit_active then
             let nm = arg[8..arg.len]
-            for k in 0..(i32) w->hs->edit_buf.len do
-                w->hs->edit_buf[(i64) k] = 0u8
+            for k in 0..(i32) w.hs.edit_buf.len do
+                w.hs.edit_buf[(i64) k] = 0u8
             let mut n = (i32) nm.len
             if n > highscore.max_name_len then n = highscore.max_name_len
             for k in 0..n do
-                w->hs->edit_buf[(i64) k] = nm[(i64) k]
-            w->hs->edit_len = n
+                w.hs.edit_buf[(i64) k] = nm[(i64) k]
+            w.hs.edit_len = n
     else if arg == "hs_state" then
         // Dump every row of the high-scores table + the current edit
         // state. Useful for verifying default content + post-insert
         // shifts.
-        let edit = if w->hs->edit_active then 1 else 0
-        let idx_disp = match w->hs->edit_index with
+        let edit = if w.hs.edit_active then 1 else 0
+        let idx_disp = match w.hs.edit_index with
             | some(n) -> n
             | none -> -1
         io.write("hs edit=%d{edit} index=%d{idx_disp}", stdout)
-        if w->hs->edit_active then
-            let typed = (const str) w->hs->edit_buf[0..(i64) w->hs->edit_len]
+        if w.hs.edit_active then
+            let typed = (const str) w.hs.edit_buf[0..(i64) w.hs.edit_len]
             io.write(" typed='", stdout)
             if typed.len > 0 then io.write(typed, stdout)
             io.write("'", stdout)
         io.write("\n", stdout)
         for i in 0..highscore.max_scores do
-            let e = &w->hs->scores[i]
+            let e = &w.hs.scores[i]
             let nm = highscore.name_str(e)
-            io.write("score[%d{i}] %d{e->score} L%d{e->completed} E%d{e->episode + 1} ", stdout)
+            io.write("score[%d{i}] %d{e.score} L%d{e.completed} E%d{e.episode + 1} ", stdout)
             if nm.len > 0 then io.write(nm, stdout)
             io.write("\n", stdout)
         void()
     else if arg == "phase" then
-        let phase_s = match g->phase with
+        let phase_s = match g.phase with
         | pg13         -> "pg13"
         | title        -> "title"
         | main_menu    -> "menu"
@@ -2627,24 +2627,24 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         | episode_end  -> "episode_end"
         | endart       -> "endart"
         | high_scores  -> "high_scores"
-        io.write(alloca("phase=%s{phase_s} timer=%6.3f{g->phase_timer} lives=%d{g->lives}\n"), stdout)
+        io.write(alloca("phase=%s{phase_s} timer=%6.3f{g.phase_timer} lives=%d{g.lives}\n"), stdout)
         void()
     else if arg == "music" then
         // Print the AUDIOT chunk that would be playing for the current phase.
         // Lets the regression suite verify menu / intermission / victory tracks
         // without needing an open audio device.
-        let chunk = font.music_chunk_for_phase(g->phase, g->level_num)
+        let chunk = font.music_chunk_for_phase(g.phase, g.level_num)
         io.write("music chunk=%d{chunk} (audiot offset=%d{chunk - 261})\n", stdout)
         void()
     else if arg == "prefs" then
         // Dump the current persistent preferences (loaded from
         // `$WOLF_FC_HOME/config` at startup, defaults when missing).
-        let m = if w->ac->music_on then 1 else 0
-        let s = if w->ac->sfx_on then 1 else 0
-        let d = if w->ac->digi_on then 1 else 0
-        let nd = if g->mommy_mode then 1 else 0
-        let sm = if g->show_map then 1 else 0
-        io.write("prefs music=%d{m} sfx=%d{s} digi=%d{d} sfx_gain=%d{w->ac->sfx_gain_pct} digi_gain=%d{w->ac->digi_gain_pct} music_gain=%d{w->ac->music_gain_pct} mommy_mode=%d{nd} shadow_depth=%d{g->shadow_depth} bj_speed_pct=%d{g->bj_speed_pct} enemy_speed_pct=%d{g->enemy_speed_pct} show_map=%d{sm}\n", stdout)
+        let m = if w.ac.music_on then 1 else 0
+        let s = if w.ac.sfx_on then 1 else 0
+        let d = if w.ac.digi_on then 1 else 0
+        let nd = if g.mommy_mode then 1 else 0
+        let sm = if g.show_map then 1 else 0
+        io.write("prefs music=%d{m} sfx=%d{s} digi=%d{d} sfx_gain=%d{w.ac.sfx_gain_pct} digi_gain=%d{w.ac.digi_gain_pct} music_gain=%d{w.ac.music_gain_pct} mommy_mode=%d{nd} shadow_depth=%d{g.shadow_depth} bj_speed_pct=%d{g.bj_speed_pct} enemy_speed_pct=%d{g.enemy_speed_pct} show_map=%d{sm}\n", stdout)
         void()
     else if arg == "digi_slots" then
         // Dump the digi-mixer slot table. Verifies dedup behavior:
@@ -2652,9 +2652,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         // slot rather than fan out across all four mixer voices.
         let mut active = 0
         for i in 0..4 do
-            let s = &w->ac->digi->slots[i]
-            if s->playing then active = active + 1
-            io.write("slot %d{i}: playing=%d{if s->playing then 1 else 0} sound=%d{s->sound_num}\n", stdout)
+            let s = &w.ac.digi.slots[i]
+            if s.playing then active = active + 1
+            io.write("slot %d{i}: playing=%d{if s.playing then 1 else 0} sound=%d{s.sound_num}\n", stdout)
         io.write("active=%d{active}\n", stdout)
         void()
     else if arg == "dcsprite" then
@@ -2662,15 +2662,15 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         // would use. Layout is in dbuf-cell units; a regression that
         // re-introduces the fb-vs-dbuf coordinate mixup (small sprite in
         // the upper-left corner) shifts these values.
-        let l = death_cam.compute_sprite_layout(w->rc)
-        io.write("dcsprite dx=%d{l.dx} dy=%d{l.dy} dw=%d{l.dw} dh=%d{l.dh} screen_w=%d{w->rc->screen_w} view_render_h=%d{w->rc->view_render_h}\n", stdout)
+        let l = death_cam.compute_sprite_layout(w.rc)
+        io.write("dcsprite dx=%d{l.dx} dy=%d{l.dy} dw=%d{l.dw} dh=%d{l.dh} screen_w=%d{w.rc.screen_w} view_render_h=%d{w.rc.view_render_h}\n", stdout)
         void()
     else if arg == "probe" then
         // Diagnostic: why can't the player move from their current position?
         // Prints the bbox tiles, any wall/door blocking each, and every live
         // enemy within 2 tiles of the player with their distance and tile.
-        let px = g->pos_x
-        let py = g->pos_y
+        let px = g.pos_x
+        let py = g.pos_y
         let xl = (i32) (px - player.radius)
         let xr = (i32) (px + player.radius)
         let yl = (i32) (py - player.radius)
@@ -2678,17 +2678,17 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         io.write("probe pos=(%7.3f{px}, %7.3f{py}) bbox_tiles: x[%d{xl}..%d{xr}] y[%d{yl}..%d{yh}]\n", stdout)
         for tx in xl..(xr + 1) do
             for ty in yl..(yh + 1) do
-                let ti = (i32) w->lv->tilemap[(i64) tx * 64 + (i64) ty]
+                let ti = (i32) w.lv.tilemap[(i64) tx * 64 + (i64) ty]
                 let dstate = if ti < 128 then "open"
-                    else match w->lv->doors[ti - 128].state with
+                    else match w.lv.doors[ti - 128].state with
                     | closed  -> "DOOR:closed"
                     | opening -> "DOOR:opening"
                     | open    -> "DOOR:open"
                     | closing -> "DOOR:closing"
                 let solid = if ti >= 1 && ti <= 63 then "WALL" else dstate
                 io.write(alloca("  tile (%d{tx},%d{ty}) = %d{ti} (%s{solid})\n"), stdout)
-        for i in 0..w->lv->num_enemies do
-            let e = w->lv->enemies[i]
+        for i in 0..w.lv.num_enemies do
+            let e = w.lv.enemies[i]
             match e.state with
             | dead | die -> void()
             | _ ->
@@ -2715,8 +2715,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                     | clyde   -> "clyde"
                     | inky    -> "inky"
                     io.write(alloca("  enemy[%d{i}] %s{ks} tile(%d{e.tile_x},%d{e.tile_y}) pos(%6.3f{e.x},%6.3f{e.y}) d=%5.3f{d}\n"), stdout)
-        for i in 0..w->lv->num_sprites do
-            let s = w->lv->sprites[i]
+        for i in 0..w.lv.num_sprites do
+            let s = w.lv.sprites[i]
             if !s.alive then continue
             let dx = s.x - px
             let dy = s.y - py
@@ -2731,15 +2731,15 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         // that enemies.ai.select_path_dir applies the override.
         for y in 0..map_size do
             for x in 0..map_size do
-                let v = (i32) w->lv->path_arrows[(i64) x * 64 + (i64) y]
+                let v = (i32) w.lv.path_arrows[(i64) x * 64 + (i64) y]
                 if v != dir.nodir then
                     io.write("arrow (%d{x},%d{y}) dir=%d{v}\n", stdout)
         void()
     else if arg == "enemylist" then
         // Per-enemy dump: grid position, kind, state, dir. Handy to locate
         // a specific enemy for a scripted screenshot or attack test.
-        for i in 0..w->lv->num_enemies do
-            let e = w->lv->enemies[i]
+        for i in 0..w.lv.num_enemies do
+            let e = w.lv.enemies[i]
             let ks = match e.kind with
             | guard   -> "guard"
             | officer -> "officer"
@@ -2766,7 +2766,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             | pain  -> "pain"
             | die   -> "die"
             | dead  -> "dead"
-            let area = (i32) w->lv->tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
+            let area = (i32) w.lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
             io.write(alloca("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp} area=%d{area} vis=%d{(i32) e.last_visible}\n"), stdout)
         void()
     else if arg == "pickups" then
@@ -2778,8 +2778,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         //   [slot] (tx,ty) kind=<kind>
         // followed by a count line.
         let mut count = 0
-        for i in 0..w->lv->num_sprites do
-            let s = w->lv->sprites[i]
+        for i in 0..w.lv.num_sprites do
+            let s = w.lv.sprites[i]
             if !s.alive then continue
             let ks = match s.item_type with
             | decoration -> ""
@@ -2812,7 +2812,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         let mut count = 0
         for y in 0..map_size do
             for x in 0..map_size do
-                if w->lv->exit_tiles[(i64) x * 64 + (i64) y] then
+                if w.lv.exit_tiles[(i64) x * 64 + (i64) y] then
                     io.write("exit: %d{x},%d{y}\n", stdout)
                     count = count + 1
         io.write("exittiles: count=%d{count}\n", stdout)
@@ -2822,8 +2822,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         // Buckets: 0=guard, 1=officer, 2=ss, 3=dog, 4=mutant, 5=boss, 6=ghost.
         let by_kind = i32[7] { 0, 0, 0, 0, 0, 0, 0 }
         let by_state = i32[7] { 0, 0, 0, 0, 0, 0, 0 }
-        for i in 0..w->lv->num_enemies do
-            let e = w->lv->enemies[i]
+        for i in 0..w.lv.num_enemies do
+            let e = w.lv.enemies[i]
             let ki = match e.kind with
             | guard -> 0
             | officer -> 1
@@ -2843,7 +2843,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             | die -> 5
             | dead -> 6
             by_state[si] = by_state[si] + 1
-        io.write("enemies: total=%d{w->lv->num_enemies}\n", stdout)
+        io.write("enemies: total=%d{w.lv.num_enemies}\n", stdout)
         io.write("  kind: guard=%d{by_kind[0]} officer=%d{by_kind[1]} ss=%d{by_kind[2]} dog=%d{by_kind[3]} mutant=%d{by_kind[4]} boss=%d{by_kind[5]} ghost=%d{by_kind[6]}\n", stdout)
         io.write("  state: stand=%d{by_state[0]} path=%d{by_state[1]} chase=%d{by_state[2]} shoot=%d{by_state[3]} pain=%d{by_state[4]} die=%d{by_state[5]} dead=%d{by_state[6]}\n", stdout)
         void()
@@ -2854,15 +2854,15 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         // spawn visible projectiles instead of hitscanning.
         let mut alive = 0
         for i in 0..projectiles.max_projectiles do
-            let p = &w->lv->projectiles[i]
-            if !p->alive then continue
+            let p = &w.lv.projectiles[i]
+            if !p.alive then continue
             alive = alive + 1
-            let ks = match p->kind with
+            let ks = match p.kind with
             | needle -> "needle"
             | rocket -> "rocket"
             | fire   -> "fire"
             | boom   -> "boom"
-            io.write(alloca("  proj[%d{i}] %s{ks} pos(%6.3f{p->x},%6.3f{p->y}) ang=%5.3f{p->angle} frame=%d{p->anim_frame}\n"), stdout)
+            io.write(alloca("  proj[%d{i}] %s{ks} pos(%6.3f{p.x},%6.3f{p.y}) ang=%5.3f{p.angle} frame=%d{p.anim_frame}\n"), stdout)
         io.write("projectiles: alive=%d{alive}\n", stdout)
         void()
     else
@@ -2908,7 +2908,7 @@ let menu_code = (m: menu.nav) ->
 // path rather than a bypass. Single-consumer either way.
 let drain_audio_commands = (ac: audio_ctx*) ->
     loop
-        match spsc.dequeue(ac->cmd_ring) with
+        match spsc.dequeue(ac.cmd_ring) with
         | some(c) ->
             if c.kind == audio_q.play_sfx then
                 sfx.apply_trigger(c.sfx_id, ac, c.pan, c.gain)
@@ -2918,14 +2918,14 @@ let drain_audio_commands = (ac: audio_ctx*) ->
                     // Demote the current track to crossfade out. If a prior
                     // crossfade is still in flight (rapid double-swap), retire
                     // that older outgoing player back to the main thread now.
-                    match ac->music_prev with
+                    match ac.music_prev with
                     | some(old) ->
-                        spsc.enqueue(ac->free_ring, old)
+                        spsc.enqueue(ac.free_ring, old)
                         void()
                     | none -> void()
-                    ac->music_prev = ac->music
-                    ac->music_xfade = if ac->music.is_some then music_xfade_samples else 0
-                    ac->music = some(np)
+                    ac.music_prev = ac.music
+                    ac.music_xfade = if ac.music.is_some then music_xfade_samples else 0
+                    ac.music = some(np)
                 | none -> void()
         | none -> break
 
@@ -2945,31 +2945,31 @@ let drain_audio_commands = (ac: audio_ctx*) ->
 let audio_callback = (userdata: any*, stream: u8*, len: i32) ->
     let ac = (audio_ctx*) userdata
     // Diagnostic heartbeat: publish that this callback fired (see audio_ctx).
-    atomic_store_release(&ac->cb_count, ac->cb_count + 1i64)
+    atomic_store_release(&ac.cb_count, ac.cb_count + 1i64)
     // Apply pending main-thread requests on this (audio) thread.
     drain_audio_commands(ac)
     let mut frames = len / 4
-    let cap = (i32) ac->mix_buf.len / 2
+    let cap = (i32) ac.mix_buf.len / 2
     if frames > cap then frames = cap     // safety net; never trips at 1024
     let out = i16[] { ptr = (i16*) stream, len = (i64) (frames * 2) }
-    let xfade_before = ac->music_xfade
-    ac->music_xfade = mixer.fill_frame(ac->mix_buf, out,
-        ac->music, ac->music_prev, atomic_load_acquire(&ac->music_on),
-        (f64) atomic_load_acquire(&ac->music_gain_pct) / 100.0,
-        ac->music_xfade, music_xfade_samples,
-        ac->sfx,  (f64) atomic_load_acquire(&ac->sfx_gain_pct)  / 100.0,
-        ac->digi, (f64) atomic_load_acquire(&ac->digi_gain_pct) / 100.0,
-        frames, ac->sample_rate)
+    let xfade_before = ac.music_xfade
+    ac.music_xfade = mixer.fill_frame(ac.mix_buf, out,
+        ac.music, ac.music_prev, atomic_load_acquire(&ac.music_on),
+        (f64) atomic_load_acquire(&ac.music_gain_pct) / 100.0,
+        ac.music_xfade, music_xfade_samples,
+        ac.sfx,  (f64) atomic_load_acquire(&ac.sfx_gain_pct)  / 100.0,
+        ac.digi, (f64) atomic_load_acquire(&ac.digi_gain_pct) / 100.0,
+        frames, ac.sample_rate)
     // A crossfade that just finished means music_prev is silent and untouched
     // from here on — hand it back to the main thread to free.
-    if xfade_before > 0 && ac->music_xfade == 0 then
-        match ac->music_prev with
+    if xfade_before > 0 && ac.music_xfade == 0 then
+        match ac.music_prev with
         | some(old) ->
-            spsc.enqueue(ac->free_ring, old)
-            ac->music_prev = none(imf.player*)
+            spsc.enqueue(ac.free_ring, old)
+            ac.music_prev = none(imf.player*)
         | none -> void()
     // Publish AdLib-busy for the main thread's use-key rhythm gate.
-    atomic_store_release(&ac->adlib_busy_flag, ac->sfx->active)
+    atomic_store_release(&ac.adlib_busy_flag, ac.sfx.active)
     void()
 
 // ============================================================
@@ -3071,7 +3071,7 @@ let main = (args: str[]) ->
     let p_vswap = data_path.wl6(data_dir, "VSWAP.WL6")
     defer free(p_vswap)
     let vs = vswap.load(p_vswap)
-    io.write("  chunks=%d{vs->num_chunks}, sprites@%d{vs->sprite_start}, sounds@%d{vs->sound_start}\n", stdout)
+    io.write("  chunks=%d{vs.num_chunks}, sprites@%d{vs.sprite_start}, sounds@%d{vs.sound_start}\n", stdout)
 
     io.write("Loading audio...\n", stdout)
     let p_audhed = data_path.wl6(data_dir, "AUDIOHED.WL6")
@@ -3079,7 +3079,7 @@ let main = (args: str[]) ->
     let p_audt = data_path.wl6(data_dir, "AUDIOT.WL6")
     defer free(p_audt)
     let ad = audio.load(p_audhed, p_audt)
-    io.write("  audio chunks=%d{ad->num_chunks}\n", stdout)
+    io.write("  audio chunks=%d{ad.num_chunks}\n", stdout)
 
     io.write("Loading VGAGRAPH...\n", stdout)
     let p_vgadict = data_path.wl6(data_dir, "VGADICT.WL6")
@@ -3089,7 +3089,7 @@ let main = (args: str[]) ->
     let p_vgagraph = data_path.wl6(data_dir, "VGAGRAPH.WL6")
     defer free(p_vgagraph)
     let vg = vgagraph.load(p_vgadict, p_vgahead, p_vgagraph)
-    io.write("  vga chunks=%d{vg->num_chunks}, pics=%d{vg->num_pics}\n", stdout)
+    io.write("  vga chunks=%d{vg.num_chunks}, pics=%d{vg.num_pics}\n", stdout)
 
     io.write("Loading level 0...\n", stdout)
     let p_maphead0 = data_path.wl6(data_dir, "MAPHEAD.WL6")
@@ -3097,7 +3097,7 @@ let main = (args: str[]) ->
     let p_gamemaps0 = data_path.wl6(data_dir, "GAMEMAPS.WL6")
     defer free(p_gamemaps0)
     let lv_data = maps.load(p_maphead0, p_gamemaps0, 0)
-    io.write("  map %d{lv_data->width}x%d{lv_data->height}\n", stdout)
+    io.write("  map %d{lv_data.width}x%d{lv_data.height}\n", stdout)
 
     // Persistent user preferences (sound toggles for now; key bindings
     // and screen settings later). Read from `~/.wolf-fc/config`; missing
@@ -3253,14 +3253,14 @@ let main = (args: str[]) ->
         rng_face = random.pcg_random.make_with_channel(rng_seed, hud.rng_channel)
     })!
     spawn.find_player_start(lv_data, g)
-    io.write("  player at (%4.1f{g->pos_x}, %4.1f{g->pos_y})\n", stdout)
+    io.write("  player at (%4.1f{g.pos_x}, %4.1f{g.pos_y})\n", stdout)
 
     // Sound system (valid in all modes; in --test and --screenshot nothing
     // actually reaches the speakers because SDL audio isn't opened, but
     // sfx.trigger / digi.fill work over this same ctx either way).
     let w = alloc(world {
         g = g,
-        lv = build_level(lv_data, vs->sprite_start, g->difficulty, g->mommy_mode),
+        lv = build_level(lv_data, vs.sprite_start, g.difficulty, g.mommy_mode),
         lv_data = lv_data,
         rc = build_render_ctx(vg, pal, fb_w, game_h, 2, cfg.ssaa_mode),
         ac = alloc(audio_ctx {
@@ -3298,23 +3298,23 @@ let main = (args: str[]) ->
         font = font.load(vg, pics.id.font_small)
     })!
     // Initial per-level counters mirror what was tallied during build_level.
-    g->total_kills = w->lv->total_enemies
-    g->total_secrets = w->lv->total_pushwalls
-    g->total_treasures = w->lv->total_treasures
+    g.total_kills = w.lv.total_enemies
+    g.total_secrets = w.lv.total_pushwalls
+    g.total_treasures = w.lv.total_treasures
     // Now that both player position and level areas exist, anchor the
     // player's area + the area_by_player set. The original does this on
     // level load: only the player's starting area is initially marked
     // reachable, since all doors begin closed and area_connect is 0.
-    areas.update_player_area(w->lv, g)
-    areas.connect(w->lv, g->area_number)
+    areas.update_player_area(w.lv, g)
+    areas.connect(w.lv, g.area_number)
 
     // --cheat: pre-activate IDDQD + IDKFA so they're live from the first
     // frame, regardless of whether the player enters a game via --level,
     // the NEW GAME menu, or --test. The IDKFA latch feeds reset_for_life,
     // so the player gets re-kitted after every death too.
     if arg_cheat then
-        g->god_mode = true
-        g->idkfa_mode = true
+        g.god_mode = true
+        g.idkfa_mode = true
         give_full_kit(g)
 
     // --difficulty N / --level N: skip the title sequence and jump the
@@ -3322,43 +3322,43 @@ let main = (args: str[]) ->
     // mode so scripts can start on any level without a `setlevel:` prefix.
     match start_difficulty with
     | some(d) ->
-        g->difficulty = d
+        g.difficulty = d
         // Rebuild enemies with the new difficulty tier. reload_level_data
         // reads g->difficulty, so it's enough to just re-run it.
         reload_level_data(w, vs)
-        spawn.find_player_start(w->lv_data, g)
-        reset_level_counters(g, w->lv)
-        areas.update_player_area(w->lv, g)
-        areas.connect(w->lv, g->area_number)
+        spawn.find_player_start(w.lv_data, g)
+        reset_level_counters(g, w.lv)
+        areas.update_player_area(w.lv, g)
+        areas.connect(w.lv, g.area_number)
     | none -> void()
     match start_level with
     | some(lvl) ->
-        g->level_num = lvl
+        g.level_num = lvl
         reload_level_data(w, vs)
-        spawn.find_player_start(w->lv_data, g)
-        reset_level_counters(g, w->lv)
-        areas.update_player_area(w->lv, g)
-        areas.connect(w->lv, g->area_number)
-        g->phase = game_phase.playing
-        g->has_active_game = true
+        spawn.find_player_start(w.lv_data, g)
+        reset_level_counters(g, w.lv)
+        areas.update_player_area(w.lv, g)
+        areas.connect(w.lv, g.area_number)
+        g.phase = game_phase.playing
+        g.has_active_game = true
         pics.trigger_get_psyched(g)
     | none -> void()
     if start_near_boss then
-        spawn.near_boss(w->lv, w->g)
-        areas.update_player_area(w->lv, g)
-        areas.connect(w->lv, g->area_number)
+        spawn.near_boss(w.lv, w.g)
+        areas.update_player_area(w.lv, g)
+        areas.connect(w.lv, g.area_number)
     if start_near_goldkey then
-        spawn.near_goldkey(w->lv, w->g)
-        areas.update_player_area(w->lv, g)
-        areas.connect(w->lv, g->area_number)
+        spawn.near_goldkey(w.lv, w.g)
+        areas.update_player_area(w.lv, g)
+        areas.connect(w.lv, g.area_number)
     if start_near_silverkey then
-        spawn.near_silverkey(w->lv, w->g)
-        areas.update_player_area(w->lv, g)
-        areas.connect(w->lv, g->area_number)
+        spawn.near_silverkey(w.lv, w.g)
+        areas.update_player_area(w.lv, g)
+        areas.connect(w.lv, g.area_number)
     if start_near_gibs then
-        spawn.near_gibs(w->lv, w->g)
-        areas.update_player_area(w->lv, g)
-        areas.connect(w->lv, g->area_number)
+        spawn.near_gibs(w.lv, w.g)
+        areas.update_player_area(w.lv, g)
+        areas.connect(w.lv, g.area_number)
 
     // Test mode: process scripted commands, no SDL needed. Skip the
     // title/menu entry flow — tests start directly in playing so
@@ -3370,8 +3370,8 @@ let main = (args: str[]) ->
     for i in 1..(i32) args.len do
         if test_idx < 0 && args[(i64) i] == "--test" then test_idx = i
     if test_mode then
-        g->phase = game_phase.playing
-        g->has_active_game = true
+        g.phase = game_phase.playing
+        g.has_active_game = true
         let test_dt = 1.0 / 35.0
         for ti in (test_idx + 1)..(i32) args.len do
             if args[(i64) ti] == "--mommy-mode" then continue
@@ -3427,8 +3427,8 @@ let main = (args: str[]) ->
     // safe initial size — fullscreen-desktop ignores it, and on WSL
     // we maximize immediately, so this only affects the brief window
     // creation moment.
-    let initial_screen_w = w->rc->screen_w
-    let initial_actual_h = (w->rc->fb_h * 12 / 10) * w->rc->scale
+    let initial_screen_w = w.rc.screen_w
+    let initial_actual_h = (w.rc.fb_h * 12 / 10) * w.rc.scale
     let fullscreen_flag = if on_wsl then 0u32 else sdl2.window_fullscreen_desktop
     let flags = sdl2.window_shown | sdl2.window_resizable
         | sdl2.window_allow_highdpi | fullscreen_flag
@@ -3493,18 +3493,18 @@ let main = (args: str[]) ->
         out_h = next_h
         sdl2.delay(20u32)
         wait_ms = wait_ms + 20u32
-    let optimal_scale = pick_scale_factor(out_w, out_h, w->rc->fb_w, w->rc->fb_h, max_scale, g->scale_factor)
-    if g->scale_factor != 0 then
+    let optimal_scale = pick_scale_factor(out_w, out_h, w.rc.fb_w, w.rc.fb_h, max_scale, g.scale_factor)
+    if g.scale_factor != 0 then
         io.write("Renderer output %d{out_w}x%d{out_h} -> super-sample %d{optimal_scale}x (manual)\n", stdout)
     else
         io.write("Renderer output %d{out_w}x%d{out_h} -> super-sample %d{optimal_scale}x (cap %d{max_scale}x)\n", stdout)
     apply_scale_factor(w, vg, pal, optimal_scale)
-    w->rc->drawable_w = out_w
-    w->rc->drawable_h = out_h
+    w.rc.drawable_w = out_w
+    w.rc.drawable_h = out_h
     // Vsync interval — drives the frame-pacing snap and the overlay budget.
-    w->rc->refresh_interval_ms = query_refresh_interval_ms(win)
-    if w->rc->refresh_interval_ms > 0.0 then
-        io.write("Display: %4.1f{1000.0 / w->rc->refresh_interval_ms} Hz (%4.1f{w->rc->refresh_interval_ms} ms frame interval)\n", stdout)
+    w.rc.refresh_interval_ms = query_refresh_interval_ms(win)
+    if w.rc.refresh_interval_ms > 0.0 then
+        io.write("Display: %4.1f{1000.0 / w.rc.refresh_interval_ms} Hz (%4.1f{w.rc.refresh_interval_ms} ms frame interval)\n", stdout)
     else
         io.write("Display: refresh rate unknown — frame-pacing snap off, debug overlay budget falls back to measured cadence\n", stdout)
     // Active SDL video backend — wayland vs x11 (XWayland) matters for the
@@ -3513,9 +3513,9 @@ let main = (args: str[]) ->
     io.write(alloca("Video driver: %s{(const str) sdl2.current_video_driver()}\n"), stdout)
     // Mutable so the Change View menu can resize on the fly when
     // fb_w changes (the SS factor is sticky across view-mode changes).
-    let mut runtime_screen_w = w->rc->screen_w
-    let mut runtime_screen_h = w->rc->screen_h
-    let mut runtime_actual_h = (w->rc->fb_h * 12 / 10) * w->rc->scale
+    let mut runtime_screen_w = w.rc.screen_w
+    let mut runtime_screen_h = w.rc.screen_h
+    let mut runtime_actual_h = (w.rc.fb_h * 12 / 10) * w.rc.scale
     sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
 
     // Streaming texture at the chosen supersample dims.
@@ -3541,10 +3541,10 @@ let main = (args: str[]) ->
     // its sole mutator: the main loop only posts commands onto the lock-free
     // cmd_ring (see audio_callback), so it never blocks on the audio thread.
     let mut spec = sdl2.audio_spec {
-        freq = w->ac->sample_rate, format = sdl2.audio_s16sys,
+        freq = w.ac.sample_rate, format = sdl2.audio_s16sys,
         channels = 2u8, silence = 0u8, samples = (u16) audio_buffer_frames,
         padding = 0u16, size = 0u32,
-        callback = &audio_callback, userdata = (any*) w->ac
+        callback = &audio_callback, userdata = (any*) w.ac
     }
     let mut obtained = default(sdl2.audio_spec)
     let audio_dev = sdl2.open_audio(default(any*), 0, &spec, &obtained, 0)
@@ -3567,10 +3567,10 @@ let main = (args: str[]) ->
     else
         diag.mark(diag_file, diag_start, "audio: device FAILED — silent")
     if audio_dev > 0u32 then
-        let init_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
-        if init_chunk < ad->num_chunks then
-            w->ac->music = some(font.music_load(ad, init_chunk, (f64) w->ac->sample_rate))
-            w->ac->music_chunk = init_chunk
+        let init_chunk = font.music_chunk_for_phase(g.phase, g.level_num)
+        if init_chunk < ad.num_chunks then
+            w.ac.music = some(font.music_load(ad, init_chunk, (f64) w.ac.sample_rate))
+            w.ac.music_chunk = init_chunk
         sdl2.pause_audio(audio_dev, 0)
         diag.mark(diag_file, diag_start, "audio: unpaused (callback live)")
     // Fresh screenshot directory each session — user copies any they want to keep.
@@ -3595,14 +3595,14 @@ let main = (args: str[]) ->
 
     loop
         if !running then break
-        if g->want_quit then break
+        if g.want_quit then break
 
         // Diagnostic heartbeat (no-op unless $WOLF_FC_DIAG). Last beat before
         // a freeze names the frame + phase + menu we hung in; a `cb` that
         // stops advancing across beats means the audio thread stalled.
         diag_frame = diag_frame + 1i64
-        diag.beat(diag_file, diag_start, diag_frame, phase_code(g->phase),
-                  menu_code(g->menu_level), atomic_load_acquire(&w->ac->cb_count))
+        diag.beat(diag_file, diag_start, diag_frame, phase_code(g.phase),
+                  menu_code(g.menu_level), atomic_load_acquire(&w.ac.cb_count))
 
         // Delta time
         let now = sdl2.get_ticks()
@@ -3622,8 +3622,8 @@ let main = (args: str[]) ->
         // them to 16.67/33.3 would systematically run the sim fast or slow. In
         // that case leave dt raw (the honest elapsed time). Only active when
         // the refresh rate is known (refresh_interval_ms > 0).
-        if w->rc->refresh_interval_ms > 0.0 then
-            let interval_s = w->rc->refresh_interval_ms / 1000.0
+        if w.rc.refresh_interval_ms > 0.0 then
+            let interval_s = w.rc.refresh_interval_ms / 1000.0
             let n = (i32) (dt / interval_s + 0.5)
             if n >= 1 then
                 let snapped = (f64) n * interval_s
@@ -3642,9 +3642,9 @@ let main = (args: str[]) ->
             (f64) (now_perf - last_perf) / (f64) perf_freq * 1000.0
         else 0.0
         last_perf = now_perf
-        overlay.debug_update_timing(w->rc, frame_ms, prev_work_ms)
+        overlay.debug_update_timing(w.rc, frame_ms, prev_work_ms)
 
-        w->rc->frame_counter = w->rc->frame_counter + 1u64
+        w.rc.frame_counter = w.rc.frame_counter + 1u64
         // Tracks "user did something this iteration" — used by the
         // should_render predicate below to keep menu / static-phase
         // input response crisp even when the half-rate skip is active.
@@ -3671,17 +3671,17 @@ let main = (args: str[]) ->
             if t == sdl2.windowevent
                 && event.window.event == sdl2.windowevent_size_changed then
                 let { new_out_w, new_out_h } = renderer_output_size(ren)
-                w->rc->drawable_w = new_out_w
-                w->rc->drawable_h = new_out_h
+                w.rc.drawable_w = new_out_w
+                w.rc.drawable_h = new_out_h
                 // The window may have crossed to a different-refresh display.
-                w->rc->refresh_interval_ms = query_refresh_interval_ms(win)
-                let new_scale = pick_scale_factor(new_out_w, new_out_h, w->rc->fb_w, w->rc->fb_h, max_scale, g->scale_factor)
+                w.rc.refresh_interval_ms = query_refresh_interval_ms(win)
+                let new_scale = pick_scale_factor(new_out_w, new_out_h, w.rc.fb_w, w.rc.fb_h, max_scale, g.scale_factor)
                 if apply_scale_factor(w, vg, pal, new_scale) then
                     io.write("Drawable %d{new_out_w}x%d{new_out_h} -> super-sample %d{new_scale}x\n", stdout)
                     sdl2.destroy_texture(tex)
-                    runtime_screen_w = w->rc->screen_w
-                    runtime_screen_h = w->rc->screen_h
-                    runtime_actual_h = (w->rc->fb_h * 12 / 10) * w->rc->scale
+                    runtime_screen_w = w.rc.screen_w
+                    runtime_screen_h = w.rc.screen_h
+                    runtime_actual_h = (w.rc.fb_h * 12 / 10) * w.rc.scale
                     tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
                         sdl2.tex_streaming, runtime_screen_w, runtime_screen_h)
                     sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
@@ -3700,8 +3700,8 @@ let main = (args: str[]) ->
                 // they hit, so the trail shows e.g. "Y at the quit modal" right
                 // before a freeze. No-op unless $WOLF_FC_DIAG.
                 if !is_key_repeat then
-                    diag.key(diag_file, diag_start, k, phase_code(g->phase),
-                             menu_code(g->menu_level), atomic_load_acquire(&w->ac->cb_count))
+                    diag.key(diag_file, diag_start, k, phase_code(g.phase),
+                             menu_code(g.menu_level), atomic_load_acquire(&w.ac.cb_count))
                 // Fullscreen toggle — always works (even from menu / pause).
                 // F11 is our own shortcut; Alt+Enter matches the original
                 // SDL port. Either Alt modifier counts (KMOD_ALT = LALT |
@@ -3741,14 +3741,14 @@ let main = (args: str[]) ->
                     || k == sdl2.key_space
                     || k == sdl2.key_lctrl
                     || k == sdl2.key_escape
-                match g->phase with
+                match g.phase with
                 | pg13 ->
                     // Advance to the title screen on an ack key. update_
                     // phase_transitions also auto-advances after a few
                     // seconds.
                     if is_ack_key_intro then
-                        g->phase = game_phase.title
-                        g->phase_timer = 0.0
+                        g.phase = game_phase.title
+                        g.phase_timer = 0.0
                 | endart ->
                     // Per-page navigation, faithful to the original's
                     // article reader. After a victorious episode the
@@ -3784,10 +3784,10 @@ let main = (args: str[]) ->
                             // matching the original which qualifies the
                             // final score before returning to the
                             // control panel.
-                            let ep = g->level_num / episode.levels_per
-                            high_scores_screen.enter(g, w->hs,
+                            let ep = g.level_num / episode.levels_per
+                            high_scores_screen.enter(g, w.hs,
                                 high_scores_screen.from_endart,
-                                g->score, g->level_num + 1, ep)
+                                g.score, g.level_num + 1, ep)
                         else if k == sdl2.key_right || k == sdl2.key_down
                                 || k == sdl2.key_pagedown
                                 || k == sdl2.key_return
@@ -3801,10 +3801,10 @@ let main = (args: str[]) ->
                     // selection = NEW GAME (RESUME is locked from the
                     // title screen).
                     if is_ack_key_intro then
-                        g->phase = game_phase.main_menu
-                        g->menu_level = menu.nav.main
-                        g->menu_sel = 0     // NEW GAME row in original layout
-                        g->phase_timer = 0.0
+                        g.phase = game_phase.main_menu
+                        g.menu_level = menu.nav.main
+                        g.menu_sel = 0     // NEW GAME row in original layout
+                        g.phase_timer = 0.0
                 | main_menu ->
                     // Classic menu-cursor feedback: cursor-move cue on
                     // up/down nav, drill-confirm cue on confirm into a
@@ -3821,7 +3821,7 @@ let main = (args: str[]) ->
                     // The episode picker's hidden number shortcut (0..9)
                     // counts as a confirm too — same drilling-into-a-
                     // submenu effect, so it deserves the same drill cue.
-                    let is_episode_floor_key = g->menu_level == menu.nav.episode
+                    let is_episode_floor_key = g.menu_level == menu.nav.episode
                         && (k == sdl2.key_0 || (k >= sdl2.key_1 && k <= sdl2.key_9))
                     // Single-source-of-truth dispatch for menu cues:
                     //   • UP/DOWN          — cursor-move cue
@@ -3835,7 +3835,7 @@ let main = (args: str[]) ->
                     //     into a submenu / picker; main / episode /
                     //     difficulty).
                     //   • ESC              — escape cue.
-                    let row_kind = menu.current_row_kind(g->menu_level, g->menu_sel)
+                    let row_kind = menu.current_row_kind(g.menu_level, g.menu_sel)
                     let is_toggle_change = (is_confirm || is_left_right) && row_kind == some(menu.option_kind.toggle)
                     let is_slider_step   = is_left_right && row_kind == some(menu.option_kind.slider)
                     let is_action_commit = is_confirm && row_kind == some(menu.option_kind.action)
@@ -3850,69 +3850,69 @@ let main = (args: str[]) ->
                     // which immediately swaps to the roster track. The
                     // shoot cue stepping on top of the music start sounds
                     // awkward, so suppress it for that one entry.
-                    let is_view_scores_entry = g->menu_level == menu.nav.main
-                        && g->menu_sel == 6 && is_confirm
+                    let is_view_scores_entry = g.menu_level == menu.nav.main
+                        && g.menu_sel == 6 && is_confirm
                     if k == sdl2.key_up || k == sdl2.key_down then
-                        sfx.trigger(sfx.id.move_gun1, w->ac)
+                        sfx.trigger(sfx.id.move_gun1, w.ac)
                     else if setting_changed then
-                        sfx.trigger(sfx.id.move_gun2, w->ac)
+                        sfx.trigger(sfx.id.move_gun2, w.ac)
                     else if (is_drill_confirm || is_episode_floor_key)
                             && !is_view_scores_entry then
-                        sfx.trigger(sfx.id.shoot, w->ac)
+                        sfx.trigger(sfx.id.shoot, w.ac)
                     else if k == sdl2.key_escape then
-                        sfx.trigger(sfx.id.esc_pressed, w->ac)
-                    if g->menu_level == menu.nav.main then
+                        sfx.trigger(sfx.id.esc_pressed, w.ac)
+                    if g.menu_level == menu.nav.main then
                         // Up/down navigation skips locked rows so SAVE
                         // and BACK TO GAME without an active game don't
                         // get in the way.
                         if k == sdl2.key_up then
-                            let mut s = g->menu_sel
+                            let mut s = g.menu_sel
                             for _ in 0..menu.main_len do
                                 s = (s + menu.main_len - 1) % menu.main_len
-                                if !menu.main_is_locked(s, g->has_active_game) then break
-                            g->menu_sel = s
+                                if !menu.main_is_locked(s, g.has_active_game) then break
+                            g.menu_sel = s
                         else if k == sdl2.key_down then
-                            let mut s = g->menu_sel
+                            let mut s = g.menu_sel
                             for _ in 0..menu.main_len do
                                 s = (s + 1) % menu.main_len
-                                if !menu.main_is_locked(s, g->has_active_game) then break
-                            g->menu_sel = s
+                                if !menu.main_is_locked(s, g.has_active_game) then break
+                            g.menu_sel = s
                         else if is_confirm then
                             // Layout: NEW / SOUND / OPTIONS / LOAD / SAVE / CHANGE VIEW / VIEW SCORES / BACK TO GAME / QUIT
-                            match g->menu_sel with
+                            match g.menu_sel with
                             | 0 ->
                                 // NEW GAME → episode picker
-                                g->menu_level = menu.nav.episode
-                                g->menu_sel = 0
+                                g.menu_level = menu.nav.episode
+                                g.menu_sel = 0
                             | 1 ->
                                 // SOUND → sound submenu
-                                g->menu_level = menu.nav.sound
-                                g->menu_sel = 0
+                                g.menu_level = menu.nav.sound
+                                g.menu_sel = 0
                             | 2 ->
                                 // OPTIONS → wolf-fc mods submenu
-                                g->menu_level = menu.nav.options
-                                g->menu_sel = 0
+                                g.menu_level = menu.nav.options
+                                g.menu_sel = 0
                             | 3 ->
                                 // LOAD GAME → load slot menu
-                                save.refresh_slots(w->sm)
-                                g->menu_level = menu.nav.loadlist
-                                g->menu_sel = 0
+                                save.refresh_slots(w.sm)
+                                g.menu_level = menu.nav.loadlist
+                                g.menu_sel = 0
                             | 4 ->
                                 // SAVE GAME (locked without an active game)
-                                if g->has_active_game then
-                                    save.refresh_slots(w->sm)
-                                    g->menu_level = menu.nav.savelist
-                                    g->menu_sel = 0
+                                if g.has_active_game then
+                                    save.refresh_slots(w.sm)
+                                    g.menu_level = menu.nav.savelist
+                                    g.menu_sel = 0
                             | 5 ->
                                 // CHANGE VIEW → view-mode picker
-                                g->menu_level = menu.nav.changeview
-                                g->menu_sel = 0
+                                g.menu_level = menu.nav.changeview
+                                g.menu_sel = 0
                             | 6 ->
                                 // VIEW SCORES → high-scores screen.
                                 // hs_source=from_menu so the dismiss
                                 // routes back here instead of to the
                                 // title.
-                                high_scores_screen.enter(g, w->hs,
+                                high_scores_screen.enter(g, w.hs,
                                     high_scores_screen.from_menu, -1, 0, 0)
                             | 7 ->
                                 // BACK TO GAME / DEMO — label + target
@@ -3921,11 +3921,11 @@ let main = (args: str[]) ->
                                 // one it bounces to the title screen
                                 // (matches the original, where BACK TO DEMO
                                 // returns to the title/demo cycle).
-                                if g->has_active_game then
-                                    g->phase = game_phase.playing
+                                if g.has_active_game then
+                                    g.phase = game_phase.playing
                                 else
-                                    g->phase = game_phase.title
-                                    g->phase_timer = 0.0
+                                    g.phase = game_phase.title
+                                    g.phase_timer = 0.0
                             | 8 ->
                                 // QUIT → enter the Y/N confirm modal.
                                 // Roll the prompt index now so the
@@ -3934,10 +3934,10 @@ let main = (args: str[]) ->
                                 // rng_face is non-gameplay and not part
                                 // of the test-mode bit-stability contract
                                 // (test mode never reaches the menu).
-                                let n = quit_prompts.count(g->quit_prompts_override)
-                                let r = random.pcg_random.next_bounded_u32(&g->rng_face, (u32) n)
-                                g->quit_prompt_idx = (i32) r
-                                g->menu_level = menu.nav.quit
+                                let n = quit_prompts.count(g.quit_prompts_override)
+                                let r = random.pcg_random.next_bounded_u32(&g.rng_face, (u32) n)
+                                g.quit_prompt_idx = (i32) r
+                                g.menu_level = menu.nav.quit
                             | _ -> void()
                         else if k == sdl2.key_escape then
                             // Esc on the main menu = same as picking
@@ -3945,12 +3945,12 @@ let main = (args: str[]) ->
                             // game is running, otherwise bounce to the
                             // title screen (matching the OG's back-to-
                             // demo behaviour).
-                            if g->has_active_game then
-                                g->phase = game_phase.playing
+                            if g.has_active_game then
+                                g.phase = game_phase.playing
                             else
-                                g->phase = game_phase.title
-                                g->phase_timer = 0.0
-                    else if g->menu_level == menu.nav.episode then
+                                g.phase = game_phase.title
+                                g.phase_timer = 0.0
+                    else if g.menu_level == menu.nav.episode then
                         // Hidden floor-jump shortcut: pressing 1..9 on the
                         // episode picker drops the player straight onto
                         // floor 1..9 of the highlighted episode (skipping
@@ -3964,52 +3964,52 @@ let main = (args: str[]) ->
                             else if k >= sdl2.key_1 && k <= sdl2.key_9 then k - sdl2.key_1
                             else -1
                         if k == sdl2.key_up then
-                            g->menu_sel = (g->menu_sel + episode.count - 1) % episode.count
+                            g.menu_sel = (g.menu_sel + episode.count - 1) % episode.count
                         else if k == sdl2.key_down then
-                            g->menu_sel = (g->menu_sel + 1) % episode.count
+                            g.menu_sel = (g.menu_sel + 1) % episode.count
                         else if floor_offset >= 0 then
-                            g->level_num = g->menu_sel * episode.levels_per + floor_offset
-                            g->want_near_boss = false
-                            g->menu_level = menu.nav.difficulty
-                            g->menu_sel = g->difficulty
+                            g.level_num = g.menu_sel * episode.levels_per + floor_offset
+                            g.want_near_boss = false
+                            g.menu_level = menu.nav.difficulty
+                            g.menu_sel = g.difficulty
                         else if is_confirm then
                             // Episode pick → straight to difficulty.
                             // level_num resets to the episode's first map.
-                            g->level_num = g->menu_sel * episode.levels_per
-                            g->want_near_boss = false
-                            g->menu_level = menu.nav.difficulty
-                            g->menu_sel = g->difficulty
+                            g.level_num = g.menu_sel * episode.levels_per
+                            g.want_near_boss = false
+                            g.menu_level = menu.nav.difficulty
+                            g.menu_sel = g.difficulty
                         else if k == sdl2.key_escape then
-                            g->menu_level = menu.nav.main
-                            g->menu_sel = 0     // back to NEW GAME row
-                    else if g->menu_level == menu.nav.difficulty then
+                            g.menu_level = menu.nav.main
+                            g.menu_sel = 0     // back to NEW GAME row
+                    else if g.menu_level == menu.nav.difficulty then
                         if k == sdl2.key_up then
-                            g->menu_sel = (g->menu_sel + 3) % 4
+                            g.menu_sel = (g.menu_sel + 3) % 4
                         else if k == sdl2.key_down then
-                            g->menu_sel = (g->menu_sel + 1) % 4
+                            g.menu_sel = (g.menu_sel + 1) % 4
                         else if is_confirm then
-                            g->difficulty = g->menu_sel
+                            g.difficulty = g.menu_sel
                             // g->level_num already holds the chosen episode's
                             // first map (set when leaving the episode picker).
                             start_new_game_here(w, vs)
-                            g->has_active_game = true
+                            g.has_active_game = true
                         else if k == sdl2.key_escape then
-                            g->menu_level = menu.nav.episode
-                            g->menu_sel = g->level_num / episode.levels_per
-                    else if g->menu_level == menu.nav.sound then
+                            g.menu_level = menu.nav.episode
+                            g.menu_sel = g.level_num / episode.levels_per
+                    else if g.menu_level == menu.nav.sound then
                         if k == sdl2.key_up then
-                            g->menu_sel = (g->menu_sel + menu.sound_len - 1) % menu.sound_len
+                            g.menu_sel = (g.menu_sel + menu.sound_len - 1) % menu.sound_len
                         else if k == sdl2.key_down then
-                            g->menu_sel = (g->menu_sel + 1) % menu.sound_len
+                            g.menu_sel = (g.menu_sel + 1) % menu.sound_len
                         else if k == sdl2.key_escape then
-                            g->menu_level = menu.nav.main
-                            g->menu_sel = 1     // back to SOUND row
+                            g.menu_level = menu.nav.main
+                            g.menu_sel = 1     // back to SOUND row
                         else
                             // Six rows: 3 (toggle, gain) section pairs.
                             // section = row/2 (0=SFX, 1=Digi, 2=Music);
                             // even rows are toggles (Enter or ←/→ flips),
                             // odd rows are gain sliders (←/→ steps ±5%).
-                            let row = g->menu_sel
+                            let row = g.menu_sel
                             let section = menu.sound_section(row)
                             let is_toggle = menu.sound_is_toggle(row)
                             let mut changed = false
@@ -4022,29 +4022,29 @@ let main = (args: str[]) ->
                             if is_toggle then
                                 if is_confirm || k == sdl2.key_left || k == sdl2.key_right then
                                     if section == 0 then
-                                        atomic_store_release(&w->ac->sfx_on, !w->ac->sfx_on)
+                                        atomic_store_release(&w.ac.sfx_on, !w.ac.sfx_on)
                                     else if section == 1 then
-                                        atomic_store_release(&w->ac->digi_on, !w->ac->digi_on)
+                                        atomic_store_release(&w.ac.digi_on, !w.ac.digi_on)
                                     else
-                                        atomic_store_release(&w->ac->music_on, !w->ac->music_on)
+                                        atomic_store_release(&w.ac.music_on, !w.ac.music_on)
                                     changed = true
                             else if k == sdl2.key_left || k == sdl2.key_right then
                                 let delta = if k == sdl2.key_left
                                     then 0 - config.gain_pct_step
                                     else config.gain_pct_step
-                                let mut cur = if section == 0 then w->ac->sfx_gain_pct
-                                              else if section == 1 then w->ac->digi_gain_pct
-                                              else w->ac->music_gain_pct
+                                let mut cur = if section == 0 then w.ac.sfx_gain_pct
+                                              else if section == 1 then w.ac.digi_gain_pct
+                                              else w.ac.music_gain_pct
                                 cur = cur + delta
                                 if cur < config.gain_pct_min then cur = config.gain_pct_min
                                 if cur > config.gain_pct_max then cur = config.gain_pct_max
-                                if section == 0 then atomic_store_release(&w->ac->sfx_gain_pct, cur)
-                                else if section == 1 then atomic_store_release(&w->ac->digi_gain_pct, cur)
-                                else atomic_store_release(&w->ac->music_gain_pct, cur)
+                                if section == 0 then atomic_store_release(&w.ac.sfx_gain_pct, cur)
+                                else if section == 1 then atomic_store_release(&w.ac.digi_gain_pct, cur)
+                                else atomic_store_release(&w.ac.music_gain_pct, cur)
                                 changed = true
                             if changed then
                                 config.save(config.snapshot(w))
-                    else if g->menu_level == menu.nav.changeview then
+                    else if g.menu_level == menu.nav.changeview then
                         // Two left/right pickers: Aspect Ratio (row 0)
                         // and Scale Factor (row 1). Up/Down moves between
                         // rows; Left/Right cycles the selected row's
@@ -4055,35 +4055,35 @@ let main = (args: str[]) ->
                         // change so the new dims actually reach the
                         // display.
                         if k == sdl2.key_up then
-                            g->menu_sel = (g->menu_sel + menu.changeview_len - 1) % menu.changeview_len
+                            g.menu_sel = (g.menu_sel + menu.changeview_len - 1) % menu.changeview_len
                         else if k == sdl2.key_down then
-                            g->menu_sel = (g->menu_sel + 1) % menu.changeview_len
+                            g.menu_sel = (g.menu_sel + 1) % menu.changeview_len
                         else if k == sdl2.key_left || k == sdl2.key_right then
                             let dir = if k == sdl2.key_left then -1 else 1
                             let mut resized = false
-                            if g->menu_sel == menu.changeview_aspect_row then
+                            if g.menu_sel == menu.changeview_aspect_row then
                                 // Aspect Ratio cycles 0..3 (Auto, 4:3,
                                 // 16:10, 16:9). Wraps so left from Auto
                                 // lands on 16:9 — every step is reachable
                                 // without restarting the loop.
                                 let n = 4
-                                let next = (g->view_mode + dir + n) % n
-                                resized = apply_view_mode(w, w->vg, pal, next)
-                            else if g->menu_sel == menu.changeview_scale_row then
+                                let next = (g.view_mode + dir + n) % n
+                                resized = apply_view_mode(w, w.vg, pal, next)
+                            else if g.menu_sel == menu.changeview_scale_row then
                                 // Scale Factor cycles Auto, 2x..12x as a
                                 // 12-position list (0, 2, 3, ..., 12).
                                 // Compute the next slot in that list and
                                 // map back to the underlying value.
-                                let mut idx = if g->scale_factor == 0 then 0
-                                    else g->scale_factor - 1
+                                let mut idx = if g.scale_factor == 0 then 0
+                                    else g.scale_factor - 1
                                 let n = config.scale_factor_max
                                 idx = (idx + dir + n) % n
                                 let next = if idx == 0 then 0 else idx + 1
-                                g->scale_factor = next
-                                let new_scale = pick_scale_factor(w->rc->drawable_w, w->rc->drawable_h,
-                                    w->rc->fb_w, w->rc->fb_h, max_scale, g->scale_factor)
-                                resized = apply_scale_factor(w, w->vg, pal, new_scale)
-                            else if g->menu_sel == menu.changeview_ssaa_row then
+                                g.scale_factor = next
+                                let new_scale = pick_scale_factor(w.rc.drawable_w, w.rc.drawable_h,
+                                    w.rc.fb_w, w.rc.fb_h, max_scale, g.scale_factor)
+                                resized = apply_scale_factor(w, w.vg, pal, new_scale)
+                            else if g.menu_sel == menu.changeview_ssaa_row then
                                 // Anti-Alias cycles Off → Vertical-only
                                 // 2× → Full 2×2 → Off. Left/right step
                                 // opposite directions through the 3-way
@@ -4091,42 +4091,42 @@ let main = (args: str[]) ->
                                 // (the ssaa_buf is internal to the 3D
                                 // pipeline), so `resized` stays false and
                                 // the SDL texture doesn't need recreating.
-                                let next = (g->ssaa_mode + dir + 3) % 3
+                                let next = (g.ssaa_mode + dir + 3) % 3
                                 apply_ssaa_mode(w, next)
                                 void()
                             config.save(config.snapshot(w))
                             if resized then
                                 sdl2.destroy_texture(tex)
-                                runtime_screen_w = w->rc->screen_w
-                                runtime_screen_h = w->rc->screen_h
-                                runtime_actual_h = (w->rc->fb_h * 12 / 10) * w->rc->scale
+                                runtime_screen_w = w.rc.screen_w
+                                runtime_screen_h = w.rc.screen_h
+                                runtime_actual_h = (w.rc.fb_h * 12 / 10) * w.rc.scale
                                 tex = sdl2.create_texture(ren, sdl2.pixel_argb8888,
                                     sdl2.tex_streaming, runtime_screen_w, runtime_screen_h)
                                 sdl2.set_logical_size(ren, runtime_screen_w, runtime_actual_h)
                         else if k == sdl2.key_escape then
-                            g->menu_level = menu.nav.main
-                            g->menu_sel = 5     // back to CHANGE VIEW row
-                    else if g->menu_level == menu.nav.options then
+                            g.menu_level = menu.nav.main
+                            g.menu_sel = 5     // back to CHANGE VIEW row
+                    else if g.menu_level == menu.nav.options then
                         // Wolf-fc mods. Up/down navigates rows; Enter
                         // toggles boolean rows or runs the action row;
                         // Left/Right adjusts slider rows by ±5%.
                         // Every commit persists the full prefs struct
                         // via config.snapshot — never partial — so
                         // other unrelated toggles round-trip cleanly.
-                        let kind = menu.row_kind(g->menu_sel)
+                        let kind = menu.row_kind(g.menu_sel)
                         if k == sdl2.key_up then
-                            g->menu_sel = (g->menu_sel + menu.options_len - 1) % menu.options_len
+                            g.menu_sel = (g.menu_sel + menu.options_len - 1) % menu.options_len
                         else if k == sdl2.key_down then
-                            g->menu_sel = (g->menu_sel + 1) % menu.options_len
+                            g.menu_sel = (g.menu_sel + 1) % menu.options_len
                         else if (is_confirm || is_left_right) && kind == menu.option_kind.toggle then
                             // Toggle rows: 0 = Mommy Mode, 4 = Map.
                             // Either Enter or ←/→ flips — matches the
                             // Sound submenu's toggle behaviour for
                             // cross-menu consistency.
-                            if g->menu_sel == 0 then
-                                g->mommy_mode = !g->mommy_mode
-                            else if g->menu_sel == 4 then
-                                g->show_map = !g->show_map
+                            if g.menu_sel == 0 then
+                                g.mommy_mode = !g.mommy_mode
+                            else if g.menu_sel == 4 then
+                                g.show_map = !g.show_map
                             config.save(config.snapshot(w))
                         else if is_confirm && kind == menu.option_kind.action then
                             // Action row = RESET. Wipe every Options
@@ -4134,131 +4134,131 @@ let main = (args: str[]) ->
                             // toggles are deliberately untouched
                             // (different submenu, different scope).
                             let d = config.defaults()
-                            g->mommy_mode = d.mommy_mode
-                            g->shadow_depth = d.shadow_depth
-                            g->bj_speed_pct = d.bj_speed_pct
-                            g->enemy_speed_pct = d.enemy_speed_pct
-                            g->show_map = d.show_map
+                            g.mommy_mode = d.mommy_mode
+                            g.shadow_depth = d.shadow_depth
+                            g.bj_speed_pct = d.bj_speed_pct
+                            g.enemy_speed_pct = d.enemy_speed_pct
+                            g.show_map = d.show_map
                             config.save(config.snapshot(w))
                         else if (k == sdl2.key_left || k == sdl2.key_right)
                             && kind == menu.option_kind.slider then
                             // Slider rows. Shadow Depth uses ±5% in 0..100;
                             // the BJ / Enemy Speed sliders use ±5% in
                             // 20..200 (constants live in `config`).
-                            if g->menu_sel == 1 then
+                            if g.menu_sel == 1 then
                                 let delta = if k == sdl2.key_left then -5 else 5
-                                let mut v = g->shadow_depth + delta
+                                let mut v = g.shadow_depth + delta
                                 if v < 0 then v = 0
                                 if v > 100 then v = 100
-                                g->shadow_depth = v
-                            else if g->menu_sel == 2 then
+                                g.shadow_depth = v
+                            else if g.menu_sel == 2 then
                                 let delta = if k == sdl2.key_left then 0 - config.speed_pct_step else config.speed_pct_step
-                                let mut v = g->bj_speed_pct + delta
+                                let mut v = g.bj_speed_pct + delta
                                 if v < config.speed_pct_min then v = config.speed_pct_min
                                 if v > config.speed_pct_max then v = config.speed_pct_max
-                                g->bj_speed_pct = v
-                            else if g->menu_sel == 3 then
+                                g.bj_speed_pct = v
+                            else if g.menu_sel == 3 then
                                 let delta = if k == sdl2.key_left then 0 - config.speed_pct_step else config.speed_pct_step
-                                let mut v = g->enemy_speed_pct + delta
+                                let mut v = g.enemy_speed_pct + delta
                                 if v < config.speed_pct_min then v = config.speed_pct_min
                                 if v > config.speed_pct_max then v = config.speed_pct_max
-                                g->enemy_speed_pct = v
+                                g.enemy_speed_pct = v
                             config.save(config.snapshot(w))
                         else if k == sdl2.key_escape then
-                            g->menu_level = menu.nav.main
-                            g->menu_sel = 2     // back to OPTIONS row
-                    else if g->menu_level == menu.nav.savelist then
+                            g.menu_level = menu.nav.main
+                            g.menu_sel = 2     // back to OPTIONS row
+                    else if g.menu_level == menu.nav.savelist then
                         // Inline save-name entry: while editing, every
                         // keydown mutates `sm->edit_buf` instead of
                         // navigating slots. Mirrors the original's
                         // line-input flow on each save row.
-                        if g->save_edit_active then
+                        if g.save_edit_active then
                             if k == sdl2.key_return then
                                 // Commit — write the slot using the
                                 // typed name (defaulting to "EMPTY"
                                 // if the user cleared the buffer
                                 // entirely).
-                                let n = w->sm->edit_len
+                                let n = w.sm.edit_len
                                 let label = if n > 0 then
-                                    (const str) w->sm->edit_buf[0..(i64) n]
+                                    (const str) w.sm.edit_buf[0..(i64) n]
                                 else "EMPTY"
-                                save.to_slot(w, g->menu_sel, label)
-                                save.refresh_slots(w->sm)
-                                g->save_edit_active = false
-                                g->menu_level = menu.nav.main
-                                g->menu_sel = 4     // back to SAVE GAME row
+                                save.to_slot(w, g.menu_sel, label)
+                                save.refresh_slots(w.sm)
+                                g.save_edit_active = false
+                                g.menu_level = menu.nav.main
+                                g.menu_sel = 4     // back to SAVE GAME row
                             else if k == sdl2.key_escape then
                                 // Cancel: clear edit buffer, stay on
                                 // slot list.
-                                g->save_edit_active = false
-                                w->sm->edit_len = 0
-                                w->sm->edit_buf[0i64] = 0u8
+                                g.save_edit_active = false
+                                w.sm.edit_len = 0
+                                w.sm.edit_buf[0i64] = 0u8
                             else if k == sdl2.key_backspace then
-                                if w->sm->edit_len > 0 then
-                                    w->sm->edit_len = w->sm->edit_len - 1
-                                    w->sm->edit_buf[(i64) w->sm->edit_len] = 0u8
+                                if w.sm.edit_len > 0 then
+                                    w.sm.edit_len = w.sm.edit_len - 1
+                                    w.sm.edit_buf[(i64) w.sm.edit_len] = 0u8
                             else
                                 // Printable-ASCII char → append. Same
                                 // shift-aware mapping as the high-
                                 // scores name editor (the original
                                 // filtered to printable ASCII for both
                                 // screens). Capacity is 32; reserve 1 for NUL.
-                                let cap = (i32) w->sm->edit_buf.len - 1
-                                if w->sm->edit_len < cap then
+                                let cap = (i32) w.sm.edit_buf.len - 1
+                                if w.sm.edit_len < cap then
                                     let ch = keysym_to_ascii(k, event.key.keysym.mod)
                                     if ch != 0u8 then
-                                        w->sm->edit_buf[(i64) w->sm->edit_len] = ch
-                                        w->sm->edit_len = w->sm->edit_len + 1
-                                        w->sm->edit_buf[(i64) w->sm->edit_len] = 0u8
+                                        w.sm.edit_buf[(i64) w.sm.edit_len] = ch
+                                        w.sm.edit_len = w.sm.edit_len + 1
+                                        w.sm.edit_buf[(i64) w.sm.edit_len] = 0u8
                         else if k == sdl2.key_up then
-                            g->menu_sel = (g->menu_sel + save.num_slots - 1) % save.num_slots
+                            g.menu_sel = (g.menu_sel + save.num_slots - 1) % save.num_slots
                         else if k == sdl2.key_down then
-                            g->menu_sel = (g->menu_sel + 1) % save.num_slots
+                            g.menu_sel = (g.menu_sel + 1) % save.num_slots
                         else if is_confirm then
                             // Enter edit mode, prefilled with the
                             // existing slot label (so re-saving over
                             // a slot doesn't force the user to retype).
-                            let s = &w->sm->slots[g->menu_sel]
-                            let mut n = if s->empty then 0
-                                else (i32) s->label.len
+                            let s = &w.sm.slots[g.menu_sel]
+                            let mut n = if s.empty then 0
+                                else (i32) s.label.len
                             if n > 31 then n = 31
                             for i in 0..n do
-                                w->sm->edit_buf[(i64) i] = s->label[(i64) i]
-                            w->sm->edit_buf[(i64) n] = 0u8
-                            w->sm->edit_len = n
-                            g->save_edit_active = true
+                                w.sm.edit_buf[(i64) i] = s.label[(i64) i]
+                            w.sm.edit_buf[(i64) n] = 0u8
+                            w.sm.edit_len = n
+                            g.save_edit_active = true
                         else if k == sdl2.key_escape then
-                            g->menu_level = menu.nav.main
-                            g->menu_sel = 4     // back to SAVE GAME row
-                    else if g->menu_level == menu.nav.loadlist then
+                            g.menu_level = menu.nav.main
+                            g.menu_sel = 4     // back to SAVE GAME row
+                    else if g.menu_level == menu.nav.loadlist then
                         if k == sdl2.key_up then
-                            g->menu_sel = (g->menu_sel + save.num_slots - 1) % save.num_slots
+                            g.menu_sel = (g.menu_sel + save.num_slots - 1) % save.num_slots
                         else if k == sdl2.key_down then
-                            g->menu_sel = (g->menu_sel + 1) % save.num_slots
+                            g.menu_sel = (g.menu_sel + 1) % save.num_slots
                         else if is_confirm then
-                            if !w->sm->slots[g->menu_sel].empty then
-                                if save.from_slot(w, vs, g->menu_sel) then
-                                    g->has_active_game = true
+                            if !w.sm.slots[g.menu_sel].empty then
+                                if save.from_slot(w, vs, g.menu_sel) then
+                                    g.has_active_game = true
                         else if k == sdl2.key_escape then
-                            g->menu_level = menu.nav.main
-                            g->menu_sel = 3     // back to LOAD GAME
-                    else if g->menu_level == menu.nav.quit then
+                            g.menu_level = menu.nav.main
+                            g.menu_sel = 3     // back to LOAD GAME
+                    else if g.menu_level == menu.nav.quit then
                         // Quit-confirm modal. Y commits; N / Esc cancels
                         // back to the main menu. Enter / Space are
                         // intentionally not synonyms for Y — matches the
                         // original game's strict-Y behaviour.
                         if k == sdl2.key_y then
-                            sfx.trigger(sfx.id.shoot, w->ac)
-                            g->want_quit = true
+                            sfx.trigger(sfx.id.shoot, w.ac)
+                            g.want_quit = true
                         else if k == sdl2.key_n || k == sdl2.key_escape then
                             // Esc already played esc_pressed via the
                             // shared dispatch above; trigger it
                             // explicitly for the N case so the cancel
                             // sound is consistent across both keys.
                             if k == sdl2.key_n then
-                                sfx.trigger(sfx.id.esc_pressed, w->ac)
-                            g->menu_level = menu.nav.main
-                            g->menu_sel = 8     // back to QUIT row
+                                sfx.trigger(sfx.id.esc_pressed, w.ac)
+                            g.menu_level = menu.nav.main
+                            g.menu_sel = 8     // back to QUIT row
                 | high_scores ->
                     // Direct dispatch (not via the IN_Ack latch) so the
                     // typing keys during edit don't double as ack
@@ -4270,19 +4270,19 @@ let main = (args: str[]) ->
                     // name, again to leave the screen).
                     if !is_key_repeat then
                         let mods = event.key.keysym.mod
-                        if w->hs->edit_active then
+                        if w.hs.edit_active then
                             if k == sdl2.key_return || k == sdl2.key_escape then
                                 // Commit + dismiss. The original copies the
                                 // buffer regardless of whether Enter or
                                 // Esc dismissed the line input.
-                                high_scores_screen.commit_name(w->hs)
-                                high_scores_screen.dismiss(g, w->hs)
+                                high_scores_screen.commit_name(w.hs)
+                                high_scores_screen.dismiss(g, w.hs)
                             else if k == sdl2.key_backspace then
-                                high_scores_screen.edit_backspace(w->hs)
+                                high_scores_screen.edit_backspace(w.hs)
                             else
                                 let ch = keysym_to_ascii(k, mods)
                                 if ch != 0u8 then
-                                    high_scores_screen.edit_append(w->hs, ch)
+                                    high_scores_screen.edit_append(w.hs, ch)
                         else
                             // Not editing — any deliberate ack key
                             // dismisses (the OG's `IN_UserInput(500)`
@@ -4292,7 +4292,7 @@ let main = (args: str[]) ->
                                 || k == sdl2.key_lctrl
                                 || k == sdl2.key_escape
                             if is_ack then
-                                high_scores_screen.dismiss(g, w->hs)
+                                high_scores_screen.dismiss(g, w.hs)
                 | _ ->
                     // playing, dying, intermission, episode_end,
                     // bj_victory, death_cam. Escape from playing
@@ -4300,18 +4300,18 @@ let main = (args: str[]) ->
                     // — BACK TO GAME is the default selection so any-key-Esc-
                     // any-key resumes immediately). Other phases consume keys
                     // for their own advance flow (handled separately below).
-                    if k == sdl2.key_escape && g->phase == game_phase.playing then
-                        g->phase = game_phase.main_menu
-                        g->menu_level = menu.nav.main
-                        g->menu_sel = 7     // BACK TO GAME row
+                    if k == sdl2.key_escape && g.phase == game_phase.playing then
+                        g.phase = game_phase.main_menu
+                        g.menu_level = menu.nav.main
+                        g.menu_sel = 7     // BACK TO GAME row
                         // Clear held inputs so the player isn't sprinting
                         // when they un-pause. (Mirrors intermission.enter's
                         // input-clear convention.)
-                        g->key_up = false
-                        g->key_down = false
-                        g->key_left = false
-                        g->key_right = false
-                        g->key_fire = false
+                        g.key_up = false
+                        g.key_down = false
+                        g.key_left = false
+                        g.key_right = false
+                        g.key_fire = false
                     else if !is_key_repeat then
                         // TAB+<key> cheats (from the original's debugmode
                         // menu). When TAB is held and the pressed key maps
@@ -4320,14 +4320,14 @@ let main = (args: str[]) ->
                         // latch the MLI 'I' chord or retrigger iddqd
                         // progress. Gated to the playing phase so the
                         // combo is inert on menus / intermission.
-                        let tab_cheat = g->key_tab_held
-                           && g->phase == game_phase.playing
+                        let tab_cheat = g.key_tab_held
+                           && g.phase == game_phase.playing
                            && (k == sdl2.key_g || k == sdl2.key_i
                                || k == sdl2.key_n || k == sdl2.key_e
                                || k == sdl2.key_h)
                         if tab_cheat then
                             if k == sdl2.key_g then player.cheats.apply_tab_g(g)
-                            if k == sdl2.key_i then player.cheats.apply_tab_i(g, w->ac)
+                            if k == sdl2.key_i then player.cheats.apply_tab_i(g, w.ac)
                             if k == sdl2.key_n then player.cheats.apply_tab_n(g)
                             if k == sdl2.key_e then player.cheats.apply_tab_e(g)
                             if k == sdl2.key_h then
@@ -4335,17 +4335,17 @@ let main = (args: str[]) ->
                                 // the player's own position. update_death_swing
                                 // sees a zero-length vector and clears killer_active
                                 // immediately (no rotation).
-                                enemies.ai.damage_player(g, w->ac, 16, enemies.damage_source.bullet, g->pos_x, g->pos_y)
+                                enemies.ai.damage_player(g, w.ac, 16, enemies.damage_source.bullet, g.pos_x, g.pos_y)
                         else
-                            if k == sdl2.key_up then g->key_up = true
-                            if k == sdl2.key_down then g->key_down = true
-                            if k == sdl2.key_left then g->key_left = true
-                            if k == sdl2.key_right then g->key_right = true
-                            if k == sdl2.key_lshift then g->key_shift = true
-                            if k == sdl2.key_lalt then g->key_alt = true
-                            if k == sdl2.key_space then g->key_space = true
-                            if k == sdl2.key_lctrl then g->key_fire = true
-                            if k == sdl2.key_tab then g->key_tab_held = true
+                            if k == sdl2.key_up then g.key_up = true
+                            if k == sdl2.key_down then g.key_down = true
+                            if k == sdl2.key_left then g.key_left = true
+                            if k == sdl2.key_right then g.key_right = true
+                            if k == sdl2.key_lshift then g.key_shift = true
+                            if k == sdl2.key_lalt then g.key_alt = true
+                            if k == sdl2.key_space then g.key_space = true
+                            if k == sdl2.key_lctrl then g.key_fire = true
+                            if k == sdl2.key_tab then g.key_tab_held = true
                             // Weapon select (1-4). Mirrors the original's
                             // weapon-change gating: only while playing, never
                             // mid-attack (the original's attack state never
@@ -4359,26 +4359,26 @@ let main = (args: str[]) ->
                                 else if k == sdl2.key_4 then 3
                                 else -1
                             if want_weapon >= 0
-                               && g->phase == game_phase.playing
-                               && g->fire_timer <= 0.0
-                               && g->ammo > 0
-                               && want_weapon <= g->best_weapon then
-                                g->weapon = want_weapon
+                               && g.phase == game_phase.playing
+                               && g.fire_timer <= 0.0
+                               && g.ammo > 0
+                               && want_weapon <= g.best_weapon then
+                                g.weapon = want_weapon
                             // Cheat-chord held-flags. M/L/I/B/A/T have no other
                             // in-game action (M used to toggle music but that
                             // clashed with the MLI chord; use the main menu's
                             // SOUND entry to toggle music now).
-                            if k == sdl2.key_m then g->key_m_held = true
-                            if k == sdl2.key_l then g->key_l_held = true
-                            if k == sdl2.key_i then g->key_i_held = true
-                            if k == sdl2.key_b then g->key_b_held = true
-                            if k == sdl2.key_a then g->key_a_held = true
-                            if k == sdl2.key_t then g->key_t_held = true
+                            if k == sdl2.key_m then g.key_m_held = true
+                            if k == sdl2.key_l then g.key_l_held = true
+                            if k == sdl2.key_i then g.key_i_held = true
+                            if k == sdl2.key_b then g.key_b_held = true
+                            if k == sdl2.key_a then g.key_a_held = true
+                            if k == sdl2.key_t then g.key_t_held = true
                             // IDDQD / IDKFA sequences — only progress while
                             // in-game, matching how the chord cheats are
                             // gated. Held keys can't auto-advance because
                             // we're already inside the !is_key_repeat branch.
-                            if g->phase == game_phase.playing then
+                            if g.phase == game_phase.playing then
                                 player.cheats.advance_iddqd(g, k)
                                 player.cheats.advance_idkfa(g, k)
                             if k == sdl2.key_s then overlay.take_screenshot(w, vs, pal)
@@ -4386,8 +4386,8 @@ let main = (args: str[]) ->
                             // (FPS / frame time / skipped frames / pos /
                             // scene counts / resolution). Works in any phase
                             // since key_tab_held is tracked globally.
-                            if k == sdl2.key_d && g->key_tab_held then
-                                g->debug_overlay = !g->debug_overlay
+                            if k == sdl2.key_d && g.key_tab_held then
+                                g.debug_overlay = !g.debug_overlay
                             // IN_Ack: a deliberate-feeling keypress (Enter,
                             // Space, Ctrl — the OG fire key, or Esc as a
                             // "get me out of here" key) during an
@@ -4404,39 +4404,39 @@ let main = (args: str[]) ->
                                 || k == sdl2.key_space
                                 || k == sdl2.key_lctrl
                                 || k == sdl2.key_escape
-                            if is_ack_key && (g->phase == game_phase.intermission
-                               || g->phase == game_phase.episode_end) then
-                                g->key_ack = true
+                            if is_ack_key && (g.phase == game_phase.intermission
+                               || g.phase == game_phase.episode_end) then
+                                g.key_ack = true
             if t == sdl2.keyup_event then
                 let k = event.key.keysym.sym
                 // Keyup only clears flags; not phase-sensitive.
-                if k == sdl2.key_up then g->key_up = false
-                if k == sdl2.key_down then g->key_down = false
-                if k == sdl2.key_left then g->key_left = false
-                if k == sdl2.key_right then g->key_right = false
-                if k == sdl2.key_lshift then g->key_shift = false
-                if k == sdl2.key_lalt then g->key_alt = false
-                if k == sdl2.key_lctrl then g->key_fire = false
-                if k == sdl2.key_tab then g->key_tab_held = false
+                if k == sdl2.key_up then g.key_up = false
+                if k == sdl2.key_down then g.key_down = false
+                if k == sdl2.key_left then g.key_left = false
+                if k == sdl2.key_right then g.key_right = false
+                if k == sdl2.key_lshift then g.key_shift = false
+                if k == sdl2.key_lalt then g.key_alt = false
+                if k == sdl2.key_lctrl then g.key_fire = false
+                if k == sdl2.key_tab then g.key_tab_held = false
                 // Cheat-chord held-flags (see keydown side).
-                if k == sdl2.key_m then g->key_m_held = false
-                if k == sdl2.key_l then g->key_l_held = false
-                if k == sdl2.key_i then g->key_i_held = false
-                if k == sdl2.key_b then g->key_b_held = false
-                if k == sdl2.key_a then g->key_a_held = false
-                if k == sdl2.key_t then g->key_t_held = false
+                if k == sdl2.key_m then g.key_m_held = false
+                if k == sdl2.key_l then g.key_l_held = false
+                if k == sdl2.key_i then g.key_i_held = false
+                if k == sdl2.key_b then g.key_b_held = false
+                if k == sdl2.key_a then g.key_a_held = false
+                if k == sdl2.key_t then g.key_t_held = false
                 if k == sdl2.key_space then
-                    g->key_space = false
-                    g->key_space_handled = false
+                    g.key_space = false
+                    g.key_space_handled = false
                 // Any keyup rearms the IN_Ack latch so the next press can fire.
-                g->key_ack = false
-                g->key_ack_handled = false
+                g.key_ack = false
+                g.key_ack_handled = false
 
         // Cheat chords (M+L+I, B+A+T). Only fires while actually playing,
         // so holding the letters on menus / intermission / death screens
         // is a no-op. Runs before tick so the refilled health/ammo/weapon
         // is visible the same frame.
-        if g->phase == game_phase.playing then
+        if g.phase == game_phase.playing then
             player.cheats.check_chords(g)
 
         // Update
@@ -4450,12 +4450,12 @@ let main = (args: str[]) ->
         // or next map. The episode-end screen owns its own space-advance.
         // First press of space while the count-up is running skips animation
         // to the final "everything shown" state; next press advances.
-        if g->phase == game_phase.intermission && g->phase_timer > 0.0
-           && g->key_ack && !g->key_ack_handled then
-            g->key_ack_handled = true
-            if g->inter_stage < 4 then
+        if g.phase == game_phase.intermission && g.phase_timer > 0.0
+           && g.key_ack && !g.key_ack_handled then
+            g.key_ack_handled = true
+            if g.inter_stage < 4 then
                 intermission.finish_anim(g)
-            else if g->level_num % episode.levels_per == 8 then
+            else if g.level_num % episode.levels_per == 8 then
                 episode_end.enter(g)
             else
                 advance_next_level(w, vs)
@@ -4463,11 +4463,11 @@ let main = (args: str[]) ->
         // last page (or Esc) returns to the main menu — the original
         // returns from a victorious episode back to the control panel;
         // players replay episodes individually from the menu.
-        if g->phase == game_phase.episode_end && g->phase_timer > 0.0
-           && g->key_ack && !g->key_ack_handled then
-            g->key_ack_handled = true
-            let ep = g->level_num / episode.levels_per
-            endart_screen.enter(g, w->vg, ep)
+        if g.phase == game_phase.episode_end && g.phase_timer > 0.0
+           && g.key_ack && !g.key_ack_handled then
+            g.key_ack_handled = true
+            let ep = g.level_num / episode.levels_per
+            endart_screen.enter(g, w.vg, ep)
         // Endart paging is handled directly in the keydown event below
         // (Left/Up/PageUp = back, Esc = exit-to-menu, forward keys =
         // next page) — not via the IN_Ack latch since the IN_Ack
@@ -4480,7 +4480,7 @@ let main = (args: str[]) ->
         // drain and destroy them here. Empty (a no-op) in test mode, where no
         // callback ever runs.
         loop
-            match spsc.dequeue(w->ac->free_ring) with
+            match spsc.dequeue(w.ac.free_ring) with
             | some(p) -> imf.destroy(p)
             | none -> break
 
@@ -4491,14 +4491,14 @@ let main = (args: str[]) ->
         // set_music, which demotes the current track to a crossfade-out so the
         // swap doesn't click. `music_chunk` is main-thread-owned, so this stays
         // race-free.
-        let want_chunk = font.music_chunk_for_phase(g->phase, g->level_num)
-        if want_chunk != w->ac->music_chunk && audio_dev > 0u32 && want_chunk < ad->num_chunks then
-            let np = font.music_load(ad, want_chunk, (f64) w->ac->sample_rate)
-            let posted = spsc.enqueue(w->ac->cmd_ring, audio_q.cmd {
+        let want_chunk = font.music_chunk_for_phase(g.phase, g.level_num)
+        if want_chunk != w.ac.music_chunk && audio_dev > 0u32 && want_chunk < ad.num_chunks then
+            let np = font.music_load(ad, want_chunk, (f64) w.ac.sample_rate)
+            let posted = spsc.enqueue(w.ac.cmd_ring, audio_q.cmd {
                 kind = audio_q.set_music, sfx_id = 0,
                 pan = 0.0, gain = 0.0, player = some(np) })
             if posted then
-                w->ac->music_chunk = want_chunk
+                w.ac.music_chunk = want_chunk
             else
                 // Ring full (extremely unlikely — it's drained every buffer).
                 // Free the player we just loaded and retry on a later frame.
@@ -4510,7 +4510,7 @@ let main = (args: str[]) ->
         // any keydown this iteration forces a full render so menu /
         // name-entry / page-advance input stays crisp. force_redraw
         // (set by resize_render_ctx / screenshot paths) always wins.
-        let phase = w->g->phase
+        let phase = w.g.phase
         let is_3d_phase = match phase with
         | playing -> true
         | dying -> true
@@ -4518,10 +4518,10 @@ let main = (args: str[]) ->
         | death_cam -> true
         | _ -> false
         let should_render = (
-            w->rc->force_redraw ||
+            w.rc.force_redraw ||
             is_3d_phase ||
             event_seen ||
-            (w->rc->frame_counter & 1u64) == 0u64)
+            (w.rc.frame_counter & 1u64) == 0u64)
 
         // Render
         if should_render then render_frame(w, vs, pal)
@@ -4531,8 +4531,8 @@ let main = (args: str[]) ->
         // the bit-stable test path (which never runs this loop). Only on a
         // rendered frame: on a skipped frame dbuf wasn't rewritten and the
         // texture isn't re-uploaded, so last frame's overlay stays put.
-        if should_render && g->debug_overlay then
-            overlay.render_debug(w->rc, w->font)
+        if should_render && g.debug_overlay then
+            overlay.render_debug(w.rc, w.font)
 
         // (Audio is produced by audio_callback on SDL's audio thread now,
         // not here — that's what keeps it smooth when the render frame is
@@ -4547,15 +4547,15 @@ let main = (args: str[]) ->
         // render_copy + present stay unconditional so vsync timing and
         // letterbox painting are preserved.
         if should_render then
-            sdl2.update_texture(tex, default(any*), (any*) w->rc->dbuf.ptr, runtime_screen_w * 4)
+            sdl2.update_texture(tex, default(any*), (any*) w.rc.dbuf.ptr, runtime_screen_w * 4)
         // Only clear the backbuffer when SDL's logical-size step will
         // letterbox/pillarbox into the drawable. With FLIP_DISCARD swap
         // chains (D3D11) the backbuffer is undefined each frame, so the
         // letterbox bars need to be black; but when logical aspect
         // matches drawable aspect, render_copy paints every drawable
         // pixel and the clear is wasted bandwidth (~33 MB/frame at 4K).
-        let needs_clear = ((i64) runtime_screen_w * (i64) w->rc->drawable_h)
-            != ((i64) runtime_actual_h * (i64) w->rc->drawable_w)
+        let needs_clear = ((i64) runtime_screen_w * (i64) w.rc.drawable_h)
+            != ((i64) runtime_actual_h * (i64) w.rc.drawable_w)
         if needs_clear then sdl2.clear(ren)
         sdl2.render_copy(ren, tex, default(any*), default(any*))
 

@@ -216,8 +216,8 @@ module pics =
     // (a 0.7s freeze would swallow ~24 `fwd:` ticks of every
     // cross-level test).
     let trigger_get_psyched = (g: game*) ->
-        if !g->test_mode then
-            g->get_psyched_timer = get_psyched_time
+        if !g.test_mode then
+            g.get_psyched_timer = get_psyched_time
 
     // Draw a decoded VGA-planar pic at (dst_x, dst_y) in the framebuffer.
     // Pixels outside the fb are clipped. `pal` is the 256-entry ARGB
@@ -236,8 +236,8 @@ module pics =
     let draw_clipped_top = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                             pal: const u32[], chunk: i32,
                             dst_x: i32, dst_y: i32, src_top_skip: i32) ->
-        if chunk < 0 || chunk >= (i32) rc->pic_cache.len then return
-        if rc->pic_cache[chunk].len == 0 then
+        if chunk < 0 || chunk >= (i32) rc.pic_cache.len then return
+        if rc.pic_cache[chunk].len == 0 then
             let pic = vgagraph.load_pic(vg, chunk)
             defer free(pic)
             if pic.len == 0 then return
@@ -246,8 +246,8 @@ module pics =
             let buf = alloc(u32[w * h] {})!
             for i in 0..(w * h) do
                 buf[(i64) i] = pal[(i32) pic[(i64) i]]
-            rc->pic_cache[chunk] = buf
-        let buf = rc->pic_cache[chunk]
+            rc.pic_cache[chunk] = buf
+        let buf = rc.pic_cache[chunk]
         let { w, h } = vgagraph.pic_dims_at(vg, chunk)
         let y0 = if src_top_skip < 0 then 0 else src_top_skip
         for y in y0..h do
@@ -255,8 +255,8 @@ module pics =
             if dy < 0 || dy >= game_h then continue
             for x in 0..w do
                 let dx = dst_x + x
-                if dx < 0 || dx >= rc->fb_w then continue
-                rc->fb[(i64) dy * (i64) rc->fb_w + (i64) dx] = buf[(i64) y * (i64) w + (i64) x]
+                if dx < 0 || dx >= rc.fb_w then continue
+                rc.fb[(i64) dy * (i64) rc.fb_w + (i64) dx] = buf[(i64) y * (i64) w + (i64) x]
 
     // "GET PSYCHED!" level-load overlay. Matches the original's
     // preload-graphics screen: fill the 3D view area with the
@@ -275,15 +275,15 @@ module pics =
         // status bar (y >= view_h) untouched.
         let bg = pal[get_psyched_bg_index]
         for y in 0..view_h do
-            let base = y * rc->fb_w
-            for x in 0..rc->fb_w do
-                rc->fb[base + x] = bg
+            let base = y * rc.fb_w
+            for x in 0..rc.fb_w do
+                rc.fb[base + x] = bg
         // Center the pic within the viewport. Use the VGAGRAPH-reported
         // size in case the pic is ever re-packed; the original's is 224x48.
         let { pw, ph } = vgagraph.pic_dims_at(vg, id.get_psyched)
         let pic_w = if pw > 0 then pw else get_psyched_pic_w
         let pic_h = if ph > 0 then ph else get_psyched_pic_h
-        let pic_x = (rc->fb_w - pic_w) / 2
+        let pic_x = (rc.fb_w - pic_w) / 2
         let pic_y = (view_h - pic_h) / 2
         draw(rc, vg, pal, id.get_psyched, pic_x, pic_y)
         // Progress bar: the original offsets it inside the pic frame
@@ -297,9 +297,9 @@ module pics =
         let bar_hilight = pal[0x32]
         // Trough (always full-width black strip 2px tall).
         for by in 0..2 do
-            let row = (bar_y + by) * rc->fb_w
+            let row = (bar_y + by) * rc.fb_w
             for bx in 0..bar_full_w do
-                rc->fb[row + bar_x + bx] = bg_col
+                rc.fb[row + bar_x + bx] = bg_col
         // Filled portion: 0 → 100% as timer_remaining goes from total → 0.
         let elapsed = timer_total - timer_remaining
         let frac = if timer_total <= 0.0 then 1.0 else elapsed / timer_total
@@ -308,13 +308,13 @@ module pics =
             else if fill_w_f > (f64) bar_full_w then bar_full_w
             else (i32) fill_w_f
         for by in 0..2 do
-            let row = (bar_y + by) * rc->fb_w
+            let row = (bar_y + by) * rc.fb_w
             let col = if by == 0 then bar_hilight else bar_col
             // The original draws the main bar full-width then the
             // highlight one pixel shorter. For simplicity we paint both
             // at the same width.
             for bx in 0..fill_w do
-                rc->fb[row + bar_x + bx] = col
+                rc.fb[row + bar_x + bx] = col
 
     // One-time decode of the title pic into an `fb_w × fb_h` ARGB buffer.
     // Letterboxed at native size (320×200) and centred; side panels
@@ -372,17 +372,17 @@ module pics =
     // populated unconditionally at startup.
     let blit_god_face = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                          dst_x: i32, dst_y: i32) ->
-        let buf = rc->god_face
+        let buf = rc.god_face
         if buf.len == 0 then return
         let { w, h } = vgagraph.pic_dims_at(vg, id.face_base)
         if w <= 0 || h <= 0 then return
         for y in 0..h do
             let dy = dst_y + y
-            if dy < 0 || dy >= rc->fb_h then continue
+            if dy < 0 || dy >= rc.fb_h then continue
             for x in 0..w do
                 let dx = dst_x + x
-                if dx < 0 || dx >= rc->fb_w then continue
-                rc->fb[(i64) dy * (i64) rc->fb_w + (i64) dx] = buf[(i64) y * (i64) w + (i64) x]
+                if dx < 0 || dx >= rc.fb_w then continue
+                rc.fb[(i64) dy * (i64) rc.fb_w + (i64) dx] = buf[(i64) y * (i64) w + (i64) x]
 
     // Draw a pic with horizontal stretch (nearest-neighbor) to a
     // target width; vertical scale is 1:1. Used for widescreen
@@ -394,8 +394,8 @@ module pics =
     let draw_stretched_h = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                              pal: const u32[], chunk: i32,
                              dst_x: i32, dst_y: i32, dst_w: i32) ->
-        if chunk < 0 || chunk >= (i32) rc->pic_cache.len then return
-        if rc->pic_cache[chunk].len == 0 then
+        if chunk < 0 || chunk >= (i32) rc.pic_cache.len then return
+        if rc.pic_cache[chunk].len == 0 then
             // Force a decode by drawing once off-screen.
             let pic = vgagraph.load_pic(vg, chunk)
             defer free(pic)
@@ -405,20 +405,20 @@ module pics =
             let buf = alloc(u32[w * h] {})!
             for i in 0..(w * h) do
                 buf[(i64) i] = pal[(i32) pic[(i64) i]]
-            rc->pic_cache[chunk] = buf
-        let buf = rc->pic_cache[chunk]
+            rc.pic_cache[chunk] = buf
+        let buf = rc.pic_cache[chunk]
         let { src_w, src_h } = vgagraph.pic_dims_at(vg, chunk)
         if src_w <= 0 || src_h <= 0 || dst_w <= 0 then return
         for y in 0..src_h do
             let dy = dst_y + y
-            if dy < 0 || dy >= rc->fb_h then continue
+            if dy < 0 || dy >= rc.fb_h then continue
             let src_row = (i64) y * (i64) src_w
-            let dst_row = (i64) dy * (i64) rc->fb_w
+            let dst_row = (i64) dy * (i64) rc.fb_w
             for x in 0..dst_w do
                 let sx = (i64) x * (i64) src_w / (i64) dst_w
                 let dx = dst_x + x
-                if dx < 0 || dx >= rc->fb_w then continue
-                rc->fb[dst_row + (i64) dx] = buf[src_row + sx]
+                if dx < 0 || dx >= rc.fb_w then continue
+                rc.fb[dst_row + (i64) dx] = buf[src_row + sx]
 
     // Four-piece help-window border, stretched to fill the
     // framebuffer in widescreen. Top + bottom strips scale to fb_w;
@@ -428,10 +428,10 @@ module pics =
     let draw_help_window = (rc: render_ctx*,
                              vg: const vgagraph.vgagraph_file*,
                              pal: const u32[]) ->
-        draw_stretched_h(rc, vg, pal, id.h_topwindow,    0,             0,   rc->fb_w)
+        draw_stretched_h(rc, vg, pal, id.h_topwindow,    0,             0,   rc.fb_w)
         draw         (rc, vg, pal, id.h_leftwindow,                 0,   8)
-        draw         (rc, vg, pal, id.h_rightwindow,    rc->fb_w - 8,    8)
-        draw_stretched_h(rc, vg, pal, id.h_bottominfo,   8,           176,   rc->fb_w - 16)
+        draw         (rc, vg, pal, id.h_rightwindow,    rc.fb_w - 8,    8)
+        draw_stretched_h(rc, vg, pal, id.h_bottominfo,   8,           176,   rc.fb_w - 16)
 
     // After drawing a 320-relative pic at (x, y), tile its LEFTMOST
     // column out to both framebuffer edges so the banner reads as a
@@ -446,29 +446,29 @@ module pics =
                                     pic_x: i32, pic_y: i32, chunk: i32) ->
         let { pw, ph } = vgagraph.pic_dims_at(vg, chunk)
         if pw <= 0 || ph <= 0 then return
-        let stride = (i64) rc->fb_w
+        let stride = (i64) rc.fb_w
         let left_x = if pic_x >= 0 then pic_x else 0
         for r in 0..ph do
             let dy = pic_y + r
-            if dy < 0 || dy >= rc->fb_h then continue
+            if dy < 0 || dy >= rc.fb_h then continue
             let row = (i64) dy * stride
-            let left_px = rc->fb[row + (i64) left_x]
+            let left_px = rc.fb[row + (i64) left_x]
             let mut x = 0
             loop
                 if x >= pic_x then break
-                rc->fb[row + (i64) x] = left_px
+                rc.fb[row + (i64) x] = left_px
                 x = x + 1
             x = pic_x + pw
             loop
-                if x >= rc->fb_w then break
-                rc->fb[row + (i64) x] = left_px
+                if x >= rc.fb_w then break
+                rc.fb[row + (i64) x] = left_px
                 x = x + 1
 
     // Blit the cached title backdrop into the framebuffer.
     let blit_title_bg = (rc: render_ctx*) ->
-        if rc->title_bg.len == 0 then return
-        for i in 0..(rc->fb_w * rc->fb_h) do
-            rc->fb[i] = rc->title_bg[i]
+        if rc.title_bg.len == 0 then return
+        for i in 0..(rc.fb_w * rc.fb_h) do
+            rc.fb[i] = rc.title_bg[i]
 
 
 // ============================================================
@@ -528,18 +528,18 @@ module font =
     let draw_char = (rc: render_ctx*, f: const info*, x: i32, y: i32,
                      ch: i32, color: u32) ->
         if ch < 0 || ch >= 256 then return 0
-        let cw = f->width[ch]
+        let cw = f.width[ch]
         if cw <= 0 then return 0
-        let ch_h = f->height
-        let src_off = (i64) f->location[ch]
+        let ch_h = f.height
+        let src_off = (i64) f.location[ch]
         for row in 0..ch_h do
             for col in 0..cw do
-                let px = f->pixels[src_off + (i64) row * (i64) cw + (i64) col]
+                let px = f.pixels[src_off + (i64) row * (i64) cw + (i64) col]
                 if px != 0u8 then
                     let dx = x + col
                     let dy = y + row
-                    if dx >= 0 && dx < rc->fb_w && dy >= 0 && dy < game_h then
-                        rc->fb[(i64) dy * (i64) rc->fb_w + (i64) dx] = color
+                    if dx >= 0 && dx < rc.fb_w && dy >= 0 && dy < game_h then
+                        rc.fb[(i64) dy * (i64) rc.fb_w + (i64) dx] = color
         cw
 
     let draw_text = (rc: render_ctx*, f: const info*,
@@ -555,13 +555,13 @@ module font =
         let mut w = 0
         for i in 0..(i32) s.len do
             let ch = (i32) s[(i64) i]
-            if ch >= 0 && ch < 256 then w = w + f->width[ch]
+            if ch >= 0 && ch < 256 then w = w + f.width[ch]
         w
 
     let draw_centered = (rc: render_ctx*, f: const info*,
                          y: i32, s: const str, color: u32) ->
         let w = text_width(f, s)
-        draw_text(rc, f, (rc->fb_w - w) / 2, y, s, color)
+        draw_text(rc, f, (rc.fb_w - w) / 2, y, s, color)
 
     // Load an IMF music player from an AUDIOT chunk number, synthesizing at
     // `sample_rate` Hz (interactive callers pass the detected device rate,
@@ -570,7 +570,7 @@ module font =
     let music_load = (ad: audio.audio_data*, chunk: i32, sample_rate: f64) ->
         let off = (i64) audio.chunk_offset(ad, chunk)
         let len = (i64) audio.chunk_length(ad, chunk)
-        imf.init_from_chunk(ad->raw, off, (i64) len, sample_rate)
+        imf.init_from_chunk(ad.raw, off, (i64) len, sample_rate)
 
     // Pick the AUDIOT chunk number that should be playing for the
     // current phase. The intro song plays continuously through the
@@ -668,8 +668,8 @@ module hud =
                         for sx in 0..scale do
                             let px = x + col * scale + sx
                             let py = y + row * scale + sy
-                            if px >= 0 && px < rc->fb_w && py >= 0 && py < game_h then
-                                rc->fb[(i64) py * (i64) rc->fb_w + (i64) px] = color
+                            if px >= 0 && px < rc.fb_w && py >= 0 && py < game_h then
+                                rc.fb[(i64) py * (i64) rc.fb_w + (i64) px] = color
 
     let draw_number = (rc: render_ctx*, x: i32, y: i32, num: i32, color: u32, scale: i32) ->
         let mut n = num
@@ -706,15 +706,15 @@ module hud =
                                 for sx in 0..scale do
                                     let px = cx + col * scale + sx
                                     let py = y + row * scale + sy
-                                    if px >= 0 && px < rc->fb_w && py >= 0 && py < game_h then
-                                        rc->fb[(i64) py * (i64) rc->fb_w + (i64) px] = color
+                                    if px >= 0 && px < rc.fb_w && py >= 0 && py < game_h then
+                                        rc.fb[(i64) py * (i64) rc.fb_w + (i64) px] = color
 
     // Draw a filled rectangle in the framebuffer.
     private let fill_rect = (rc: render_ctx*, x0: i32, y0: i32, x1: i32, y1: i32, color: u32) ->
         for y in y0..y1 do
             for x in x0..x1 do
-                if x >= 0 && x < rc->fb_w && y >= 0 && y < game_h then
-                    rc->fb[(i64) y * (i64) rc->fb_w + (i64) x] = color
+                if x >= 0 && x < rc.fb_w && y >= 0 && y < game_h then
+                    rc.fb[(i64) y * (i64) rc.fb_w + (i64) x] = color
 
     // Pick the BJ face chunk from health + animation frame. The
     // original picks the expression row from `(100-health)/16`
@@ -737,7 +737,7 @@ module hud =
     // struct game) so HUD rendering doesn't perturb the enemy RNG
     // stream that scripted tests rely on.
     private let face_rnd_byte = (g: game*) ->
-        (i32) (random.pcg_random.next_u32(&g->rng_face) & 0xFFu32)
+        (i32) (random.pcg_random.next_u32(&g.rng_face) & 0xFFu32)
 
     // Face update: accumulate tics into the face counter; when it
     // exceeds a random 0..255 threshold, roll a new face frame. The
@@ -755,14 +755,14 @@ module hud =
     // the accumulator crossing a new integer-tic boundary, so the
     // check rate is ≤ 70Hz no matter the refresh.
     let update_face = (g: game*, dt: f64) ->
-        let old_count = g->face_count
-        g->face_count = g->face_count + dt * 70.0
-        if (i64) g->face_count > (i64) old_count then
-            if g->face_count > (f64) face_rnd_byte(g) then
+        let old_count = g.face_count
+        g.face_count = g.face_count + dt * 70.0
+        if (i64) g.face_count > (i64) old_count then
+            if g.face_count > (f64) face_rnd_byte(g) then
                 let roll = face_rnd_byte(g) / 64       // 0..3
                 let frame = if roll == 3 then 1 else roll
-                g->face_frame = frame
-                g->face_count = 0.0
+                g.face_frame = frame
+                g.face_count = 0.0
 
     // Draw a right-aligned decimal number using the VGAGRAPH number
     // pics. `digits` is the cell count; shorter numbers get
@@ -801,15 +801,15 @@ module hud =
         // (the standard viewport grey — same neutral fill the level
         // intermission uses; reads as a continuation of the floor
         // without the attention-grabbing menu red).
-        let ox = rc->ui_offset_x
+        let ox = rc.ui_offset_x
         if ox > 0 then
             let fill = pal[0x7f]
-            for y in bar_top..rc->fb_h do
-                let row = y * rc->fb_w
+            for y in bar_top..rc.fb_h do
+                let row = y * rc.fb_w
                 for x in 0..ox do
-                    rc->fb[(i64) (row + x)] = fill
-                for x in (ox + 320)..rc->fb_w do
-                    rc->fb[(i64) (row + x)] = fill
+                    rc.fb[(i64) (row + x)] = fill
+                for x in (ox + 320)..rc.fb_w do
+                    rc.fb[(i64) (row + x)] = fill
         // Full Wolf3D status-bar graphic: all the cell outlines +
         // labels are pre-rendered into a single 320x40 image. We
         // paint it, then stamp digits / face / keys / weapon-icon
@@ -823,11 +823,11 @@ module hud =
         //   health: x=168, 3 cells
         //   ammo  : x=216, 2 cells
         let num_y = bar_top + 16
-        draw_vg_number(rc, vg, pal, ox + 16, num_y, 2, (g->level_num % episode.levels_per) + 1)
-        draw_vg_number(rc, vg, pal, ox + 48, num_y, 6, g->score)
-        draw_vg_number(rc, vg, pal, ox + 112, num_y, 1, g->lives)
-        draw_vg_number(rc, vg, pal, ox + 168, num_y, 3, g->health)
-        draw_vg_number(rc, vg, pal, ox + 216, num_y, 2, g->ammo)
+        draw_vg_number(rc, vg, pal, ox + 16, num_y, 2, (g.level_num % episode.levels_per) + 1)
+        draw_vg_number(rc, vg, pal, ox + 48, num_y, 6, g.score)
+        draw_vg_number(rc, vg, pal, ox + 112, num_y, 1, g.lives)
+        draw_vg_number(rc, vg, pal, ox + 168, num_y, 3, g.health)
+        draw_vg_number(rc, vg, pal, ox + 216, num_y, 2, g.ammo)
         // BJ face — chosen by health + the rolling A/B/C variant
         // from update_face. On death, the face swaps to the single
         // dead-face pic (or the mutant-BJ pic when the killing hit
@@ -838,23 +838,23 @@ module hud =
         // (rc->god_face) — the symmetric eyes-forward variant with
         // its blue irises pre-recolored, baked once at startup so
         // there's no per-frame scan.
-        if g->god_mode && g->health > 0 then
+        if g.god_mode && g.health > 0 then
             pics.blit_god_face(rc, vg, ox + 136, bar_top + 4)
         else
             let dead_face =
-                if g->last_hit_needle then pics.id.mutant_bj
+                if g.last_hit_needle then pics.id.mutant_bj
                 else pics.id.face_dead
             let face =
-                if g->got_gatling_timer > 0.0 then pics.id.got_gatling
-                else if g->mommy_mode then face_chunk_for(g->health, g->face_frame, true)
-                else if g->health <= 0 then dead_face
+                if g.got_gatling_timer > 0.0 then pics.id.got_gatling
+                else if g.mommy_mode then face_chunk_for(g.health, g.face_frame, true)
+                else if g.health <= 0 then dead_face
                 else
-                    match g->phase with
+                    match g.phase with
                     | dying -> dead_face
-                    | _ -> face_chunk_for(g->health, g->face_frame, false)
+                    | _ -> face_chunk_for(g.health, g.face_frame, false)
             pics.draw(rc, vg, pal, face, ox + 136, bar_top + 4)
         // Weapon icon on the right.
-        let weapon_chunk = match g->weapon with
+        let weapon_chunk = match g.weapon with
         | 1 -> pics.id.pistol
         | 2 -> pics.id.mg
         | 3 -> pics.id.chain
@@ -863,9 +863,9 @@ module hud =
         // Key indicators — two slots on the right edge. Positions
         // match the original status-bar key-slot coords (top/bottom)
         // → x=240.
-        if g->has_gold_key then
+        if g.has_gold_key then
             pics.draw(rc, vg, pal, pics.id.gold_key, ox + 240, bar_top + 4)
-        if g->has_silver_key then
+        if g.has_silver_key then
             pics.draw(rc, vg, pal, pics.id.silver_key, ox + 240, bar_top + 20)
         // No cheat-edge stripe: god mode shows itself through BJ's
         // gold eyes (above) and IDKFA is self-evident from the full
@@ -879,39 +879,39 @@ module hud =
         let mut n = (i32) text.len
         if n > 255 then n = 255
         for i in 0..n do
-            g->msg_buf[i] = text[i]
-        g->msg_len = n
-        g->msg_timer = 3.0
+            g.msg_buf[i] = text[i]
+        g.msg_len = n
+        g.msg_timer = 3.0
 
     // Draw the banner message if active. Fades out in the last
     // 0.5 s. Newlines split the message into multiple centered
     // lines stacked vertically — used by the secret cheat messages
     // to show their full original-game text.
     let render_message = (rc: render_ctx*, f: const font.info*, g: game*) ->
-        if g->msg_timer <= 0.0 || g->msg_len <= 0 then return
+        if g.msg_timer <= 0.0 || g.msg_len <= 0 then return
         // Foreground color brightens/fades.
-        let t = if g->msg_timer > 0.5 then 1.0 else g->msg_timer / 0.5
+        let t = if g.msg_timer > 0.5 then 1.0 else g.msg_timer / 0.5
         let bright = (u32) (255.0 * t)
         let color = 0xFF000000u32 | (bright << 16) | (bright << 8) | bright
         // Walk msg_buf one line at a time, breaking on '\n'. Empty
         // lines (from "\n\n" in the source text) render as a blank
         // vertical gap.
-        let line_h = f->height + 1
+        let line_h = f.height + 1
         let mut y = 4
         let mut line_start = 0
         let mut i = 0
         loop
-            let at_end = i >= g->msg_len
-            let is_nl = !at_end && g->msg_buf[i] == 10u8
+            let at_end = i >= g.msg_len
+            let is_nl = !at_end && g.msg_buf[i] == 10u8
             if at_end || is_nl then
                 // Measure + render the slice [line_start .. i).
                 let mut w = 0
                 for j in line_start..i do
-                    let ch = (i32) g->msg_buf[j]
-                    if ch >= 0 && ch < 256 then w = w + f->width[ch]
-                let mut cx = (rc->fb_w - w) / 2
+                    let ch = (i32) g.msg_buf[j]
+                    if ch >= 0 && ch < 256 then w = w + f.width[ch]
+                let mut cx = (rc.fb_w - w) / 2
                 for j in line_start..i do
-                    cx = cx + font.draw_char(rc, f, cx, y, (i32) g->msg_buf[j], color)
+                    cx = cx + font.draw_char(rc, f, cx, y, (i32) g.msg_buf[j], color)
                 y = y + line_h
                 line_start = i + 1
                 if at_end then break

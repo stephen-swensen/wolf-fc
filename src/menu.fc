@@ -197,8 +197,8 @@ module menu =
                 let mut xx = x0
                 loop
                     if xx >= x1 then break
-                    if xx >= 0 && xx < rc->fb_w then
-                        rc->fb[(i64) yy * (i64) rc->fb_w + (i64) xx] = c
+                    if xx >= 0 && xx < rc.fb_w then
+                        rc.fb[(i64) yy * (i64) rc.fb_w + (i64) xx] = c
                     xx = xx + 1
             yy = yy + 1
 
@@ -224,8 +224,8 @@ module menu =
     // on a continuous strip even in widescreen — same approach the
     // high-scores screen uses. Public so high_scores_screen can share.
     let draw_stripes = (rc: render_ctx*, pal: const u32[], y: i32) ->
-        fill_rect(rc, 0, y, rc->fb_w, y + 24, pal[0x00])
-        fill_rect(rc, 0, y + 22, rc->fb_w, y + 23, pal[pal_stripe])
+        fill_rect(rc, 0, y, rc.fb_w, y + 24, pal[0x00])
+        fill_rect(rc, 0, y + 22, rc.fb_w, y + 23, pal[pal_stripe])
 
     // Background common to every menu screen: full-screen red
     // border-color fill (spans the entire framebuffer including
@@ -234,7 +234,7 @@ module menu =
     // main and load/save screens (where a header pic floats over it);
     // the episode / difficulty / sound menus skip it.
     private let draw_backdrop = (rc: render_ctx*, pal: const u32[]) ->
-        fill_rect(rc, 0, 0, rc->fb_w, rc->fb_h, pal[pal_bordcolor])
+        fill_rect(rc, 0, 0, rc.fb_w, rc.fb_h, pal[pal_bordcolor])
 
     // Cursor blink at ~3.5 Hz alternating two cursor pics.
     private let cursor_chunk = (time: f64) ->
@@ -255,7 +255,7 @@ module menu =
     private let draw_help_pic = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                  pal: const u32[]) ->
         pics.draw_clipped_top(rc, vg, pal, pics.id.c_mouselback,
-            rc->ui_offset_x + 112, 187, 3)
+            rc.ui_offset_x + 112, 187, 3)
 
     // Pick a row's text colour given selected / locked flags. Matches
     // the original's normal / highlight color tables.
@@ -277,7 +277,7 @@ module menu =
     private let render_main_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                     pal: const u32[], f: const font.info*,
                                     g: game*, time: f64) ->
-        let ox = rc->ui_offset_x
+        let ox = rc.ui_offset_x
         // Full-width stripe + native-size header pic centered on top
         // (the original's main menu reuses the options-header pic
         // since the main menu and "options" share a screen). The
@@ -291,8 +291,8 @@ module menu =
         draw_window(rc, pal, ox + menu_x - 8, menu_y - 3, menu_w, win_h)
         for i in 0..main_len do
             let row_y = menu_y + i * row_h
-            let is_sel = g->menu_sel == i
-            let is_locked = main_is_locked(i, g->has_active_game)
+            let is_sel = g.menu_sel == i
+            let is_locked = main_is_locked(i, g.has_active_game)
             if is_sel then
                 draw_cursor(rc, vg, pal, ox + menu_x, row_y - 2, time)
             // Row 7 only gets the orange / yellow "read this"-style
@@ -301,14 +301,14 @@ module menu =
             // to Demo" variant uses regular row colors since it's a
             // passive return-to-title nav, not a "you have unfinished
             // business" jump.
-            let is_resume_game = i == 7 && g->has_active_game
+            let is_resume_game = i == 7 && g.has_active_game
             let color = if is_locked then pal[pal_deactive]
                 else if is_resume_game && is_sel then pal[pal_readh]
                 else if is_resume_game then pal[pal_read]
                 else if is_sel then pal[pal_highlight]
                 else pal[pal_text]
             font.draw_text(rc, f, ox + menu_x + menu_indent, row_y,
-                main_label(i, g->has_active_game), color)
+                main_label(i, g.has_active_game), color)
         draw_help_pic(rc, vg, pal)
 
     // ============================================================
@@ -322,7 +322,7 @@ module menu =
         // width=300, height≈154. Cards drawn at x+32 + i*26.
         // ui_offset_x recentres the 320-grid coords inside a wider
         // framebuffer for Hor+ widescreen.
-        let ne_x = rc->ui_offset_x + 10
+        let ne_x = rc.ui_offset_x + 10
         let ne_y = 23
         let ne_w = 300
         let ne_h = 6 * 26 + 4
@@ -338,7 +338,7 @@ module menu =
         let x_label  = ne_x + 96
         for i in 0..episode.count do
             let row_y = ne_y + i * row_step
-            let is_sel = g->menu_sel == i
+            let is_sel = g.menu_sel == i
             if is_sel then
                 draw_cursor(rc, vg, pal, x_cursor, row_y + 4, time)
             pics.draw(rc, vg, pal, episode_card(i), x_card, row_y)
@@ -361,7 +361,7 @@ module menu =
         // (24x32) is drawn separately at (x+185, y+7) — only the
         // chosen row's card shows. ui_offset_x recentres for
         // widescreen.
-        let nm_x = rc->ui_offset_x + 50
+        let nm_x = rc.ui_offset_x + 50
         let nm_y = 100
         let nm_w = 225
         let nm_h = 4 * row_h + 15
@@ -370,13 +370,13 @@ module menu =
             "How tough are you?", pal[pal_readh])
         draw_window(rc, pal, nm_x - 5, nm_y - 10, nm_w, nm_h)
         // The selected face card on the right edge of the window.
-        pics.draw(rc, vg, pal, diff_card(g->menu_sel), nm_x + 185, nm_y + 7)
+        pics.draw(rc, vg, pal, diff_card(g.menu_sel), nm_x + 185, nm_y + 7)
         let row_top  = nm_y - 2
         let x_cursor = nm_x
         let x_label  = nm_x + 24
         for i in 0..4 do
             let row_y = row_top + i * row_h
-            let is_sel = g->menu_sel == i
+            let is_sel = g.menu_sel == i
             if is_sel then
                 draw_cursor(rc, vg, pal, x_cursor, row_y - 2, time)
             font.draw_text(rc, f, x_label, row_y, diff_label(i),
@@ -397,7 +397,7 @@ module menu =
     private let render_sound_list = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                                       pal: const u32[], f: const font.info*,
                                       g: game*, ac: audio_ctx*, time: f64) ->
-        let ox       = rc->ui_offset_x
+        let ox       = rc.ui_offset_x
         let sect_x   = ox + 40
         let sect_w   = 240
         let sect_h   = 38
@@ -431,22 +431,22 @@ module menu =
             for k in 0..2 do
                 let row_i = s * 2 + k
                 let row_y = row_top + k * row_step
-                let is_sel = g->menu_sel == row_i
+                let is_sel = g.menu_sel == row_i
                 if is_sel then
                     draw_cursor(rc, vg, pal, x_cursor, row_y - 2, time)
                 let color = row_color(pal, is_sel, false)
                 let label = if k == 0 then "On/Off" else "Gain"
                 font.draw_text(rc, f, x_label, row_y, label, color)
                 if k == 0 then
-                    let on = if s == 0 then ac->sfx_on
-                             else if s == 1 then ac->digi_on
-                             else ac->music_on
+                    let on = if s == 0 then ac.sfx_on
+                             else if s == 1 then ac.digi_on
+                             else ac.music_on
                     let v = if on then "On" else "Off"
                     font.draw_text(rc, f, x_value, row_y, v, color)
                 else
-                    let pct = if s == 0 then ac->sfx_gain_pct
-                              else if s == 1 then ac->digi_gain_pct
-                              else ac->music_gain_pct
+                    let pct = if s == 0 then ac.sfx_gain_pct
+                              else if s == 1 then ac.digi_gain_pct
+                              else ac.music_gain_pct
                     font.draw_text(rc, f, x_value, row_y,
                         "%d{pct}%", color)
         draw_help_pic(rc, vg, pal)
@@ -459,7 +459,7 @@ module menu =
                                         pal: const u32[], f: const font.info*,
                                         g: game*, time: f64) ->
         font.draw_centered(rc, f, 28, "Options", pal[pal_readh])
-        let op_x = rc->ui_offset_x + 40
+        let op_x = rc.ui_offset_x + 40
         let op_y = 48
         let op_w = 240
         let op_h = options_len * 20 + 16
@@ -471,7 +471,7 @@ module menu =
         let x_value  = op_x + op_w - 56
         for i in 0..options_len do
             let row_y = row_top + i * row_step
-            let is_sel = g->menu_sel == i
+            let is_sel = g.menu_sel == i
             if is_sel then
                 draw_cursor(rc, vg, pal, x_cursor, row_y - 2, time)
             let color = row_color(pal, is_sel, false)
@@ -480,19 +480,19 @@ module menu =
             // Each row prints its own value because the match arms
             // would mix str / const str otherwise.
             if i == 0 then
-                let v = if g->mommy_mode then "On" else "Off"
+                let v = if g.mommy_mode then "On" else "Off"
                 font.draw_text(rc, f, x_value, row_y, v, color)
             else if i == 1 then
                 font.draw_text(rc, f, x_value, row_y,
-                    "%d{g->shadow_depth}%", color)
+                    "%d{g.shadow_depth}%", color)
             else if i == 2 then
                 font.draw_text(rc, f, x_value, row_y,
-                    "%d{g->bj_speed_pct}%", color)
+                    "%d{g.bj_speed_pct}%", color)
             else if i == 3 then
                 font.draw_text(rc, f, x_value, row_y,
-                    "%d{g->enemy_speed_pct}%", color)
+                    "%d{g.enemy_speed_pct}%", color)
             else if i == 4 then
-                let v = if g->show_map then "On" else "Off"
+                let v = if g.show_map then "On" else "Off"
                 font.draw_text(rc, f, x_value, row_y, v, color)
         draw_help_pic(rc, vg, pal)
 
@@ -517,7 +517,7 @@ module menu =
                                            pal: const u32[], f: const font.info*,
                                            g: game*, time: f64) ->
         font.draw_centered(rc, f, 22, "Change View", pal[pal_readh])
-        let cv_x = rc->ui_offset_x + 36
+        let cv_x = rc.ui_offset_x + 36
         let cv_y = 50
         let cv_w = 248
         let cv_h = changeview_len * 18 + 14
@@ -531,23 +531,23 @@ module menu =
         let x_value  = cv_x + cv_w - 116
         for i in 0..changeview_len do
             let row_y = row_top + i * row_step
-            let is_sel = g->menu_sel == i
+            let is_sel = g.menu_sel == i
             if is_sel then
                 draw_cursor(rc, vg, pal, x_cursor, row_y - 2, time)
             let color = row_color(pal, is_sel, false)
             if i == changeview_aspect_row then
                 font.draw_text(rc, f, x_label, row_y, "Aspect Ratio", color)
                 font.draw_text(rc, f, x_value, row_y,
-                    config.view_mode_label(g->view_mode), color)
+                    config.view_mode_label(g.view_mode), color)
             else if i == changeview_scale_row then
                 font.draw_text(rc, f, x_label, row_y, "Scale Factor", color)
                 // Show the user's choice (Auto vs 2x..12x). The
                 // resolved supersample factor is exposed by the
                 // footer's "Texture" line below.
-                if g->scale_factor == 0 then
+                if g.scale_factor == 0 then
                     font.draw_text(rc, f, x_value, row_y, "Auto", color)
                 else
-                    font.draw_text(rc, f, x_value, row_y, "%d{g->scale_factor}x", color)
+                    font.draw_text(rc, f, x_value, row_y, "%d{g.scale_factor}x", color)
             else if i == changeview_ssaa_row then
                 font.draw_text(rc, f, x_label, row_y, "Anti-Alias", color)
                 // Three-way SSAA on top of Scale Factor. The value
@@ -555,8 +555,8 @@ module menu =
                 // — the footer's "Anti-Alias" line below spells out the
                 // mode in full and shows the resolved buffer dimensions.
                 font.draw_text(rc, f, x_value, row_y,
-                    if g->ssaa_mode == 0 then "Off"
-                    else if g->ssaa_mode == 1 then "Vert 2x"
+                    if g.ssaa_mode == 0 then "Off"
+                    else if g.ssaa_mode == 1 then "Vert 2x"
                     else "Full 2x", color)
         // Footer: walk the four geometry stages of the pipeline
         // with their actual numbers, so the player can see exactly
@@ -574,38 +574,38 @@ module menu =
         // panel at scale=5 is ~210px wide, which would overflow if
         // the block started at the picker window's cursor column.
         let info_y = cv_y + cv_h + 4
-        let logical_h = rc->fb_h * 12 / 10 * rc->scale
-        let label_x = rc->ui_offset_x + 8
+        let logical_h = rc.fb_h * 12 / 10 * rc.scale
+        let label_x = rc.ui_offset_x + 8
         let value_x = label_x + 88
         font.draw_text(rc, f, label_x, info_y,      "Framebuffer", pal[pal_text])
         font.draw_text(rc, f, value_x, info_y,
-            "%d{rc->fb_w} x %d{rc->fb_h}", pal[pal_text])
+            "%d{rc.fb_w} x %d{rc.fb_h}", pal[pal_text])
         font.draw_text(rc, f, label_x, info_y + 9,  "Anti-Alias", pal[pal_text])
-        if rc->ssaa_mode == 0 then
+        if rc.ssaa_mode == 0 then
             font.draw_text(rc, f, value_x, info_y + 9, "off", pal[pal_text])
         else
             // Resolved internal viewport buffer (vbuf_w × vbuf_h) plus
             // the SSAA mode.
             font.draw_text(rc, f, value_x, info_y + 9,
-                alloca("%d{rc->vbuf_w} x %d{rc->vbuf_h}   (%s{if rc->ssaa_mode == 1 then "vert 2x" else "full 2x"} SSAA)"), pal[pal_text])
+                alloca("%d{rc.vbuf_w} x %d{rc.vbuf_h}   (%s{if rc.ssaa_mode == 1 then "vert 2x" else "full 2x"} SSAA)"), pal[pal_text])
         font.draw_text(rc, f, label_x, info_y + 18,  "Texture", pal[pal_text])
         font.draw_text(rc, f, value_x, info_y + 18,
-            "%d{rc->screen_w} x %d{rc->screen_h}   (%d{rc->scale}x supersample)", pal[pal_text])
+            "%d{rc.screen_w} x %d{rc.screen_h}   (%d{rc.scale}x supersample)", pal[pal_text])
         font.draw_text(rc, f, label_x, info_y + 27, "Logical", pal[pal_text])
         font.draw_text(rc, f, value_x, info_y + 27,
-            "%d{rc->screen_w} x %d{logical_h}   (1.2x VGA aspect)", pal[pal_text])
+            "%d{rc.screen_w} x %d{logical_h}   (1.2x VGA aspect)", pal[pal_text])
         font.draw_text(rc, f, label_x, info_y + 36, "Drawable", pal[pal_text])
         font.draw_text(rc, f, value_x, info_y + 36,
-            "%d{rc->drawable_w} x %d{rc->drawable_h}", pal[pal_text])
+            "%d{rc.drawable_w} x %d{rc.drawable_h}", pal[pal_text])
         draw_help_pic(rc, vg, pal)
         // 1px blue outline on the inside of the framebuffer
         // perimeter so the user can verify the active mode isn't
         // clipped by the window / display.
         let blue = 0xFF0000FFu32
-        fill_rect(rc, 0, 0, rc->fb_w, 1, blue)
-        fill_rect(rc, 0, rc->fb_h - 1, rc->fb_w, rc->fb_h, blue)
-        fill_rect(rc, 0, 0, 1, rc->fb_h, blue)
-        fill_rect(rc, rc->fb_w - 1, 0, rc->fb_w, rc->fb_h, blue)
+        fill_rect(rc, 0, 0, rc.fb_w, 1, blue)
+        fill_rect(rc, 0, rc.fb_h - 1, rc.fb_w, rc.fb_h, blue)
+        fill_rect(rc, 0, 0, 1, rc.fb_h, blue)
+        fill_rect(rc, rc.fb_w - 1, 0, rc.fb_w, rc.fb_h, blue)
 
     // ============================================================
     // Save / Load slot list — geometry matches the original
@@ -628,22 +628,22 @@ module menu =
     private let edit_buf_str = (sm: save_menu_ctx*) ->
         let mut n = 0i64
         loop
-            if n >= sm->edit_buf.len then break
-            if sm->edit_buf[n] == 0u8 then break
+            if n >= sm.edit_buf.len then break
+            if sm.edit_buf[n] == 0u8 then break
             n = n + 1
-        (const str) sm->edit_buf[0..n]
+        (const str) sm.edit_buf[0..n]
 
     // Returns true while the user is typing a name into save slot
     // `g->menu_sel`. Read by the renderer to swap the slot's static
     // label for an in-place editable line.
     let is_editing_save = (g: game*) ->
-        g->menu_level == nav.savelist && g->save_edit_active
+        g.menu_level == nav.savelist && g.save_edit_active
 
     private let render_slot = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
                        pal: const u32[], f: const font.info*,
                        g: game*, sm: save_menu_ctx*, header_pic: i32,
                        sel: i32, load_mode: bool, time: f64) ->
-        let ox = rc->ui_offset_x
+        let ox = rc.ui_offset_x
         let lsm_x_off = ox + lsm_x   // ui-offset-aware base x
         // Full-width stripe + native-size 216x48 header pic centered on
         // top at x=60. The stripe goes the whole framebuffer width so the
@@ -656,10 +656,10 @@ module menu =
         let editing = is_editing_save(g)
         let cursor_blink = ((i32) (time * 3.5)) % 2 == 0
         for i in 0..save.num_slots do
-            let s = &sm->slots[i]
+            let s = &sm.slots[i]
             let row_y = lsm_y + i * lsm_row_h
             let is_sel = sel == i
-            let is_locked = load_mode && s->empty
+            let is_locked = load_mode && s.empty
             // Per-slot outlined inset box. Selected row uses
             // HIGHLIGHT, others use TEXTCOLOR / DEACTIVE.
             let color = row_color(pal, is_sel, is_locked)
@@ -684,7 +684,7 @@ module menu =
                 if cursor_blink then
                     let ew = font.text_width(f, edit)
                     font.draw_text(rc, f, text_x + ew, text_y, "_", color)
-            else if s->empty then
+            else if s.empty then
                 // Centered placeholder inside the row's box, matching
                 // the OG's `- empty -` rendering for unused slots.
                 let placeholder = "- empty -"
@@ -692,17 +692,17 @@ module menu =
                 font.draw_text(rc, f, box_x + (box_w - pw) / 2, text_y,
                     placeholder, color)
             else
-                if s->label.len > 0 then
-                    let mut limit = (i32) s->label.len
+                if s.label.len > 0 then
+                    let mut limit = (i32) s.label.len
                     if limit > 22 then limit = 22
                     for j in 0..limit do
-                        sm->label_scratch[j] = s->label[j]
-                    sm->label_scratch[limit] = 0u8
-                    let slab = (const str) sm->label_scratch[0..(i64) limit]
+                        sm.label_scratch[j] = s.label[j]
+                    sm.label_scratch[limit] = 0u8
+                    let slab = (const str) sm.label_scratch[0..(i64) limit]
                     font.draw_text(rc, f, text_x, text_y, slab, color)
                 else
-                    let ep = s->level_num / episode.levels_per + 1
-                    let lvl = s->level_num % episode.levels_per + 1
+                    let ep = s.level_num / episode.levels_per + 1
+                    let lvl = s.level_num % episode.levels_per + 1
                     font.draw_text(rc, f, text_x, text_y,
                         "E%d{ep}M%d{lvl}", color)
         draw_help_pic(rc, vg, pal)
@@ -724,17 +724,17 @@ module menu =
                                       pal: const u32[],
                                       f: const font.info*, g: game*,
                                       ac: audio_ctx*) ->
-        render_main_list(rc, vg, pal, f, g, g->phase_timer)
-        let prompt = quit_prompts.at(g->quit_prompts_override, g->quit_prompt_idx)
+        render_main_list(rc, vg, pal, f, g, g.phase_timer)
+        let prompt = quit_prompts.at(g.quit_prompts_override, g.quit_prompt_idx)
         let hint = "Press Y to quit, N to stay"
         let pad = 10
-        let line_h = f->height + 2
+        let line_h = f.height + 2
         let pw = font.text_width(f, prompt)
         let hw = font.text_width(f, hint)
         let max_w = if pw > hw then pw else hw
         let box_w = max_w + 2 * pad
         let box_h = 2 * line_h + 2 * pad
-        let box_x = (rc->fb_w - box_w) / 2
+        let box_x = (rc.fb_w - box_w) / 2
         let box_y = (game_h - box_h) / 2
         // Fill — matches the original's message-box fill color
         // (pal_text already maps to the same palette index 0x17).
@@ -758,14 +758,14 @@ module menu =
                        vg: const vgagraph.vgagraph_file*, pal: const u32[],
                        f: const font.info*, g: game*, ac: audio_ctx*) ->
         draw_backdrop(rc, pal)
-        let time = g->phase_timer
-        match g->menu_level with
+        let time = g.phase_timer
+        match g.menu_level with
         | main       -> render_main_list(rc, vg, pal, f, g, time)
         | episode    -> render_episode_list(rc, vg, pal, f, g, time)
         | difficulty -> render_difficulty_list(rc, vg, pal, f, g, time)
         | sound      -> render_sound_list(rc, vg, pal, f, g, ac, time)
         | options    -> render_options_list(rc, vg, pal, f, g, time)
         | changeview -> render_changeview_list(rc, vg, pal, f, g, time)
-        | savelist   -> render_slot(rc, vg, pal, f, g, sm, pics.id.c_savegame, g->menu_sel, false, time)
-        | loadlist   -> render_slot(rc, vg, pal, f, g, sm, pics.id.c_loadgame, g->menu_sel, true, time)
+        | savelist   -> render_slot(rc, vg, pal, f, g, sm, pics.id.c_savegame, g.menu_sel, false, time)
+        | loadlist   -> render_slot(rc, vg, pal, f, g, sm, pics.id.c_loadgame, g.menu_sel, true, time)
         | quit       -> render_quit_modal(rc, vg, pal, f, g, ac)

@@ -397,7 +397,7 @@ module sfx =
     // thread now, so read the flag the callback publishes (acquire)
     // rather than poking `sfx->active` across the boundary.
     let adlib_busy = (ac: audio_ctx*) ->
-        atomic_load_acquire(&ac->adlib_busy_flag)
+        atomic_load_acquire(&ac.adlib_busy_flag)
 
     // Play a sound by sfx.id.*. The Sound submenu has two independent
     // toggles relevant here: DIGITIZED SOUND (gates the digi PCM path)
@@ -421,7 +421,7 @@ module sfx =
     private let trigger_panned_gain = (sound_id: i32, ac: audio_ctx*,
                                 pan: f64, gain: f64) ->
         if sound_id < 0 || sound_id >= count then return
-        spsc.enqueue(ac->cmd_ring, audio_q.cmd {
+        spsc.enqueue(ac.cmd_ring, audio_q.cmd {
             kind = audio_q.play_sfx, sfx_id = sound_id,
             pan = pan, gain = gain, player = none(imf.player*) })
         void()
@@ -434,20 +434,20 @@ module sfx =
     let apply_trigger = (sound_id: i32, ac: audio_ctx*,
                          pan: f64, gain: f64) ->
         let digi_idx = digi_slot[sound_id]
-        if digi_idx >= 0 && atomic_load_acquire(&ac->digi_on) then
-            digi.play_with_gain(ac->digi, digi_idx, pan, gain)
+        if digi_idx >= 0 && atomic_load_acquire(&ac.digi_on) then
+            digi.play_with_gain(ac.digi, digi_idx, pan, gain)
             return
         // No digi (off, or no sample) — fall through to AdLib if the
         // SFX toggle is on and an AdLib chunk exists.
-        if !atomic_load_acquire(&ac->sfx_on) then return
+        if !atomic_load_acquire(&ac.sfx_on) then return
         let enum_val = adlib_chunk[sound_id]
         if enum_val >= 0 then
             let chunk = 87 + enum_val   // 87 = AdLib block base in AUDIOT
-            if chunk >= 0 && chunk < ac->ad->num_chunks then
-                let off = (i64) audio.chunk_offset(ac->ad, chunk)
-                let len = audio.chunk_length(ac->ad, chunk)
+            if chunk >= 0 && chunk < ac.ad.num_chunks then
+                let off = (i64) audio.chunk_offset(ac.ad, chunk)
+                let len = audio.chunk_length(ac.ad, chunk)
                 if len >= 23 then
-                    adlib.play(ac->sfx, adlib.parse(ac->ad->raw, off),
+                    adlib.play(ac.sfx, adlib.parse(ac.ad.raw, off),
                                priority[sound_id])
 
     private let trigger_panned = (sound_id: i32, ac: audio_ctx*, pan: f64) ->
@@ -482,8 +482,8 @@ module sfx =
     // distant enemies don't eat mix slots.
     let trigger_at = (sound_id: i32, ac: audio_ctx*, g: game*,
                        x: f64, y: f64) ->
-        let dx = x - g->pos_x
-        let dy = y - g->pos_y
+        let dx = x - g.pos_x
+        let dy = y - g.pos_y
         let dist_sq = dx * dx + dy * dy
         let dist = math.sqrt(dist_sq)
         let max_dist = 16.0
@@ -496,9 +496,9 @@ module sfx =
             trigger_panned_gain(sound_id, ac, 0.0, gain)
         else
             // Camera-plane axis is g->plane; its sign tells us which side.
-            let plen = math.sqrt(g->plane_x * g->plane_x + g->plane_y * g->plane_y)
+            let plen = math.sqrt(g.plane_x * g.plane_x + g.plane_y * g.plane_y)
             let pan_raw = if plen < 1e-4 then 0.0
-                else (dx * g->plane_x + dy * g->plane_y) / (plen * dist)
+                else (dx * g.plane_x + dy * g.plane_y) / (plen * dist)
             // Soften pan by distance so far-off sources don't ping-pong
             // across the soundstage; at 16 tiles pan settles to ~half
             // of raw.

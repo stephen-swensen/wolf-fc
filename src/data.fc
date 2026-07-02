@@ -219,12 +219,12 @@ module vswap =
 
     // File offset of a page.
     let page_offset = (vs: const vswap_file*, page: i32) ->
-        (i64) bytes.u32(vs->raw, 6i64 + (i64) page * 4)
+        (i64) bytes.u32(vs.raw, 6i64 + (i64) page * 4)
 
     // Length of a page in bytes.
     let page_length = (vs: const vswap_file*, page: i32) ->
-        let len_off = 6i64 + (i64) vs->num_chunks * 4 + (i64) page * 2
-        (i32) bytes.u16(vs->raw, len_off)
+        let len_off = 6i64 + (i64) vs.num_chunks * 4 + (i64) page * 2
+        (i32) bytes.u16(vs.raw, len_off)
 
     // Lookup pre-computed header for a sprite page. Returns by value;
     // struct is small (~140 bytes) so the copy cost is negligible next to
@@ -232,12 +232,12 @@ module vswap =
     // (walls, sounds) the result is undefined — call only with page in
     // [sprite_start, sound_start).
     let sprite_header_at = (vs: const vswap_file*, page: i32) ->
-        vs->sprite_headers[page - vs->sprite_start]
+        vs.sprite_headers[page - vs.sprite_start]
 
     // Wall texture pixel (column-major 64x64). Returns palette index.
     let wall_pixel = (vs: const vswap_file*, tex_page: i32, col: i32, row: i32) ->
         let off = page_offset(vs, tex_page)
-        vs->raw[off + (i64) col * 64 + (i64) row]
+        vs.raw[off + (i64) col * 64 + (i64) row]
 
 // ============================================================
 // Map loading — MAPHEAD + GAMEMAPS, Carmack + RLEW decompression
@@ -457,8 +457,8 @@ module vgagraph =
     // Decompress chunk `chunk` by number. Returns empty slice on out-of-
     // range or sparse chunks.
     let decompress_chunk = (vg: const vgagraph_file*, chunk: i32) ->
-        if chunk < 0 || chunk >= vg->num_chunks then alloc(u8[0] {})!
-        else decompress_at(vg->raw, vg->dict, vg->offsets[chunk])
+        if chunk < 0 || chunk >= vg.num_chunks then alloc(u8[0] {})!
+        else decompress_at(vg.raw, vg.dict, vg.offsets[chunk])
 
     // Load VGADICT + VGAHEAD + VGAGRAPH and decode STRUCTPIC (the picture
     // dimension table). Caller owns the returned pointer and its buffers,
@@ -530,8 +530,8 @@ module vgagraph =
     // rendering.
     let pic_dims_at = (vg: const vgagraph_file*, chunk: i32) ->
         let idx = chunk - start_pics
-        if idx < 0 || idx >= vg->num_pics then { 0, 0 }
-        else { vg->pic_dims[idx].width, vg->pic_dims[idx].height }
+        if idx < 0 || idx >= vg.num_pics then { 0, 0 }
+        else { vg.pic_dims[idx].width, vg.pic_dims[idx].height }
 
     // Convert a VGA-planar pic (as stored in VGAGRAPH) into a linear row-
     // major 8-bit palette-index buffer. Planes are 4-way interleaved: the
@@ -593,11 +593,11 @@ module audio =
     // Get offset and length of an audio chunk.
     // Returns (offset, length). Length is from next chunk offset minus this one.
     let chunk_offset = (ad: const audio_data*, chunk: i32) ->
-        bytes.u32(ad->offsets, (i64) chunk * 4)
+        bytes.u32(ad.offsets, (i64) chunk * 4)
 
     let chunk_length = (ad: const audio_data*, chunk: i32) ->
         let off = (i64) chunk_offset(ad, chunk)
-        let next_off = if chunk + 1 < ad->num_chunks then
+        let next_off = if chunk + 1 < ad.num_chunks then
             (i64) chunk_offset(ad, chunk + 1)
-        else (i64) ad->raw.len
+        else (i64) ad.raw.len
         (i32) (next_off - off)

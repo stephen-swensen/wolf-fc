@@ -274,20 +274,20 @@ module config =
     // construction.
     let snapshot = (w: world*) ->
         prefs {
-            music_on = w->ac->music_on,
-            sfx_on = w->ac->sfx_on,
-            digi_on = w->ac->digi_on,
-            sfx_gain_pct = w->ac->sfx_gain_pct,
-            digi_gain_pct = w->ac->digi_gain_pct,
-            music_gain_pct = w->ac->music_gain_pct,
-            mommy_mode = w->g->mommy_mode,
-            shadow_depth = w->g->shadow_depth,
-            view_mode = w->g->view_mode,
-            scale_factor = w->g->scale_factor,
-            ssaa_mode = w->g->ssaa_mode,
-            bj_speed_pct = w->g->bj_speed_pct,
-            enemy_speed_pct = w->g->enemy_speed_pct,
-            show_map = w->g->show_map
+            music_on = w.ac.music_on,
+            sfx_on = w.ac.sfx_on,
+            digi_on = w.ac.digi_on,
+            sfx_gain_pct = w.ac.sfx_gain_pct,
+            digi_gain_pct = w.ac.digi_gain_pct,
+            music_gain_pct = w.ac.music_gain_pct,
+            mommy_mode = w.g.mommy_mode,
+            shadow_depth = w.g.shadow_depth,
+            view_mode = w.g.view_mode,
+            scale_factor = w.g.scale_factor,
+            ssaa_mode = w.g.ssaa_mode,
+            bj_speed_pct = w.g.bj_speed_pct,
+            enemy_speed_pct = w.g.enemy_speed_pct,
+            show_map = w.g.show_map
         }
 
     private let config_path = () ->
@@ -617,8 +617,8 @@ module save =
             void()
         | some(path) ->
             defer free(path)
-            let g = w->g
-            let lv = w->lv
+            let g = w.g
+            let lv = w.lv
             match io.open(path, "wb") with
             | none ->
                 io.write(alloca("save: failed to open %s{path}\n"), stderr)
@@ -633,70 +633,70 @@ module save =
                 if label.len > 0 then
                     io.write(alloca("label %s{label}\n"), f)
                 else
-                    let ep = g->level_num / episode.levels_per + 1
-                    let lvl = g->level_num % episode.levels_per + 1
+                    let ep = g.level_num / episode.levels_per + 1
+                    let lvl = g.level_num % episode.levels_per + 1
                     io.write("label E%d{ep}M%d{lvl}\n", f)
                 io.write(
-                    "game %d{g->level_num} %d{g->difficulty} %d{g->lives} %d{g->score} %d{g->health} %d{g->ammo} %d{g->weapon} %d{g->best_weapon} %d{if g->has_gold_key then 1 else 0} %d{if g->has_silver_key then 1 else 0} %d{if g->went_secret then 1 else 0}\n", f)
+                    "game %d{g.level_num} %d{g.difficulty} %d{g.lives} %d{g.score} %d{g.health} %d{g.ammo} %d{g.weapon} %d{g.best_weapon} %d{if g.has_gold_key then 1 else 0} %d{if g.has_silver_key then 1 else 0} %d{if g.went_secret then 1 else 0}\n", f)
                 // OG-style start-of-level score, used by death-rewind.
                 // Written on its own line so older saves (lacking it)
                 // load with `oldscore = score` defaulted in `from_slot`.
-                io.write("oldscore %d{g->oldscore}\n", f)
+                io.write("oldscore %d{g.oldscore}\n", f)
                 io.write(
-                    "counters %d{g->kills} %d{g->total_kills} %d{g->secrets} %d{g->total_secrets} %d{g->treasures} %d{g->total_treasures}\n", f)
-                io.write("time %14.6f{g->level_time}\n", f)
-                io.write("pos %14.6f{g->pos_x} %14.6f{g->pos_y}\n", f)
-                io.write("dir %14.6f{g->dir_x} %14.6f{g->dir_y}\n", f)
-                io.write("plane %14.6f{g->plane_x} %14.6f{g->plane_y}\n", f)
-                io.write("area %d{g->area_number}\n", f)
+                    "counters %d{g.kills} %d{g.total_kills} %d{g.secrets} %d{g.total_secrets} %d{g.treasures} %d{g.total_treasures}\n", f)
+                io.write("time %14.6f{g.level_time}\n", f)
+                io.write("pos %14.6f{g.pos_x} %14.6f{g.pos_y}\n", f)
+                io.write("dir %14.6f{g.dir_x} %14.6f{g.dir_y}\n", f)
+                io.write("plane %14.6f{g.plane_x} %14.6f{g.plane_y}\n", f)
+                io.write("area %d{g.area_number}\n", f)
                 // Doors: count + one row per door.
-                io.write("doors %d{lv->num_doors}\n", f)
-                for i in 0..lv->num_doors do
-                    let d = &lv->doors[i]
-                    let st = match d->state with
+                io.write("doors %d{lv.num_doors}\n", f)
+                for i in 0..lv.num_doors do
+                    let d = &lv.doors[i]
+                    let st = match d.state with
                     | closed  -> 0
                     | opening -> 1
                     | open    -> 2
                     | closing -> 3
                     io.write(
-                        "door %d{i} %d{d->tile_x} %d{d->tile_y} %d{st} %14.6f{d->open_timer} %14.6f{lv->door_pos[i]}\n", f)
+                        "door %d{i} %d{d.tile_x} %d{d.tile_y} %d{st} %14.6f{d.open_timer} %14.6f{lv.door_pos[i]}\n", f)
                 // Pushwall.
-                let pw = &lv->pushwall
-                let pw_active = if pw->active then 1 else 0
+                let pw = &lv.pushwall
+                let pw_active = if pw.active then 1 else 0
                 io.write(
-                    "pushwall %d{pw_active} %d{pw->tile_x} %d{pw->tile_y} %d{pw->dir_x} %d{pw->dir_y} %14.6f{pw->progress} %d{(i32) pw->orig_tile}\n", f)
+                    "pushwall %d{pw_active} %d{pw.tile_x} %d{pw.tile_y} %d{pw.dir_x} %d{pw.dir_y} %14.6f{pw.progress} %d{(i32) pw.orig_tile}\n", f)
                 // Sprite alive flags: compact hex bitmask, one char
                 // per 4 sprites.
-                io.write("sprites %d{lv->num_sprites} ", f)
-                let ns = lv->num_sprites
+                io.write("sprites %d{lv.num_sprites} ", f)
+                let ns = lv.num_sprites
                 let bytes_needed = (ns + 3) / 4
                 for b in 0..bytes_needed do
                     let mut nibble = 0
                     for bit in 0..4 do
                         let idx = b * 4 + bit
-                        if idx < ns && lv->sprites[idx].alive then
+                        if idx < ns && lv.sprites[idx].alive then
                             nibble = nibble | (1 << bit)
                     let ch = if nibble < 10 then 48 + nibble else 87 + nibble
-                    w->sm->hex_scratch[0] = (u8) ch
-                    io.write(w->sm->hex_scratch[0..1], f)
+                    w.sm.hex_scratch[0] = (u8) ch
+                    io.write(w.sm.hex_scratch[0..1], f)
                 io.write("\n", f)
                 // Enemies.
-                io.write("enemies %d{lv->num_enemies}\n", f)
-                for i in 0..lv->num_enemies do
-                    let e = &lv->enemies[i]
-                    let ki = enemy_kind_to_int(e->kind)
-                    let si = enemy_state_to_int(e->state)
-                    let amb = if e->ambush then 1 else 0
-                    let nfd = if e->notified then 1 else 0
+                io.write("enemies %d{lv.num_enemies}\n", f)
+                for i in 0..lv.num_enemies do
+                    let e = &lv.enemies[i]
+                    let ki = enemy_kind_to_int(e.kind)
+                    let si = enemy_state_to_int(e.state)
+                    let amb = if e.ambush then 1 else 0
+                    let nfd = if e.notified then 1 else 0
                     io.write(
-                        "enemy %d{i} %14.6f{e->x} %14.6f{e->y} %d{e->tile_x} %d{e->tile_y} %d{ki} %d{si} %d{e->dir} %d{e->hp} %d{e->anim_frame} %14.6f{e->anim_timer} %14.6f{e->move_remaining} %d{amb} %d{nfd} %14.6f{e->reaction_timer} %14.6f{e->touch_cooldown}\n", f)
+                        "enemy %d{i} %14.6f{e.x} %14.6f{e.y} %d{e.tile_x} %d{e.tile_y} %d{ki} %d{si} %d{e.dir} %d{e.hp} %d{e.anim_frame} %14.6f{e.anim_timer} %14.6f{e.move_remaining} %d{amb} %d{nfd} %14.6f{e.reaction_timer} %14.6f{e.touch_cooldown}\n", f)
                 // PRNG state. Bits round-trip through signed i64
                 // (same width as u64 under 2's complement); load
                 // reinterprets via (u64). Older saves lack this
                 // line and fall back to a fresh seed-0 stream (reset
                 // at the top of from_slot).
                 io.write(
-                    "rng %d{(i64) g->rng_enemy.state} %d{(i64) g->rng_enemy.inc} %d{(i64) g->rng_face.state} %d{(i64) g->rng_face.inc}\n", f)
+                    "rng %d{(i64) g.rng_enemy.state} %d{(i64) g.rng_enemy.inc} %d{(i64) g.rng_face.state} %d{(i64) g.rng_face.inc}\n", f)
                 io.write("end\n", f)
                 void()
 
@@ -726,7 +726,7 @@ module save =
                     io.write(alloca("save: %s{path} is an older format and cannot be loaded by this build — delete the file to dismiss this slot\n"), stderr)
                     false
                 else
-                    let g = w->g
+                    let g = w.g
                     // Reset both PCG streams to a seed-0 baseline
                     // before walking lines. A save written by this
                     // build will include an `rng` line that
@@ -735,8 +735,8 @@ module save =
                     // Either way, load is now reproducible rather
                     // than inheriting whatever stream position the
                     // live game had reached.
-                    g->rng_enemy = random.pcg_random.make_with_channel(0u64, enemies.rng_channel)
-                    g->rng_face  = random.pcg_random.make_with_channel(0u64, hud.rng_channel)
+                    g.rng_enemy = random.pcg_random.make_with_channel(0u64, enemies.rng_channel)
+                    g.rng_face  = random.pcg_random.make_with_channel(0u64, hud.rng_channel)
                     // Loading a slot drops any cheat latches the live
                     // session had picked up (IDDQD / IDKFA / noclip).
                     // Save files don't persist cheat state, so this
@@ -755,17 +755,17 @@ module save =
                             let toks = split_ws(line)
                             defer free_split(toks)
                             if toks.len >= 12 then
-                                g->level_num    = unwrap_int(toks[1])
-                                g->difficulty   = unwrap_int(toks[2])
-                                g->lives        = unwrap_int(toks[3])
-                                g->score        = unwrap_int(toks[4])
-                                g->health       = unwrap_int(toks[5])
-                                g->ammo         = unwrap_int(toks[6])
-                                g->weapon       = unwrap_int(toks[7])
-                                g->best_weapon  = unwrap_int(toks[8])
-                                g->has_gold_key   = unwrap_int(toks[9]) != 0
-                                g->has_silver_key = unwrap_int(toks[10]) != 0
-                                g->went_secret  = unwrap_int(toks[11]) != 0
+                                g.level_num    = unwrap_int(toks[1])
+                                g.difficulty   = unwrap_int(toks[2])
+                                g.lives        = unwrap_int(toks[3])
+                                g.score        = unwrap_int(toks[4])
+                                g.health       = unwrap_int(toks[5])
+                                g.ammo         = unwrap_int(toks[6])
+                                g.weapon       = unwrap_int(toks[7])
+                                g.best_weapon  = unwrap_int(toks[8])
+                                g.has_gold_key   = unwrap_int(toks[9]) != 0
+                                g.has_silver_key = unwrap_int(toks[10]) != 0
+                                g.went_secret  = unwrap_int(toks[11]) != 0
                                 // Default oldscore to score for back-
                                 // compat: older saves lack the
                                 // `oldscore` line, and we want a
@@ -773,7 +773,7 @@ module save =
                                 // rather than wiping the player back
                                 // to 0. The explicit `oldscore` line
                                 // (if present) overwrites this below.
-                                g->oldscore = g->score
+                                g.oldscore = g.score
                                 // Reload the level for the saved
                                 // level_num. This rebuilds
                                 // lv->{tilemap,doors,pushwall,sprites,enemies}
@@ -784,73 +784,73 @@ module save =
                         else if text.starts_with(line, "oldscore ") then
                             let toks = split_ws(line)
                             defer free_split(toks)
-                            if toks.len >= 2 then g->oldscore = unwrap_int(toks[1])
+                            if toks.len >= 2 then g.oldscore = unwrap_int(toks[1])
                         else if text.starts_with(line, "counters ") then
                             let toks = split_ws(line)
                             defer free_split(toks)
                             if toks.len >= 7 then
-                                g->kills           = unwrap_int(toks[1])
-                                g->total_kills     = unwrap_int(toks[2])
-                                g->secrets         = unwrap_int(toks[3])
-                                g->total_secrets   = unwrap_int(toks[4])
-                                g->treasures       = unwrap_int(toks[5])
-                                g->total_treasures = unwrap_int(toks[6])
+                                g.kills           = unwrap_int(toks[1])
+                                g.total_kills     = unwrap_int(toks[2])
+                                g.secrets         = unwrap_int(toks[3])
+                                g.total_secrets   = unwrap_int(toks[4])
+                                g.treasures       = unwrap_int(toks[5])
+                                g.total_treasures = unwrap_int(toks[6])
                         else if text.starts_with(line, "time ") then
                             let toks = split_ws(line)
                             defer free_split(toks)
-                            if toks.len >= 2 then g->level_time = unwrap_float(toks[1])
+                            if toks.len >= 2 then g.level_time = unwrap_float(toks[1])
                         else if text.starts_with(line, "pos ") then
                             let toks = split_ws(line)
                             defer free_split(toks)
                             if toks.len >= 3 then
-                                g->pos_x = unwrap_float(toks[1])
-                                g->pos_y = unwrap_float(toks[2])
+                                g.pos_x = unwrap_float(toks[1])
+                                g.pos_y = unwrap_float(toks[2])
                         else if text.starts_with(line, "dir ") then
                             let toks = split_ws(line)
                             defer free_split(toks)
                             if toks.len >= 3 then
-                                g->dir_x = unwrap_float(toks[1])
-                                g->dir_y = unwrap_float(toks[2])
+                                g.dir_x = unwrap_float(toks[1])
+                                g.dir_y = unwrap_float(toks[2])
                         else if text.starts_with(line, "plane ") then
                             let toks = split_ws(line)
                             defer free_split(toks)
                             if toks.len >= 3 then
-                                g->plane_x = unwrap_float(toks[1])
-                                g->plane_y = unwrap_float(toks[2])
+                                g.plane_x = unwrap_float(toks[1])
+                                g.plane_y = unwrap_float(toks[2])
                         else if text.starts_with(line, "area ") then
                             let toks = split_ws(line)
                             defer free_split(toks)
-                            if toks.len >= 2 then g->area_number = unwrap_int(toks[1])
+                            if toks.len >= 2 then g.area_number = unwrap_int(toks[1])
                         else if text.starts_with(line, "rng ") then
                             let toks = split_ws(line)
                             defer free_split(toks)
                             if toks.len >= 5 then
-                                g->rng_enemy.state = (u64) unwrap_i64(toks[1])
-                                g->rng_enemy.inc   = (u64) unwrap_i64(toks[2])
-                                g->rng_face.state  = (u64) unwrap_i64(toks[3])
-                                g->rng_face.inc    = (u64) unwrap_i64(toks[4])
+                                g.rng_enemy.state = (u64) unwrap_i64(toks[1])
+                                g.rng_enemy.inc   = (u64) unwrap_i64(toks[2])
+                                g.rng_face.state  = (u64) unwrap_i64(toks[3])
+                                g.rng_face.inc    = (u64) unwrap_i64(toks[4])
                         else if text.starts_with(line, "door ") then
                             let toks = split_ws(line)
                             defer free_split(toks)
                             if toks.len >= 7 && level_loaded then
                                 let di = unwrap_int(toks[1])
-                                if di >= 0 && di < w->lv->num_doors then
-                                    let d = &w->lv->doors[di]
-                                    d->state = int_to_door_state(unwrap_int(toks[4]))
-                                    d->open_timer = unwrap_float(toks[5])
-                                    w->lv->door_pos[di] = unwrap_float(toks[6])
+                                if di >= 0 && di < w.lv.num_doors then
+                                    let d = &w.lv.doors[di]
+                                    d.state = int_to_door_state(unwrap_int(toks[4]))
+                                    d.open_timer = unwrap_float(toks[5])
+                                    w.lv.door_pos[di] = unwrap_float(toks[6])
                         else if text.starts_with(line, "pushwall ") && level_loaded then
                             let toks = split_ws(line)
                             defer free_split(toks)
                             if toks.len >= 8 then
-                                let pw = &w->lv->pushwall
-                                pw->active   = unwrap_int(toks[1]) != 0
-                                pw->tile_x   = unwrap_int(toks[2])
-                                pw->tile_y   = unwrap_int(toks[3])
-                                pw->dir_x    = unwrap_int(toks[4])
-                                pw->dir_y    = unwrap_int(toks[5])
-                                pw->progress = unwrap_float(toks[6])
-                                pw->orig_tile = (u8) unwrap_int(toks[7])
+                                let pw = &w.lv.pushwall
+                                pw.active   = unwrap_int(toks[1]) != 0
+                                pw.tile_x   = unwrap_int(toks[2])
+                                pw.tile_y   = unwrap_int(toks[3])
+                                pw.dir_x    = unwrap_int(toks[4])
+                                pw.dir_y    = unwrap_int(toks[5])
+                                pw.progress = unwrap_float(toks[6])
+                                pw.orig_tile = (u8) unwrap_int(toks[7])
                         else if text.starts_with(line, "sprites ") && level_loaded then
                             let toks = split_ws(line)
                             defer free_split(toks)
@@ -867,66 +867,66 @@ module save =
                                     for bit in 0..4 do
                                         let idx = b * 4 + bit
                                         if idx >= ns then break
-                                        if idx < w->lv->num_sprites then
-                                            w->lv->sprites[idx].alive = (nibble >> bit) & 1 != 0
+                                        if idx < w.lv.num_sprites then
+                                            w.lv.sprites[idx].alive = (nibble >> bit) & 1 != 0
                         else if text.starts_with(line, "enemies ") && level_loaded then
                             let toks = split_ws(line)
                             defer free_split(toks)
                             if toks.len >= 2 then
-                                w->lv->num_enemies = unwrap_int(toks[1])
+                                w.lv.num_enemies = unwrap_int(toks[1])
                         else if text.starts_with(line, "enemy ") && level_loaded then
                             let toks = split_ws(line)
                             defer free_split(toks)
                             if toks.len >= 17 then
                                 let ei = unwrap_int(toks[1])
-                                if ei >= 0 && ei < w->lv->num_enemies then
-                                    let e = &w->lv->enemies[ei]
-                                    e->x              = unwrap_float(toks[2])
-                                    e->y              = unwrap_float(toks[3])
-                                    e->tile_x         = unwrap_int(toks[4])
-                                    e->tile_y         = unwrap_int(toks[5])
-                                    e->kind           = int_to_enemy_kind(unwrap_int(toks[6]))
-                                    e->state          = int_to_enemy_state(unwrap_int(toks[7]))
-                                    e->dir            = unwrap_int(toks[8])
-                                    e->hp             = unwrap_int(toks[9])
-                                    e->anim_frame     = unwrap_int(toks[10])
-                                    e->anim_timer     = unwrap_float(toks[11])
-                                    e->move_remaining = unwrap_float(toks[12])
-                                    e->ambush         = unwrap_int(toks[13]) != 0
-                                    e->notified       = unwrap_int(toks[14]) != 0
-                                    e->reaction_timer = unwrap_float(toks[15])
-                                    e->touch_cooldown = unwrap_float(toks[16])
+                                if ei >= 0 && ei < w.lv.num_enemies then
+                                    let e = &w.lv.enemies[ei]
+                                    e.x              = unwrap_float(toks[2])
+                                    e.y              = unwrap_float(toks[3])
+                                    e.tile_x         = unwrap_int(toks[4])
+                                    e.tile_y         = unwrap_int(toks[5])
+                                    e.kind           = int_to_enemy_kind(unwrap_int(toks[6]))
+                                    e.state          = int_to_enemy_state(unwrap_int(toks[7]))
+                                    e.dir            = unwrap_int(toks[8])
+                                    e.hp             = unwrap_int(toks[9])
+                                    e.anim_frame     = unwrap_int(toks[10])
+                                    e.anim_timer     = unwrap_float(toks[11])
+                                    e.move_remaining = unwrap_float(toks[12])
+                                    e.ambush         = unwrap_int(toks[13]) != 0
+                                    e.notified       = unwrap_int(toks[14]) != 0
+                                    e.reaction_timer = unwrap_float(toks[15])
+                                    e.touch_cooldown = unwrap_float(toks[16])
                     // Recompute area_by_player from the restored door
                     // states so enemy AI sees the correct
                     // connectivity. areas.connect walks the door list
                     // and re-floods from the player's anchor area.
                     for a in 0..areas.num_areas do
-                        w->lv->area_by_player[a] = false
+                        w.lv.area_by_player[a] = false
                     for aa in 0..(areas.num_areas * areas.num_areas) do
-                        w->lv->area_connect[aa] = 0u8
+                        w.lv.area_connect[aa] = 0u8
                     // Sum open-door counts into area_connect (both
                     // directions).
-                    for di in 0..w->lv->num_doors do
-                        let d = &w->lv->doors[di]
-                        match d->state with
+                    for di in 0..w.lv.num_doors do
+                        let d = &w.lv.doors[di]
+                        match d.state with
                         | open ->
-                            if d->area1 >= 0 && d->area2 >= 0 then
-                                let i1 = d->area1 * areas.num_areas + d->area2
-                                let i2 = d->area2 * areas.num_areas + d->area1
-                                w->lv->area_connect[i1] = w->lv->area_connect[i1] + 1u8
-                                w->lv->area_connect[i2] = w->lv->area_connect[i2] + 1u8
+                            if d.area1 >= 0 && d.area2 >= 0 then
+                                let i1 = d.area1 * areas.num_areas + d.area2
+                                let i2 = d.area2 * areas.num_areas + d.area1
+                                w.lv.area_connect[i1] = w.lv.area_connect[i1] + 1u8
+                                w.lv.area_connect[i2] = w.lv.area_connect[i2] + 1u8
                         | _ -> void()
-                    areas.connect(w->lv, g->area_number)
+                    areas.connect(w.lv, g.area_number)
                     // Resume gameplay.
-                    g->phase = game_phase.playing
-                    g->phase_timer = 0.0
-                    g->made_noise = false
-                    g->key_up = false
-                    g->key_down = false
-                    g->key_left = false
-                    g->key_right = false
-                    g->key_fire = false
-                    g->key_space = false
+                    g.phase = game_phase.playing
+                    g.phase_timer = 0.0
+                    g.made_noise = false
+                    g.key_up = false
+                    g.key_down = false
+                    g.key_left = false
+                    g.key_right = false
+                    g.key_fire = false
+                    g.key_space = false
                     // Leave key_space_handled at false: the user
                     // confirmed the load by pressing space/enter in
                     // the menu, and if we mark it handled here their
@@ -934,11 +934,11 @@ module save =
                     // intervening KEYUP) would be silently eaten.
                     // Matches the intermission.enter / episode_end.enter
                     // fix for the same symptom.
-                    g->key_space_handled = false
-                    g->key_ack = false
-                    g->key_ack_handled = false
-                    g->damage_flash_timer = 0.0
-                    g->msg_timer = 0.0
+                    g.key_space_handled = false
+                    g.key_ack = false
+                    g.key_ack_handled = false
+                    g.damage_flash_timer = 0.0
+                    g.msg_timer = 0.0
                     true
 
     // Rebuild the save-slots cache from disk. Called when entering
@@ -948,9 +948,9 @@ module save =
     let refresh_slots = (sm: save_menu_ctx*) ->
         for i in 0..save.num_slots do
             // Free any label from a previous refresh.
-            let old_label = sm->slots[i].label
+            let old_label = sm.slots[i].label
             if old_label.len > 0 then free(old_label)
-            sm->slots[i] = save.slot_info {
+            sm.slots[i] = save.slot_info {
                 empty = true,
                 label = default(u8[]),
                 level_num = 0, difficulty = 0, score = 0
@@ -994,7 +994,7 @@ module save =
                                     buf[k] = s[k]
                                 buf
                             | none -> default(u8[])
-                            sm->slots[i] = save.slot_info {
+                            sm.slots[i] = save.slot_info {
                                 empty = false, label = lbl,
                                 level_num = level_num,
                                 difficulty = difficulty, score = score
@@ -1048,10 +1048,10 @@ module highscore =
         let mut n = (i32) src.len
         if n > max_name_len then n = max_name_len
         for i in 0..n do
-            e->name[i] = src[(i64) i]
+            e.name[i] = src[(i64) i]
         for i in n..29 do
-            e->name[i] = 0u8
-        e->name_len = n
+            e.name[i] = 0u8
+        e.name_len = n
 
     // Original-game defaults — same names / scores / level the
     // original ships with, in the same top-to-bottom order. Used as
@@ -1074,7 +1074,7 @@ module highscore =
     // bytes. Result references the caller-owned buffer so it stays
     // valid as long as `e` does.
     let name_str = (e: const entry*) ->
-        (const str) e->name[0..(i64) e->name_len]
+        (const str) e.name[0..(i64) e.name_len]
 
     // Returns the insert index (0..max_scores-1) if (score, completed)
     // qualifies; -1 otherwise. Mirrors the original's `score >` /
@@ -1085,10 +1085,10 @@ module highscore =
         loop
             if i >= max_scores then break
             let s = &scores[i]
-            if score > s->score then
+            if score > s.score then
                 idx = i
                 break
-            if score == s->score && completed > s->completed then
+            if score == s.score && completed > s.completed then
                 idx = i
                 break
             i = i + 1
@@ -1110,19 +1110,19 @@ module highscore =
             let src = &scores[i - 1]
             let dst = &scores[i]
             for k in 0..29 do
-                dst->name[k] = src->name[k]
-            dst->name_len = src->name_len
-            dst->score = src->score
-            dst->completed = src->completed
-            dst->episode = src->episode
+                dst.name[k] = src.name[k]
+            dst.name_len = src.name_len
+            dst.score = src.score
+            dst.completed = src.completed
+            dst.episode = src.episode
             i = i - 1
         let dst = &scores[n]
         for k in 0..29 do
-            dst->name[k] = 0u8
-        dst->name_len = 0
-        dst->score = score
-        dst->completed = completed
-        dst->episode = episode
+            dst.name[k] = 0u8
+        dst.name_len = 0
+        dst.score = score
+        dst.completed = completed
+        dst.episode = episode
 
     // Replace the name at row `n`. Used by the name editor on commit
     // so the buffer it was typing into lands in the table before we
@@ -1209,7 +1209,7 @@ module highscore =
                 for i in 0..max_scores do
                     let e = &scores[i]
                     let nm = name_str(e)
-                    io.write("score %d{e->score} %d{e->completed} %d{e->episode} ", f)
+                    io.write("score %d{e.score} %d{e.completed} %d{e.episode} ", f)
                     if nm.len > 0 then io.write(nm, f)
                     io.write("\n", f)
                 void()
