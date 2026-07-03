@@ -312,11 +312,7 @@ module config =
                 defer free(contents)
                 let lines = text.split(contents, "\n")
                 defer free(lines)
-                let mut i = 0
-                loop
-                    if i >= (i32) lines.len then break
-                    let line = lines[(i64) i]
-                    i = i + 1
+                for line in lines do
                     if line.len == 0 then continue
                     if text.starts_with(line, "music ") then
                         match text.parse_i32(line[6..line.len]) with
@@ -504,8 +500,8 @@ module save =
 
     // Free the result of split_ws (both the outer array and each entry).
     private let free_split = (toks: str[]) ->
-        for k in 0..(i32) toks.len do
-            free(toks[(i64) k])
+        for t in toks do
+            free(t)
         free(toks)
 
     private let slot_path = (slot: i32) ->
@@ -743,11 +739,7 @@ module save =
                     // also keeps load deterministic.
                     player.cheats.clear_modes(g)
                     let mut level_loaded = false
-                    let mut i = 0
-                    loop
-                        if i >= (i32) lines.len then break
-                        let line = lines[(i64) i]
-                        i = i + 1
+                    for line in lines do
                         if line.len == 0 then continue
                         if text.starts_with(line, "label ") then
                             void()   // menu-only; ignored at load time
@@ -973,8 +965,7 @@ module save =
                         let mut score = 0
                         let mut label_src = none(const str)
                         let mut valid = false
-                        for li in 0..(i32) lines.len do
-                            let line = lines[(i64) li]
+                        for line in lines do
                             if text.starts_with(line, "label ") then
                                 label_src = some(line[6..line.len])
                             else if text.starts_with(line, "game ") then
@@ -1081,9 +1072,7 @@ module highscore =
     // `(== && completed >)` ordering — tie on score *and* level loses.
     let qualifies = (scores: entry[], score: i32, completed: i32) ->
         let mut idx = -1
-        let mut i = 0
-        loop
-            if i >= max_scores then break
+        for i in 0..max_scores do
             let s = &scores[i]
             if score > s.score then
                 idx = i
@@ -1091,7 +1080,6 @@ module highscore =
             if score == s.score && completed > s.completed then
                 idx = i
                 break
-            i = i + 1
         idx
 
     // Insert (score, completed, episode, name) at index `n`, shifting
@@ -1160,12 +1148,8 @@ module highscore =
                 let lines = text.split(contents, "\n")
                 defer free(lines)
                 let mut row = 0
-                let mut li = 0
-                loop
-                    if li >= (i32) lines.len then break
+                for line in lines do
                     if row >= max_scores then break
-                    let line = lines[(i64) li]
-                    li = li + 1
                     if line.len == 0 then continue
                     if !text.starts_with(line, "score ") then continue
                     // Parse "score <int> <int> <int> <name...>". Walk

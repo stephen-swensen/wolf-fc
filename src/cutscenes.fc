@@ -750,8 +750,8 @@ module intermission =
                            x: i32, y: i32, s: const str) ->
         let mut nx = x
         let mut ny = y
-        for i in 0..(i32) s.len do
-            let ch = (i32) s[(i64) i]
+        for b in s do
+            let ch = (i32) b
             if ch == 10 then
                 nx = x
                 ny = ny + 16

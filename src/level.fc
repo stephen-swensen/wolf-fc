@@ -294,8 +294,7 @@ module pushwall =
         if !lv.pushwall.active then return
         let prev = lv.pushwall.progress
         let cap = 2.0
-        let mut cur = prev + speed * dt
-        if cur > cap then cur = cap
+        let cur = math.min(prev + speed * dt, cap)
         lv.pushwall.progress = cur
         let prev_floor = (i32) math.floor(prev)
         let cur_floor = (i32) math.floor(cur)

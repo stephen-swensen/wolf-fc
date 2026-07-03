@@ -159,8 +159,8 @@ module player =
                 if s.alive && s.blocks then
                     let dx = px - s.x
                     let dy = py - s.y
-                    let adx = if dx < 0.0 then 0.0 - dx else dx
-                    let ady = if dy < 0.0 then 0.0 - dy else dy
+                    let adx = math.abs(dx)
+                    let ady = math.abs(dy)
                     if adx < reach && ady < reach then hit = true
             hit
 
@@ -265,7 +265,7 @@ module player =
         let cross = g.dir_x * tyn - g.dir_y * txn
         let alpha = math.atan2(cross, dot)
         let max_step = death_swing_rate * dt
-        let abs_a = if alpha < 0.0 then 0.0 - alpha else alpha
+        let abs_a = math.abs(alpha)
         if abs_a <= max_step then
             rotate_camera(g, 0.0 - alpha)
             g.killer_active = false

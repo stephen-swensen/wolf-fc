@@ -705,7 +705,7 @@ module enemies =
                 let xstep = if xt2 > xt1 then 1 else -1
                 let partial_x = if xt2 > xt1 then 1.0 - (x1 - (f64) xt1)
                                              else x1 - (f64) xt1
-                let dx_abs = if x2 > x1 then x2 - x1 else x1 - x2
+                let dx_abs = math.abs(x2 - x1)
                 let ystep = (y2 - y1) / dx_abs
                 let mut yfrac = y1 + ystep * partial_x
                 let mut x = xt1 + xstep
@@ -736,7 +736,7 @@ module enemies =
                 let ystep_dir = if yt2 > yt1 then 1 else -1
                 let partial_y = if yt2 > yt1 then 1.0 - (y1 - (f64) yt1)
                                              else y1 - (f64) yt1
-                let dy_abs = if y2 > y1 then y2 - y1 else y1 - y2
+                let dy_abs = math.abs(y2 - y1)
                 let xstep = (x2 - x1) / dy_abs
                 let mut xfrac = x1 + xstep * partial_y
                 let mut y = yt1 + ystep_dir
@@ -771,8 +771,8 @@ module enemies =
         let sees_player = (lv: const level*, g: game*, e: enemy*) ->
             let dx = g.pos_x - e.x
             let dy = g.pos_y - e.y
-            let adx = if dx < 0.0 then -dx else dx
-            let ady = if dy < 0.0 then -dy else dy
+            let adx = math.abs(dx)
+            let ady = math.abs(dy)
             if adx < 1.5 && ady < 1.5 then
                 check_line_clear(lv, e.x, e.y, g.pos_x, g.pos_y)
             else
@@ -1815,7 +1815,7 @@ module hitscan =
             let proj = rx * g.dir_x + ry * g.dir_y
             if proj <= 0.1 || proj >= best_dist then continue
             let perp = rx * g.dir_y - ry * g.dir_x
-            let pabs = if perp < 0.0 then -perp else perp
+            let pabs = math.abs(perp)
             // Half-tile wide "enemy hitbox". Most enemies are ~0.7
             // wide in Wolf3D; 0.5 is a forgiving compromise for our
             // raycaster where sprites render at the full tile scale.

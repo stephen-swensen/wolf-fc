@@ -190,17 +190,11 @@ module menu =
 
     // Filled rect [x0, x1) x [y0, y1) in framebuffer ARGB.
     private let fill_rect = (rc: render_ctx*, x0: i32, y0: i32, x1: i32, y1: i32, c: u32) ->
-        let mut yy = y0
-        loop
-            if yy >= y1 then break
+        for yy in y0..y1 do
             if yy >= 0 && yy < game_h then
-                let mut xx = x0
-                loop
-                    if xx >= x1 then break
+                for xx in x0..x1 do
                     if xx >= 0 && xx < rc.fb_w then
                         rc.fb[(i64) yy * (i64) rc.fb_w + (i64) xx] = c
-                    xx = xx + 1
-            yy = yy + 1
 
     // Menu window: solid fill plus a two-tone outline (top + left
     // in `c_top`, bottom + right in `c_bot`) — gives the box the

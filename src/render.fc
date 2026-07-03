@@ -742,6 +742,7 @@ module billboards =
 
 module overlay =
     import io from std::
+    import math from std::
     import text from std::
 
     let screenshot_max_slots = 100
@@ -816,7 +817,7 @@ module overlay =
     // the dying collapse fade.
     let viewport_tint = (rc: render_ctx*, tint: u32, alpha: f64) ->
         if alpha <= 0.0 then return
-        let a = if alpha >= 1.0 then 1.0 else alpha
+        let a = math.min(alpha, 1.0)
         let inv = 1.0 - a
         let tr = (f64) ((tint >> 16) & 0xFFu32) * a
         let tg = (f64) ((tint >> 8) & 0xFFu32) * a
@@ -845,7 +846,7 @@ module overlay =
     // (HUD + view).
     let viewport_tint_full = (rc: render_ctx*, tint: u32, alpha: f64) ->
         if alpha <= 0.0 then return
-        let a = if alpha >= 1.0 then 1.0 else alpha
+        let a = math.min(alpha, 1.0)
         let inv = 1.0 - a
         let tr = (f64) ((tint >> 16) & 0xFFu32) * a
         let tg = (f64) ((tint >> 8) & 0xFFu32) * a
@@ -872,7 +873,7 @@ module overlay =
     // monotonically removes them.
     let dissolve_stipple = (rc: render_ctx*, tint: u32, progress: f64) ->
         if progress <= 0.0 then return
-        let p = if progress >= 1.0 then 1.0 else progress
+        let p = math.min(progress, 1.0)
         let threshold = (u32) (p * 65536.0)
         let color = 0xFF000000u32 | (tint & 0x00FFFFFFu32)
         let sw = (i64) rc.screen_w
@@ -1026,7 +1027,7 @@ module overlay =
             rc.dbg_hitch_flash = rc.dbg_hitch_flash - ms / 1000.0
         // Jitter EMA — |period − interval|, seeded on the first frame (where
         // dbg_ms is still 0) since a deviation of exactly 0 is legitimate.
-        let dev = if ms > interval then ms - interval else interval - ms
+        let dev = math.abs(ms - interval)
         rc.dbg_jitter_ms = if rc.dbg_ms > 0.0 then
             rc.dbg_jitter_ms * 0.9 + dev * 0.1
         else dev
@@ -1066,8 +1067,8 @@ module overlay =
     private let dbg_text = (rc: render_ctx*, f: const font.info*,
                             x: i32, y: i32, sclstr: const str, color: u32, s: i32) ->
         let mut cx = x
-        for i in 0..(i32) sclstr.len do
-            cx = cx + dbg_glyph(rc, f, cx, y, (i32) sclstr[(i64) i], color, s)
+        for ch in sclstr do
+            cx = cx + dbg_glyph(rc, f, cx, y, (i32) ch, color, s)
 
     // Blend a dbuf rectangle toward black by `alpha` (legibility backdrop).
     private let dbg_dim = (rc: render_ctx*, x0: i32, y0: i32, x1: i32, y1: i32, alpha: f64) ->
@@ -1111,8 +1112,8 @@ module overlay =
         let line_h = (f.height + 1) * s
         let margin = 3 * s
         let mut maxw = 0
-        for i in 0..4 do
-            let lw = font.text_width(f, lines[i]) * s
+        for ln in lines do
+            let lw = font.text_width(f, ln) * s
             if lw > maxw then maxw = lw
         let x_right = rc.screen_w - margin
         let y_top = margin
@@ -1185,7 +1186,7 @@ module overlay =
     // fade-out).
     let dbuf_tint_full = (rc: render_ctx*, tint: u32, alpha: f64) ->
         if alpha <= 0.0 then return
-        let a = if alpha >= 1.0 then 1.0 else alpha
+        let a = math.min(alpha, 1.0)
         let inv = 1.0 - a
         let tr = (f64) ((tint >> 16) & 0xFFu32) * a
         let tg = (f64) ((tint >> 8) & 0xFFu32) * a

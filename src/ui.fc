@@ -453,16 +453,10 @@ module pics =
             if dy < 0 || dy >= rc.fb_h then continue
             let row = (i64) dy * stride
             let left_px = rc.fb[row + (i64) left_x]
-            let mut x = 0
-            loop
-                if x >= pic_x then break
+            for x in 0..pic_x do
                 rc.fb[row + (i64) x] = left_px
-                x = x + 1
-            x = pic_x + pw
-            loop
-                if x >= rc.fb_w then break
+            for x in (pic_x + pw)..rc.fb_w do
                 rc.fb[row + (i64) x] = left_px
-                x = x + 1
 
     // Blit the cached title backdrop into the framebuffer.
     let blit_title_bg = (rc: render_ctx*) ->
@@ -545,16 +539,15 @@ module font =
     let draw_text = (rc: render_ctx*, f: const info*,
                      x: i32, y: i32, s: const str, color: u32) ->
         let mut cx = x
-        for i in 0..(i32) s.len do
-            let ch = (i32) s[(i64) i]
-            let advance = draw_char(rc, f, cx, y, ch, color)
+        for b in s do
+            let advance = draw_char(rc, f, cx, y, (i32) b, color)
             cx = cx + advance
 
     // Measure a string's rendered pixel width (for centering).
     let text_width = (f: const info*, s: const str) ->
         let mut w = 0
-        for i in 0..(i32) s.len do
-            let ch = (i32) s[(i64) i]
+        for b in s do
+            let ch = (i32) b
             if ch >= 0 && ch < 256 then w = w + f.width[ch]
         w
 

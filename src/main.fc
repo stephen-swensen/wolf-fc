@@ -152,8 +152,8 @@ module quit_prompts =
     private let dup_str = (s: const str) ->
         let n = s.len
         let buf = alloc(u8[n] {})!
-        for i in 0..n do
-            buf[i] = s[i]
+        for i, c in s do
+            buf[i] = c
         (str) buf
 
     // Read newline-delimited override pool. Lines are trimmed; blanks
@@ -174,15 +174,15 @@ module quit_prompts =
                 defer free(lines)
                 // First pass: count non-blank trimmed lines.
                 let mut n = 0i64
-                for i in 0..lines.len do
-                    if text.trim(lines[i]).len > 0i64 then
+                for ln in lines do
+                    if text.trim(ln).len > 0i64 then
                         n = n + 1i64
                 if n == 0i64 then alloc(str[0] {})!
                 else
                     let out = alloc(str[n] {})!
                     let mut k = 0i64
-                    for i in 0..lines.len do
-                        let t = text.trim(lines[i])
+                    for ln in lines do
+                        let t = text.trim(ln)
                         if t.len > 0i64 then
                             out[k] = dup_str(t)
                             k = k + 1i64
@@ -190,8 +190,8 @@ module quit_prompts =
 
     // Free the heap-allocated override pool (line buffers + outer slice).
     let free_override = (pool: str[]) ->
-        for i in 0..pool.len do
-            free(pool[i])
+        for line in pool do
+            free(line)
         free(pool)
 
     // Pick the i-th prompt out of either the override pool (when non-
@@ -1044,11 +1044,8 @@ let add_score = (g: game*, amount: i32, ac: audio_ctx*) ->
     g.score = g.score + amount
     if g.score > score_max || g.score < 0 then g.score = score_max
     let after_milestones = g.score / extra_life_score
-    let mut n = before_milestones
-    loop
-        if n >= after_milestones then break
+    for _ in before_milestones..after_milestones do
         grant_extra_life(g, ac)
-        n = n + 1
 
 // Grant the full cheat kit: 100 health, 99 ammo, chain gun (+ best-
 // weapon latch), both keys. Shared by the M+L+I chord, IDKFA
@@ -1446,8 +1443,8 @@ let build_level = (lv_data: maps.level*, sprite_start: i32, difficulty: i32, mom
         | _ -> enemies_live = enemies_live + 1
     lv.total_enemies = enemies_live
     let mut pw = 0
-    for i in 0..(map_size * map_size) do
-        if lv.pushwall_tiles[i] then pw = pw + 1
+    for t in lv.pushwall_tiles do
+        if t then pw = pw + 1
     lv.total_pushwalls = pw
     // The original game counts the 1-UP among a level's treasures: both
     // the per-level treasure total and the collected-treasure tally
@@ -1918,8 +1915,7 @@ let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const u32[]) ->
     | dying ->
         // Ramp 0 → 1 over player.death_fade_time, then hold at 1 until
         // player.death_anim_time elapses and the phase transition fires.
-        let t = w.g.phase_timer / player.death_fade_time
-        if t > 1.0 then 1.0 else t
+        math.min(w.g.phase_timer / player.death_fade_time, 1.0)
     | _ ->
         // Quick uncover back to the new scene on respawn.
         if w.g.respawn_fade_timer > 0.0 then
@@ -3627,7 +3623,7 @@ let main = (args: str[]) ->
             let n = (i32) (dt / interval_s + 0.5)
             if n >= 1 then
                 let snapped = (f64) n * interval_s
-                let err = if dt > snapped then dt - snapped else snapped - dt
+                let err = math.abs(dt - snapped)
                 let snap_tol = interval_s * 0.2
                 if err <= snap_tol then dt = snapped
 
