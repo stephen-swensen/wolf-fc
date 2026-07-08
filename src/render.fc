@@ -1309,8 +1309,8 @@ module overlay =
             io.mkdir(dir)
             io.mkdir(ss_dir)
             match io.list_dir(ss_dir) with
-            | none -> void()
-            | some(entries) ->
+            | err(_) -> void()
+            | ok(entries) ->
                 let mut deleted = 0
                 for name in entries do
                     if text.starts_with(name, "ss_") && text.ends_with(name, ".png") then

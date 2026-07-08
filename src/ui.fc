@@ -183,7 +183,7 @@ module pics =
 
         // --- Demo / order-screen lump (chunks 136..148).
         let order       = 136     // (unused) shareware order screen
-        let error       = 137     // (unused) generic error screen
+        let error_art   = 137     // (unused) generic error screen
         let t_helpart   = 138     // (unused) alt "Read This!" help art
         let t_demo0     = 139     // (unused) demo-playback art slot 0
         let t_demo1     = 140     // (unused) demo slot 1

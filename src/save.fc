@@ -71,16 +71,16 @@ module diag =
             let path = alloc("%s{dir}/diag.log")!
             defer free(path)
             match io.open(path, "w") with
-            | some(f) ->
+            | ok(f) ->
                 io.write("== wolf-fc diag log (lock-free audio) — fsync per line ==\n", f)
                 io.flush(f)
                 some(f)
-            | none -> none(any*)
+            | err(_) -> none(any*)
 
     // Flush a line all the way to disk so a later hard freeze can't lose it.
     // io.sync flushes and then forces the bytes to the platter (fsync on
     // POSIX, _commit on Windows), so the breadcrumb survives a power cut on
-    // every target. The bool result (did it reach disk?) is irrelevant to a
+    // every target. The result (did it reach disk?) is irrelevant to a
     // best-effort debugging aid, so it's discarded.
     private let sync_line = (f: any*) ->
         io.sync(f)
@@ -307,8 +307,8 @@ module config =
         | some(path) ->
             defer free(path)
             match io.read_all(path) with
-            | none -> p
-            | some(contents) ->
+            | err(_) -> p
+            | ok(contents) ->
                 defer free(contents)
                 let lines = text.split(contents, "\n")
                 defer free(lines)
@@ -316,58 +316,58 @@ module config =
                     if line.len == 0 then continue
                     if text.starts_with(line, "music ") then
                         match text.parse_i32(line[6..line.len]) with
-                        | some(v) -> p.music_on = v != 0
-                        | none -> void()
+                        | ok(v) -> p.music_on = v != 0
+                        | err(_) -> void()
                     else if text.starts_with(line, "sfx ") then
                         match text.parse_i32(line[4..line.len]) with
-                        | some(v) -> p.sfx_on = v != 0
-                        | none -> void()
+                        | ok(v) -> p.sfx_on = v != 0
+                        | err(_) -> void()
                     else if text.starts_with(line, "digi ") then
                         match text.parse_i32(line[5..line.len]) with
-                        | some(v) -> p.digi_on = v != 0
-                        | none -> void()
+                        | ok(v) -> p.digi_on = v != 0
+                        | err(_) -> void()
                     else if text.starts_with(line, "sfx_gain_pct ") then
                         match text.parse_i32(line[13..line.len]) with
-                        | some(v) ->
+                        | ok(v) ->
                             p.sfx_gain_pct = if v < gain_pct_min then gain_pct_min
                                 else if v > gain_pct_max then gain_pct_max
                                 else v
-                        | none -> void()
+                        | err(_) -> void()
                     else if text.starts_with(line, "digi_gain_pct ") then
                         match text.parse_i32(line[14..line.len]) with
-                        | some(v) ->
+                        | ok(v) ->
                             p.digi_gain_pct = if v < gain_pct_min then gain_pct_min
                                 else if v > gain_pct_max then gain_pct_max
                                 else v
-                        | none -> void()
+                        | err(_) -> void()
                     else if text.starts_with(line, "music_gain_pct ") then
                         match text.parse_i32(line[15..line.len]) with
-                        | some(v) ->
+                        | ok(v) ->
                             p.music_gain_pct = if v < gain_pct_min then gain_pct_min
                                 else if v > gain_pct_max then gain_pct_max
                                 else v
-                        | none -> void()
+                        | err(_) -> void()
                     else if text.starts_with(line, "mommy_mode ") then
                         match text.parse_i32(line[11..line.len]) with
-                        | some(v) -> p.mommy_mode = v != 0
-                        | none -> void()
+                        | ok(v) -> p.mommy_mode = v != 0
+                        | err(_) -> void()
                     else if text.starts_with(line, "shadow_depth ") then
                         match text.parse_i32(line[13..line.len]) with
-                        | some(v) ->
+                        | ok(v) ->
                             // Clamp to 0..100 in case a hand-edited
                             // config falls outside the slider range.
                             p.shadow_depth = if v < 0 then 0
                                 else if v > 100 then 100
                                 else v
-                        | none -> void()
+                        | err(_) -> void()
                     else if text.starts_with(line, "view_mode ") then
                         match text.parse_i32(line[10..line.len]) with
-                        | some(v) ->
+                        | ok(v) ->
                             p.view_mode = if v < 0 || v > 3 then 0 else v
-                        | none -> void()
+                        | err(_) -> void()
                     else if text.starts_with(line, "scale_factor ") then
                         match text.parse_i32(line[13..line.len]) with
-                        | some(v) ->
+                        | ok(v) ->
                             // 0 = auto; otherwise clamp to [min, max].
                             // Out-of-range values fall back to auto so a
                             // hand-edited config can't pin an unusable
@@ -376,29 +376,29 @@ module config =
                                 else if v < scale_factor_min then scale_factor_auto
                                 else if v > scale_factor_max then scale_factor_max
                                 else v
-                        | none -> void()
+                        | err(_) -> void()
                     else if text.starts_with(line, "ssaa_mode ") then
                         match text.parse_i32(line[10..line.len]) with
-                        | some(v) -> p.ssaa_mode = if v < 0 || v > 2 then 0 else v
-                        | none -> void()
+                        | ok(v) -> p.ssaa_mode = if v < 0 || v > 2 then 0 else v
+                        | err(_) -> void()
                     else if text.starts_with(line, "bj_speed_pct ") then
                         match text.parse_i32(line[13..line.len]) with
-                        | some(v) ->
+                        | ok(v) ->
                             p.bj_speed_pct = if v < speed_pct_min then speed_pct_min
                                 else if v > speed_pct_max then speed_pct_max
                                 else v
-                        | none -> void()
+                        | err(_) -> void()
                     else if text.starts_with(line, "enemy_speed_pct ") then
                         match text.parse_i32(line[16..line.len]) with
-                        | some(v) ->
+                        | ok(v) ->
                             p.enemy_speed_pct = if v < speed_pct_min then speed_pct_min
                                 else if v > speed_pct_max then speed_pct_max
                                 else v
-                        | none -> void()
+                        | err(_) -> void()
                     else if text.starts_with(line, "show_map ") then
                         match text.parse_i32(line[9..line.len]) with
-                        | some(v) -> p.show_map = v != 0
-                        | none -> void()
+                        | ok(v) -> p.show_map = v != 0
+                        | err(_) -> void()
                 p
 
     // Write the current prefs to disk. Fire-and-forget — failures
@@ -411,8 +411,8 @@ module config =
         | some(path) ->
             defer free(path)
             match io.open(path, "wb") with
-            | none -> void()
-            | some(f) ->
+            | err(_) -> void()
+            | ok(f) ->
                 defer io.close(f)
                 io.write("WLFC_CONFIG %d{version}\n", f)
                 io.write("music %d{if p.music_on then 1 else 0}\n", f)
@@ -517,21 +517,21 @@ module save =
     // least N tokens" guards in each section, this keeps a malformed
     // line from cascading. text.parse_* caps input length internally
     // (alloca-overflow safety lives in the stdlib), so over-long tokens
-    // simply parse as none here like any other malformed field.
+    // simply err here like any other malformed field.
     private let unwrap_int = (s: const str) ->
         match text.parse_i32(s) with
-        | some(n) -> n
-        | none    -> 0
+        | ok(n) -> n
+        | err(_)    -> 0
 
     private let unwrap_i64 = (s: const str) ->
         match text.parse_i64(s) with
-        | some(n) -> n
-        | none    -> 0i64
+        | ok(n) -> n
+        | err(_)    -> 0i64
 
     private let unwrap_float = (s: const str) ->
         match text.parse_f64(s) with
-        | some(x) -> x
-        | none    -> 0.0
+        | ok(x) -> x
+        | err(_)    -> 0.0
 
     // Numeric kind/state codes for serialization. Preserving ordering
     // so older saves stay loadable if we add new variants at the end.
@@ -616,10 +616,10 @@ module save =
             let g = w.g
             let lv = w.lv
             match io.open(path, "wb") with
-            | none ->
+            | err(_) ->
                 io.write(alloca("save: failed to open %s{path}\n"), stderr)
                 void()
-            | some(f) ->
+            | ok(f) ->
                 defer io.close(f)
                 io.write("WLFC %d{version}\n", f)
                 // User-supplied slot label (the inline save-name entry
@@ -712,8 +712,8 @@ module save =
         | some(path) ->
             defer free(path)
             match io.read_all(path) with
-            | none -> false
-            | some(contents) ->
+            | err(_) -> false
+            | ok(contents) ->
                 defer free(contents)
                 let lines = text.split(contents, "\n")
                 defer free(lines)
@@ -955,8 +955,8 @@ module save =
                 if !io.exists(path) then void()
                 else
                     match io.read_all(path) with
-                    | none -> void()
-                    | some(contents) ->
+                    | err(_) -> void()
+                    | ok(contents) ->
                         defer free(contents)
                         let lines = text.split(contents, "\n")
                         defer free(lines)
@@ -1128,8 +1128,8 @@ module highscore =
 
     private let parse_int_or_zero = (s: const str) ->
         match text.parse_i32(s) with
-        | some(v) -> v
-        | none    -> 0
+        | ok(v) -> v
+        | err(_)    -> 0
 
     // Read the high-scores file into `scores`. Missing / unreadable /
     // malformed files leave the caller's defaults in place — we never
@@ -1142,8 +1142,8 @@ module highscore =
         | some(path) ->
             defer free(path)
             match io.read_all(path) with
-            | none -> void()
-            | some(contents) ->
+            | err(_) -> void()
+            | ok(contents) ->
                 defer free(contents)
                 let lines = text.split(contents, "\n")
                 defer free(lines)
@@ -1186,8 +1186,8 @@ module highscore =
         | some(path) ->
             defer free(path)
             match io.open(path, "wb") with
-            | none -> void()
-            | some(f) ->
+            | err(_) -> void()
+            | ok(f) ->
                 defer io.close(f)
                 io.write("WLFC_HISCORES %d{version}\n", f)
                 for i in 0..max_scores do

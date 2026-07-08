@@ -23,8 +23,8 @@ module data_path =
             let path = alloc("%s{dir}/data_dir.txt")!
             defer free(path)
             match io.read_all(path) with
-            | none -> none(str)
-            | some(contents) ->
+            | err(_) -> none(str)
+            | ok(contents) ->
                 defer free(contents)
                 let trimmed = text.trim(contents)
                 if trimmed.len == 0 then none(str)
@@ -184,7 +184,7 @@ module vswap =
     let load = (path: const str) ->
         let f = io.open(path, "rb")!
         io.seek(f, 0i64, io.seek_end)
-        let size = io.tell(f)
+        let size = io.tell(f)!
         io.seek(f, 0i64, io.seek_set)
         let raw = alloc(u8[size] {})!
         io.read(raw, size, f)
@@ -256,7 +256,7 @@ module maps =
     let load_file = (path: const str) ->
         let f = io.open(path, "rb")!
         io.seek(f, 0i64, io.seek_end)
-        let size = io.tell(f)
+        let size = io.tell(f)!
         io.seek(f, 0i64, io.seek_set)
         let buf = alloc(u8[size] {})!
         io.read(buf, size, f)
@@ -467,7 +467,7 @@ module vgagraph =
         // VGADICT — 510 bytes, 255 {bit0, bit1} huffnodes.
         let df = io.open(dict_path, "rb")!
         io.seek(df, 0i64, io.seek_end)
-        let dsize = io.tell(df)
+        let dsize = io.tell(df)!
         io.seek(df, 0i64, io.seek_set)
         let dict_raw = alloc(u8[dsize] {})!
         io.read(dict_raw, dsize, df)
@@ -484,7 +484,7 @@ module vgagraph =
         // VGAHEAD — 3-byte little-endian file offsets; 0xFFFFFF = sparse.
         let hf = io.open(head_path, "rb")!
         io.seek(hf, 0i64, io.seek_end)
-        let hsize = io.tell(hf)
+        let hsize = io.tell(hf)!
         io.seek(hf, 0i64, io.seek_set)
         let head_raw = alloc(u8[hsize] {})!
         io.read(head_raw, hsize, hf)
@@ -502,7 +502,7 @@ module vgagraph =
         // VGAGRAPH — whole file into raw.
         let gf = io.open(graph_path, "rb")!
         io.seek(gf, 0i64, io.seek_end)
-        let gsize = io.tell(gf)
+        let gsize = io.tell(gf)!
         io.seek(gf, 0i64, io.seek_set)
         let raw = alloc(u8[gsize] {})!
         io.read(raw, gsize, gf)
@@ -575,14 +575,14 @@ module audio =
     let load = (hed_path: const str, dat_path: const str) ->
         let hf = io.open(hed_path, "rb")!
         io.seek(hf, 0i64, io.seek_end)
-        let hed_size = io.tell(hf)
+        let hed_size = io.tell(hf)!
         io.seek(hf, 0i64, io.seek_set)
         let hed = alloc(u8[hed_size] {})!
         io.read(hed, hed_size, hf)
         io.close(hf)
         let df = io.open(dat_path, "rb")!
         io.seek(df, 0i64, io.seek_end)
-        let dat_size = io.tell(df)
+        let dat_size = io.tell(df)!
         io.seek(df, 0i64, io.seek_set)
         let dat = alloc(u8[dat_size] {})!
         io.read(dat, dat_size, df)

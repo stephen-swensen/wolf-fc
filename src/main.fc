@@ -167,8 +167,8 @@ module quit_prompts =
             let path = alloc("%s{dir}/quit-prompts")!
             defer free(path)
             match io.read_all(path) with
-            | none -> alloc(str[0] {})!
-            | some(contents) ->
+            | err(_) -> alloc(str[0] {})!
+            | ok(contents) ->
                 defer free(contents)
                 let lines = text.split(contents, "\n")
                 defer free(lines)
@@ -1968,41 +1968,41 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         void()
     if text.starts_with(arg, "fwd:") then
         match text.parse_i32(arg[4..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             g.key_up = true
             for j in 0..n do
                 tick(w, dt)
             g.key_up = false
-        | none -> bad("integer tick count")
+        | err(_) -> bad("integer tick count")
     else if text.starts_with(arg, "back:") then
         match text.parse_i32(arg[5..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             g.key_down = true
             for j in 0..n do
                 tick(w, dt)
             g.key_down = false
-        | none -> bad("integer tick count")
+        | err(_) -> bad("integer tick count")
     else if text.starts_with(arg, "turnr:") then
         match text.parse_i32(arg[6..arg.len]) with
-        | some(deg) -> player.rotate_camera(g, 0.0 - (f64) deg * 3.14159265 / 180.0)
-        | none -> bad("integer degrees")
+        | ok(deg) -> player.rotate_camera(g, 0.0 - (f64) deg * 3.14159265 / 180.0)
+        | err(_) -> bad("integer degrees")
     else if text.starts_with(arg, "turnl:") then
         match text.parse_i32(arg[6..arg.len]) with
-        | some(deg) -> player.rotate_camera(g, (f64) deg * 3.14159265 / 180.0)
-        | none -> bad("integer degrees")
+        | ok(deg) -> player.rotate_camera(g, (f64) deg * 3.14159265 / 180.0)
+        | err(_) -> bad("integer degrees")
     else if arg == "run" then
         g.key_shift = !g.key_shift
     else if text.starts_with(arg, "goto:") then
         let coords = text.split(arg[5..arg.len], ",")
         if coords.len >= 2 then
             match text.parse_i32(coords[0]) with
-            | some(tx) ->
+            | ok(tx) ->
                 match text.parse_i32(coords[1]) with
-                | some(ty) ->
+                | ok(ty) ->
                     g.pos_x = (f64) tx + 0.5
                     g.pos_y = (f64) ty + 0.5
-                | none -> bad("integer Y coordinate")
-            | none -> bad("integer X coordinate")
+                | err(_) -> bad("integer Y coordinate")
+            | err(_) -> bad("integer X coordinate")
         else bad("X,Y coordinate pair")
         free(coords)
         pickups.check(w.lv, g, w.ac)
@@ -2014,16 +2014,16 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         areas.connect(w.lv, g.area_number)
     else if text.starts_with(arg, "sethp:") then
         match text.parse_i32(arg[6..arg.len]) with
-        | some(n) -> g.health = n
-        | none -> bad("integer HP value")
+        | ok(n) -> g.health = n
+        | err(_) -> bad("integer HP value")
     else if text.starts_with(arg, "setweapon:") then
         match text.parse_i32(arg[10..arg.len]) with
-        | some(n) -> g.weapon = n
-        | none -> bad("integer weapon index (0-3)")
+        | ok(n) -> g.weapon = n
+        | err(_) -> bad("integer weapon index (0-3)")
     else if text.starts_with(arg, "setammo:") then
         match text.parse_i32(arg[8..arg.len]) with
-        | some(n) -> g.ammo = n
-        | none -> bad("integer ammo count")
+        | ok(n) -> g.ammo = n
+        | err(_) -> bad("integer ammo count")
     else if arg == "fire" then
         g.key_fire = true
         tick(w, dt)
@@ -2078,10 +2078,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         g.key_space_handled = false
     else if text.starts_with(arg, "wait:") then
         match text.parse_i32(arg[5..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             for j in 0..n do
                 tick(w, dt)
-        | none -> bad("integer tick count")
+        | err(_) -> bad("integer tick count")
     else if text.starts_with(arg, "ss:") then
         w.rc.force_redraw = true
         render_frame(w, w.ac.vs, pal)
@@ -2094,30 +2094,30 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         // bit-stable); this command is for the perf bench harness to
         // probe higher-scale codepaths headlessly.
         match text.parse_i32(arg[9..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             if n >= 2 && n <= 8 then
                 apply_scale_factor(w, w.vg, pal, n)
                 void()
             else bad("scale in [2,8]")
-        | none -> bad("integer scale factor")
+        | err(_) -> bad("integer scale factor")
     else if text.starts_with(arg, "setssaa:") then
         // Set the SSAA mode (0=off, 1=vertical-only 2×, 2=full 2×2).
         // Test mode defaults to off (the regression suite expects
         // bit-stable SSAA-off output); this command lets the perf bench
         // probe the supersampled raycaster + downsample paths headlessly.
         match text.parse_i32(arg[8..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             let m = if n < 0 then 0 else if n > 2 then 2 else n
             apply_ssaa_mode(w, m)
             void()
-        | none -> bad("0, 1, or 2")
+        | err(_) -> bad("0, 1, or 2")
     else if text.starts_with(arg, "bench:") then
         // Render `n` full frames and report total/per-frame wall time.
         // Drives the raycaster + billboards + overlay pipeline at the
         // current scale. Use after `setscale:N` and a position-setting
         // sequence (e.g. fwd:35) to measure a representative scene.
         match text.parse_i32(arg[6..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             let t0 = sys.time()
             for j in 0..n do
                 render_frame(w, w.ac.vs, pal)
@@ -2127,14 +2127,14 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             let fps = if total_ms > 0 then (f64) n * 1000.0 / (f64) total_ms else 0.0
             io.write("bench scale=%d{w.rc.scale} screen=%d{w.rc.screen_w}x%d{w.rc.screen_h} frames=%d{n} total=%d{total_ms}ms per_frame=%6.3f{per_frame}ms fps=%6.1f{fps}\n", stdout)
             void()
-        | none -> bad("integer frame count")
+        | err(_) -> bad("integer frame count")
     else if text.starts_with(arg, "audiobench:") then
         // Render `n` seconds of WONDERIN through the OPL2 music chip
         // and report total / per-sample wall time. Used to compare OPL2
         // emulator perf across implementations (e.g. float vs integer
         // gain pipeline).
         match text.parse_i32(arg[11..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             // WONDERIN = music.wonderin = 14, chunk = 261 + 14 = 275.
             // Pinned to 44100 (not the detected device rate) so bench
             // numbers stay comparable across machines.
@@ -2162,7 +2162,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             io.write("audiobench n=%d{n}s samples=%d{total_samples} total=%d{total_ms}ms ns/sample=%6.1f{ns_per_sample} realtime=%6.1f{realtime_x}x\n", stdout)
             imf.destroy(ms)
             void()
-        | none -> bad("integer seconds")
+        | err(_) -> bad("integer seconds")
     else if text.starts_with(arg, "benchparts:") then
         // Per-section profile: time each chunk of the playing-phase
         // render path independently for `n` iterations. Skips the
@@ -2170,7 +2170,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         // measured in isolation. Sums roughly approximate render_frame
         // (small drift from the omitted phase-match overhead).
         match text.parse_i32(arg[11..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             let t0 = sys.time()
             for j in 0..n do
                 overlay.clear_view_sentinel(w.rc)
@@ -2210,7 +2210,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             io.write("  composite hud       : %7.3f{(f64) (t8 - t7) / nf}ms\n", stdout)
             io.write("  total               : %7.3f{(f64) (t8 - t0) / nf}ms\n", stdout)
             void()
-        | none -> bad("integer frame count")
+        | err(_) -> bad("integer frame count")
     else if arg == "state" then
         io.write("pos=(%8.4f{g.pos_x}, %8.4f{g.pos_y}) dir=(%8.4f{g.dir_x}, %8.4f{g.dir_y})\n", stdout)
         io.write("health=%d{g.health} ammo=%d{g.ammo} score=%d{g.score} lives=%d{g.lives} level=%d{g.level_num} weapon=%d{g.weapon} best=%d{g.best_weapon}\n", stdout)
@@ -2246,7 +2246,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         let parts = text.split(rest, ",")
         if parts.len >= 2 then
             match text.parse_i32(parts[0]) with
-            | some(n) ->
+            | ok(n) ->
                 // Clear the fb black first so metadata is obvious.
                 for i in 0..(w.rc.fb_w * game_h) do
                     w.rc.fb[i] = 0xFF000000u32
@@ -2254,7 +2254,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                 png.write(parts[1], w.rc.fb, w.rc.fb_w, game_h, "vg")
                 io.write(alloca("Saved %s{parts[1]}\n"), stdout)
                 void()
-            | none -> bad("integer chunk number")
+            | err(_) -> bad("integer chunk number")
         else bad("CHUNK,PATH.png")
         free(parts)
     else if text.starts_with(arg, "vgrenderfont:") then
@@ -2277,12 +2277,12 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         // Dump the dimensions of one VGAGRAPH chunk (pic). Useful to verify
         // the decoder produces sane widths/heights after the Huffman expand.
         match text.parse_i32(arg[7..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             let { pw, ph } = vgagraph.pic_dims_at(w.vg, n)
             let off = if n < w.vg.num_chunks then w.vg.offsets[n] else -1i64
             io.write("vgchunk %d{n}: offset=%d{off} width=%d{pw} height=%d{ph}\n", stdout)
             void()
-        | none -> bad("integer chunk number")
+        | err(_) -> bad("integer chunk number")
     else if arg == "vgtable" then
         // Dump the entire picture-dimensions table (STRUCTPIC / chunk 0).
         for i in 0..w.vg.num_pics do
@@ -2350,7 +2350,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         // Set difficulty + fully rebuild the current level so spawn filtering
         // reflects it. Useful for testing tier gating (base/+36/+72 tiles).
         match text.parse_i32(arg[14..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             g.difficulty = if n < 0 then 0 else if n > 3 then 3 else n
             // Re-run spawn.spawn_enemies on the existing level. Since difficulty
             // only affects which plane-1 enemy tiles spawn, we can clear
@@ -2366,10 +2366,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             w.lv.total_enemies = alive
             g.total_kills = alive
             g.kills = 0
-        | none -> bad("integer difficulty 0-3")
+        | err(_) -> bad("integer difficulty 0-3")
     else if text.starts_with(arg, "setlevel:") then
         match text.parse_i32(arg[9..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             if n < 0 || n >= 60 then bad("level 0..59")
             else
                 g.level_num = n
@@ -2381,12 +2381,12 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                 areas.connect(w.lv, g.area_number)
                 g.phase = game_phase.playing
                 g.phase_timer = 0.0
-        | none -> bad("integer level")
+        | err(_) -> bad("integer level")
     else if text.starts_with(arg, "setepisode:") then
         // Jump to the start of episode N (level = N*10), preserving
         // score/lives. Wrapper around setlevel.
         match text.parse_i32(arg[11..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             if n < 0 || n >= episode.count then bad("episode 0..5")
             else
                 g.level_num = n * episode.levels_per
@@ -2398,10 +2398,10 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                 areas.connect(w.lv, g.area_number)
                 g.phase = game_phase.playing
                 g.phase_timer = 0.0
-        | none -> bad("integer episode 0..5")
+        | err(_) -> bad("integer episode 0..5")
     else if text.starts_with(arg, "save:") then
         match text.parse_i32(arg[5..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             if n < 0 || n >= save.num_slots then bad("slot 0..%d{save.num_slots - 1}")
             else
                 // Test-mode save uses the auto-generated label (empty
@@ -2409,16 +2409,16 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                 save.to_slot(w, n, "")
                 io.write("saved slot %d{n}\n", stdout)
                 void()
-        | none -> bad("integer slot")
+        | err(_) -> bad("integer slot")
     else if text.starts_with(arg, "load:") then
         match text.parse_i32(arg[5..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             if n < 0 || n >= save.num_slots then bad("slot 0..%d{save.num_slots - 1}")
             else
-                let ok = save.from_slot(w, w.ac.vs, n)
-                io.write(alloca("load slot %d{n}: %s{if ok then "ok" else "failed"}\n"), stdout)
+                let loaded = save.from_slot(w, w.ac.vs, n)
+                io.write(alloca("load slot %d{n}: %s{if loaded then "ok" else "failed"}\n"), stdout)
                 void()
-        | none -> bad("integer slot")
+        | err(_) -> bad("integer slot")
     else if arg == "listsaves" then
         // Dump the on-disk save slots (label + level + score).
         save.refresh_slots(w.sm)
@@ -2464,9 +2464,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         if comma <= 0 || comma >= body.len - 1 then bad("X,Y world coords")
         else
             match text.parse_f64(body[0..comma]) with
-            | some(kx) ->
+            | ok(kx) ->
                 match text.parse_f64(body[comma+1..body.len]) with
-                | some(ky) ->
+                | ok(ky) ->
                     g.health = 0
                     g.phase = game_phase.dying
                     g.phase_timer = 0.0
@@ -2474,19 +2474,19 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                     g.killer_y = ky
                     g.killer_active = true
                     sfx.trigger(sfx.id.death_1, w.ac)
-                | none -> bad("X,Y world coords")
-            | none -> bad("X,Y world coords")
+                | err(_) -> bad("X,Y world coords")
+            | err(_) -> bad("X,Y world coords")
     else if text.starts_with(arg, "killenemy:") then
         // Instant-kill enemy by index (matches enemylist's [N] order).
         // Routes through enemies.ai.damage_enemy with an HP-clearing damage value so
         // score / kills / drops fire the same way a real bullet would.
         match text.parse_i32(arg[10..arg.len]) with
-        | some(n) ->
+        | ok(n) ->
             if n < 0 || n >= w.lv.num_enemies then bad("enemy index out of range")
             else
                 let e = &w.lv.enemies[n]
                 enemies.ai.damage_enemy(w.lv, g, w.ac, e, n, e.hp + 1, w.ac.vs.sprite_start)
-        | none -> bad("integer enemy index")
+        | err(_) -> bad("integer enemy index")
     else if text.starts_with(arg, "setphase:") then
         // Force a phase transition for test-mode screenshot coverage.
         let p = arg[9..arg.len]
@@ -2566,8 +2566,8 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         if parts.len >= 3 then
             let parse = (s: const str) ->
                 match text.parse_i32(s) with
-                | some(v) -> v
-                | none -> 0
+                | ok(v) -> v
+                | err(_) -> 0
             let sc = parse(parts[0])
             let lv = parse(parts[1])
             let ep = parse(parts[2])
@@ -3036,16 +3036,16 @@ let main = (args: str[]) ->
         if a == "--debug" then arg_debug = true
         if text.starts_with(a, "--level=") then
             match text.parse_i32(a[8..a.len]) with
-            | some(n) -> if n >= 0 && n < 60 then start_level = some(n)
-            | none    -> void()
+            | ok(n) -> if n >= 0 && n < 60 then start_level = some(n)
+            | err(_)    -> void()
         if text.starts_with(a, "--difficulty=") then
             match text.parse_i32(a[13..a.len]) with
-            | some(n) -> if n >= 0 && n < 4 then start_difficulty = some(n)
-            | none    -> void()
+            | ok(n) -> if n >= 0 && n < 4 then start_difficulty = some(n)
+            | err(_)    -> void()
         if text.starts_with(a, "--max-scale=") then
             match text.parse_i32(a[12..a.len]) with
-            | some(n) -> if n >= 2 then max_scale = n
-            | none    -> void()
+            | ok(n) -> if n >= 2 then max_scale = n
+            | err(_)    -> void()
 
     // PRNG seed: deterministic 0 in --test mode so scripted scenarios
     // reproduce bit-identically; wall-clock milliseconds otherwise. A single
@@ -3623,9 +3623,9 @@ let main = (args: str[]) ->
             let n = (i32) (dt / interval_s + 0.5)
             if n >= 1 then
                 let snapped = (f64) n * interval_s
-                let err = math.abs(dt - snapped)
+                let drift = math.abs(dt - snapped)
                 let snap_tol = interval_s * 0.2
-                if err <= snap_tol then dt = snapped
+                if drift <= snap_tol then dt = snapped
 
         // Debug-overlay perf accounting. Runs every iteration (even on
         // skipped-render frames) so FPS tracks the true loop cadence;

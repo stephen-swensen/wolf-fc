@@ -696,7 +696,7 @@ module enemies =
             let yt1 = (i32) y1
             let xt2 = (i32) x2
             let yt2 = (i32) y2
-            let mut ok = true
+            let mut clear = true
 
             // X-stepping pass: walk tile boundaries in x, sampling the
             // tile we're about to leave at its midline in y.
@@ -715,20 +715,20 @@ module enemies =
                     let y = (i32) yfrac
                     yfrac = yfrac + ystep
                     if x < 0 || x >= map_size || y < 0 || y >= map_size then
-                        ok = false
+                        clear = false
                         break
                     let t = (i32) lv.tilemap[(i64) x * 64 + (i64) y]
                     x = x + xstep
                     if t >= 1 && t <= 63 then
-                        ok = false
+                        clear = false
                         break
                     if t >= 128 then
                         let intercept = yfrac - ystep * 0.5
                         if intercept > lv.door_pos[t - 128] * 256.0 then
-                            ok = false
+                            clear = false
                             break
 
-            if !ok then return false
+            if !clear then return false
 
             // Y-stepping pass: same idea, swapped.
             let ydist = if yt2 > yt1 then yt2 - yt1 else yt1 - yt2
@@ -746,20 +746,20 @@ module enemies =
                     let x = (i32) xfrac
                     xfrac = xfrac + xstep
                     if x < 0 || x >= map_size || y < 0 || y >= map_size then
-                        ok = false
+                        clear = false
                         break
                     let t = (i32) lv.tilemap[(i64) x * 64 + (i64) y]
                     y = y + ystep_dir
                     if t >= 1 && t <= 63 then
-                        ok = false
+                        clear = false
                         break
                     if t >= 128 then
                         let intercept = xfrac - xstep * 0.5
                         if intercept > lv.door_pos[t - 128] * 256.0 then
-                            ok = false
+                            clear = false
                             break
 
-            ok
+            clear
 
         // Is the player visible to the enemy right now? Mirrors the
         // original's sight check: inside ~1.5 tiles on BOTH axes sight
