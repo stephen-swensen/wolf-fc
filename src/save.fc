@@ -78,7 +78,7 @@ module diag =
             match io.open(path, "w") with
             | ok(f) ->
                 io.write("== wolf-fc diag log (lock-free audio) — fsync per line ==\n", f)
-                let _ = io.flush(f)
+                discard io.flush(f)
                 some(f)
             | err(_) -> none(any*)
 
@@ -88,8 +88,7 @@ module diag =
     // every target. The result (did it reach disk?) is irrelevant to a
     // best-effort debugging aid, so it's discarded.
     private let sync_line = (f: any*) ->
-        let _ = io.sync(f)
-        void()
+        discard io.sync(f)
 
     // Free-text breadcrumb (startup steps, the present() boundary, each
     // shutdown step, the final "EXIT clean").
@@ -125,8 +124,7 @@ module diag =
         match file with
         | none -> void()
         | some(f) ->
-            let _ = io.close(f)
-            void()
+            discard io.close(f)
 
 
 // ============================================================
@@ -433,8 +431,7 @@ module config =
                 io.write("ssaa_mode %d{p.ssaa_mode}\n", f)
                 io.write("bj_speed_pct %d{p.bj_speed_pct}\n", f)
                 io.write("enemy_speed_pct %d{p.enemy_speed_pct}\n", f)
-                io.write("show_map %d{if p.show_map then 1 else 0}\n", f)
-                void()
+                discard io.write("show_map %d{if p.show_map then 1 else 0}\n", f)
 
 
 module save =
@@ -614,16 +611,14 @@ module save =
         paths.ensure_save_dir()
         match slot_path(slot) with
         | none ->
-            io.write("save: HOME not set, skipping\n", stderr)
-            void()
+            discard io.write("save: HOME not set, skipping\n", stderr)
         | some(path) ->
             defer free(path)
             let g = w.g
             let lv = w.lv
             match io.open(path, "wb") with
             | err(_) ->
-                io.write(alloca("save: failed to open %s{path}\n"), stderr)
-                void()
+                discard io.write(alloca("save: failed to open %s{path}\n"), stderr)
             | ok(f) ->
                 defer io.close(f)
                 io.write("WLFC %d{version}\n", f)
@@ -698,8 +693,7 @@ module save =
                 // at the top of from_slot).
                 io.write(
                     "rng %d{(i64) g.rng_enemy.state} %d{(i64) g.rng_enemy.inc} %d{(i64) g.rng_face.state} %d{(i64) g.rng_face.inc}\n", f)
-                io.write("end\n", f)
-                void()
+                discard io.write("end\n", f)
 
     // Load a saved slot file into the world. Returns true on success.
     // On failure the world state is undefined (caller should treat a

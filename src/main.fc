@@ -1964,8 +1964,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
     // per tick already; this just covers the non-ticking enqueuers.
     drain_audio_commands(w.ac)
     let bad = (expected: const str) ->
-        io.write(alloca("bad arg '%s{arg}': expected %s{expected}\n"), stderr)
-        void()
+        discard io.write(alloca("bad arg '%s{arg}': expected %s{expected}\n"), stderr)
     if text.starts_with(arg, "fwd:") then
         match text.parse_i32(arg[4..arg.len]) with
         | ok(n) ->
@@ -2041,8 +2040,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             (i32) w.lv.tilemap[(i64) fx * 64 + (i64) fy]
         else -1
         let nl = if g.next_level then 1 else 0
-        io.write("facing=(%d{fx},%d{fy}) tile=%d{ft} next_level=%d{nl}\n", stdout)
-        void()
+        discard io.write("facing=(%d{fx},%d{fy}) tile=%d{ft} next_level=%d{nl}\n", stdout)
     else if arg == "givekeys" then
         g.has_gold_key = true
         g.has_silver_key = true
@@ -2086,8 +2084,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         w.rc.force_redraw = true
         render_frame(w, w.ac.vs, pal)
         overlay.save_png(w, arg[3..arg.len])!
-        io.write(alloca("Saved %s{arg[3..arg.len]}\n"), stdout)
-        void()
+        discard io.write(alloca("Saved %s{arg[3..arg.len]}\n"), stdout)
     else if text.starts_with(arg, "setscale:") then
         // Resize dbuf/zbuf to the given supersample factor. Test mode
         // normally pins scale=2 (so screenshot regressions stay
@@ -2125,8 +2122,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             let total_ms = t1 - t0
             let per_frame = if n > 0 then (f64) total_ms / (f64) n else 0.0
             let fps = if total_ms > 0 then (f64) n * 1000.0 / (f64) total_ms else 0.0
-            io.write("bench scale=%d{w.rc.scale} screen=%d{w.rc.screen_w}x%d{w.rc.screen_h} frames=%d{n} total=%d{total_ms}ms per_frame=%6.3f{per_frame}ms fps=%6.1f{fps}\n", stdout)
-            void()
+            discard io.write("bench scale=%d{w.rc.scale} screen=%d{w.rc.screen_w}x%d{w.rc.screen_h} frames=%d{n} total=%d{total_ms}ms per_frame=%6.3f{per_frame}ms fps=%6.1f{fps}\n", stdout)
         | err(_) -> bad("integer frame count")
     else if text.starts_with(arg, "audiobench:") then
         // Render `n` seconds of WONDERIN through the OPL2 music chip
@@ -2208,8 +2204,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             io.write("  hud render+msg      : %7.3f{(f64) (t6 - t5) / nf}ms\n", stdout)
             io.write("  composite view      : %7.3f{(f64) (t7 - t6) / nf}ms\n", stdout)
             io.write("  composite hud       : %7.3f{(f64) (t8 - t7) / nf}ms\n", stdout)
-            io.write("  total               : %7.3f{(f64) (t8 - t0) / nf}ms\n", stdout)
-            void()
+            discard io.write("  total               : %7.3f{(f64) (t8 - t0) / nf}ms\n", stdout)
         | err(_) -> bad("integer frame count")
     else if arg == "state" then
         io.write("pos=(%8.4f{g.pos_x}, %8.4f{g.pos_y}) dir=(%8.4f{g.dir_x}, %8.4f{g.dir_y})\n", stdout)
@@ -2218,8 +2213,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         let sk = if g.has_silver_key then 1 else 0
         let gm = if g.god_mode then 1 else 0
         let ik = if g.idkfa_mode then 1 else 0
-        io.write("keys: gold=%d{gk} silver=%d{sk} god=%d{gm} idkfa=%d{ik}\n", stdout)
-        void()
+        discard io.write("keys: gold=%d{gk} silver=%d{sk} god=%d{gm} idkfa=%d{ik}\n", stdout)
     else if arg == "counters" then
         // Kill / secret / treasure counters + level time / par / phase.
         let phase_s = match g.phase with
@@ -2237,8 +2231,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         let par = if g.level_num < 60 then intermission.par_times[g.level_num] else 0
         io.write(alloca("phase=%s{phase_s} difficulty=%d{g.difficulty}\n"), stdout)
         io.write("kills=%d{g.kills}/%d{g.total_kills} secrets=%d{g.secrets}/%d{g.total_secrets} treasures=%d{g.treasures}/%d{g.total_treasures}\n", stdout)
-        io.write("time=%6.2f{g.level_time} par=%d{par}\n", stdout)
-        void()
+        discard io.write("time=%6.2f{g.level_time} par=%d{par}\n", stdout)
     else if text.starts_with(arg, "vgrender:") then
         // Render one VGAGRAPH pic to the framebuffer and take a screenshot.
         // Syntax: vgrender:CHUNK,OUTFILE.png — top-left aligned, unscaled.
@@ -2252,8 +2245,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                     w.rc.fb[i] = 0xFF000000u32
                 pics.draw(w.rc, w.vg, pal, n, 0, 0)
                 png.write(parts[1], w.rc.fb, w.rc.fb_w, game_h, "vg")!
-                io.write(alloca("Saved %s{parts[1]}\n"), stdout)
-                void()
+                discard io.write(alloca("Saved %s{parts[1]}\n"), stdout)
             | err(_) -> bad("integer chunk number")
         else bad("CHUNK,PATH.png")
         free(parts)
@@ -2271,8 +2263,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                 px = 8
                 py = py + w.font.height + 2
         png.write(arg[13..arg.len], w.rc.fb, w.rc.fb_w, game_h, "font")!
-        io.write(alloca("Saved %s{arg[13..arg.len]}\n"), stdout)
-        void()
+        discard io.write(alloca("Saved %s{arg[13..arg.len]}\n"), stdout)
     else if text.starts_with(arg, "vginfo:") then
         // Dump the dimensions of one VGAGRAPH chunk (pic). Useful to verify
         // the decoder produces sane widths/heights after the Huffman expand.
@@ -2280,8 +2271,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         | ok(n) ->
             let { pw, ph } = vgagraph.pic_dims_at(w.vg, n)
             let off = if n < w.vg.num_chunks then w.vg.offsets[n] else -1i64
-            io.write("vgchunk %d{n}: offset=%d{off} width=%d{pw} height=%d{ph}\n", stdout)
-            void()
+            discard io.write("vgchunk %d{n}: offset=%d{off} width=%d{pw} height=%d{ph}\n", stdout)
         | err(_) -> bad("integer chunk number")
     else if arg == "vgtable" then
         // Dump the entire picture-dimensions table (STRUCTPIC / chunk 0).
@@ -2294,8 +2284,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         void()
     else if arg == "level_stats" then
         // Dump total enemy/pushwall/treasure counts as counted by build_level.
-        io.write("level_stats: enemies=%d{w.lv.total_enemies} pushwalls=%d{w.lv.total_pushwalls} treasures=%d{w.lv.total_treasures}\n", stdout)
-        void()
+        discard io.write("level_stats: enemies=%d{w.lv.total_enemies} pushwalls=%d{w.lv.total_pushwalls} treasures=%d{w.lv.total_treasures}\n", stdout)
     else if arg == "advance" then
         // Simulates the "press space" that dismisses an intermission /
         // game-over / episode-end / victory screen. Test-mode equivalent of
@@ -2407,8 +2396,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                 // Test-mode save uses the auto-generated label (empty
                 // string triggers the "E<ep>M<lvl>" fallback).
                 save.to_slot(w, n, "")
-                io.write("saved slot %d{n}\n", stdout)
-                void()
+                discard io.write("saved slot %d{n}\n", stdout)
         | err(_) -> bad("integer slot")
     else if text.starts_with(arg, "load:") then
         match text.parse_i32(arg[5..arg.len]) with
@@ -2416,8 +2404,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             if n < 0 || n >= save.num_slots then bad("slot 0..%d{save.num_slots - 1}")
             else
                 let loaded = save.from_slot(w, w.ac.vs, n)
-                io.write(alloca("load slot %d{n}: %s{if loaded then "ok" else "failed"}\n"), stdout)
-                void()
+                discard io.write(alloca("load slot %d{n}: %s{if loaded then "ok" else "failed"}\n"), stdout)
         | err(_) -> bad("integer slot")
     else if arg == "listsaves" then
         // Dump the on-disk save slots (label + level + score).
@@ -2425,16 +2412,14 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         for i in 0..save.num_slots do
             let s = &w.sm.slots[i]
             if s.empty then
-                io.write("slot %d{i}: EMPTY\n", stdout)
-                void()
+                discard io.write("slot %d{i}: EMPTY\n", stdout)
             else
                 let ep = s.level_num / episode.levels_per + 1
                 let lvl = s.level_num % episode.levels_per + 1
                 let lbl_chars = if s.label.len > 0 then s.label else default(u8[])
                 io.write("slot %d{i}: E%d{ep}M%d{lvl} diff=%d{s.difficulty} score=%d{s.score} label=", stdout)
                 if lbl_chars.len > 0 then io.write(lbl_chars, stdout)
-                io.write("\n", stdout)
-                void()
+                discard io.write("\n", stdout)
         void()
     else if arg == "endepisode" then
         // Force the episode-end path: sets next_level on level 8 of the
@@ -2553,8 +2538,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
     else if arg == "endart_state" then
         // Dump current article state (page + total). Useful for tests
         // that want to verify the parser found N pages.
-        io.write("endart page=%d{g.endart_page + 1} of %d{g.endart_total_pages}\n", stdout)
-        void()
+        discard io.write("endart page=%d{g.endart_page + 1} of %d{g.endart_total_pages}\n", stdout)
     else if text.starts_with(arg, "hs_qualify:") then
         // Drive the high-scores entry path with a synthetic
         // (score, completed-level, episode) triple. Sets up the
@@ -2623,15 +2607,13 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         | episode_end  -> "episode_end"
         | endart       -> "endart"
         | high_scores  -> "high_scores"
-        io.write(alloca("phase=%s{phase_s} timer=%6.3f{g.phase_timer} lives=%d{g.lives}\n"), stdout)
-        void()
+        discard io.write(alloca("phase=%s{phase_s} timer=%6.3f{g.phase_timer} lives=%d{g.lives}\n"), stdout)
     else if arg == "music" then
         // Print the AUDIOT chunk that would be playing for the current phase.
         // Lets the regression suite verify menu / intermission / victory tracks
         // without needing an open audio device.
         let chunk = font.music_chunk_for_phase(g.phase, g.level_num)
-        io.write("music chunk=%d{chunk} (audiot offset=%d{chunk - 261})\n", stdout)
-        void()
+        discard io.write("music chunk=%d{chunk} (audiot offset=%d{chunk - 261})\n", stdout)
     else if arg == "prefs" then
         // Dump the current persistent preferences (loaded from
         // `$WOLF_FC_HOME/config` at startup, defaults when missing).
@@ -2640,8 +2622,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         let d = if w.ac.digi_on then 1 else 0
         let nd = if g.mommy_mode then 1 else 0
         let sm = if g.show_map then 1 else 0
-        io.write("prefs music=%d{m} sfx=%d{s} digi=%d{d} sfx_gain=%d{w.ac.sfx_gain_pct} digi_gain=%d{w.ac.digi_gain_pct} music_gain=%d{w.ac.music_gain_pct} mommy_mode=%d{nd} shadow_depth=%d{g.shadow_depth} bj_speed_pct=%d{g.bj_speed_pct} enemy_speed_pct=%d{g.enemy_speed_pct} show_map=%d{sm}\n", stdout)
-        void()
+        discard io.write("prefs music=%d{m} sfx=%d{s} digi=%d{d} sfx_gain=%d{w.ac.sfx_gain_pct} digi_gain=%d{w.ac.digi_gain_pct} music_gain=%d{w.ac.music_gain_pct} mommy_mode=%d{nd} shadow_depth=%d{g.shadow_depth} bj_speed_pct=%d{g.bj_speed_pct} enemy_speed_pct=%d{g.enemy_speed_pct} show_map=%d{sm}\n", stdout)
     else if arg == "digi_slots" then
         // Dump the digi-mixer slot table. Verifies dedup behavior:
         // retriggers of a sound already playing should reuse the same
@@ -2651,16 +2632,14 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             let s = &w.ac.digi.slots[i]
             if s.playing then active = active + 1
             io.write("slot %d{i}: playing=%d{if s.playing then 1 else 0} sound=%d{s.sound_num}\n", stdout)
-        io.write("active=%d{active}\n", stdout)
-        void()
+        discard io.write("active=%d{active}\n", stdout)
     else if arg == "dcsprite" then
         // Dump the death-cam sprite layout that death_cam.render_sprite
         // would use. Layout is in dbuf-cell units; a regression that
         // re-introduces the fb-vs-dbuf coordinate mixup (small sprite in
         // the upper-left corner) shifts these values.
         let l = death_cam.compute_sprite_layout(w.rc)
-        io.write("dcsprite dx=%d{l.dx} dy=%d{l.dy} dw=%d{l.dw} dh=%d{l.dh} screen_w=%d{w.rc.screen_w} view_render_h=%d{w.rc.view_render_h}\n", stdout)
-        void()
+        discard io.write("dcsprite dx=%d{l.dx} dy=%d{l.dy} dw=%d{l.dw} dh=%d{l.dh} screen_w=%d{w.rc.screen_w} view_render_h=%d{w.rc.view_render_h}\n", stdout)
     else if arg == "probe" then
         // Diagnostic: why can't the player move from their current position?
         // Prints the bbox tiles, any wall/door blocking each, and every live
@@ -2799,8 +2778,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             let ty = (i32) s.y
             io.write(alloca("[%d{i}] (%d{tx},%d{ty}) kind=%s{ks}\n"), stdout)
             count = count + 1
-        io.write("pickups: count=%d{count}\n", stdout)
-        void()
+        discard io.write("pickups: count=%d{count}\n", stdout)
     else if arg == "exittiles" then
         // List every exit-tile marker (plane-1 tile 99) on the current map.
         // Boss-level maps place exactly one of these behind the gold-key
@@ -2811,8 +2789,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                 if w.lv.exit_tiles[(i64) x * 64 + (i64) y] then
                     io.write("exit: %d{x},%d{y}\n", stdout)
                     count = count + 1
-        io.write("exittiles: count=%d{count}\n", stdout)
-        void()
+        discard io.write("exittiles: count=%d{count}\n", stdout)
     else if arg == "enemies" then
         // Summary: counts by kind and by state, for regression checks.
         // Buckets: 0=guard, 1=officer, 2=ss, 3=dog, 4=mutant, 5=boss, 6=ghost.
@@ -2841,8 +2818,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             by_state[si] = by_state[si] + 1
         io.write("enemies: total=%d{w.lv.num_enemies}\n", stdout)
         io.write("  kind: guard=%d{by_kind[0]} officer=%d{by_kind[1]} ss=%d{by_kind[2]} dog=%d{by_kind[3]} mutant=%d{by_kind[4]} boss=%d{by_kind[5]} ghost=%d{by_kind[6]}\n", stdout)
-        io.write("  state: stand=%d{by_state[0]} path=%d{by_state[1]} chase=%d{by_state[2]} shoot=%d{by_state[3]} pain=%d{by_state[4]} die=%d{by_state[5]} dead=%d{by_state[6]}\n", stdout)
-        void()
+        discard io.write("  state: stand=%d{by_state[0]} path=%d{by_state[1]} chase=%d{by_state[2]} shoot=%d{by_state[3]} pain=%d{by_state[4]} die=%d{by_state[5]} dead=%d{by_state[6]}\n", stdout)
     else if arg == "projectiles" then
         // Dump all active (alive) enemy projectiles: kind, position, travel
         // angle in radians, animation frame. Used by the boss regression
@@ -2859,11 +2835,9 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             | fire   -> "fire"
             | boom   -> "boom"
             io.write(alloca("  proj[%d{i}] %s{ks} pos(%6.3f{p.x},%6.3f{p.y}) ang=%5.3f{p.angle} frame=%d{p.anim_frame}\n"), stdout)
-        io.write("projectiles: alive=%d{alive}\n", stdout)
-        void()
+        discard io.write("projectiles: alive=%d{alive}\n", stdout)
     else
-        io.write(alloca("Unknown test command: %s{arg}\n"), stdout)
-        void()
+        discard io.write(alloca("Unknown test command: %s{arg}\n"), stdout)
 
 // Compact integer code for the current phase, for the diagnostic log
 // (game_phase is a union with no numeric form). Keep in sync with the union.

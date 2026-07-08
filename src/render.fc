@@ -1309,21 +1309,20 @@ module overlay =
             // Best-effort: if the dir can't be made, list_dir below just finds
             // nothing to clear. ensure_dir keeps a pre-existing dir from
             // reading as a failure.
-            let _ = io.ensure_dir(dir)
-            let _ = io.ensure_dir(ss_dir)
+            discard io.ensure_dir(dir)
+            discard io.ensure_dir(ss_dir)
             match io.list_dir(ss_dir) with
             | err(_) -> void()
             | ok(entries) ->
                 let mut deleted = 0
                 for name in entries do
                     if text.starts_with(name, "ss_") && text.ends_with(name, ".png") then
-                        let _ = io.remove(alloca("%s{ss_dir}/%s{name}"))
+                        discard io.remove(alloca("%s{ss_dir}/%s{name}"))
                         deleted = deleted + 1
                     free(name)
                 free(entries)
                 if deleted > 0 then
-                    io.write(alloca("[screenshot] cleared %d{deleted} old file(s) from %s{ss_dir}\n"), stdout)
-                    void()
+                    discard io.write(alloca("[screenshot] cleared %d{deleted} old file(s) from %s{ss_dir}\n"), stdout)
 
     // Take an interactive screenshot: renders, picks the next
     // rotating slot in $WOLF_FC_HOME/screenshots (or
@@ -1332,15 +1331,14 @@ module overlay =
     let take_screenshot = (w: world*, vs: const vswap.vswap_file*, pal: const u32[]) ->
         match paths.wolf_data_dir() with
         | none ->
-            io.write("[screenshot] HOME not set; skipping\n", stdout)
-            void()
+            discard io.write("[screenshot] HOME not set; skipping\n", stdout)
         | some(dir) ->
             defer free(dir)
             // Best-effort: a real dir-creation failure resurfaces when
             // save_png below can't write. ensure_dir keeps an existing dir
             // from reading as a failure.
-            let _ = io.ensure_dir(dir)
-            let _ = io.ensure_dir(alloca("%s{dir}/screenshots"))
+            discard io.ensure_dir(dir)
+            discard io.ensure_dir(alloca("%s{dir}/screenshots"))
             let slot = w.rc.screenshot_slot
             w.rc.screenshot_slot = (w.rc.screenshot_slot + 1) % screenshot_max_slots
             let path = alloca("%s{dir}/screenshots/ss_%03d{slot}.png")
@@ -1348,6 +1346,5 @@ module overlay =
             // regardless of the main loop's frame-skip cadence.
             w.rc.force_redraw = true
             render_frame(w, vs, pal)
-            let _ = save_png(w, path)
-            io.write(alloca("[screenshot] saved %s{path} (+ -raw.png, -display.png)\n"), stdout)
-            void()
+            discard save_png(w, path)
+            discard io.write(alloca("[screenshot] saved %s{path} (+ -raw.png, -display.png)\n"), stdout)
