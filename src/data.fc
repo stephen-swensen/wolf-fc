@@ -183,12 +183,12 @@ module vswap =
 
     let load = (path: const str) ->
         let f = io.open(path, "rb")!
-        io.seek(f, 0i64, io.seek_end)
+        io.seek(f, 0i64, io.seek_end)!
         let size = io.tell(f)!
-        io.seek(f, 0i64, io.seek_set)
+        io.seek(f, 0i64, io.seek_set)!
         let raw = alloc(u8[size] {})!
         io.read(raw, size, f)
-        io.close(f)
+        io.close(f)!
         let nc = (i32) bytes.u16(raw, 0i64)
         let ss = (i32) bytes.u16(raw, 2i64)
         let snd = (i32) bytes.u16(raw, 4i64)
@@ -255,12 +255,12 @@ module maps =
     // Read an entire file into a heap-allocated byte slice.
     let load_file = (path: const str) ->
         let f = io.open(path, "rb")!
-        io.seek(f, 0i64, io.seek_end)
+        io.seek(f, 0i64, io.seek_end)!
         let size = io.tell(f)!
-        io.seek(f, 0i64, io.seek_set)
+        io.seek(f, 0i64, io.seek_set)!
         let buf = alloc(u8[size] {})!
         io.read(buf, size, f)
-        io.close(f)
+        io.close(f)!
         buf
 
     // Carmack decompression: byte source -> word output.
@@ -466,12 +466,12 @@ module vgagraph =
     let load = (dict_path: const str, head_path: const str, graph_path: const str) ->
         // VGADICT — 510 bytes, 255 {bit0, bit1} huffnodes.
         let df = io.open(dict_path, "rb")!
-        io.seek(df, 0i64, io.seek_end)
+        io.seek(df, 0i64, io.seek_end)!
         let dsize = io.tell(df)!
-        io.seek(df, 0i64, io.seek_set)
+        io.seek(df, 0i64, io.seek_set)!
         let dict_raw = alloc(u8[dsize] {})!
         io.read(dict_raw, dsize, df)
-        io.close(df)
+        io.close(df)!
         let dict = alloc(huffnode[255] {})!
         for i in 0..255 do
             let o = (i64) i * 4
@@ -483,12 +483,12 @@ module vgagraph =
 
         // VGAHEAD — 3-byte little-endian file offsets; 0xFFFFFF = sparse.
         let hf = io.open(head_path, "rb")!
-        io.seek(hf, 0i64, io.seek_end)
+        io.seek(hf, 0i64, io.seek_end)!
         let hsize = io.tell(hf)!
-        io.seek(hf, 0i64, io.seek_set)
+        io.seek(hf, 0i64, io.seek_set)!
         let head_raw = alloc(u8[hsize] {})!
         io.read(head_raw, hsize, hf)
-        io.close(hf)
+        io.close(hf)!
         let nc = (i32) (hsize / 3)
         let offsets = alloc(i64[nc] {})!
         for i in 0..nc do
@@ -501,12 +501,12 @@ module vgagraph =
 
         // VGAGRAPH — whole file into raw.
         let gf = io.open(graph_path, "rb")!
-        io.seek(gf, 0i64, io.seek_end)
+        io.seek(gf, 0i64, io.seek_end)!
         let gsize = io.tell(gf)!
-        io.seek(gf, 0i64, io.seek_set)
+        io.seek(gf, 0i64, io.seek_set)!
         let raw = alloc(u8[gsize] {})!
         io.read(raw, gsize, gf)
-        io.close(gf)
+        io.close(gf)!
 
         // Decode STRUCTPIC (chunk 0) — array of (u16 width, u16 height).
         let pic_table = decompress_at(raw, dict, offsets[0])
@@ -574,19 +574,19 @@ module audio =
 
     let load = (hed_path: const str, dat_path: const str) ->
         let hf = io.open(hed_path, "rb")!
-        io.seek(hf, 0i64, io.seek_end)
+        io.seek(hf, 0i64, io.seek_end)!
         let hed_size = io.tell(hf)!
-        io.seek(hf, 0i64, io.seek_set)
+        io.seek(hf, 0i64, io.seek_set)!
         let hed = alloc(u8[hed_size] {})!
         io.read(hed, hed_size, hf)
-        io.close(hf)
+        io.close(hf)!
         let df = io.open(dat_path, "rb")!
-        io.seek(df, 0i64, io.seek_end)
+        io.seek(df, 0i64, io.seek_end)!
         let dat_size = io.tell(df)!
-        io.seek(df, 0i64, io.seek_set)
+        io.seek(df, 0i64, io.seek_set)!
         let dat = alloc(u8[dat_size] {})!
         io.read(dat, dat_size, df)
-        io.close(df)
+        io.close(df)!
         let nc = (i32) (hed_size / 4)
         alloc(audio_data { raw = dat, offsets = hed, num_chunks = nc })!
 

@@ -38,8 +38,8 @@ module paths =
         | none -> false
         | some(dir) ->
             defer free(dir)
-            io.mkdir(dir)
-            io.mkdir(alloca("%s{dir}/saves"))
+            let _ = io.mkdir(dir)
+            let _ = io.mkdir(alloca("%s{dir}/saves"))
             true
 
 
@@ -73,7 +73,7 @@ module diag =
             match io.open(path, "w") with
             | ok(f) ->
                 io.write("== wolf-fc diag log (lock-free audio) — fsync per line ==\n", f)
-                io.flush(f)
+                let _ = io.flush(f)
                 some(f)
             | err(_) -> none(any*)
 
@@ -83,7 +83,7 @@ module diag =
     // every target. The result (did it reach disk?) is irrelevant to a
     // best-effort debugging aid, so it's discarded.
     private let sync_line = (f: any*) ->
-        io.sync(f)
+        let _ = io.sync(f)
         void()
 
     // Free-text breadcrumb (startup steps, the present() boundary, each
@@ -120,7 +120,7 @@ module diag =
         match file with
         | none -> void()
         | some(f) ->
-            io.close(f)
+            let _ = io.close(f)
             void()
 
 

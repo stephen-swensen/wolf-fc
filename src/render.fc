@@ -1284,10 +1284,10 @@ module overlay =
         let sk = if g.has_silver_key then 1 else 0
         let meta = alloc("level=%d{g.level_num + 1}\npos=(%7.3f{g.pos_x}, %7.3f{g.pos_y})\ndir=(%7.4f{g.dir_x}, %7.4f{g.dir_y})\nhealth=%d{g.health}\nammo=%d{g.ammo}\nscore=%d{g.score}\nlives=%d{g.lives}\nweapon=%d{g.weapon}\nkeys=gold:%d{gk},silver:%d{sk}")!
         defer free(meta)
-        png.write(path, w.rc.fb, w.rc.fb_w, game_h, meta)
+        png.write(path, w.rc.fb, w.rc.fb_w, game_h, meta)?
         let raw_path = derive_path(path, "-raw")
         defer free(raw_path)
-        png.write(raw_path, w.rc.dbuf, w.rc.screen_w, w.rc.screen_h, meta)
+        png.write(raw_path, w.rc.dbuf, w.rc.screen_w, w.rc.screen_h, meta)?
         let disp_h = display_h(w.rc)
         let disp = alloc(u32[(i64) w.rc.screen_w * (i64) disp_h] {})!
         defer free(disp)
@@ -1306,15 +1306,15 @@ module overlay =
         | some(dir) ->
             defer free(dir)
             let ss_dir = alloca("%s{dir}/screenshots")
-            io.mkdir(dir)
-            io.mkdir(ss_dir)
+            let _ = io.mkdir(dir)
+            let _ = io.mkdir(ss_dir)
             match io.list_dir(ss_dir) with
             | err(_) -> void()
             | ok(entries) ->
                 let mut deleted = 0
                 for name in entries do
                     if text.starts_with(name, "ss_") && text.ends_with(name, ".png") then
-                        io.remove(alloca("%s{ss_dir}/%s{name}"))
+                        let _ = io.remove(alloca("%s{ss_dir}/%s{name}"))
                         deleted = deleted + 1
                     free(name)
                 free(entries)
@@ -1333,8 +1333,8 @@ module overlay =
             void()
         | some(dir) ->
             defer free(dir)
-            io.mkdir(dir)
-            io.mkdir(alloca("%s{dir}/screenshots"))
+            let _ = io.mkdir(dir)
+            let _ = io.mkdir(alloca("%s{dir}/screenshots"))
             let slot = w.rc.screenshot_slot
             w.rc.screenshot_slot = (w.rc.screenshot_slot + 1) % screenshot_max_slots
             let path = alloca("%s{dir}/screenshots/ss_%03d{slot}.png")
@@ -1342,6 +1342,6 @@ module overlay =
             // regardless of the main loop's frame-skip cadence.
             w.rc.force_redraw = true
             render_frame(w, vs, pal)
-            save_png(w, path)
+            let _ = save_png(w, path)
             io.write(alloca("[screenshot] saved %s{path} (+ -raw.png, -display.png)\n"), stdout)
             void()

@@ -2085,7 +2085,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
     else if text.starts_with(arg, "ss:") then
         w.rc.force_redraw = true
         render_frame(w, w.ac.vs, pal)
-        overlay.save_png(w, arg[3..arg.len])
+        overlay.save_png(w, arg[3..arg.len])!
         io.write(alloca("Saved %s{arg[3..arg.len]}\n"), stdout)
         void()
     else if text.starts_with(arg, "setscale:") then
@@ -2251,7 +2251,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                 for i in 0..(w.rc.fb_w * game_h) do
                     w.rc.fb[i] = 0xFF000000u32
                 pics.draw(w.rc, w.vg, pal, n, 0, 0)
-                png.write(parts[1], w.rc.fb, w.rc.fb_w, game_h, "vg")
+                png.write(parts[1], w.rc.fb, w.rc.fb_w, game_h, "vg")!
                 io.write(alloca("Saved %s{parts[1]}\n"), stdout)
                 void()
             | err(_) -> bad("integer chunk number")
@@ -2270,7 +2270,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             if px > w.rc.fb_w - 16 then
                 px = 8
                 py = py + w.font.height + 2
-        png.write(arg[13..arg.len], w.rc.fb, w.rc.fb_w, game_h, "font")
+        png.write(arg[13..arg.len], w.rc.fb, w.rc.fb_w, game_h, "font")!
         io.write(alloca("Saved %s{arg[13..arg.len]}\n"), stdout)
         void()
     else if text.starts_with(arg, "vginfo:") then
