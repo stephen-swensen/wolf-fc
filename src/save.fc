@@ -38,9 +38,14 @@ module paths =
         | none -> false
         | some(dir) ->
             defer free(dir)
-            let _ = io.mkdir(dir)
-            let _ = io.mkdir(alloca("%s{dir}/saves"))
-            true
+            // ensure_dir folds "already exists" into ok, so a false here is a
+            // real failure (permissions, disk) — the return value is honest.
+            match io.ensure_dir(dir) with
+            | err(_) -> false
+            | ok ->
+                match io.ensure_dir(alloca("%s{dir}/saves")) with
+                | ok -> true
+                | err(_) -> false
 
 
 // ============================================================

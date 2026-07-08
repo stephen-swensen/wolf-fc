@@ -1306,8 +1306,11 @@ module overlay =
         | some(dir) ->
             defer free(dir)
             let ss_dir = alloca("%s{dir}/screenshots")
-            let _ = io.mkdir(dir)
-            let _ = io.mkdir(ss_dir)
+            // Best-effort: if the dir can't be made, list_dir below just finds
+            // nothing to clear. ensure_dir keeps a pre-existing dir from
+            // reading as a failure.
+            let _ = io.ensure_dir(dir)
+            let _ = io.ensure_dir(ss_dir)
             match io.list_dir(ss_dir) with
             | err(_) -> void()
             | ok(entries) ->
@@ -1333,8 +1336,11 @@ module overlay =
             void()
         | some(dir) ->
             defer free(dir)
-            let _ = io.mkdir(dir)
-            let _ = io.mkdir(alloca("%s{dir}/screenshots"))
+            // Best-effort: a real dir-creation failure resurfaces when
+            // save_png below can't write. ensure_dir keeps an existing dir
+            // from reading as a failure.
+            let _ = io.ensure_dir(dir)
+            let _ = io.ensure_dir(alloca("%s{dir}/screenshots"))
             let slot = w.rc.screenshot_slot
             w.rc.screenshot_slot = (w.rc.screenshot_slot + 1) % screenshot_max_slots
             let path = alloca("%s{dir}/screenshots/ss_%03d{slot}.png")
