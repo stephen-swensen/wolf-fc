@@ -1,0 +1,302 @@
+// Wolf-FC display geometry — framebuffer / supersample-scale / SSAA
+// management for the render_ctx, plus the SDL display queries that feed
+// it. Everything here is resolution plumbing: picking fb_w from the
+// display aspect (Hor+ widescreen), picking the supersample factor from
+// the drawable size, (re)allocating the size-dependent buffers, and
+// re-aliasing the 3D-viewport slices when the SSAA mode changes.
+
+// The SDL window / renderer / streaming-texture handles plus the cached
+// output dims they were last built for. Owned by `main`; mutated by
+// input.handle_events (fullscreen toggle) and video.recreate_texture
+// (resize / Change View). `actual_h` is the logical-size height after
+// the VGA 1.2 pixel-aspect stretch (fb_h * 12/10 * scale).
+struct video_state =
+    win: any*
+    ren: any*
+    tex: any*
+    screen_w: i32     // = rc.screen_w when tex was (re)built
+    screen_h: i32     // = rc.screen_h when tex was (re)built
+    actual_h: i32     // logical-size height (VGA aspect applied)
+    fullscreen: bool
+    on_wsl: bool      // WSLg: maximized window instead of fullscreen-desktop
+
+module video =
+    // Allocate renderer scratch buffers. One instance per process. `fb_w`
+    // is the framebuffer width — typically the OG 320, or wider for
+    // Hor+ widescreen (384 / 428 / etc., set from the display aspect).
+    // `fb_h` stays 200 (vertical FOV preserved). `scale` is the supersample
+    // factor [2..6] — dbuf is `scale * fb_w` × `scale * fb_h`. Test mode
+    // pins scale = 2 to keep regression screenshots bit-stable; interactive
+    // mode picks the value via `compute_scale_factor` after the renderer is
+    // up. Decodes the title-screen backdrop once so pics.blit_title_bg is a
+    // cheap memcpy on every menu frame, and sizes pic_cache to hold one ARGB
+    // buffer per VGAGRAPH chunk (lazily populated on first draw).
+    // (Re-)alias the viewport-render slices to whichever underlying
+    // buffer matches the current SSAA state. Call after any change to
+    // dbuf / zbuf / ssaa_buf / ssaa_zbuf or to the `ssaa` flag — the 3D
+    // pipeline reads only vbuf / vzbuf / vbuf_w / vbuf_h, so this is the
+    // single chokepoint that decides which buffer they hit.
+    // SSAA viewport geometry, all derived from ssaa_mode (0=off, 1=vertical-
+    // only 2×, 2=full 2×2). Width doubles only in full mode; height doubles
+    // in vertical + full. These are the single source of truth for the
+    // supersample buffer dimensions — build / resize / apply / rebind all go
+    // through them so the sizes can never drift out of sync.
+    let ssaa_vbuf_w = (mode: i32, screen_w: i32) ->
+        if mode == 2 then 2 * screen_w else screen_w
+    let ssaa_vbuf_h = (mode: i32, view_render_h: i32) ->
+        if mode == 0 then view_render_h else 2 * view_render_h
+    let ssaa_buf_len = (mode: i32, screen_w: i32, view_render_h: i32) ->
+        if mode == 0 then 0
+        else ssaa_vbuf_w(mode, screen_w) * ssaa_vbuf_h(mode, view_render_h)
+    let ssaa_zbuf_len = (mode: i32, screen_w: i32) ->
+        if mode == 0 then 0 else ssaa_vbuf_w(mode, screen_w)
+
+    let rebind_vbuf = (rc: render_ctx*) ->
+        if rc.ssaa_mode == 0 then
+            rc.vbuf = rc.dbuf
+            rc.vzbuf = rc.zbuf
+        else
+            rc.vbuf = rc.ssaa_buf
+            rc.vzbuf = rc.ssaa_zbuf
+        rc.vbuf_w = ssaa_vbuf_w(rc.ssaa_mode, rc.screen_w)
+        rc.vbuf_h = ssaa_vbuf_h(rc.ssaa_mode, rc.view_render_h)
+        rc.ss_h = if rc.ssaa_mode == 2 then 2 else 1
+        rc.ss_v = if rc.ssaa_mode == 0 then 1 else 2
+
+    let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const u32[],
+                            fb_w: i32, fb_h: i32, scale: i32, ssaa_mode: i32) ->
+        let screen_w = fb_w * scale
+        let view_render_h = view_h * scale
+        let dbuf = alloc(u32[screen_w * (fb_h * scale)] {})!
+        let zbuf = alloc(f64[screen_w] {})!
+        let ssaa_buf = alloc(u32[ssaa_buf_len(ssaa_mode, screen_w, view_render_h)] {})!
+        let ssaa_zbuf = alloc(f64[ssaa_zbuf_len(ssaa_mode, screen_w)] {})!
+        let rc = alloc(render_ctx {
+            fb_w = fb_w,
+            fb_h = fb_h,
+            scale = scale,
+            screen_w = screen_w,
+            screen_h = fb_h * scale,
+            view_render_h = view_render_h,
+            drawable_w = 0,
+            drawable_h = 0,
+            ui_offset_x = (fb_w - 320) / 2,
+            fb = alloc(u32[fb_w * fb_h] {})!,
+            dbuf = dbuf,
+            zbuf = zbuf,
+            ssaa_mode = ssaa_mode,
+            ss_h = if ssaa_mode == 2 then 2 else 1,
+            ss_v = if ssaa_mode == 0 then 1 else 2,
+            ssaa_buf = ssaa_buf,
+            ssaa_zbuf = ssaa_zbuf,
+            // vbuf / vzbuf are slice aliases (not independently owned);
+            // they share storage with either dbuf/zbuf or ssaa_buf/ssaa_zbuf
+            // depending on ssaa_mode. rebind_vbuf is the single chokepoint
+            // that updates this aliasing.
+            vbuf = if ssaa_mode == 0 then dbuf else ssaa_buf,
+            vzbuf = if ssaa_mode == 0 then zbuf else ssaa_zbuf,
+            vbuf_w = ssaa_vbuf_w(ssaa_mode, screen_w),
+            vbuf_h = ssaa_vbuf_h(ssaa_mode, view_render_h),
+            billboards = alloc(billboard[tilemap.max_sprites + enemies.max_enemies + projectiles.max_projectiles + 1] {})!,
+            num_billboards = 0,
+            title_bg = pics.build_title_bg_cache(vg, pal, fb_w, fb_h),
+            god_face = pics.build_god_face_cache(vg, pal),
+            pic_cache = alloc(u32[][vg.num_chunks] {})!,
+            screenshot_slot = 0,
+            frame_counter = 0u64,
+            force_redraw = true,
+            refresh_interval_ms = 0.0,
+            dbg_fps = 0.0, dbg_ms = 0.0, dbg_work_ms = 0.0,
+            dbg_jitter_ms = 0.0, dbg_drops = 0, dbg_hitch_flash = 0.0
+        })!
+        rc
+
+    // Resolve a view-mode preference into a concrete framebuffer width.
+    // Auto (0) queries the display; Original / 16:10 / 16:9 use fixed
+    // values from `config.view_mode_to_fb_w`. Always clamps to [320, 640]
+    // and rounds up to even (so dbuf width stays a multiple of 2). Aspect-
+    // only — no use of absolute pixel counts, so DPI scaling doesn't
+    // affect this. Test-mode callers should bypass this and just use 320 —
+    // SDL isn't initialised in that path.
+    let compute_fb_w_for_view_mode = (view_mode: i32) ->
+        let forced = config.view_mode_to_fb_w(view_mode)
+        if forced > 0 then forced
+        else
+            let mut db = sdl2.rect { x = 0, y = 0, w = 0, h = 0 }
+            sdl2.get_display_bounds(0, &db)
+            if db.w <= 0 || db.h <= 0 then 320
+            else
+                let display_aspect = (f64) db.w / (f64) db.h
+                let aspect_scale = display_aspect / (4.0 / 3.0)
+                let mut x = (i32) (320.0 * aspect_scale)
+                if x < 320 then x = 320
+                if x > 640 then x = 640
+                if x % 2 != 0 then x = x + 1
+                x
+
+    // Pick the supersample factor (CPU-side software upscale) given the
+    // renderer's actual pixel drawable. Larger is sharper but more
+    // raycasting work — `max_scale` is the upper clamp (default 6 from
+    // CLI parsing; --max-scale=N to override). The 5/6 factor on the
+    // height side ≈ 1/1.2, undoing the VGA pixel-aspect stretch SDL
+    // applies via logical-size mismatch, so we pick the largest scale
+    // that fits inside the drawable area before SDL's downstream stretch.
+    let compute_scale_factor = (out_w: i32, out_h: i32, fb_w: i32, fb_h: i32, max_scale: i32) ->
+        if out_w <= 0 || out_h <= 0 then 2
+        else
+            let scale_w = out_w / fb_w
+            let scale_h = out_h * 5 / (fb_h * 6)
+            let mut s = if scale_w < scale_h then scale_w else scale_h
+            if s < 2 then s = 2
+            if s > max_scale then s = max_scale
+            s
+
+    // Resolve the player's `scale_factor` preference into a concrete
+    // supersample factor. An explicit non-zero choice (2..12, set from
+    // the Change View menu) wins outright and bypasses --max-scale; Auto
+    // (0) falls through to the auto-pick which honours the CLI cap.
+    let pick_scale_factor = (out_w: i32, out_h: i32, fb_w: i32, fb_h: i32,
+                              max_scale: i32, scale_factor: i32) ->
+        if scale_factor != 0 then scale_factor
+        else compute_scale_factor(out_w, out_h, fb_w, fb_h, max_scale)
+
+    // SDL_GetRendererOutputSize wrapped to return the drawable size as a
+    // { width, height } tuple instead of writing through two out-pointers.
+    // All callers are in main.fc's display-setup / resize path.
+    let renderer_output_size = (ren: any*) ->
+        let mut w = 0i32
+        let mut h = 0i32
+        sdl2.get_output_size(ren, &w, &h)
+        { w, h }
+
+    // The vsync interval (ms per refresh) of whatever display the window is on,
+    // from its active desktop mode (so a drag to a different-Hz monitor re-derives
+    // it). Drives both the main-loop frame-pacing snap and the debug overlay's
+    // budget. 0 when SDL reports an unknown refresh rate (some drivers / headless)
+    // — the snap then disables itself and the overlay falls back to the measured
+    // loop cadence as its denominator.
+    let query_refresh_interval_ms = (win: any*) ->
+        let disp = sdl2.window_display_index(win)
+        let mut mode = default(sdl_display_mode)
+        if disp >= 0 && sdl2.current_display_mode(disp, (any*) &mode) == 0 && mode.refresh_rate > 0 then
+            1000.0 / (f64) mode.refresh_rate
+        else 0.0
+
+    // Free + realloc the size-dependent buffers (fb if fb_w changed,
+    // title_bg if fb_w changed, dbuf + zbuf always when scale or fb_w
+    // changed). Updates the derived geometry fields. Pic cache is left
+    // intact since pic-pixel buffers are independent of these dimensions.
+    // Returns whether anything changed; caller decides whether to rescale
+    // the camera plane (only on fb_w change) and whether to recreate the
+    // SDL texture (on either change).
+    let resize_render_ctx = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*,
+                             pal: const u32[], new_fb_w: i32, new_scale: i32) ->
+        let fb_w_changed = new_fb_w != rc.fb_w
+        let scale_changed = new_scale != rc.scale
+        if !fb_w_changed && !scale_changed then false
+        else
+            if fb_w_changed then
+                free(rc.fb)
+                free(rc.title_bg)
+            free(rc.dbuf)
+            free(rc.zbuf)
+            if rc.ssaa_mode != 0 then
+                free(rc.ssaa_buf)
+                free(rc.ssaa_zbuf)
+            rc.fb_w = new_fb_w
+            rc.scale = new_scale
+            rc.screen_w = new_fb_w * new_scale
+            rc.screen_h = rc.fb_h * new_scale
+            rc.view_render_h = view_h * new_scale
+            rc.ui_offset_x = (new_fb_w - 320) / 2
+            if fb_w_changed then
+                rc.fb = alloc(u32[new_fb_w * rc.fb_h] {})!
+                rc.title_bg = pics.build_title_bg_cache(vg, pal, new_fb_w, rc.fb_h)
+            rc.dbuf = alloc(u32[rc.screen_w * rc.screen_h] {})!
+            rc.zbuf = alloc(f64[rc.screen_w] {})!
+            if rc.ssaa_mode != 0 then
+                rc.ssaa_buf = alloc(u32[ssaa_buf_len(rc.ssaa_mode, rc.screen_w, rc.view_render_h)] {})!
+                rc.ssaa_zbuf = alloc(f64[ssaa_zbuf_len(rc.ssaa_mode, rc.screen_w)] {})!
+            rebind_vbuf(rc)
+            // Newly-allocated dbuf is zero-initialized — the HUD strip would
+            // be black for one frame under the frame-skip optimization
+            // without forcing a full repaint on the next render_frame.
+            rc.force_redraw = true
+            true
+
+    // Apply a view-mode change on the fly. Picks the new fb_w from the
+    // view mode + re-picks the supersample factor against the new fb_w
+    // (the optimal scale is fb_w-dependent: a 16:10 fb at 384 wide hits
+    // the panel's horizontal budget at one scale, a 16:9 fb at 428 hits
+    // it at a smaller scale), delegates the realloc to resize_render_ctx,
+    // and rescales the player's camera-plane vector to the new FOV
+    // magnitude. Returns true if anything actually changed — caller
+    // recreates the SDL texture + resets logical size on true.
+    let apply_view_mode = (w: world*, vg: const vgagraph.vgagraph_file*,
+                           pal: const u32[], view_mode: i32) ->
+        let new_fb_w = compute_fb_w_for_view_mode(view_mode)
+        let new_plane_factor = fov_factor * (f64) new_fb_w / 320.0
+        let g = w.g
+        let rc = w.rc
+        let fb_w_was = rc.fb_w
+        let new_scale = pick_scale_factor(rc.drawable_w, rc.drawable_h,
+                                            new_fb_w, rc.fb_h, g.max_scale, g.scale_factor)
+        let changed = resize_render_ctx(rc, vg, pal, new_fb_w, new_scale)
+        if new_fb_w != fb_w_was then
+            // Rescale the player's camera plane to the new FOV magnitude
+            // while preserving direction. Plane is always perpendicular
+            // to dir with magnitude == plane_factor; multiplying by the
+            // ratio keeps that invariant after the change.
+            let plane_scale = new_plane_factor / g.plane_factor
+            g.plane_x = g.plane_x * plane_scale
+            g.plane_y = g.plane_y * plane_scale
+            g.plane_factor = new_plane_factor
+        g.view_mode = view_mode
+        overlay.debug_reset(rc)
+        changed
+
+    // Apply a supersample-scale change on the fly. Reallocates dbuf +
+    // zbuf at the new size; fb / title_bg / camera plane are unaffected.
+    // Returns true on a real change.
+    let apply_scale_factor = (w: world*, vg: const vgagraph.vgagraph_file*,
+                              pal: const u32[], new_scale: i32) ->
+        let changed = resize_render_ctx(w.rc, vg, pal, w.rc.fb_w, new_scale)
+        overlay.debug_reset(w.rc)
+        changed
+
+    // Switch the SSAA mode (0=off, 1=vertical-only 2×, 2=full 2×2). Frees
+    // the old `ssaa_buf` + `ssaa_zbuf`, allocates them at the new mode's
+    // size (length 0 when off), re-aliases vbuf / vzbuf + ss_h/ss_v via
+    // rebind_vbuf so the next 3D frame writes into the correct target, and
+    // updates the persistent `g->ssaa_mode` preference. dbuf / zbuf /
+    // screen_w / screen_h are unaffected — only the upstream raycaster
+    // target changes — so the SDL texture and logical size stay valid
+    // across this switch. Returns true on a real change.
+    let apply_ssaa_mode = (w: world*, new_mode: i32) ->
+        let rc = w.rc
+        if new_mode == rc.ssaa_mode then false
+        else
+            if rc.ssaa_mode != 0 then
+                free(rc.ssaa_buf)
+                free(rc.ssaa_zbuf)
+            rc.ssaa_mode = new_mode
+            w.g.ssaa_mode = new_mode
+            rc.ssaa_buf = alloc(u32[ssaa_buf_len(new_mode, rc.screen_w, rc.view_render_h)] {})!
+            rc.ssaa_zbuf = alloc(f64[ssaa_zbuf_len(new_mode, rc.screen_w)] {})!
+            rebind_vbuf(rc)
+            overlay.debug_reset(rc)
+            true
+
+    // Destroy + recreate the streaming texture and logical size after a
+    // render_ctx resize (supersample-scale or fb_w change), syncing the
+    // video_state's cached dims from the freshly-resized render_ctx.
+    // Single chokepoint shared by the window-resize handler and the
+    // Change View menu.
+    let recreate_texture = (vid: video_state*, rc: const render_ctx*) ->
+        sdl2.destroy_texture(vid.tex)
+        vid.screen_w = rc.screen_w
+        vid.screen_h = rc.screen_h
+        vid.actual_h = (rc.fb_h * 12 / 10) * rc.scale
+        vid.tex = sdl2.create_texture(vid.ren, sdl2.pixel_argb8888,
+            sdl2.tex_streaming, vid.screen_w, vid.screen_h)
+        sdl2.set_logical_size(vid.ren, vid.screen_w, vid.actual_h)

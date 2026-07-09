@@ -340,7 +340,7 @@ section "level-transition"
 # Walk onto the elevator, press space, wait. The interactive loop handles
 # next_level transition but --test mode exits before that — the facetile
 # assertion above is the best we can do without adding a transition hook
-# to run_test_cmd. Record this coverage gap explicitly.
+# to testmode.run_cmd. Record this coverage gap explicitly.
 
 section "map-probe (diagnostic command)"
 # The 'probe' test command is itself a diagnostic aid — verify it at least

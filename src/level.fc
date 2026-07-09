@@ -1,6 +1,5 @@
-// Wolf-FC level — static geometry and dynamic per-level entities. Split
-// into sibling modules (not nested under a single `level` module because
-// that would collide with the `struct level` type name in main.fc):
+// Wolf-FC level — static geometry and dynamic per-level entities, as
+// sibling modules:
 //
 //   difficulty — the four picker choices (baby/easy/medium/hard)
 //   doors      — door_obj + open/close state machine
@@ -11,9 +10,63 @@
 //   spawn      — player spawn, sprite spawn, enemy spawn, exit / push-
 //                wall markers, BJ-victory path arrows (consumes
 //                `difficulty.*` for tier gating)
+//   level      — type-associated lifecycle for `struct level`:
+//                build / destroy / reload / reset_counters
 //
 // Ordering within the file follows logical dependencies (types first,
 // then functions that compose them).
+
+
+// Per-level state: tile grid, dynamic entities, in-progress animations.
+// Built once per level via level.build and destroyed via level.destroy on
+// transition. Everything that a save-state would need to preserve lives here.
+struct level =
+    // Column-major 64x64 tile grid: tilemap[x*64 + y].
+    // 0 = empty, 1-63 = wall texture, 128+ = door (index = value - 128).
+    tilemap: u8[]
+    // Bitmap: which wall tiles are pushable (marker 98 in plane 1).
+    pushwall_tiles: bool[]
+    // Bitmap: which tiles are exit markers (plane-1 tile 99). Stepping
+    // onto one triggers the BJ-victory cutscene (matches the original's
+    // victory-tile behavior). Boss-level maps place these behind the
+    // gold-key door so the player must kill the boss + pick up the
+    // dropped key first.
+    exit_tiles: bool[]
+    // Per-tile path-arrow override for patrolling enemies (plane-1 tiles
+    // 90..97 = path-arrow marker + dir). 0..7 redirects a passing patroller to that
+    // dir; dir.nodir (8) means "no arrow at this tile".
+    path_arrows: u8[]
+    // Static sprite objects spawned from plane-1 tiles 23..72.
+    sprites: tilemap.sprite_obj[]
+    num_sprites: i32
+    // Door objects allocated when their tiles are encountered during build.
+    doors: doors.door_obj[]
+    door_pos: f64[]         // 0.0 = closed, 1.0 = open
+    num_doors: i32
+    // Currently-animating push-wall (at most one at a time).
+    pushwall: pushwall.pushwall_state
+    // Active + dead enemies spawned from plane-1 tiles 108+.
+    enemies: enemies.enemy[]
+    num_enemies: i32
+    // Active enemy-fired projectiles (Schabbs syringes, Giftmacher / Fat
+    // rockets + their boom sprites, fake-Hitler flames). Slot-allocated in a
+    // fixed-size array; `alive = false` means free. No separate count — the
+    // array is scanned on every update / billboards.build pass.
+    projectiles: projectiles.projectile[]
+    // Area system (matches the original): per-tile area index (areas.no_area
+    // for walls / other non-area tiles); a areas.num_areas² counter of how
+    // many open doors connect each pair (>0 means connected); a per-area
+    // "reachable from player by open doors" flag refreshed by areas.connect
+    // on each door transition.
+    tile_areas: u8[]
+    area_connect: u8[]
+    area_by_player: bool[]
+    // Per-level totals used by the kill / secret / treasure counters.
+    // Computed once at build time; `game.total_*` mirrors them. Kept on
+    // level so they survive player death (restart reuses these).
+    total_enemies: i32         // live enemies spawned (excludes corpses)
+    total_pushwalls: i32       // plane-1 tile 98 count
+    total_treasures: i32       // treasure pickups (cross/chalice/bible/crown)
 
 
 // ============================================================
@@ -400,7 +453,7 @@ module pickups =
                 g.ammo = g.ammo + 25
                 if g.ammo > 99 then g.ammo = 99
                 g.treasures = g.treasures + 1
-                grant_extra_life(g, ac)
+                score.grant_extra_life(g, ac)
                 true
             | clip | clip_small when (g.ammo >= 99) -> false
             | clip ->
@@ -438,19 +491,19 @@ module pickups =
                 g.has_silver_key = true
                 true
             | cross ->
-                add_score(g, 100, ac)
+                score.add(g, 100, ac)
                 g.treasures = g.treasures + 1
                 true
             | chalice ->
-                add_score(g, 500, ac)
+                score.add(g, 500, ac)
                 g.treasures = g.treasures + 1
                 true
             | bible ->
-                add_score(g, 1000, ac)
+                score.add(g, 1000, ac)
                 g.treasures = g.treasures + 1
                 true
             | crown ->
-                add_score(g, 5000, ac)
+                score.add(g, 5000, ac)
                 g.treasures = g.treasures + 1
                 true
             if !picked_up then continue
@@ -459,7 +512,7 @@ module pickups =
             // banner, just a score bump and a sound. Health pickups
             // have their own health1/health2 cue; dog_food / food and
             // first_aid chose between them. The bonus-1up cue on
-            // extra_life already fired inside grant_extra_life above.
+            // extra_life already fired inside score.grant_extra_life above.
             match it with
             | gold_key | silver_key -> sfx.trigger(sfx.id.get_key, ac)
             | machine_gun           -> sfx.trigger(sfx.id.get_mg, ac)
@@ -481,7 +534,7 @@ module pickups =
             | crown                 -> sfx.trigger(sfx.id.bonus4, ac)
             | dog_food | food       -> sfx.trigger(sfx.id.health1, ac)
             | first_aid             -> sfx.trigger(sfx.id.health2, ac)
-            | extra_life            -> void()  // sound fired by grant_extra_life
+            | extra_life            -> void()  // sound fired by score.grant_extra_life
             | decoration            -> void()
 
 
@@ -1124,3 +1177,111 @@ module spawn =
                     lv.path_arrows[idx] = (u8) (obj - 90)
                 else
                     lv.path_arrows[idx] = (u8) dir.nodir
+
+
+// ============================================================
+// Level lifecycle — build / free / reload the per-level state
+// ============================================================
+
+// Type-associated module for `struct level`: construction and lifecycle.
+// `level { ... }` stays struct construction; `level.build` / `level.destroy`
+// / `level.reload` / `level.reset_counters` are module access.
+module level =
+    // Allocate a level from the decoded wolf3d map data. Builds tilemap,
+    // spawns static sprites, and marks push-wall tiles. Caller must call
+    // `level.destroy` when the level is no longer needed.
+    let build = (lv_data: maps.level*, sprite_start: i32, difficulty: i32, mommy_mode: bool) ->
+        let lv = alloc(level {
+            tilemap = alloc(u8[map_size * map_size] {})!,
+            pushwall_tiles = alloc(bool[map_size * map_size] {})!,
+            exit_tiles = alloc(bool[map_size * map_size] {})!,
+            path_arrows = alloc(u8[map_size * map_size] {})!,
+            sprites = alloc(tilemap.sprite_obj[tilemap.max_sprites] {})!,
+            num_sprites = 0,
+            doors = alloc(doors.door_obj[doors.max_doors] {})!,
+            door_pos = alloc(f64[doors.max_doors] {})!,
+            num_doors = 0,
+            pushwall = default(pushwall.pushwall_state),
+            enemies = alloc(enemies.enemy[enemies.max_enemies] {})!,
+            num_enemies = 0,
+            projectiles = alloc(projectiles.projectile[projectiles.max_projectiles] {})!,
+            tile_areas = alloc(u8[map_size * map_size] {})!,
+            area_connect = alloc(u8[areas.num_areas * areas.num_areas] {})!,
+            area_by_player = alloc(bool[areas.num_areas] {})!,
+            total_enemies = 0,
+            total_pushwalls = 0,
+            total_treasures = 0
+        })!
+        tilemap.build(lv, lv_data, sprite_start)
+        spawn.sprites(lv, lv_data, sprite_start)
+        spawn.mark_pushwalls(lv, lv_data)
+        spawn.mark_exit_tiles(lv, lv_data)
+        spawn.mark_path_arrows(lv, lv_data)
+        areas.build(lv, lv_data)
+        spawn.spawn_enemies(lv, lv_data, difficulty, mommy_mode)
+        // Tally totals for the intermission screen (enemies that are not
+        // pre-dead corpses; push-wall marker tiles; treasure pickups).
+        let mut enemies_live = 0
+        for i in 0..lv.num_enemies do
+            match lv.enemies[i].state with
+            | dead -> void()
+            | _ -> enemies_live = enemies_live + 1
+        lv.total_enemies = enemies_live
+        let mut pw = 0
+        for t in lv.pushwall_tiles do
+            if t then pw = pw + 1
+        lv.total_pushwalls = pw
+        // The original game counts the 1-UP among a level's treasures: both
+        // the per-level treasure total and the collected-treasure tally
+        // include the four bonus items AND the full-heal pickup. Counting
+        // extra_life only in the numerator (pickups.check) without the
+        // denominator here would let a 1-UP map read over 100%.
+        let mut treas = 0
+        for i in 0..lv.num_sprites do
+            match lv.sprites[i].item_type with
+            | cross | chalice | bible | crown | extra_life -> treas = treas + 1
+            | _ -> void()
+        lv.total_treasures = treas
+        lv
+
+    let destroy = (lv: level*) ->
+        free(lv.tilemap)
+        free(lv.pushwall_tiles)
+        free(lv.exit_tiles)
+        free(lv.path_arrows)
+        free(lv.sprites)
+        free(lv.doors)
+        free(lv.door_pos)
+        free(lv.enemies)
+        free(lv.projectiles)
+        free(lv.tile_areas)
+        free(lv.area_connect)
+        free(lv.area_by_player)
+        free(lv)
+
+    // Mirror level totals into g and zero the current-progress counters. Called
+    // on every level entry (initial load, elevator transition, death restart).
+    let reset_counters = (g: game*, lv: level*) ->
+        g.kills = 0
+        g.secrets = 0
+        g.treasures = 0
+        g.total_kills = lv.total_enemies
+        g.total_secrets = lv.total_pushwalls
+        g.total_treasures = lv.total_treasures
+        g.level_time = 0.0
+
+    // Free the current level + lv_data and load + build the level at level_num.
+    // Shared by every transition path (next-level / restart / new-game). After
+    // this runs, the player still needs position + per-level state set — caller
+    // does that for its specific semantics.
+    let reload = (w: world*, vs: const vswap.vswap_file*) ->
+        destroy(w.lv)
+        free(w.lv_data.walls)
+        free(w.lv_data.objects)
+        free(w.lv_data)
+        let p_maphead = data_path.wl6(w.g.data_dir, "MAPHEAD.WL6")
+        defer free(p_maphead)
+        let p_gamemaps = data_path.wl6(w.g.data_dir, "GAMEMAPS.WL6")
+        defer free(p_gamemaps)
+        w.lv_data = maps.load(p_maphead, p_gamemaps, w.g.level_num)
+        w.lv = build(w.lv_data, vs.sprite_start, w.g.difficulty, w.g.mommy_mode)

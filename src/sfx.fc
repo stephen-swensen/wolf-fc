@@ -12,6 +12,72 @@
 //   2. extend `digi_slot` and `adlib_chunk` with the right lookup row,
 //   3. call `sfx.trigger(sfx.id.new_one, ac)` from the new site.
 
+// Sound system handle: loaded-asset refs + SFX playback state.
+struct audio_ctx =
+    vs: const vswap.vswap_file*      // VSWAP — digi sound data + wall/sprite pages
+    ad: audio.audio_data*      // AUDIOT — AdLib SFX chunks + music
+    sfx: adlib.sfx_state*      // AdLib SFX playback (owns its own OPL2 chip)
+    digi: digi.player*         // 8-bit PCM playback (up to 4 slots)
+    // Music + mix scratch. These are owned by the SDL audio callback thread:
+    // it mutates `music` / `music_prev` / `music_xfade` only while draining
+    // `cmd_ring` and mixing, so they are touched on a single thread and need
+    // no lock. The main thread sets `music` exactly once at startup (before
+    // the device is unpaused, so no callback can be running) and thereafter
+    // hands new tracks across via `cmd_ring`; it never reads or writes these
+    // directly again. `music_prev` is the outgoing track during a swap and
+    // `music_xfade` counts its crossfade-out down. `mix_buf` is the i32
+    // accumulation buffer the callback sums sources into before soft-clipping
+    // straight to SDL's stream. `music_chunk`, by contrast, is owned by the
+    // MAIN thread (the swap-decision in the loop) and never read by the
+    // callback — it just records which track we last asked for.
+    music: imf.player*?        // current track (none = nothing loaded)
+    music_prev: imf.player*?   // outgoing track, crossfading out
+    music_chunk: i32           // AUDIOT chunk last requested (-1 = none)
+    music_xfade: i32           // samples remaining in the crossfade-out
+    mix_buf: i32[]
+    // Mix/synthesis rate in Hz, detected from the default output device at
+    // startup (48000 fallback; see `audio_rate` in main). Immutable after
+    // construction, so both threads read it without synchronization.
+    sample_rate: i32
+    // Lock-free command channel between the main thread (producer) and the
+    // SDL audio callback (consumer). `cmd_ring` carries play-sfx / set-music
+    // requests main -> audio; the callback drains it at the top of each call
+    // and performs the actual chip / slot / player mutation. `free_ring`
+    // carries retired music players the other way (audio -> main), since only
+    // the main thread may free them — the callback hands a player back once
+    // its crossfade is done and the main loop destroys it. `adlib_busy_flag`
+    // mirrors `sfx->active` across the boundary: the callback publishes it
+    // each call (release) and sfx.adlib_busy reads it (acquire) for the
+    // use-key "do-do-do" rhythm gate, which runs on the main thread.
+    cmd_ring: spsc.ring<audio_q.cmd>*
+    free_ring: spsc.ring<imf.player*>*
+    adlib_busy_flag: bool
+    // Audio-callback heartbeat: bumped + published once per callback. The
+    // main loop's diagnostic beat reads it (acquire) to tell a stalled audio
+    // thread (cb frozen) from a stalled main thread (beats frozen). Diagnostic
+    // only — never read by the simulation.
+    cb_count: i64
+    // Sound submenu toggles. `sfx_on` gates the AdLib SFX fallback path
+    // (synthesized FM hits — see sfx.trigger_*). `digi_on` gates the
+    // digitized PCM path (Sound Blaster samples). `music_on` gates the
+    // IMF music stream in the main-loop mixer. Each runs independently:
+    // a sound with both an AdLib chunk and a digi sample prefers digi
+    // when `digi_on`, falling through to AdLib when digi is off but
+    // `sfx_on` is still on.
+    sfx_on: bool
+    digi_on: bool
+    music_on: bool
+    // Per-source level scalars, as integer percentages 10..200. The
+    // mixer multiplies its per-frame source gain by `pct / 100.0`. 100
+    // is the default mix; 200 pushes a source toward the soft-clip
+    // region in `mixer.soft_clip_to_i16`; 10 attenuates a source to
+    // a whisper without silencing it (use the on/off toggle for true
+    // silence).
+    sfx_gain_pct: i32
+    digi_gain_pct: i32
+    music_gain_pct: i32
+
+
 module sfx =
     import math from std::
 
@@ -504,3 +570,87 @@ module sfx =
             let pan_atten = 1.0 / (1.0 + dist / 8.0)
             let pan = pan_raw * (0.4 + 0.6 * pan_atten)
             trigger_panned_gain(sound_id, ac, pan, gain)
+
+
+// ============================================================
+// Audio thread — the command-ring consumer
+// ============================================================
+
+// The consumer half of the lock-free audio pipeline. The main thread
+// produces requests (sfx.trigger, music swaps) onto `audio_ctx.cmd_ring`;
+// this module drains and applies them — on SDL's audio thread in the
+// real game, or pumped synchronously per tick in headless test mode.
+module audio_thread =
+    // Click-killing crossfade applied when a track is swapped — 256
+    // samples ≈ 5.3 ms at 48 kHz, matching the original fade-out tail.
+    let music_xfade_samples = 256
+
+    // Drain the command ring and apply every pending command — the single place
+    // the OPL2 chips / digi slots / music players are mutated. Runs on the audio
+    // thread (from `callback`) in the real game; in headless test mode, where
+    // there is no audio thread, it's pumped synchronously each tick (see `tick`)
+    // so the regression suite exercises this real producer -> ring -> consumer
+    // path rather than a bypass. Single-consumer either way.
+    let drain = (ac: audio_ctx*) ->
+        loop
+            match spsc.dequeue(ac.cmd_ring) with
+            | some(c) ->
+                if c.kind == audio_q.play_sfx then
+                    sfx.apply_trigger(c.sfx_id, ac, c.pan, c.gain)
+                else if c.kind == audio_q.set_music then
+                    match c.player with
+                    | some(np) ->
+                        // Demote the current track to crossfade out. If a prior
+                        // crossfade is still in flight (rapid double-swap), retire
+                        // that older outgoing player back to the main thread now.
+                        match ac.music_prev with
+                        | some(old) ->
+                            discard spsc.enqueue(ac.free_ring, old)
+                        | none -> void()
+                        ac.music_prev = ac.music
+                        ac.music_xfade = if ac.music.is_some then music_xfade_samples else 0
+                        ac.music = some(np)
+                    | none -> void()
+            | none -> break
+
+    // SDL audio callback — runs on SDL's dedicated audio thread, so it is fully
+    // decoupled from the render loop and heavy supersampling / SSAA frame hitches
+    // can't stutter the sound. It is the SOLE mutator of the OPL2 chips, digi
+    // slots, and music players: the main thread never touches them directly, it
+    // only posts requests onto `cmd_ring`, which this callback drains and applies
+    // here. That is what lets the whole thing run lock-free — the main loop never
+    // blocks on the audio thread. `stream` is the device buffer (interleaved
+    // stereo i16) and `len` its size in bytes (4 bytes per stereo frame).
+    // Non-capturing (references only module-level bindings), so
+    // `&audio_thread.callback` yields a plain C function pointer. `stream` is
+    // typed u8* (not any*) so the generated C trampoline matches
+    // SDL_AudioCallback's `void(*)(void*, Uint8*, int)` exactly — an any* there
+    // trips -Werror=incompatible-pointer-types against the real SDL field.
+    let callback = (userdata: any*, stream: u8*, len: i32) ->
+        let ac = (audio_ctx*) userdata
+        // Diagnostic heartbeat: publish that this callback fired (see audio_ctx).
+        atomic_store_release(&ac.cb_count, ac.cb_count + 1i64)
+        // Apply pending main-thread requests on this (audio) thread.
+        drain(ac)
+        let mut frames = len / 4
+        let cap = (i32) ac.mix_buf.len / 2
+        if frames > cap then frames = cap     // safety net; never trips at 1024
+        let out = i16[] { ptr = (i16*) stream, len = (i64) (frames * 2) }
+        let xfade_before = ac.music_xfade
+        ac.music_xfade = mixer.fill_frame(ac.mix_buf, out,
+            ac.music, ac.music_prev, atomic_load_acquire(&ac.music_on),
+            (f64) atomic_load_acquire(&ac.music_gain_pct) / 100.0,
+            ac.music_xfade, music_xfade_samples,
+            ac.sfx,  (f64) atomic_load_acquire(&ac.sfx_gain_pct)  / 100.0,
+            ac.digi, (f64) atomic_load_acquire(&ac.digi_gain_pct) / 100.0,
+            frames, ac.sample_rate)
+        // A crossfade that just finished means music_prev is silent and untouched
+        // from here on — hand it back to the main thread to free.
+        if xfade_before > 0 && ac.music_xfade == 0 then
+            match ac.music_prev with
+            | some(old) ->
+                spsc.enqueue(ac.free_ring, old)
+                ac.music_prev = none(imf.player*)
+            | none -> void()
+        // Publish AdLib-busy for the main thread's use-key rhythm gate.
+        atomic_store_release(&ac.adlib_busy_flag, ac.sfx.active)

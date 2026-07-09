@@ -78,6 +78,18 @@ module player =
     // covers the viewport.
     let death_swing_rate = 140.0 * 3.14159265358979 / 180.0
 
+    // Grant the full cheat kit: 100 health, 99 ammo, chain gun (+ best-
+    // weapon latch), both keys. Shared by the M+L+I chord, IDKFA
+    // activation, the --cheat launch flag, and reset_for_life's IDKFA
+    // restock on respawn.
+    let give_full_kit = (g: game*) ->
+        g.health = 100
+        g.ammo = 99
+        g.weapon = 3
+        g.best_weapon = 3
+        g.has_gold_key = true
+        g.has_silver_key = true
+
     // Reset per-life player state for a death restart. Score, lives
     // (already decremented), and weapon inventory are preserved;
     // health / ammo / weapon reset to pistol with starter ammo —
@@ -332,7 +344,7 @@ module player =
         // IDKFA — Doom-style "give me everything" toggle. Activating it
         // grants both keys, the chain gun with 99 ammo, and latches
         // `idkfa_mode`, which suppresses ammo decrement in update_weapon
-        // and blocks score gains through add_score. Deactivating leaves
+        // and blocks score gains through score.add. Deactivating leaves
         // the gifts in the inventory but re-enables ammo drain and
         // score accumulation.
         let apply_idkfa = (g: game*) ->
@@ -380,7 +392,7 @@ module player =
         // (capped at 99), bump to the next weapon tier if below chain
         // gun, and grant 100 000 points. Unlike IDKFA this is a
         // one-shot bump — pressing it again re-applies the deltas. Takes
-        // audio_ctx because add_score may fire the extra-life SFX at a
+        // audio_ctx because score.add may fire the extra-life SFX at a
         // 40k milestone crossed by this +100k bump.
         let apply_tab_i = (g: game*, ac: audio_ctx*) ->
             g.health = g.health + 99
@@ -390,7 +402,7 @@ module player =
             if g.best_weapon < 3 then
                 g.best_weapon = g.best_weapon + 1
                 g.weapon = g.best_weapon
-            add_score(g, 100000, ac)
+            score.add(g, 100000, ac)
             hud.show_message(g, "Free items!")
             g.msg_timer = msg_time
 
@@ -414,7 +426,7 @@ module player =
         // shortcut, not a cinematic trigger.
         let apply_tab_e = (g: game*) ->
             if g.level_num % episode.levels_per == 8 then
-                record_level_for_episode(g)
+                episode.record_level_for_episode(g)
                 episode_end.enter(g)
             else if !g.next_level then
                 g.next_level = true

@@ -1,0 +1,890 @@
+// Wolf-FC headless test mode — the scripted-command interpreter behind
+// `./run.sh --test <cmd>...`. One entry point (`testmode.run_cmd`),
+// dispatched left-to-right per CLI arg by main with dt = 1/35 per
+// simulated tick. Runs with no window, no audio thread, deterministic
+// RNG; ticking commands go through flow.tick so the simulation path is
+// identical to interactive play. To add a command: add an `else if`
+// branch in run_cmd (prefix commands use text.starts_with +
+// text.parse_i32; branches that produce text end in void() so all arms
+// have matching types; call flow.tick(w, dt) only if the command
+// advances time) and document it in README.md.
+
+module testmode =
+    import io from std::
+    import math from std::
+    import sys from std::
+    import text from std::
+
+    let run_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
+        let g = w.g
+        // Apply audio commands a prior command left on the ring (e.g. a `goto`
+        // that collected a pickup — it doesn't tick, so nothing pumped it) before
+        // this command runs, so audio probes observe them. Ticking commands pump
+        // per tick already; this just covers the non-ticking enqueuers.
+        audio_thread.drain(w.ac)
+        let bad = (expected: const str) ->
+            discard io.write(alloca("bad arg '%s{arg}': expected %s{expected}\n"), stderr)
+        if text.starts_with(arg, "fwd:") then
+            match text.parse_i32(arg[4..arg.len]) with
+            | ok(n) ->
+                g.key_up = true
+                for j in 0..n do
+                    flow.tick(w, dt)
+                g.key_up = false
+            | err(_) -> bad("integer tick count")
+        else if text.starts_with(arg, "back:") then
+            match text.parse_i32(arg[5..arg.len]) with
+            | ok(n) ->
+                g.key_down = true
+                for j in 0..n do
+                    flow.tick(w, dt)
+                g.key_down = false
+            | err(_) -> bad("integer tick count")
+        else if text.starts_with(arg, "turnr:") then
+            match text.parse_i32(arg[6..arg.len]) with
+            | ok(deg) -> player.rotate_camera(g, 0.0 - (f64) deg * 3.14159265 / 180.0)
+            | err(_) -> bad("integer degrees")
+        else if text.starts_with(arg, "turnl:") then
+            match text.parse_i32(arg[6..arg.len]) with
+            | ok(deg) -> player.rotate_camera(g, (f64) deg * 3.14159265 / 180.0)
+            | err(_) -> bad("integer degrees")
+        else if arg == "run" then
+            g.key_shift = !g.key_shift
+        else if text.starts_with(arg, "goto:") then
+            let coords = text.split(arg[5..arg.len], ",")
+            if coords.len >= 2 then
+                match text.parse_i32(coords[0]) with
+                | ok(tx) ->
+                    match text.parse_i32(coords[1]) with
+                    | ok(ty) ->
+                        g.pos_x = (f64) tx + 0.5
+                        g.pos_y = (f64) ty + 0.5
+                    | err(_) -> bad("integer Y coordinate")
+                | err(_) -> bad("integer X coordinate")
+            else bad("X,Y coordinate pair")
+            free(coords)
+            pickups.check(w.lv, g, w.ac)
+            // Teleporting bypasses door traversal, so the player's area + the
+            // door-connectivity flood would otherwise stay anchored to the spawn
+            // area. Recompute both, equivalent to "treat the jump as if the
+            // player legally walked here through every open door."
+            areas.update_player_area(w.lv, g)
+            areas.connect(w.lv, g.area_number)
+        else if text.starts_with(arg, "sethp:") then
+            match text.parse_i32(arg[6..arg.len]) with
+            | ok(n) -> g.health = n
+            | err(_) -> bad("integer HP value")
+        else if text.starts_with(arg, "setweapon:") then
+            match text.parse_i32(arg[10..arg.len]) with
+            | ok(n) -> g.weapon = n
+            | err(_) -> bad("integer weapon index (0-3)")
+        else if text.starts_with(arg, "setammo:") then
+            match text.parse_i32(arg[8..arg.len]) with
+            | ok(n) -> g.ammo = n
+            | err(_) -> bad("integer ammo count")
+        else if arg == "fire" then
+            g.key_fire = true
+            flow.tick(w, dt)
+            g.key_fire = false
+        else if arg == "facetile" then
+            // Mirror the use-key's cardinal quantization (dominant axis
+            // wins) so this reports the actual door/elevator/push-wall
+            // target, not the raw-heading neighbour.
+            let face_horiz = math.abs(g.dir_x) > math.abs(g.dir_y)
+            let cdx = if face_horiz then (if g.dir_x >= 0.0 then 1 else -1) else 0
+            let cdy = if face_horiz then 0 else (if g.dir_y >= 0.0 then 1 else -1)
+            let fx = (i32) g.pos_x + cdx
+            let fy = (i32) g.pos_y + cdy
+            let ft = if fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
+                (i32) w.lv.tilemap[(i64) fx * 64 + (i64) fy]
+            else -1
+            let nl = if g.next_level then 1 else 0
+            discard io.write("facing=(%d{fx},%d{fy}) tile=%d{ft} next_level=%d{nl}\n", stdout)
+        else if arg == "givekeys" then
+            g.has_gold_key = true
+            g.has_silver_key = true
+        else if arg == "mli" then
+            // Direct-fire the M+L+I cheat effect. In interactive play this is
+            // triggered by holding those three keys; test mode has no keyboard,
+            // so scripted scenarios invoke the effect through this command.
+            player.cheats.apply_mli(g)
+        else if arg == "bat" then
+            player.cheats.apply_bat(g)
+        else if arg == "iddqd" then
+            // Trigger the IDDQD god-mode toggle directly without having to
+            // pipe the full I-D-D-Q-D sequence through the key event path.
+            player.cheats.apply_iddqd(g)
+        else if arg == "idkfa" then
+            // Trigger the IDKFA toggle directly (see apply_iddqd comment).
+            player.cheats.apply_idkfa(g)
+        else if arg == "psyched" then
+            // Force the GET PSYCHED overlay timer so a following ss: captures
+            // the full-screen load graphic. Bypasses the normal test_mode gate
+            // in pics.trigger_get_psyched.
+            g.get_psyched_timer = pics.get_psyched_time
+        else if arg == "gotgatling" then
+            // Force the got-gatling face-cell swap so ss: can capture it.
+            // Bypasses test_mode. The pic replaces the BJ face in hud.render
+            // while the timer is active.
+            g.got_gatling_timer = hud.got_gatling_time
+        else if arg == "space" then
+            g.key_space = true
+            g.key_space_handled = false
+            flow.tick(w, dt)
+            g.key_space = false
+            g.key_space_handled = false
+        else if text.starts_with(arg, "wait:") then
+            match text.parse_i32(arg[5..arg.len]) with
+            | ok(n) ->
+                for j in 0..n do
+                    flow.tick(w, dt)
+            | err(_) -> bad("integer tick count")
+        else if text.starts_with(arg, "ss:") then
+            w.rc.force_redraw = true
+            flow.render_frame(w, w.ac.vs, pal)
+            overlay.save_png(w, arg[3..arg.len])!
+            discard io.write(alloca("Saved %s{arg[3..arg.len]}\n"), stdout)
+        else if text.starts_with(arg, "setscale:") then
+            // Resize dbuf/zbuf to the given supersample factor. Test mode
+            // normally pins scale=2 (so screenshot regressions stay
+            // bit-stable); this command is for the perf bench harness to
+            // probe higher-scale codepaths headlessly.
+            match text.parse_i32(arg[9..arg.len]) with
+            | ok(n) ->
+                if n >= 2 && n <= 8 then
+                    discard video.apply_scale_factor(w, w.vg, pal, n)
+                else bad("scale in [2,8]")
+            | err(_) -> bad("integer scale factor")
+        else if text.starts_with(arg, "setssaa:") then
+            // Set the SSAA mode (0=off, 1=vertical-only 2×, 2=full 2×2).
+            // Test mode defaults to off (the regression suite expects
+            // bit-stable SSAA-off output); this command lets the perf bench
+            // probe the supersampled raycaster + downsample paths headlessly.
+            match text.parse_i32(arg[8..arg.len]) with
+            | ok(n) ->
+                let m = if n < 0 then 0 else if n > 2 then 2 else n
+                discard video.apply_ssaa_mode(w, m)
+            | err(_) -> bad("0, 1, or 2")
+        else if text.starts_with(arg, "bench:") then
+            // Render `n` full frames and report total/per-frame wall time.
+            // Drives the raycaster + billboards + overlay pipeline at the
+            // current scale. Use after `setscale:N` and a position-setting
+            // sequence (e.g. fwd:35) to measure a representative scene.
+            match text.parse_i32(arg[6..arg.len]) with
+            | ok(n) ->
+                let t0 = sys.time()
+                for j in 0..n do
+                    flow.render_frame(w, w.ac.vs, pal)
+                let t1 = sys.time()
+                let total_ms = t1 - t0
+                let per_frame = if n > 0 then (f64) total_ms / (f64) n else 0.0
+                let fps = if total_ms > 0 then (f64) n * 1000.0 / (f64) total_ms else 0.0
+                discard io.write("bench scale=%d{w.rc.scale} screen=%d{w.rc.screen_w}x%d{w.rc.screen_h} frames=%d{n} total=%d{total_ms}ms per_frame=%6.3f{per_frame}ms fps=%6.1f{fps}\n", stdout)
+            | err(_) -> bad("integer frame count")
+        else if text.starts_with(arg, "audiobench:") then
+            // Render `n` seconds of WONDERIN through the OPL2 music chip
+            // and report total / per-sample wall time. Used to compare OPL2
+            // emulator perf across implementations (e.g. float vs integer
+            // gain pipeline).
+            match text.parse_i32(arg[11..arg.len]) with
+            | ok(n) ->
+                // WONDERIN = music.wonderin = 14, chunk = 261 + 14 = 275.
+                // Pinned to 44100 (not the detected device rate) so bench
+                // numbers stay comparable across machines.
+                let chunk = 261 + 14
+                let sample_rate = 44100i32
+                let ms = font.music_load(w.ac.ad, chunk, (f64) sample_rate)
+                let frames_per_batch = 1024i32
+                let total_frames = n * sample_rate
+                let batches = total_frames / frames_per_batch
+                let mix_buf = i32[2048] {}
+                let t0 = sys.time()
+                for j in 0..batches do
+                    for k in 0..2048 do
+                        mix_buf[k] = 0i32
+                    imf.fill(ms, mix_buf, frames_per_batch, sample_rate, 1.0)
+                let t1 = sys.time()
+                let total_ms = t1 - t0
+                let total_samples = batches * frames_per_batch
+                let ns_per_sample = if total_samples > 0
+                    then (f64) total_ms * 1000000.0 / (f64) total_samples
+                    else 0.0
+                let realtime_x = if total_ms > 0
+                    then (f64) n * 1000.0 / (f64) total_ms
+                    else 0.0
+                io.write("audiobench n=%d{n}s samples=%d{total_samples} total=%d{total_ms}ms ns/sample=%6.1f{ns_per_sample} realtime=%6.1f{realtime_x}x\n", stdout)
+                imf.destroy(ms)
+            | err(_) -> bad("integer seconds")
+        else if text.starts_with(arg, "benchparts:") then
+            // Per-section profile: time each chunk of the playing-phase
+            // render path independently for `n` iterations. Skips the
+            // playing-phase routing in render_frame so each piece is
+            // measured in isolation. Sums roughly approximate render_frame
+            // (small drift from the omitted phase-match overhead).
+            match text.parse_i32(arg[11..arg.len]) with
+            | ok(n) ->
+                let t0 = sys.time()
+                for j in 0..n do
+                    overlay.clear_view_sentinel(w.rc)
+                let t1 = sys.time()
+                for j in 0..n do
+                    raycaster.render_walls(w.lv, w.rc, w.g, w.ac.vs, pal)
+                let t2 = sys.time()
+                for j in 0..n do
+                    billboards.build(w.lv, w.rc, w.g, w.ac.vs.sprite_start)
+                    billboards.render(w.rc, w.g, w.ac.vs, pal)
+                let t3 = sys.time()
+                for j in 0..n do
+                    player.render_weapon(w.rc, w.ac.vs, pal, w.g)
+                let t4 = sys.time()
+                for j in 0..n do
+                    overlay.ssaa_downsample(w.rc)
+                let t5 = sys.time()
+                for j in 0..n do
+                    hud.render(w.rc, w.vg, pal, w.g)
+                    hud.render_message(w.rc, w.font, w.g)
+                let t6 = sys.time()
+                for j in 0..n do
+                    overlay.composite_view_overlay(w.rc)
+                let t7 = sys.time()
+                for j in 0..n do
+                    overlay.composite_hud(w.rc)
+                let t8 = sys.time()
+                let nf = (f64) n
+                io.write("benchparts scale=%d{w.rc.scale} ssaa=%d{w.rc.ssaa_mode} frames=%d{n}\n", stdout)
+                io.write("  clear_view_sentinel : %7.3f{(f64) (t1 - t0) / nf}ms\n", stdout)
+                io.write("  raycaster.walls     : %7.3f{(f64) (t2 - t1) / nf}ms\n", stdout)
+                io.write("  billboards build+ren: %7.3f{(f64) (t3 - t2) / nf}ms\n", stdout)
+                io.write("  render_weapon       : %7.3f{(f64) (t4 - t3) / nf}ms\n", stdout)
+                io.write("  ssaa_downsample     : %7.3f{(f64) (t5 - t4) / nf}ms\n", stdout)
+                io.write("  hud render+msg      : %7.3f{(f64) (t6 - t5) / nf}ms\n", stdout)
+                io.write("  composite view      : %7.3f{(f64) (t7 - t6) / nf}ms\n", stdout)
+                io.write("  composite hud       : %7.3f{(f64) (t8 - t7) / nf}ms\n", stdout)
+                discard io.write("  total               : %7.3f{(f64) (t8 - t0) / nf}ms\n", stdout)
+            | err(_) -> bad("integer frame count")
+        else if arg == "state" then
+            io.write("pos=(%8.4f{g.pos_x}, %8.4f{g.pos_y}) dir=(%8.4f{g.dir_x}, %8.4f{g.dir_y})\n", stdout)
+            io.write("health=%d{g.health} ammo=%d{g.ammo} score=%d{g.score} lives=%d{g.lives} level=%d{g.level_num} weapon=%d{g.weapon} best=%d{g.best_weapon}\n", stdout)
+            let gk = if g.has_gold_key then 1 else 0
+            let sk = if g.has_silver_key then 1 else 0
+            let gm = if g.god_mode then 1 else 0
+            let ik = if g.idkfa_mode then 1 else 0
+            discard io.write("keys: gold=%d{gk} silver=%d{sk} god=%d{gm} idkfa=%d{ik}\n", stdout)
+        else if arg == "counters" then
+            // Kill / secret / treasure counters + level time / par / phase.
+            let phase_s = match g.phase with
+            | pg13         -> "pg13"
+            | title        -> "title"
+            | main_menu    -> "menu"
+            | playing      -> "playing"
+            | dying        -> "dying"
+            | intermission -> "intermission"
+            | bj_victory   -> "bj_victory"
+            | death_cam    -> "death_cam"
+            | episode_end  -> "episode_end"
+            | endart       -> "endart"
+            | high_scores  -> "high_scores"
+            let par = if g.level_num < 60 then intermission.par_times[g.level_num] else 0
+            io.write(alloca("phase=%s{phase_s} difficulty=%d{g.difficulty}\n"), stdout)
+            io.write("kills=%d{g.kills}/%d{g.total_kills} secrets=%d{g.secrets}/%d{g.total_secrets} treasures=%d{g.treasures}/%d{g.total_treasures}\n", stdout)
+            discard io.write("time=%6.2f{g.level_time} par=%d{par}\n", stdout)
+        else if text.starts_with(arg, "vgrender:") then
+            // Render one VGAGRAPH pic to the framebuffer and take a screenshot.
+            // Syntax: vgrender:CHUNK,OUTFILE.png — top-left aligned, unscaled.
+            let rest = arg[9..arg.len]
+            let parts = text.split(rest, ",")
+            if parts.len >= 2 then
+                match text.parse_i32(parts[0]) with
+                | ok(n) ->
+                    // Clear the fb black first so metadata is obvious.
+                    for i in 0..(w.rc.fb_w * game_h) do
+                        w.rc.fb[i] = 0xFF000000u32
+                    pics.draw(w.rc, w.vg, pal, n, 0, 0)
+                    png.write(parts[1], w.rc.fb, w.rc.fb_w, game_h, "vg")!
+                    discard io.write(alloca("Saved %s{parts[1]}\n"), stdout)
+                | err(_) -> bad("integer chunk number")
+            else bad("CHUNK,PATH.png")
+            free(parts)
+        else if text.starts_with(arg, "vgrenderfont:") then
+            // Render the entire font ASCII range onto the fb and save. Useful
+            // for verifying the font loader extracts correct glyphs.
+            for i in 0..(w.rc.fb_w * game_h) do
+                w.rc.fb[i] = 0xFF000000u32
+            let mut py = 8
+            let mut px = 8
+            for ch in 32..127 do
+                let adv = font.draw_char(w.rc, w.font, px, py, ch, 0xFFFFFFFFu32)
+                px = px + adv + 1
+                if px > w.rc.fb_w - 16 then
+                    px = 8
+                    py = py + w.font.height + 2
+            png.write(arg[13..arg.len], w.rc.fb, w.rc.fb_w, game_h, "font")!
+            discard io.write(alloca("Saved %s{arg[13..arg.len]}\n"), stdout)
+        else if text.starts_with(arg, "vginfo:") then
+            // Dump the dimensions of one VGAGRAPH chunk (pic). Useful to verify
+            // the decoder produces sane widths/heights after the Huffman expand.
+            match text.parse_i32(arg[7..arg.len]) with
+            | ok(n) ->
+                let { pw, ph } = vgagraph.pic_dims_at(w.vg, n)
+                let off = if n < w.vg.num_chunks then w.vg.offsets[n] else -1i64
+                discard io.write("vgchunk %d{n}: offset=%d{off} width=%d{pw} height=%d{ph}\n", stdout)
+            | err(_) -> bad("integer chunk number")
+        else if arg == "vgtable" then
+            // Dump the entire picture-dimensions table (STRUCTPIC / chunk 0).
+            for i in 0..w.vg.num_pics do
+                let pw = w.vg.pic_dims[i].width
+                let ph = w.vg.pic_dims[i].height
+                if pw > 0 || ph > 0 then
+                    let ch = i + vgagraph.start_pics
+                    io.write("pic %d{ch}: %d{pw}x%d{ph}\n", stdout)
+        else if arg == "level_stats" then
+            // Dump total enemy/pushwall/treasure counts as counted by level.build.
+            discard io.write("level_stats: enemies=%d{w.lv.total_enemies} pushwalls=%d{w.lv.total_pushwalls} treasures=%d{w.lv.total_treasures}\n", stdout)
+        else if arg == "advance" then
+            // Simulates the "press space" that dismisses an intermission /
+            // game-over / episode-end / victory screen. Test-mode equivalent of
+            // the interactive space-bar path, but collapses animation-skip +
+            // advance into one step so scripted tests don't need two hops.
+            if g.phase == game_phase.intermission then
+                if g.inter_stage < 4 then intermission.finish_anim(g)
+                if g.level_num % episode.levels_per == 8 then
+                    episode_end.enter(g)
+                else
+                    flow.advance_next_level(w, w.ac.vs)
+            else if g.phase == game_phase.bj_victory then
+                // BJ cutscene collapses straight to the episode-end screen.
+                // Interactive mode auto-advances on its own after the final
+                // hold, but tests skip to the end so scripted sequences don't
+                // need to pad with wait:200.
+                episode_end.enter(g)
+            else if g.phase == game_phase.death_cam then
+                // Death-cam collapses straight to the episode-end screen,
+                // mirroring the natural death_cam.sub.done transition (which
+                // skips intermission for boss kills, matching the original's
+                // victorious-episode handling).
+                score.add(g, intermission.compute_level_bonus(g), w.ac)
+                episode.record_level_for_episode(g)
+                episode_end.enter(g)
+            else if g.phase == game_phase.episode_end then
+                // Test-mode advance from episode_end → endart, matching the
+                // interactive ack flow. Use `endartnext` / `endart_state` to
+                // step pages within the article.
+                let ep = g.level_num / episode.levels_per
+                endart_screen.enter(g, w.vg, ep)
+            else if g.phase == game_phase.endart then
+                // Test-mode advance from endart → high-scores screen,
+                // matching the interactive Esc / past-last-page flow
+                // (which routes through the high-scores check on the
+                // way back to the menu in the original).
+                let ep = g.level_num / episode.levels_per
+                high_scores_screen.enter(g, w.hs, high_scores_screen.from_endart,
+                    g.score, g.level_num + 1, ep)
+            else if g.phase == game_phase.high_scores then
+                // Test-mode advance from high-scores → its source's
+                // dismissal target. Death / endart flows return to the
+                // title screen (matching the original's title/demo cycle); the
+                // View Scores menu entry returns to the main menu.
+                // Commits any pending name buffer first so a script that
+                // types into hs_name + advance behaves the same as the
+                // interactive Enter (which commits + dismisses in one).
+                if w.hs.edit_active then
+                    high_scores_screen.commit_name(w.hs)
+                high_scores_screen.dismiss(g, w.hs)
+        else if text.starts_with(arg, "setdifficulty:") then
+            // Set difficulty + fully rebuild the current level so spawn filtering
+            // reflects it. Useful for testing tier gating (base/+36/+72 tiles).
+            match text.parse_i32(arg[14..arg.len]) with
+            | ok(n) ->
+                g.difficulty = if n < 0 then 0 else if n > 3 then 3 else n
+                // Re-run spawn.spawn_enemies on the existing level. Since difficulty
+                // only affects which plane-1 enemy tiles spawn, we can clear
+                // lv->num_enemies and re-scan without rebuilding the tilemap.
+                w.lv.num_enemies = 0
+                spawn.spawn_enemies(w.lv, w.lv_data, g.difficulty, g.mommy_mode)
+                // Recount total_enemies so the counters tally correctly.
+                let mut alive = 0
+                for i in 0..w.lv.num_enemies do
+                    match w.lv.enemies[i].state with
+                    | dead -> void()
+                    | _ -> alive = alive + 1
+                w.lv.total_enemies = alive
+                g.total_kills = alive
+                g.kills = 0
+            | err(_) -> bad("integer difficulty 0-3")
+        else if text.starts_with(arg, "setlevel:") then
+            match text.parse_i32(arg[9..arg.len]) with
+            | ok(n) ->
+                if n < 0 || n >= 60 then bad("level 0..59")
+                else
+                    g.level_num = n
+                    g.oldscore = g.score   // pin start-of-level for death rewind
+                    level.reload(w, w.ac.vs)
+                    spawn.find_player_start(w.lv_data, g)
+                    level.reset_counters(g, w.lv)
+                    areas.update_player_area(w.lv, g)
+                    areas.connect(w.lv, g.area_number)
+                    g.phase = game_phase.playing
+                    g.phase_timer = 0.0
+            | err(_) -> bad("integer level")
+        else if text.starts_with(arg, "setepisode:") then
+            // Jump to the start of episode N (level = N*10), preserving
+            // score/lives. Wrapper around setlevel.
+            match text.parse_i32(arg[11..arg.len]) with
+            | ok(n) ->
+                if n < 0 || n >= episode.count then bad("episode 0..5")
+                else
+                    g.level_num = n * episode.levels_per
+                    g.oldscore = g.score   // pin start-of-level for death rewind
+                    level.reload(w, w.ac.vs)
+                    spawn.find_player_start(w.lv_data, g)
+                    level.reset_counters(g, w.lv)
+                    areas.update_player_area(w.lv, g)
+                    areas.connect(w.lv, g.area_number)
+                    g.phase = game_phase.playing
+                    g.phase_timer = 0.0
+            | err(_) -> bad("integer episode 0..5")
+        else if text.starts_with(arg, "save:") then
+            match text.parse_i32(arg[5..arg.len]) with
+            | ok(n) ->
+                if n < 0 || n >= save.num_slots then bad("slot 0..%d{save.num_slots - 1}")
+                else
+                    // Test-mode save uses the auto-generated label (empty
+                    // string triggers the "E<ep>M<lvl>" fallback).
+                    save.to_slot(w, n, "")
+                    discard io.write("saved slot %d{n}\n", stdout)
+            | err(_) -> bad("integer slot")
+        else if text.starts_with(arg, "load:") then
+            match text.parse_i32(arg[5..arg.len]) with
+            | ok(n) ->
+                if n < 0 || n >= save.num_slots then bad("slot 0..%d{save.num_slots - 1}")
+                else
+                    let loaded = save.from_slot(w, w.ac.vs, n)
+                    discard io.write(alloca("load slot %d{n}: %s{if loaded then "ok" else "failed"}\n"), stdout)
+            | err(_) -> bad("integer slot")
+        else if arg == "listsaves" then
+            // Dump the on-disk save slots (label + level + score).
+            save.refresh_slots(w.sm)
+            for i in 0..save.num_slots do
+                let s = &w.sm.slots[i]
+                if s.empty then
+                    discard io.write("slot %d{i}: EMPTY\n", stdout)
+                else
+                    let ep = s.level_num / episode.levels_per + 1
+                    let lvl = s.level_num % episode.levels_per + 1
+                    let lbl_chars = if s.label.len > 0 then s.label else default(u8[])
+                    io.write("slot %d{i}: E%d{ep}M%d{lvl} diff=%d{s.difficulty} score=%d{s.score} label=", stdout)
+                    if lbl_chars.len > 0 then io.write(lbl_chars, stdout)
+                    discard io.write("\n", stdout)
+        else if arg == "endepisode" then
+            // Force the episode-end path: sets next_level on level 8 of the
+            // current episode so the intermission → episode-end flow runs.
+            g.next_level = true
+        else if arg == "kill" then
+            // Instant-kill the player (skips the pain sound, goes straight to
+            // dying). Mostly used by the regression suite to exercise the
+            // death → restart → game-over flow without waiting for the enemy
+            // AI to roll a lethal hit. Leaves killer_active false, so the
+            // dying-phase camera swing is a no-op.
+            g.health = 0
+            g.phase = game_phase.dying
+            g.phase_timer = 0.0
+            g.killer_active = false
+            sfx.trigger(sfx.id.death_1, w.ac)
+        else if text.starts_with(arg, "killby:") then
+            // Like `kill`, but latches a killer position so the dying-phase
+            // camera swing has a target to rotate toward. Args are world
+            // coordinates: "killby:32.5,57.5".
+            let body = arg[7..arg.len]
+            let mut comma = -1i64
+            for i in 0..body.len do
+                if body[i] == 0x2C then    // ','
+                    comma = i
+                    break
+            if comma <= 0 || comma >= body.len - 1 then bad("X,Y world coords")
+            else
+                match text.parse_f64(body[0..comma]) with
+                | ok(kx) ->
+                    match text.parse_f64(body[comma+1..body.len]) with
+                    | ok(ky) ->
+                        g.health = 0
+                        g.phase = game_phase.dying
+                        g.phase_timer = 0.0
+                        g.killer_x = kx
+                        g.killer_y = ky
+                        g.killer_active = true
+                        sfx.trigger(sfx.id.death_1, w.ac)
+                    | err(_) -> bad("X,Y world coords")
+                | err(_) -> bad("X,Y world coords")
+        else if text.starts_with(arg, "killenemy:") then
+            // Instant-kill enemy by index (matches enemylist's [N] order).
+            // Routes through enemies.ai.damage_enemy with an HP-clearing damage value so
+            // score / kills / drops fire the same way a real bullet would.
+            match text.parse_i32(arg[10..arg.len]) with
+            | ok(n) ->
+                if n < 0 || n >= w.lv.num_enemies then bad("enemy index out of range")
+                else
+                    let e = &w.lv.enemies[n]
+                    enemies.ai.damage_enemy(w.lv, g, w.ac, e, n, e.hp + 1, w.ac.vs.sprite_start)
+            | err(_) -> bad("integer enemy index")
+        else if text.starts_with(arg, "setphase:") then
+            // Force a phase transition for test-mode screenshot coverage.
+            let p = arg[9..arg.len]
+            if p == "pg13" then
+                g.phase = game_phase.pg13
+                g.phase_timer = 0.0
+            else if p == "title" then g.phase = game_phase.title
+            else if p == "menu" then
+                g.phase = game_phase.main_menu
+                g.menu_level = menu.nav.main
+            else if p == "diffmenu" then
+                g.phase = game_phase.main_menu
+                g.menu_level = menu.nav.difficulty
+            else if p == "epmenu" then
+                g.phase = game_phase.main_menu
+                g.menu_level = menu.nav.episode
+            else if p == "soundmenu" then
+                g.phase = game_phase.main_menu
+                g.menu_level = menu.nav.sound
+            else if p == "optionsmenu" then
+                g.phase = game_phase.main_menu
+                g.menu_level = menu.nav.options
+            else if p == "changeview" then
+                g.phase = game_phase.main_menu
+                g.menu_level = menu.nav.changeview
+            else if p == "savemenu" then
+                g.phase = game_phase.main_menu
+                g.menu_level = menu.nav.savelist
+                save.refresh_slots(w.sm)
+            else if p == "loadmenu" then
+                g.phase = game_phase.main_menu
+                g.menu_level = menu.nav.loadlist
+                save.refresh_slots(w.sm)
+            else if p == "quitprompt" then
+                g.phase = game_phase.main_menu
+                g.menu_level = menu.nav.quit
+                g.quit_prompt_idx = 0     // deterministic for screenshots
+            else if p == "playing" then g.phase = game_phase.playing
+            else if p == "endart" then
+                // Enter the per-episode ending article for whichever
+                // episode the current level belongs to. The article is
+                // already loaded by enter(); tests can drive it via
+                // `endartnext` to step pages or `advance` to skip.
+                let ep = g.level_num / episode.levels_per
+                endart_screen.enter(g, w.vg, ep)
+            else if p == "viewscores" then
+                // High-scores screen reached via the View Scores main-
+                // menu entry. Pure display — no insertion, no edit.
+                high_scores_screen.enter(g, w.hs, high_scores_screen.from_menu,
+                    -1, 0, 0)
+            else bad("pg13/title/menu/epmenu/diffmenu/soundmenu/optionsmenu/savemenu/loadmenu/playing/endart/viewscores")
+        else if arg == "endartnext" then
+            // Step one page in the endart article. Past the last page
+            // this is a no-op — matches the interactive forward-past-last
+            // behaviour (only Esc / `endartexit` actually leaves the
+            // article).
+            if g.phase == game_phase.endart then
+                endart_screen.next_page(g)
+        else if arg == "endartexit" then
+            // Simulate Esc on the endart article: returns to the main
+            // menu (the only way out of the article in the OG flow).
+            if g.phase == game_phase.endart then
+                flow.return_to_menu_post_episode(g)
+        else if arg == "endart_state" then
+            // Dump current article state (page + total). Useful for tests
+            // that want to verify the parser found N pages.
+            discard io.write("endart page=%d{g.endart_page + 1} of %d{g.endart_total_pages}\n", stdout)
+        else if text.starts_with(arg, "hs_qualify:") then
+            // Drive the high-scores entry path with a synthetic
+            // (score, completed-level, episode) triple. Sets up the
+            // screen exactly the same way a real death would, so the
+            // editor + insert behaviour can be exercised without faking
+            // a 4-life death sequence.
+            // Syntax: hs_qualify:SCORE,LEVEL1IDX,EPISODE
+            let parts = text.split(arg[11..arg.len], ",")
+            if parts.len >= 3 then
+                let parse = (s: const str) ->
+                    match text.parse_i32(s) with
+                    | ok(v) -> v
+                    | err(_) -> 0
+                let sc = parse(parts[0])
+                let lv = parse(parts[1])
+                let ep = parse(parts[2])
+                high_scores_screen.enter(g, w.hs, high_scores_screen.from_death, sc, lv, ep)
+            else bad("SCORE,LEVEL,EPISODE")
+            free(parts)
+        else if text.starts_with(arg, "hs_name:") then
+            // Type a literal name into the high-scores edit buffer (replaces
+            // any previously-typed bytes). Only meaningful while the screen
+            // is in edit mode — does nothing otherwise. Followed by `advance`
+            // to commit + dismiss.
+            if w.hs.edit_active then
+                let nm = arg[8..arg.len]
+                for k in 0..(i32) w.hs.edit_buf.len do
+                    w.hs.edit_buf[(i64) k] = 0u8
+                let mut n = (i32) nm.len
+                if n > highscore.max_name_len then n = highscore.max_name_len
+                for k in 0..n do
+                    w.hs.edit_buf[(i64) k] = nm[(i64) k]
+                w.hs.edit_len = n
+        else if arg == "hs_state" then
+            // Dump every row of the high-scores table + the current edit
+            // state. Useful for verifying default content + post-insert
+            // shifts.
+            let edit = if w.hs.edit_active then 1 else 0
+            let idx_disp = match w.hs.edit_index with
+                | some(n) -> n
+                | none -> -1
+            io.write("hs edit=%d{edit} index=%d{idx_disp}", stdout)
+            if w.hs.edit_active then
+                let typed = (const str) w.hs.edit_buf[0..(i64) w.hs.edit_len]
+                io.write(" typed='", stdout)
+                if typed.len > 0 then io.write(typed, stdout)
+                io.write("'", stdout)
+            io.write("\n", stdout)
+            for i in 0..highscore.max_scores do
+                let e = &w.hs.scores[i]
+                let nm = highscore.name_str(e)
+                io.write("score[%d{i}] %d{e.score} L%d{e.completed} E%d{e.episode + 1} ", stdout)
+                if nm.len > 0 then io.write(nm, stdout)
+                io.write("\n", stdout)
+        else if arg == "phase" then
+            let phase_s = match g.phase with
+            | pg13         -> "pg13"
+            | title        -> "title"
+            | main_menu    -> "menu"
+            | playing      -> "playing"
+            | dying        -> "dying"
+            | intermission -> "intermission"
+            | bj_victory   -> "bj_victory"
+            | death_cam    -> "death_cam"
+            | episode_end  -> "episode_end"
+            | endart       -> "endart"
+            | high_scores  -> "high_scores"
+            discard io.write(alloca("phase=%s{phase_s} timer=%6.3f{g.phase_timer} lives=%d{g.lives}\n"), stdout)
+        else if arg == "music" then
+            // Print the AUDIOT chunk that would be playing for the current phase.
+            // Lets the regression suite verify menu / intermission / victory tracks
+            // without needing an open audio device.
+            let chunk = font.music_chunk_for_phase(g.phase, g.level_num)
+            discard io.write("music chunk=%d{chunk} (audiot offset=%d{chunk - 261})\n", stdout)
+        else if arg == "prefs" then
+            // Dump the current persistent preferences (loaded from
+            // `$WOLF_FC_HOME/config` at startup, defaults when missing).
+            let m = if w.ac.music_on then 1 else 0
+            let s = if w.ac.sfx_on then 1 else 0
+            let d = if w.ac.digi_on then 1 else 0
+            let nd = if g.mommy_mode then 1 else 0
+            let sm = if g.show_map then 1 else 0
+            discard io.write("prefs music=%d{m} sfx=%d{s} digi=%d{d} sfx_gain=%d{w.ac.sfx_gain_pct} digi_gain=%d{w.ac.digi_gain_pct} music_gain=%d{w.ac.music_gain_pct} mommy_mode=%d{nd} shadow_depth=%d{g.shadow_depth} bj_speed_pct=%d{g.bj_speed_pct} enemy_speed_pct=%d{g.enemy_speed_pct} show_map=%d{sm}\n", stdout)
+        else if arg == "digi_slots" then
+            // Dump the digi-mixer slot table. Verifies dedup behavior:
+            // retriggers of a sound already playing should reuse the same
+            // slot rather than fan out across all four mixer voices.
+            let mut active = 0
+            for i in 0..4 do
+                let s = &w.ac.digi.slots[i]
+                if s.playing then active = active + 1
+                io.write("slot %d{i}: playing=%d{if s.playing then 1 else 0} sound=%d{s.sound_num}\n", stdout)
+            discard io.write("active=%d{active}\n", stdout)
+        else if arg == "dcsprite" then
+            // Dump the death-cam sprite layout that death_cam.render_sprite
+            // would use. Layout is in dbuf-cell units; a regression that
+            // re-introduces the fb-vs-dbuf coordinate mixup (small sprite in
+            // the upper-left corner) shifts these values.
+            let l = death_cam.compute_sprite_layout(w.rc)
+            discard io.write("dcsprite dx=%d{l.dx} dy=%d{l.dy} dw=%d{l.dw} dh=%d{l.dh} screen_w=%d{w.rc.screen_w} view_render_h=%d{w.rc.view_render_h}\n", stdout)
+        else if arg == "probe" then
+            // Diagnostic: why can't the player move from their current position?
+            // Prints the bbox tiles, any wall/door blocking each, and every live
+            // enemy within 2 tiles of the player with their distance and tile.
+            let px = g.pos_x
+            let py = g.pos_y
+            let xl = (i32) (px - player.radius)
+            let xr = (i32) (px + player.radius)
+            let yl = (i32) (py - player.radius)
+            let yh = (i32) (py + player.radius)
+            io.write("probe pos=(%7.3f{px}, %7.3f{py}) bbox_tiles: x[%d{xl}..%d{xr}] y[%d{yl}..%d{yh}]\n", stdout)
+            for tx in xl..(xr + 1) do
+                for ty in yl..(yh + 1) do
+                    let ti = (i32) w.lv.tilemap[(i64) tx * 64 + (i64) ty]
+                    let dstate = if ti < 128 then "open"
+                        else match w.lv.doors[ti - 128].state with
+                        | closed  -> "DOOR:closed"
+                        | opening -> "DOOR:opening"
+                        | open    -> "DOOR:open"
+                        | closing -> "DOOR:closing"
+                    let solid = if ti >= 1 && ti <= 63 then "WALL" else dstate
+                    io.write(alloca("  tile (%d{tx},%d{ty}) = %d{ti} (%s{solid})\n"), stdout)
+            for i in 0..w.lv.num_enemies do
+                let e = w.lv.enemies[i]
+                match e.state with
+                | dead | die -> void()
+                | _ ->
+                    let dx = e.x - px
+                    let dy = e.y - py
+                    let d = math.sqrt(dx * dx + dy * dy)
+                    if d < 2.5 then
+                        let ks = match e.kind with
+                        | guard   -> "guard"
+                        | officer -> "officer"
+                        | ss      -> "ss"
+                        | dog     -> "dog"
+                        | mutant  -> "mutant"
+                        | hans    -> "hans"
+                        | schabbs -> "schabbs"
+                        | gretel  -> "gretel"
+                        | giftmacher  -> "gift"
+                        | fat     -> "fat"
+                        | hitler_fake -> "hitler_fake"
+                        | mecha_hitler -> "mecha_hitler"
+                        | hitler  -> "hitler"
+                        | blinky  -> "blinky"
+                        | pinky   -> "pinky"
+                        | clyde   -> "clyde"
+                        | inky    -> "inky"
+                        io.write(alloca("  enemy[%d{i}] %s{ks} tile(%d{e.tile_x},%d{e.tile_y}) pos(%6.3f{e.x},%6.3f{e.y}) d=%5.3f{d}\n"), stdout)
+            for i in 0..w.lv.num_sprites do
+                let s = w.lv.sprites[i]
+                if !s.alive then continue
+                let dx = s.x - px
+                let dy = s.y - py
+                let d = math.sqrt(dx * dx + dy * dy)
+                if d < 2.5 then
+                    let bs = if s.blocks then "BLOCKS" else "walk"
+                    io.write(alloca("  sprite[%d{i}] tile(%d{(i32) s.x},%d{(i32) s.y}) page=%d{s.shape_page} %s{bs} d=%5.3f{d}\n"), stdout)
+        else if arg == "arrows" then
+            // Dump every path-arrow marker tile baked into the level. Lets a
+            // test author find a tile to walk a patrolling enemy through to verify
+            // that enemies.ai.select_path_dir applies the override.
+            for y in 0..map_size do
+                for x in 0..map_size do
+                    let v = (i32) w.lv.path_arrows[(i64) x * 64 + (i64) y]
+                    if v != dir.nodir then
+                        io.write("arrow (%d{x},%d{y}) dir=%d{v}\n", stdout)
+        else if arg == "enemylist" then
+            // Per-enemy dump: grid position, kind, state, dir. Handy to locate
+            // a specific enemy for a scripted screenshot or attack test.
+            for i in 0..w.lv.num_enemies do
+                let e = w.lv.enemies[i]
+                let ks = match e.kind with
+                | guard   -> "guard"
+                | officer -> "officer"
+                | ss      -> "ss"
+                | dog     -> "dog"
+                | mutant  -> "mutant"
+                | hans    -> "hans"
+                | schabbs -> "schabbs"
+                | gretel  -> "gretel"
+                | giftmacher  -> "gift"
+                | fat     -> "fat"
+                | hitler_fake -> "hitler_fake"
+                | mecha_hitler -> "mecha_hitler"
+                | hitler  -> "hitler"
+                | blinky  -> "blinky"
+                | pinky   -> "pinky"
+                | clyde   -> "clyde"
+                | inky    -> "inky"
+                let ss = match e.state with
+                | stand -> "stand"
+                | path  -> "path"
+                | chase -> "chase"
+                | shoot -> "shoot"
+                | pain  -> "pain"
+                | die   -> "die"
+                | dead  -> "dead"
+                let area = (i32) w.lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
+                io.write(alloca("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp} area=%d{area} vis=%d{(i32) e.last_visible}\n"), stdout)
+        else if arg == "pickups" then
+            // Per-level pickup inventory: dumps every live sprite whose
+            // item_type is something the player could actually grab
+            // (decorations are filtered out). Enemy-dropped items appear
+            // after their corpse lands, so running `killenemy:i pickups`
+            // is a way to verify drops. Format mirrors `enemylist`:
+            //   [slot] (tx,ty) kind=<kind>
+            // followed by a count line.
+            let mut count = 0
+            for i in 0..w.lv.num_sprites do
+                let s = w.lv.sprites[i]
+                if !s.alive then continue
+                let ks = match s.item_type with
+                | decoration -> ""
+                | dog_food    -> "dog_food"
+                | food        -> "food"
+                | first_aid   -> "first_aid"
+                | extra_life  -> "extra_life"
+                | clip        -> "clip"
+                | clip_small  -> "clip_small"
+                | machine_gun -> "machine_gun"
+                | chain_gun   -> "chain_gun"
+                | gold_key    -> "gold_key"
+                | silver_key  -> "silver_key"
+                | cross       -> "cross"
+                | chalice     -> "chalice"
+                | bible       -> "bible"
+                | crown       -> "crown"
+                | gibs        -> "gibs"
+                if ks.len == 0 then continue
+                let tx = (i32) s.x
+                let ty = (i32) s.y
+                io.write(alloca("[%d{i}] (%d{tx},%d{ty}) kind=%s{ks}\n"), stdout)
+                count = count + 1
+            discard io.write("pickups: count=%d{count}\n", stdout)
+        else if arg == "exittiles" then
+            // List every exit-tile marker (plane-1 tile 99) on the current map.
+            // Boss-level maps place exactly one of these behind the gold-key
+            // door; stepping onto it triggers the BJ-victory cutscene.
+            let mut count = 0
+            for y in 0..map_size do
+                for x in 0..map_size do
+                    if w.lv.exit_tiles[(i64) x * 64 + (i64) y] then
+                        io.write("exit: %d{x},%d{y}\n", stdout)
+                        count = count + 1
+            discard io.write("exittiles: count=%d{count}\n", stdout)
+        else if arg == "enemies" then
+            // Summary: counts by kind and by state, for regression checks.
+            // Buckets: 0=guard, 1=officer, 2=ss, 3=dog, 4=mutant, 5=boss, 6=ghost.
+            let by_kind = i32[7] { 0, 0, 0, 0, 0, 0, 0 }
+            let by_state = i32[7] { 0, 0, 0, 0, 0, 0, 0 }
+            for i in 0..w.lv.num_enemies do
+                let e = w.lv.enemies[i]
+                let ki = match e.kind with
+                | guard -> 0
+                | officer -> 1
+                | ss -> 2
+                | dog -> 3
+                | mutant -> 4
+                | hans | schabbs | gretel | giftmacher | fat
+                | hitler_fake | mecha_hitler | hitler -> 5
+                | blinky | pinky | clyde | inky -> 6
+                by_kind[ki] = by_kind[ki] + 1
+                let si = match e.state with
+                | stand -> 0
+                | path -> 1
+                | chase -> 2
+                | shoot -> 3
+                | pain -> 4
+                | die -> 5
+                | dead -> 6
+                by_state[si] = by_state[si] + 1
+            io.write("enemies: total=%d{w.lv.num_enemies}\n", stdout)
+            io.write("  kind: guard=%d{by_kind[0]} officer=%d{by_kind[1]} ss=%d{by_kind[2]} dog=%d{by_kind[3]} mutant=%d{by_kind[4]} boss=%d{by_kind[5]} ghost=%d{by_kind[6]}\n", stdout)
+            discard io.write("  state: stand=%d{by_state[0]} path=%d{by_state[1]} chase=%d{by_state[2]} shoot=%d{by_state[3]} pain=%d{by_state[4]} die=%d{by_state[5]} dead=%d{by_state[6]}\n", stdout)
+        else if arg == "projectiles" then
+            // Dump all active (alive) enemy projectiles: kind, position, travel
+            // angle in radians, animation frame. Used by the boss regression
+            // tests to verify Schabbs / Giftmacher / fake-Hitler actually
+            // spawn visible projectiles instead of hitscanning.
+            let mut alive = 0
+            for i in 0..projectiles.max_projectiles do
+                let p = &w.lv.projectiles[i]
+                if !p.alive then continue
+                alive = alive + 1
+                let ks = match p.kind with
+                | needle -> "needle"
+                | rocket -> "rocket"
+                | fire   -> "fire"
+                | boom   -> "boom"
+                io.write(alloca("  proj[%d{i}] %s{ks} pos(%6.3f{p.x},%6.3f{p.y}) ang=%5.3f{p.angle} frame=%d{p.anim_frame}\n"), stdout)
+            discard io.write("projectiles: alive=%d{alive}\n", stdout)
+        else
+            discard io.write(alloca("Unknown test command: %s{arg}\n"), stdout)

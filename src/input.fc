@@ -1,0 +1,830 @@
+// Wolf-FC interactive input — the SDL event pump and every per-phase
+// key binding. One entry point (`input.handle_events`) called once per
+// main-loop iteration; everything else in here is its plumbing. Headless
+// test mode never touches this file — scripted commands go through
+// testmode instead, which pokes g.key_* flags directly.
+
+module input =
+    import io from std::
+    import random from std::
+
+    // Map an SDL keysym + modifier mask to the ASCII byte the user
+    // intended to type, or 0 if the key has no printable mapping.
+    // Used by every inline name editor (high-scores, save-game) so they
+    // accept the same character set the original game's line-input did
+    // (the printable-ASCII range — letters, digits, punctuation). SDL keysym
+    // values for printable-ASCII keys are the ASCII byte itself
+    // (e.g. SDLK_PERIOD == 46 == '.'), so we compare the keysym
+    // directly against ASCII codepoints rather than chaining named-
+    // constant `if`s. The shift mapping assumes a US QWERTY layout —
+    // other layouts will hand back the wrong shifted character for
+    // punctuation, but plain letters stay correct.
+    let keysym_to_ascii = (k: i32, mods: u16) ->
+        let shift = (mods & 0x0003u16) != 0u16
+        if k < 32 || k > 126 then 0u8
+        else if shift then
+            // Letters → uppercase.
+            if k >= 97 && k <= 122 then (u8) (k - 32)
+            // Digits + punctuation → US QWERTY shift map.
+            else if k == 49 then 33u8     // 1 -> !
+            else if k == 50 then 64u8     // 2 -> @
+            else if k == 51 then 35u8     // 3 -> #
+            else if k == 52 then 36u8     // 4 -> $
+            else if k == 53 then 37u8     // 5 -> %
+            else if k == 54 then 94u8     // 6 -> ^
+            else if k == 55 then 38u8     // 7 -> &
+            else if k == 56 then 42u8     // 8 -> *
+            else if k == 57 then 40u8     // 9 -> (
+            else if k == 48 then 41u8     // 0 -> )
+            else if k == 45 then 95u8     // - -> _
+            else if k == 61 then 43u8     // = -> +
+            else if k == 91 then 123u8    // [ -> {
+            else if k == 93 then 125u8    // ] -> }
+            else if k == 92 then 124u8    // \ -> |
+            else if k == 59 then 58u8     // ; -> :
+            else if k == 39 then 34u8     // ' -> "
+            else if k == 44 then 60u8     // , -> <
+            else if k == 46 then 62u8     // . -> >
+            else if k == 47 then 63u8     // / -> ?
+            else if k == 96 then 126u8    // ` -> ~
+            else (u8) k
+        else (u8) k
+
+    // Drain the SDL event queue and dispatch every event for the current
+    // phase: window resize / DPI changes, the fullscreen toggle, and the
+    // whole per-phase keydown map (menu navigation, save-name and
+    // high-score inline editors, gameplay keys, cheats, ack keys) plus
+    // keyup flag clearing. Returns {keep_running, event_seen}:
+    // keep_running goes false on SDL_QUIT; event_seen reports "user did
+    // something this iteration" so the main loop's should_render
+    // predicate keeps menu input crisp under the half-rate render skip.
+    let handle_events = (w: world*, vid: video_state*, vs: const vswap.vswap_file*,
+                         pal: const u32[], diag_file: any*?, diag_start: i64) ->
+        let g = w.g
+        let mut keep_running = true
+        let mut event_seen = false
+        let mut event = default(sdl2.sdl_event)
+            loop
+                if sdl2.poll_event(&event) == 0 then break
+                let t = (i32) event.type
+                if t == sdl2.quit_event then keep_running = false
+                // Drawable-size change (user resize, fullscreen toggle,
+                // DPI change on cross-monitor move under permonitorv2).
+                // Re-query the renderer output size, re-pick the
+                // supersample factor, and rebuild the texture + logical
+                // size to match. video.apply_scale_factor is a no-op when the
+                // pick is unchanged, so events that don't move the
+                // needle (e.g. transient events at the same DPI) just
+                // walk past.
+                if t == sdl2.windowevent
+                    && event.window.event == sdl2.windowevent_size_changed then
+                    let { new_out_w, new_out_h } = video.renderer_output_size(vid.ren)
+                    w.rc.drawable_w = new_out_w
+                    w.rc.drawable_h = new_out_h
+                    // The window may have crossed to a different-refresh display.
+                    w.rc.refresh_interval_ms = video.query_refresh_interval_ms(vid.win)
+                    let new_scale = video.pick_scale_factor(new_out_w, new_out_h, w.rc.fb_w, w.rc.fb_h, g.max_scale, g.scale_factor)
+                    if video.apply_scale_factor(w, w.vg, pal, new_scale) then
+                        io.write("Drawable %d{new_out_w}x%d{new_out_h} -> super-sample %d{new_scale}x\n", stdout)
+                        video.recreate_texture(vid, w.rc)
+                if t == sdl2.keydown_event then
+                    event_seen = true
+                    let k = event.key.keysym.sym
+                    // OS key-autorepeat fires SDL_KEYDOWN every ~30 ms while a key
+                    // is held; `repeat != 0` flags the duplicates. We want repeats
+                    // for menu nav (hold ↓ to scroll save slots) but NOT for
+                    // gameplay keys — a ctrl held through the episode-end screen
+                    // would otherwise re-raise key_fire after the level reset
+                    // clears it, so the gatling fires on the first frame of the
+                    // next level. Checked per-branch below.
+                    let is_key_repeat = event.key.repeat != 0u8
+                    // Diagnostic: log real (non-repeat) key presses with the state
+                    // they hit, so the trail shows e.g. "Y at the quit modal" right
+                    // before a freeze. No-op unless $WOLF_FC_DIAG.
+                    if !is_key_repeat then
+                        diag.key(diag_file, diag_start, k, diag.phase_code(g.phase),
+                                 menu.nav_code(g.menu_level), atomic_load_acquire(&w.ac.cb_count))
+                    // Fullscreen toggle — always works (even from menu / pause).
+                    // F11 is our own shortcut; Alt+Enter matches the original
+                    // SDL port. Either Alt modifier counts (KMOD_ALT = LALT |
+                    // RALT = 0x0300). Alt+Enter `continue`s past the phase
+                    // match so the menu doesn't also confirm on the same press.
+                    let is_alt_enter = k == sdl2.key_return
+                        && (event.key.keysym.mod & 0x0300u16) != 0u16
+                    if (k == sdl2.key_f11 || is_alt_enter) && !is_key_repeat then
+                        vid.fullscreen = !vid.fullscreen
+                        if vid.fullscreen then
+                            if vid.on_wsl then sdl2.maximize_window(vid.win)
+                            else
+                                discard sdl2.set_fullscreen(vid.win, sdl2.window_fullscreen_desktop)
+                        else
+                            if vid.on_wsl then
+                                // restore_window alone doesn't drop the
+                                // maximized state on WSLg — an explicit
+                                // resize forces the WM to un-maximize.
+                                // No reposition: WSLg's Xwayland doesn't
+                                // honor SDL_WINDOWPOS_CENTERED and treats
+                                // the sentinel as a literal pixel coord.
+                                sdl2.restore_window(vid.win)
+                                sdl2.set_window_size(vid.win, vid.screen_w, vid.actual_h)
+                            else
+                                sdl2.set_fullscreen(vid.win, 0u32)
+                                sdl2.maximize_window(vid.win)
+                        sdl2.set_logical_size(vid.ren, vid.screen_w, vid.actual_h)
+                        if is_alt_enter then continue
+                    // Per-phase dispatch for everything else.
+                    // Deliberate-feeling ack keys (Enter / Space / Ctrl / Esc)
+                    // — matches the IN_Ack restriction below so modifier-only
+                    // / function-key bumps don't skip past intro screens.
+                    // Esc is included so a player can mash "get me out of
+                    // here" on every screen consistently.
+                    let is_ack_key_intro = k == sdl2.key_return
+                        || k == sdl2.key_space
+                        || k == sdl2.key_lctrl
+                        || k == sdl2.key_escape
+                    match g.phase with
+                    | pg13 ->
+                        // Advance to the title screen on an ack key. update_
+                        // phase_transitions also auto-advances after a few
+                        // seconds.
+                        if is_ack_key_intro then
+                            g.phase = game_phase.title
+                            g.phase_timer = 0.0
+                    | endart ->
+                        // Per-page navigation, faithful to the original's
+                        // article reader. After a victorious episode the
+                        // original returns to the control panel — there is
+                        // no auto-advance to the next episode. Players
+                        // replay each episode by re-picking it from the main
+                        // menu.
+                        //
+                        //   Left / Up / PageUp           → previous page
+                        //   Right / Down / PageDown      → next page
+                        //   Enter / Space / Ctrl         → next page
+                        //   Esc                          → exit the article →
+                        //                                  main menu (the
+                        //                                  only key that
+                        //                                  actually leaves
+                        //                                  the article;
+                        //                                  matches the on-
+                        //                                  screen "ESC EXITS"
+                        //                                  hint)
+                        //   Forward past the last page   → no-op (stays on
+                        //                                  the final page;
+                        //                                  player still has
+                        //                                  to press Esc to
+                        //                                  leave)
+                        // Other keys (modifiers, letters, etc.) are no-ops
+                        // so a stray bump doesn't skip a page.
+                        if !is_key_repeat then
+                            if k == sdl2.key_left || k == sdl2.key_up
+                                    || k == sdl2.key_pageup then
+                                endart_screen.prev_page(g)
+                            else if k == sdl2.key_escape then
+                                // Esc routes through the high-scores screen,
+                                // matching the original which qualifies the
+                                // final score before returning to the
+                                // control panel.
+                                let ep = g.level_num / episode.levels_per
+                                high_scores_screen.enter(g, w.hs,
+                                    high_scores_screen.from_endart,
+                                    g.score, g.level_num + 1, ep)
+                            else if k == sdl2.key_right || k == sdl2.key_down
+                                    || k == sdl2.key_pagedown
+                                    || k == sdl2.key_return
+                                    || k == sdl2.key_space
+                                    || k == sdl2.key_lctrl then
+                                // next_page no-ops past the last page — the
+                                // user has to press Esc to exit the article.
+                                endart_screen.next_page(g)
+                    | title ->
+                        // Advance to the main menu on an ack key. Default
+                        // selection = NEW GAME (RESUME is locked from the
+                        // title screen).
+                        if is_ack_key_intro then
+                            g.phase = game_phase.main_menu
+                            g.menu_level = menu.nav.main
+                            g.menu_sel = 0     // NEW GAME row in original layout
+                            g.phase_timer = 0.0
+                    | main_menu ->
+                        // Classic menu-cursor feedback: cursor-move cue on
+                        // up/down nav, drill-confirm cue on confirm into a
+                        // submenu, commit cue on commit-a-setting (sound
+                        // toggles), escape cue on cancel. The submenu-confirm
+                        // vs setting-commit split matches the original:
+                        // drill-confirm for drilling in, commit cue for
+                        // finalising a config change. Plays on every menu
+                        // level — the dispatch below just mutates menu_sel
+                        // / menu_level, so a single site up here covers all
+                        // sub-menus without sprinkling calls per branch.
+                        let is_confirm = k == sdl2.key_return || k == sdl2.key_space
+                        let is_left_right = k == sdl2.key_left || k == sdl2.key_right
+                        // The episode picker's hidden number shortcut (0..9)
+                        // counts as a confirm too — same drilling-into-a-
+                        // submenu effect, so it deserves the same drill cue.
+                        let is_episode_floor_key = g.menu_level == menu.nav.episode
+                            && (k == sdl2.key_0 || (k >= sdl2.key_1 && k <= sdl2.key_9))
+                        // Single-source-of-truth dispatch for menu cues:
+                        //   • UP/DOWN          — cursor-move cue
+                        //   • Setting changed  — commit cue (toggle flip,
+                        //     slider step, action commit). Same cue whether
+                        //     fired by Enter on a toggle, ←/→ on a slider, or
+                        //     Enter on an action row — matches how the
+                        //     original played the commit cue for every
+                        //     setting-changed event across submenus.
+                        //   • Other confirm    — drill-confirm cue (drilling
+                        //     into a submenu / picker; main / episode /
+                        //     difficulty).
+                        //   • ESC              — escape cue.
+                        let row_kind = menu.current_row_kind(g.menu_level, g.menu_sel)
+                        let is_toggle_change = (is_confirm || is_left_right) && row_kind == some(menu.option_kind.toggle)
+                        let is_slider_step   = is_left_right && row_kind == some(menu.option_kind.slider)
+                        let is_action_commit = is_confirm && row_kind == some(menu.option_kind.action)
+                        let setting_changed = is_toggle_change || is_slider_step || is_action_commit
+                        // The drill-confirm cue only fires for drill-style
+                        // menus (main / episode / difficulty / save / load
+                        // / quit confirm) — those return `none` from
+                        // current_row_kind. Skipping it for row-typed menus
+                        // keeps Enter on a slider row silent (it's a no-op).
+                        let is_drill_confirm = is_confirm && row_kind.is_none
+                        // View Scores drills into the high-scores screen,
+                        // which immediately swaps to the roster track. The
+                        // shoot cue stepping on top of the music start sounds
+                        // awkward, so suppress it for that one entry.
+                        let is_view_scores_entry = g.menu_level == menu.nav.main
+                            && g.menu_sel == 6 && is_confirm
+                        if k == sdl2.key_up || k == sdl2.key_down then
+                            sfx.trigger(sfx.id.move_gun1, w.ac)
+                        else if setting_changed then
+                            sfx.trigger(sfx.id.move_gun2, w.ac)
+                        else if (is_drill_confirm || is_episode_floor_key)
+                                && !is_view_scores_entry then
+                            sfx.trigger(sfx.id.shoot, w.ac)
+                        else if k == sdl2.key_escape then
+                            sfx.trigger(sfx.id.esc_pressed, w.ac)
+                        if g.menu_level == menu.nav.main then
+                            // Up/down navigation skips locked rows so SAVE
+                            // and BACK TO GAME without an active game don't
+                            // get in the way.
+                            if k == sdl2.key_up then
+                                let mut s = g.menu_sel
+                                for _ in 0..menu.main_len do
+                                    s = (s + menu.main_len - 1) % menu.main_len
+                                    if !menu.main_is_locked(s, g.has_active_game) then break
+                                g.menu_sel = s
+                            else if k == sdl2.key_down then
+                                let mut s = g.menu_sel
+                                for _ in 0..menu.main_len do
+                                    s = (s + 1) % menu.main_len
+                                    if !menu.main_is_locked(s, g.has_active_game) then break
+                                g.menu_sel = s
+                            else if is_confirm then
+                                // Layout: NEW / SOUND / OPTIONS / LOAD / SAVE / CHANGE VIEW / VIEW SCORES / BACK TO GAME / QUIT
+                                match g.menu_sel with
+                                | 0 ->
+                                    // NEW GAME → episode picker
+                                    g.menu_level = menu.nav.episode
+                                    g.menu_sel = 0
+                                | 1 ->
+                                    // SOUND → sound submenu
+                                    g.menu_level = menu.nav.sound
+                                    g.menu_sel = 0
+                                | 2 ->
+                                    // OPTIONS → wolf-fc mods submenu
+                                    g.menu_level = menu.nav.options
+                                    g.menu_sel = 0
+                                | 3 ->
+                                    // LOAD GAME → load slot menu
+                                    save.refresh_slots(w.sm)
+                                    g.menu_level = menu.nav.loadlist
+                                    g.menu_sel = 0
+                                | 4 ->
+                                    // SAVE GAME (locked without an active game)
+                                    if g.has_active_game then
+                                        save.refresh_slots(w.sm)
+                                        g.menu_level = menu.nav.savelist
+                                        g.menu_sel = 0
+                                | 5 ->
+                                    // CHANGE VIEW → view-mode picker
+                                    g.menu_level = menu.nav.changeview
+                                    g.menu_sel = 0
+                                | 6 ->
+                                    // VIEW SCORES → high-scores screen.
+                                    // hs_source=from_menu so the dismiss
+                                    // routes back here instead of to the
+                                    // title.
+                                    high_scores_screen.enter(g, w.hs,
+                                        high_scores_screen.from_menu, -1, 0, 0)
+                                | 7 ->
+                                    // BACK TO GAME / DEMO — label + target
+                                    // track has_active_game. With a running
+                                    // game this resumes gameplay; without
+                                    // one it bounces to the title screen
+                                    // (matches the original, where BACK TO DEMO
+                                    // returns to the title/demo cycle).
+                                    if g.has_active_game then
+                                        g.phase = game_phase.playing
+                                    else
+                                        g.phase = game_phase.title
+                                        g.phase_timer = 0.0
+                                | 8 ->
+                                    // QUIT → enter the Y/N confirm modal.
+                                    // Roll the prompt index now so the
+                                    // displayed tagline stays stable while
+                                    // the modal is up. RNG channel reuse:
+                                    // rng_face is non-gameplay and not part
+                                    // of the test-mode bit-stability contract
+                                    // (test mode never reaches the menu).
+                                    let n = quit_prompts.count(g.quit_prompts_override)
+                                    let r = random.pcg_random.next_bounded_u32(&g.rng_face, (u32) n)
+                                    g.quit_prompt_idx = (i32) r
+                                    g.menu_level = menu.nav.quit
+                                | _ -> void()
+                            else if k == sdl2.key_escape then
+                                // Esc on the main menu = same as picking
+                                // BACK TO GAME / DEMO: resume gameplay if a
+                                // game is running, otherwise bounce to the
+                                // title screen (matching the OG's back-to-
+                                // demo behaviour).
+                                if g.has_active_game then
+                                    g.phase = game_phase.playing
+                                else
+                                    g.phase = game_phase.title
+                                    g.phase_timer = 0.0
+                        else if g.menu_level == menu.nav.episode then
+                            // Hidden floor-jump shortcut: pressing 1..9 on the
+                            // episode picker drops the player straight onto
+                            // floor 1..9 of the highlighted episode (skipping
+                            // the floors before it); pressing 0 jumps to the
+                            // secret bonus floor (floor 10 / level index 9).
+                            // Same `level_num = ep*10 + offset` math the rest
+                            // of the menu uses; no other state is mutated, so
+                            // the difficulty picker still gates the actual
+                            // game start.
+                            let floor_offset = if k == sdl2.key_0 then 9
+                                else if k >= sdl2.key_1 && k <= sdl2.key_9 then k - sdl2.key_1
+                                else -1
+                            if k == sdl2.key_up then
+                                g.menu_sel = (g.menu_sel + episode.count - 1) % episode.count
+                            else if k == sdl2.key_down then
+                                g.menu_sel = (g.menu_sel + 1) % episode.count
+                            else if floor_offset >= 0 then
+                                g.level_num = g.menu_sel * episode.levels_per + floor_offset
+                                g.want_near_boss = false
+                                g.menu_level = menu.nav.difficulty
+                                g.menu_sel = g.difficulty
+                            else if is_confirm then
+                                // Episode pick → straight to difficulty.
+                                // level_num resets to the episode's first map.
+                                g.level_num = g.menu_sel * episode.levels_per
+                                g.want_near_boss = false
+                                g.menu_level = menu.nav.difficulty
+                                g.menu_sel = g.difficulty
+                            else if k == sdl2.key_escape then
+                                g.menu_level = menu.nav.main
+                                g.menu_sel = 0     // back to NEW GAME row
+                        else if g.menu_level == menu.nav.difficulty then
+                            if k == sdl2.key_up then
+                                g.menu_sel = (g.menu_sel + 3) % 4
+                            else if k == sdl2.key_down then
+                                g.menu_sel = (g.menu_sel + 1) % 4
+                            else if is_confirm then
+                                g.difficulty = g.menu_sel
+                                // g->level_num already holds the chosen episode's
+                                // first map (set when leaving the episode picker).
+                                flow.start_new_game_here(w, vs)
+                                g.has_active_game = true
+                            else if k == sdl2.key_escape then
+                                g.menu_level = menu.nav.episode
+                                g.menu_sel = g.level_num / episode.levels_per
+                        else if g.menu_level == menu.nav.sound then
+                            if k == sdl2.key_up then
+                                g.menu_sel = (g.menu_sel + menu.sound_len - 1) % menu.sound_len
+                            else if k == sdl2.key_down then
+                                g.menu_sel = (g.menu_sel + 1) % menu.sound_len
+                            else if k == sdl2.key_escape then
+                                g.menu_level = menu.nav.main
+                                g.menu_sel = 1     // back to SOUND row
+                            else
+                                // Six rows: 3 (toggle, gain) section pairs.
+                                // section = row/2 (0=SFX, 1=Digi, 2=Music);
+                                // even rows are toggles (Enter or ←/→ flips),
+                                // odd rows are gain sliders (←/→ steps ±5%).
+                                let row = g.menu_sel
+                                let section = menu.sound_section(row)
+                                let is_toggle = menu.sound_is_toggle(row)
+                                let mut changed = false
+                                // The audio callback reads these toggles / gains
+                                // on its own thread, so publish each change with a
+                                // release store (the main thread is the only
+                                // writer, so the read side of the flip stays
+                                // plain). The callback picks the new value up
+                                // within one buffer (~21 ms) — no queue to flush.
+                                if is_toggle then
+                                    if is_confirm || k == sdl2.key_left || k == sdl2.key_right then
+                                        if section == 0 then
+                                            atomic_store_release(&w.ac.sfx_on, !w.ac.sfx_on)
+                                        else if section == 1 then
+                                            atomic_store_release(&w.ac.digi_on, !w.ac.digi_on)
+                                        else
+                                            atomic_store_release(&w.ac.music_on, !w.ac.music_on)
+                                        changed = true
+                                else if k == sdl2.key_left || k == sdl2.key_right then
+                                    let delta = if k == sdl2.key_left
+                                        then 0 - config.gain_pct_step
+                                        else config.gain_pct_step
+                                    let mut cur = if section == 0 then w.ac.sfx_gain_pct
+                                                  else if section == 1 then w.ac.digi_gain_pct
+                                                  else w.ac.music_gain_pct
+                                    cur = cur + delta
+                                    if cur < config.gain_pct_min then cur = config.gain_pct_min
+                                    if cur > config.gain_pct_max then cur = config.gain_pct_max
+                                    if section == 0 then atomic_store_release(&w.ac.sfx_gain_pct, cur)
+                                    else if section == 1 then atomic_store_release(&w.ac.digi_gain_pct, cur)
+                                    else atomic_store_release(&w.ac.music_gain_pct, cur)
+                                    changed = true
+                                if changed then
+                                    config.save(config.snapshot(w))
+                        else if g.menu_level == menu.nav.changeview then
+                            // Two left/right pickers: Aspect Ratio (row 0)
+                            // and Scale Factor (row 1). Up/Down moves between
+                            // rows; Left/Right cycles the selected row's
+                            // value and applies it on the fly. video.apply_view_mode
+                            // / video.apply_scale_factor reallocate the size-
+                            // dependent buffers; the texture + logical size
+                            // are rebuilt below whenever screen_w / screen_h
+                            // change so the new dims actually reach the
+                            // display.
+                            if k == sdl2.key_up then
+                                g.menu_sel = (g.menu_sel + menu.changeview_len - 1) % menu.changeview_len
+                            else if k == sdl2.key_down then
+                                g.menu_sel = (g.menu_sel + 1) % menu.changeview_len
+                            else if k == sdl2.key_left || k == sdl2.key_right then
+                                let dir = if k == sdl2.key_left then -1 else 1
+                                let mut resized = false
+                                if g.menu_sel == menu.changeview_aspect_row then
+                                    // Aspect Ratio cycles 0..3 (Auto, 4:3,
+                                    // 16:10, 16:9). Wraps so left from Auto
+                                    // lands on 16:9 — every step is reachable
+                                    // without restarting the loop.
+                                    let n = 4
+                                    let next = (g.view_mode + dir + n) % n
+                                    resized = video.apply_view_mode(w, w.vg, pal, next)
+                                else if g.menu_sel == menu.changeview_scale_row then
+                                    // Scale Factor cycles Auto, 2x..12x as a
+                                    // 12-position list (0, 2, 3, ..., 12).
+                                    // Compute the next slot in that list and
+                                    // map back to the underlying value.
+                                    let mut idx = if g.scale_factor == 0 then 0
+                                        else g.scale_factor - 1
+                                    let n = config.scale_factor_max
+                                    idx = (idx + dir + n) % n
+                                    let next = if idx == 0 then 0 else idx + 1
+                                    g.scale_factor = next
+                                    let new_scale = video.pick_scale_factor(w.rc.drawable_w, w.rc.drawable_h,
+                                        w.rc.fb_w, w.rc.fb_h, g.max_scale, g.scale_factor)
+                                    resized = video.apply_scale_factor(w, w.vg, pal, new_scale)
+                                else if g.menu_sel == menu.changeview_ssaa_row then
+                                    // Anti-Alias cycles Off → Vertical-only
+                                    // 2× → Full 2×2 → Off. Left/right step
+                                    // opposite directions through the 3-way
+                                    // list. No texture / logical-size change
+                                    // (the ssaa_buf is internal to the 3D
+                                    // pipeline), so `resized` stays false and
+                                    // the SDL texture doesn't need recreating.
+                                    let next = (g.ssaa_mode + dir + 3) % 3
+                                    discard video.apply_ssaa_mode(w, next)
+                                config.save(config.snapshot(w))
+                                if resized then
+                                    video.recreate_texture(vid, w.rc)
+                            else if k == sdl2.key_escape then
+                                g.menu_level = menu.nav.main
+                                g.menu_sel = 5     // back to CHANGE VIEW row
+                        else if g.menu_level == menu.nav.options then
+                            // Wolf-fc mods. Up/down navigates rows; Enter
+                            // toggles boolean rows or runs the action row;
+                            // Left/Right adjusts slider rows by ±5%.
+                            // Every commit persists the full prefs struct
+                            // via config.snapshot — never partial — so
+                            // other unrelated toggles round-trip cleanly.
+                            let kind = menu.row_kind(g.menu_sel)
+                            if k == sdl2.key_up then
+                                g.menu_sel = (g.menu_sel + menu.options_len - 1) % menu.options_len
+                            else if k == sdl2.key_down then
+                                g.menu_sel = (g.menu_sel + 1) % menu.options_len
+                            else if (is_confirm || is_left_right) && kind == menu.option_kind.toggle then
+                                // Toggle rows: 0 = Mommy Mode, 4 = Map.
+                                // Either Enter or ←/→ flips — matches the
+                                // Sound submenu's toggle behaviour for
+                                // cross-menu consistency.
+                                if g.menu_sel == 0 then
+                                    g.mommy_mode = !g.mommy_mode
+                                else if g.menu_sel == 4 then
+                                    g.show_map = !g.show_map
+                                config.save(config.snapshot(w))
+                            else if is_confirm && kind == menu.option_kind.action then
+                                // Action row = RESET. Wipe every Options
+                                // field back to its default — sound
+                                // toggles are deliberately untouched
+                                // (different submenu, different scope).
+                                let d = config.defaults()
+                                g.mommy_mode = d.mommy_mode
+                                g.shadow_depth = d.shadow_depth
+                                g.bj_speed_pct = d.bj_speed_pct
+                                g.enemy_speed_pct = d.enemy_speed_pct
+                                g.show_map = d.show_map
+                                config.save(config.snapshot(w))
+                            else if (k == sdl2.key_left || k == sdl2.key_right)
+                                && kind == menu.option_kind.slider then
+                                // Slider rows. Shadow Depth uses ±5% in 0..100;
+                                // the BJ / Enemy Speed sliders use ±5% in
+                                // 20..200 (constants live in `config`).
+                                if g.menu_sel == 1 then
+                                    let delta = if k == sdl2.key_left then -5 else 5
+                                    let mut v = g.shadow_depth + delta
+                                    if v < 0 then v = 0
+                                    if v > 100 then v = 100
+                                    g.shadow_depth = v
+                                else if g.menu_sel == 2 then
+                                    let delta = if k == sdl2.key_left then 0 - config.speed_pct_step else config.speed_pct_step
+                                    let mut v = g.bj_speed_pct + delta
+                                    if v < config.speed_pct_min then v = config.speed_pct_min
+                                    if v > config.speed_pct_max then v = config.speed_pct_max
+                                    g.bj_speed_pct = v
+                                else if g.menu_sel == 3 then
+                                    let delta = if k == sdl2.key_left then 0 - config.speed_pct_step else config.speed_pct_step
+                                    let mut v = g.enemy_speed_pct + delta
+                                    if v < config.speed_pct_min then v = config.speed_pct_min
+                                    if v > config.speed_pct_max then v = config.speed_pct_max
+                                    g.enemy_speed_pct = v
+                                config.save(config.snapshot(w))
+                            else if k == sdl2.key_escape then
+                                g.menu_level = menu.nav.main
+                                g.menu_sel = 2     // back to OPTIONS row
+                        else if g.menu_level == menu.nav.savelist then
+                            // Inline save-name entry: while editing, every
+                            // keydown mutates `sm->edit_buf` instead of
+                            // navigating slots. Mirrors the original's
+                            // line-input flow on each save row.
+                            if g.save_edit_active then
+                                if k == sdl2.key_return then
+                                    // Commit — write the slot using the
+                                    // typed name (defaulting to "EMPTY"
+                                    // if the user cleared the buffer
+                                    // entirely).
+                                    let n = w.sm.edit_len
+                                    let label = if n > 0 then
+                                        (const str) w.sm.edit_buf[0..(i64) n]
+                                    else "EMPTY"
+                                    save.to_slot(w, g.menu_sel, label)
+                                    save.refresh_slots(w.sm)
+                                    g.save_edit_active = false
+                                    g.menu_level = menu.nav.main
+                                    g.menu_sel = 4     // back to SAVE GAME row
+                                else if k == sdl2.key_escape then
+                                    // Cancel: clear edit buffer, stay on
+                                    // slot list.
+                                    g.save_edit_active = false
+                                    w.sm.edit_len = 0
+                                    w.sm.edit_buf[0i64] = 0u8
+                                else if k == sdl2.key_backspace then
+                                    if w.sm.edit_len > 0 then
+                                        w.sm.edit_len = w.sm.edit_len - 1
+                                        w.sm.edit_buf[(i64) w.sm.edit_len] = 0u8
+                                else
+                                    // Printable-ASCII char → append. Same
+                                    // shift-aware mapping as the high-
+                                    // scores name editor (the original
+                                    // filtered to printable ASCII for both
+                                    // screens). Capacity is 32; reserve 1 for NUL.
+                                    let cap = (i32) w.sm.edit_buf.len - 1
+                                    if w.sm.edit_len < cap then
+                                        let ch = keysym_to_ascii(k, event.key.keysym.mod)
+                                        if ch != 0u8 then
+                                            w.sm.edit_buf[(i64) w.sm.edit_len] = ch
+                                            w.sm.edit_len = w.sm.edit_len + 1
+                                            w.sm.edit_buf[(i64) w.sm.edit_len] = 0u8
+                            else if k == sdl2.key_up then
+                                g.menu_sel = (g.menu_sel + save.num_slots - 1) % save.num_slots
+                            else if k == sdl2.key_down then
+                                g.menu_sel = (g.menu_sel + 1) % save.num_slots
+                            else if is_confirm then
+                                // Enter edit mode, prefilled with the
+                                // existing slot label (so re-saving over
+                                // a slot doesn't force the user to retype).
+                                let s = &w.sm.slots[g.menu_sel]
+                                let mut n = if s.empty then 0
+                                    else (i32) s.label.len
+                                if n > 31 then n = 31
+                                for i in 0..n do
+                                    w.sm.edit_buf[(i64) i] = s.label[(i64) i]
+                                w.sm.edit_buf[(i64) n] = 0u8
+                                w.sm.edit_len = n
+                                g.save_edit_active = true
+                            else if k == sdl2.key_escape then
+                                g.menu_level = menu.nav.main
+                                g.menu_sel = 4     // back to SAVE GAME row
+                        else if g.menu_level == menu.nav.loadlist then
+                            if k == sdl2.key_up then
+                                g.menu_sel = (g.menu_sel + save.num_slots - 1) % save.num_slots
+                            else if k == sdl2.key_down then
+                                g.menu_sel = (g.menu_sel + 1) % save.num_slots
+                            else if is_confirm then
+                                if !w.sm.slots[g.menu_sel].empty then
+                                    if save.from_slot(w, vs, g.menu_sel) then
+                                        g.has_active_game = true
+                            else if k == sdl2.key_escape then
+                                g.menu_level = menu.nav.main
+                                g.menu_sel = 3     // back to LOAD GAME
+                        else if g.menu_level == menu.nav.quit then
+                            // Quit-confirm modal. Y commits; N / Esc cancels
+                            // back to the main menu. Enter / Space are
+                            // intentionally not synonyms for Y — matches the
+                            // original game's strict-Y behaviour.
+                            if k == sdl2.key_y then
+                                sfx.trigger(sfx.id.shoot, w.ac)
+                                g.want_quit = true
+                            else if k == sdl2.key_n || k == sdl2.key_escape then
+                                // Esc already played esc_pressed via the
+                                // shared dispatch above; trigger it
+                                // explicitly for the N case so the cancel
+                                // sound is consistent across both keys.
+                                if k == sdl2.key_n then
+                                    sfx.trigger(sfx.id.esc_pressed, w.ac)
+                                g.menu_level = menu.nav.main
+                                g.menu_sel = 8     // back to QUIT row
+                    | high_scores ->
+                        // Direct dispatch (not via the IN_Ack latch) so the
+                        // typing keys during edit don't double as ack
+                        // presses, and so Enter / Esc both commit-and-
+                        // dismiss in one keystroke — matches the original,
+                        // where the high-scores screen exits the moment the
+                        // line input is dismissed. Without this we'd need
+                        // the player to press Enter twice (first to commit
+                        // name, again to leave the screen).
+                        if !is_key_repeat then
+                            let mods = event.key.keysym.mod
+                            if w.hs.edit_active then
+                                if k == sdl2.key_return || k == sdl2.key_escape then
+                                    // Commit + dismiss. The original copies the
+                                    // buffer regardless of whether Enter or
+                                    // Esc dismissed the line input.
+                                    high_scores_screen.commit_name(w.hs)
+                                    high_scores_screen.dismiss(g, w.hs)
+                                else if k == sdl2.key_backspace then
+                                    high_scores_screen.edit_backspace(w.hs)
+                                else
+                                    let ch = keysym_to_ascii(k, mods)
+                                    if ch != 0u8 then
+                                        high_scores_screen.edit_append(w.hs, ch)
+                            else
+                                // Not editing — any deliberate ack key
+                                // dismisses (the OG's `IN_UserInput(500)`
+                                // takes any key in the no-qualify branch).
+                                let is_ack = k == sdl2.key_return
+                                    || k == sdl2.key_space
+                                    || k == sdl2.key_lctrl
+                                    || k == sdl2.key_escape
+                                if is_ack then
+                                    high_scores_screen.dismiss(g, w.hs)
+                    | _ ->
+                        // playing, dying, intermission, episode_end,
+                        // bj_victory, death_cam. Escape from playing
+                        // jumps to the main menu (which doubles as the pause UI
+                        // — BACK TO GAME is the default selection so any-key-Esc-
+                        // any-key resumes immediately). Other phases consume keys
+                        // for their own advance flow (the IN_Ack latch set here
+                        // is consumed by the main loop after flow.tick).
+                        if k == sdl2.key_escape && g.phase == game_phase.playing then
+                            g.phase = game_phase.main_menu
+                            g.menu_level = menu.nav.main
+                            g.menu_sel = 7     // BACK TO GAME row
+                            // Clear held inputs so the player isn't sprinting
+                            // when they un-pause. (Mirrors intermission.enter's
+                            // input-clear convention.)
+                            g.key_up = false
+                            g.key_down = false
+                            g.key_left = false
+                            g.key_right = false
+                            g.key_fire = false
+                        else if !is_key_repeat then
+                            // TAB+<key> cheats (from the original's debugmode
+                            // menu). When TAB is held and the pressed key maps
+                            // to a cheat, dispatch it and suppress the normal
+                            // per-key handlers so e.g. TAB+I doesn't also
+                            // latch the MLI 'I' chord or retrigger iddqd
+                            // progress. Gated to the playing phase so the
+                            // combo is inert on menus / intermission.
+                            let tab_cheat = g.key_tab_held
+                               && g.phase == game_phase.playing
+                               && (k == sdl2.key_g || k == sdl2.key_i
+                                   || k == sdl2.key_n || k == sdl2.key_e
+                                   || k == sdl2.key_h)
+                            if tab_cheat then
+                                if k == sdl2.key_g then player.cheats.apply_tab_g(g)
+                                if k == sdl2.key_i then player.cheats.apply_tab_i(g, w.ac)
+                                if k == sdl2.key_n then player.cheats.apply_tab_n(g)
+                                if k == sdl2.key_e then player.cheats.apply_tab_e(g)
+                                if k == sdl2.key_h then
+                                    // Synthetic damage — no in-world attacker, so feed
+                                    // the player's own position. update_death_swing
+                                    // sees a zero-length vector and clears killer_active
+                                    // immediately (no rotation).
+                                    enemies.ai.damage_player(g, w.ac, 16, enemies.damage_source.bullet, g.pos_x, g.pos_y)
+                            else
+                                if k == sdl2.key_up then g.key_up = true
+                                if k == sdl2.key_down then g.key_down = true
+                                if k == sdl2.key_left then g.key_left = true
+                                if k == sdl2.key_right then g.key_right = true
+                                if k == sdl2.key_lshift then g.key_shift = true
+                                if k == sdl2.key_lalt then g.key_alt = true
+                                if k == sdl2.key_space then g.key_space = true
+                                if k == sdl2.key_lctrl then g.key_fire = true
+                                if k == sdl2.key_tab then g.key_tab_held = true
+                                // Weapon select (1-4). Mirrors the original's
+                                // weapon-change gating: only while playing, never
+                                // mid-attack (the original's attack state never
+                                // re-checks the weapon), only with ammo, and only
+                                // up to the best weapon owned (best_weapon is >=1,
+                                // so knife/pistol are always reachable). The
+                                // setweapon: test command stays ungated on purpose.
+                                let want_weapon = if k == sdl2.key_1 then 0
+                                    else if k == sdl2.key_2 then 1
+                                    else if k == sdl2.key_3 then 2
+                                    else if k == sdl2.key_4 then 3
+                                    else -1
+                                if want_weapon >= 0
+                                   && g.phase == game_phase.playing
+                                   && g.fire_timer <= 0.0
+                                   && g.ammo > 0
+                                   && want_weapon <= g.best_weapon then
+                                    g.weapon = want_weapon
+                                // Cheat-chord held-flags. M/L/I/B/A/T have no other
+                                // in-game action (M used to toggle music but that
+                                // clashed with the MLI chord; use the main menu's
+                                // SOUND entry to toggle music now).
+                                if k == sdl2.key_m then g.key_m_held = true
+                                if k == sdl2.key_l then g.key_l_held = true
+                                if k == sdl2.key_i then g.key_i_held = true
+                                if k == sdl2.key_b then g.key_b_held = true
+                                if k == sdl2.key_a then g.key_a_held = true
+                                if k == sdl2.key_t then g.key_t_held = true
+                                // IDDQD / IDKFA sequences — only progress while
+                                // in-game, matching how the chord cheats are
+                                // gated. Held keys can't auto-advance because
+                                // we're already inside the !is_key_repeat branch.
+                                if g.phase == game_phase.playing then
+                                    player.cheats.advance_iddqd(g, k)
+                                    player.cheats.advance_idkfa(g, k)
+                                if k == sdl2.key_s then flow.take_screenshot(w, vs, pal)
+                                // TAB+D toggles the on-screen debug overlay
+                                // (FPS / frame time / skipped frames / pos /
+                                // scene counts / resolution). Works in any phase
+                                // since key_tab_held is tracked globally.
+                                if k == sdl2.key_d && g.key_tab_held then
+                                    g.debug_overlay = !g.debug_overlay
+                                // IN_Ack: a deliberate-feeling keypress (Enter,
+                                // Space, Ctrl — the OG fire key, or Esc as a
+                                // "get me out of here" key) during an
+                                // acknowledge screen (intermission / episode-end
+                                // / final victory / game-over) counts as
+                                // "acknowledge and advance". The OG accepted
+                                // any LastScan including modifier keys, but on
+                                // modern keyboards a stray Shift / Win / Menu
+                                // / function key shouldn't skip past the screen.
+                                // The advance itself runs in the main loop
+                                // (after flow.tick) and is gated by
+                                // key_ack_handled so a held key only fires once.
+                                let is_ack_key = k == sdl2.key_return
+                                    || k == sdl2.key_space
+                                    || k == sdl2.key_lctrl
+                                    || k == sdl2.key_escape
+                                if is_ack_key && (g.phase == game_phase.intermission
+                                   || g.phase == game_phase.episode_end) then
+                                    g.key_ack = true
+                if t == sdl2.keyup_event then
+                    let k = event.key.keysym.sym
+                    // Keyup only clears flags; not phase-sensitive.
+                    if k == sdl2.key_up then g.key_up = false
+                    if k == sdl2.key_down then g.key_down = false
+                    if k == sdl2.key_left then g.key_left = false
+                    if k == sdl2.key_right then g.key_right = false
+                    if k == sdl2.key_lshift then g.key_shift = false
+                    if k == sdl2.key_lalt then g.key_alt = false
+                    if k == sdl2.key_lctrl then g.key_fire = false
+                    if k == sdl2.key_tab then g.key_tab_held = false
+                    // Cheat-chord held-flags (see keydown side).
+                    if k == sdl2.key_m then g.key_m_held = false
+                    if k == sdl2.key_l then g.key_l_held = false
+                    if k == sdl2.key_i then g.key_i_held = false
+                    if k == sdl2.key_b then g.key_b_held = false
+                    if k == sdl2.key_a then g.key_a_held = false
+                    if k == sdl2.key_t then g.key_t_held = false
+                    if k == sdl2.key_space then
+                        g.key_space = false
+                        g.key_space_handled = false
+                    // Any keyup rearms the IN_Ack latch so the next press can fire.
+                    g.key_ack = false
+                    g.key_ack_handled = false
+
+        { keep_running, event_seen }

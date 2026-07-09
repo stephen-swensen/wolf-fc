@@ -28,6 +28,21 @@ module menu =
         | changeview
         | quit
 
+    // Compact integer code for the active menu level, for the diagnostic
+    // log (nav is a union). 8 is the quit (Y/N) modal. Keep in sync with
+    // the union.
+    let nav_code = (m: nav) ->
+        match m with
+        | main -> 0
+        | difficulty -> 1
+        | episode -> 2
+        | savelist -> 3
+        | loadlist -> 4
+        | sound -> 5
+        | options -> 6
+        | changeview -> 7
+        | quit -> 8
+
     // Menu-chrome palette indices, matched to the original. We
     // resolve them through `pal[]` at draw time so they always come
     // back as the right ARGB value for the current palette,
@@ -763,3 +778,117 @@ module menu =
         | savelist   -> render_slot(rc, vg, pal, f, g, sm, pics.id.c_savegame, g.menu_sel, false, time)
         | loadlist   -> render_slot(rc, vg, pal, f, g, sm, pics.id.c_loadgame, g.menu_sel, true, time)
         | quit       -> render_quit_modal(rc, vg, pal, f, g, ac)
+
+
+// Quit-confirmation prompt pool. Mirrors the original game's "are you
+// sure?" modal that picked a tongue-in-cheek prompt at random. We invent
+// our own pool (no copyleft hygiene risk from the OG strings).
+//
+// Tone: playful taunt. The implicit deal is "quitting trades real action
+// for mundane life" — so each cliffhanger ("FOR X AND Y...") names a
+// paired-mundane thing the player would be trading down to, and the
+// spelled-out ones describe a small domestic alternative. A handful of
+// WW2-flavoured pairings (paperwork, drills, furlough) lean into the
+// game's setting; the rest are general retiree-coded coziness.
+//
+// The pool can be overridden by writing one prompt per line to
+// `~/.wolf-fc/quit-prompts`. Blank lines are ignored. A missing file or
+// a file with no non-blank lines falls back to the built-in pool.
+module quit_prompts =
+    import io from std::
+    import text from std::
+
+    let builtin_count = 27
+
+    let builtin_at = (i: i32) ->
+        match i with
+        // "For X and Y..." cliffhangers — the mundane life waiting on
+        // the other side of the QUIT key.
+        | 0  -> "For paperwork and protocol..."
+        | 1  -> "For desk duty and decaf..."
+        | 2  -> "For drill and drudgery..."
+        | 3  -> "For filing and furlough..."
+        | 4  -> "For memos and mothballs..."
+        | 5  -> "For laundry and leftovers..."
+        | 6  -> "For dishes and daytime TV..."
+        | 7  -> "For hot cocoa and housework..."
+        | 8  -> "For hearth and homework..."
+        | 9  -> "For tea and tranquility..."
+        | 10 -> "For fresh air and ferns..."
+        | 11 -> "For the love of daylight..."
+        | 12 -> "For pizza and peace of mind..."
+        | 13 -> "For friends and fresh bread..."
+        | 14 -> "For cats and contentment..."
+        | 15 -> "For porch swings and patience..."
+        | 16 -> "For dominoes and daydreams..."
+        | 17 -> "For slippers and sudoku..."
+        | 18 -> "For cardigans and crosswords..."
+        | 19 -> "For yarn and yawning..."
+        | 20 -> "For naps and needlepoint..."
+        // Spelled-out — small domestic observations, no imperatives.
+        | 21 -> "Dinner won't cook itself."
+        | 22 -> "Bed is calling."
+        | 23 -> "There is a sunset waiting."
+        | 24 -> "Birds are chirping outside."
+        | 25 -> "The coffee is getting cold."
+        | _  -> "The laundry has been waiting."
+
+    // Heap-copy a str slice into an owned u8 buffer. Returned slice
+    // is freeable on its own (no shared backing), so the override array
+    // can be torn down line-by-line in `free_override`.
+    private let dup_str = (s: const str) ->
+        let n = s.len
+        let buf = alloc(u8[n] {})!
+        for i, c in s do
+            buf[i] = c
+        (str) buf
+
+    // Read newline-delimited override pool. Lines are trimmed; blanks
+    // dropped. Returns an empty slice if the file is missing, unreadable,
+    // or contains zero non-blank lines — caller falls back to built-ins.
+    let load_override = () ->
+        match paths.wolf_data_dir() with
+        | none -> alloc(str[0] {})!
+        | some(dir) ->
+            defer free(dir)
+            let path = alloc("%s{dir}/quit-prompts")!
+            defer free(path)
+            match io.read_all(path) with
+            | err(_) -> alloc(str[0] {})!
+            | ok(contents) ->
+                defer free(contents)
+                let lines = text.split(contents, "\n")
+                defer free(lines)
+                // First pass: count non-blank trimmed lines.
+                let mut n = 0i64
+                for ln in lines do
+                    if text.trim(ln).len > 0i64 then
+                        n = n + 1i64
+                if n == 0i64 then alloc(str[0] {})!
+                else
+                    let out = alloc(str[n] {})!
+                    let mut k = 0i64
+                    for ln in lines do
+                        let t = text.trim(ln)
+                        if t.len > 0i64 then
+                            out[k] = dup_str(t)
+                            k = k + 1i64
+                    out
+
+    // Free the heap-allocated override pool (line buffers + outer slice).
+    let free_override = (pool: str[]) ->
+        for line in pool do
+            free(line)
+        free(pool)
+
+    // Pick the i-th prompt out of either the override pool (when non-
+    // empty) or the built-in pool. Caller is responsible for choosing
+    // a valid index.
+    let at = (override_pool: const str[], i: i32) ->
+        if override_pool.len > 0i64 then
+            (const str) override_pool[(i64) i % override_pool.len]
+        else builtin_at(i)
+
+    let count = (override_pool: const str[]) ->
+        if override_pool.len > 0i64 then (i32) override_pool.len
+        else builtin_count

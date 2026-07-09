@@ -305,28 +305,33 @@ All project `.fc` sources live in `src/`. All project modules are declared at th
 
 **Engine core**
 
-- **`main.fc`** — Entry point. Owns the `world` god-handle (`{g: game*, lv: level*, rc: render_ctx*, ac: audio_ctx*, sm: save_menu_ctx*}`) and its component structs, the factories that build them, the `game_phase` state machine, and the three top-level dispatchers — `tick(w, dt)` (per-frame simulation), `render_frame(w, vs, pal)` (per-frame rendering), and `run_test_cmd(w, arg, ...)` (`--test` command interpreter). Phase-transition routing (level-end, episode-end, death, restart) lives here too. No file-scope mutable state anywhere in the project: buffers, caches, counters, and launch-time config all hang off one of the context structs.
+- **`main.fc`** — Entry point, and nothing but: program-wide constants, CLI parsing, asset loading, `world` assembly, SDL window / renderer / audio-device wiring, and the interactive game-loop skeleton. No file-scope mutable state anywhere in the project: buffers, caches, counters, and launch-time config all hang off one of the context structs.
+- **`world.fc`** — The cross-cutting game vocabulary: the `game_phase` state machine, the `game` and `world` state structs (the `world` god-handle groups `{g, lv, lv_data, rc, ac, sm, hs, vg, font}`), episode structure + per-episode stat accounting, and the score / extra-life rules.
+- **`flow.fc`** — The orchestrators every path funnels through: `flow.tick(w, dt)` (per-frame simulation), `flow.render_frame(w, vs, pal)` (per-frame rendering), phase-transition routing (level-end, episode-end, death, restart), and screenshot capture.
 - **`player.fc`** — Player movement, collision against tilemap + doors + enemies, camera plane update, weapon firing, and the IDDQD / IDKFA / TAB-debug cheats. Owns the per-life / new-game / input-clear reset helpers and movement tuning constants.
-- **`level.fc`** — Per-level geometry and lifecycle: tilemap decode, area-flood reachability, spawn filtering by difficulty, animated doors, push-walls, pickup collection.
+- **`level.fc`** — Per-level geometry and lifecycle: the `level` struct with its build / destroy / reload module, tilemap decode, area-flood reachability, spawn filtering by difficulty, animated doors, push-walls, pickup collection.
 - **`combat.fc`** — Enemy data tables, finite-state AI, projectile simulation, and the player-fired hitscan path.
+- **`testmode.fc`** — The `--test` command interpreter (`testmode.run_cmd`) behind the headless scripted-play mode.
 
 **Rendering and UI**
 
-- **`render.fc`** — DDA wall raycaster, billboard sort + draw, and the viewport-overlay pipeline (damage flash, elevator fade, dying-phase stipple, supersample upscaler, optional 2× SSAA box-downsample, screenshot capture). See [Display pipeline](#display-pipeline).
+- **`render.fc`** — The `render_ctx` framebuffer struct, DDA wall raycaster, billboard sort + draw, and the viewport-overlay pipeline (damage flash, elevator fade, dying-phase stipple, supersample upscaler, optional 2× SSAA box-downsample, PNG screenshot encode). See [Display pipeline](#display-pipeline).
+- **`video.fc`** — Display geometry management: framebuffer width from display aspect (Hor+ widescreen), supersample-factor pick from drawable size, `render_ctx` allocation / resize, SSAA buffer rebinding, and SDL texture rebuild — the machinery behind the Change View menu and window-resize handling.
 - **`ui.fc`** — UI primitives shared by every non-3D phase: music track IDs + the per-level `songs[]` table, the cached VGAGRAPH pic blitter, font, and the status-bar HUD with BJ-face animation.
-- **`menu.fc`** — Main menu and submenus (episode, difficulty, map, save / load slot list, change-view).
+- **`menu.fc`** — Main menu and submenus (episode, difficulty, map, save / load slot list, change-view), plus the quit-confirmation prompt pool.
 - **`cutscenes.fc`** — Per-phase state machines and renderers for the title screen, parental-advisory splash, intermission scoring, BJ victory, death-cam, episode-end art screen (the `^P`/`^E`/`^C`/... markup parser lives here), and the high-scores screen with inline name editor.
 
 **Audio**
 
 - **`sound.fc`** — Format drivers (`imf` music, `adlib` SFX, `digi` PCM) and the additive `mixer` that consumes them. See [Audio pipeline](#audio-pipeline).
-- **`sfx.fc`** — Sound-effect trigger helpers, the 73 sound-ID enum, and the `digi_slot[]` / `adlib_chunk[]` lookup tables that pick the right delivery path per ID.
+- **`sfx.fc`** — The `audio_ctx` handle, sound-effect trigger helpers, the 73 sound-ID enum, the `digi_slot[]` / `adlib_chunk[]` lookup tables that pick the right delivery path per ID, and the audio-thread side of the pipeline (the SDL audio callback + lock-free command-ring consumer).
 - **`opl2.fc`** — Standalone YM3812 FM synth emulator: chip state, register writes, sample generation, AdLib instrument helpers, and the shared `fill_ticked` driver runner. Not wolf-specific.
 
 **I/O and host**
 
 - **`data.fc`** — Wolf3D asset loading: `bytes` (little-endian readers), `palette` (256-entry VGA), `vswap` (wall textures, sprites, PCM), `maps` (Carmack + RLEW map decompression), `vgagraph` (Huffman-coded UI graphics), `audio` (AUDIOHED / AUDIOT chunk index).
 - **`save.fc`** — Save / load slots and the on-disk encoding, `~/.wolf-fc/config` persistence (music / SFX / digi toggles, per-source gain percentages, mommy-mode, shadow-depth, view-mode, scale-factor, SSAA, speeds), and a leaf `paths` module that resolves `~/.wolf-fc/` directory locations.
+- **`input.fc`** — The SDL event pump and every per-phase key binding: menu navigation, the save-name and high-score inline editors, gameplay keys, cheats, fullscreen toggle, and window-resize handling.
 - **`sdl2.fc`** — Flat `extern` FFI against `SDL2/SDL.h`: lifecycle, window (incl. fullscreen-desktop + high-DPI), the accelerated 2D renderer (used only as a blit primitive for one streaming ARGB8888 texture), keyboard events, and the audio device.
 - **`png.fc`** — Pure-FC PNG writer (CRC-32, Adler-32, stored deflate, optional tEXt metadata) used by the screenshot path.
 

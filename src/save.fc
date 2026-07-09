@@ -99,6 +99,23 @@ module diag =
             io.write(alloca("%d{sys.time() - start_ms} %s{label}\n"), f)
             sync_line(f)
 
+    // Compact integer code for the current phase, for the diagnostic log
+    // (game_phase is a union with no numeric form). Keep in sync with the
+    // union. Union references are type-only, so this adds no module edge.
+    let phase_code = (p: game_phase) ->
+        match p with
+        | pg13 -> 0
+        | title -> 1
+        | main_menu -> 2
+        | playing -> 3
+        | dying -> 4
+        | intermission -> 5
+        | bj_victory -> 6
+        | death_cam -> 7
+        | episode_end -> 8
+        | endart -> 9
+        | high_scores -> 10
+
     // Per-frame heartbeat: frame counter, phase + menu_level ints (to spot
     // the quit prompt = menu nav.quit), and the audio-callback count — if
     // `cb` stops advancing across beats, the audio thread has stalled.
@@ -434,6 +451,20 @@ module config =
                 discard io.write("show_map %d{if p.show_map then 1 else 0}\n", f)
 
 
+// Save/load menu scratch. One instance per process — only one menu is open
+// at a time, so sharing is fine. `slots` is refreshed by save.refresh_slots
+// on menu entry; the two scratch buffers are reused across renders / writes.
+struct save_menu_ctx =
+    slots: save.slot_info[]    // length = save.num_slots
+    label_scratch: u8[]        // 32-byte reusable buffer for slot-label substrings
+    hex_scratch: u8[]          // 1-byte buffer for per-nibble save-file writes
+    // In-progress slot name during inline save edit. NUL-terminated;
+    // `edit_len` holds the byte length without the terminator. Capacity
+    // is 32 (matches the original's max input string length).
+    edit_buf: u8[]
+    edit_len: i32
+
+
 module save =
     import io from std::
     import sys from std::
@@ -456,6 +487,18 @@ module save =
         level_num: i32
         difficulty: i32
         score: i32
+
+    // Allocate the save/load menu cache + scratch buffers. One instance per
+    // process (only one save/load menu can be open at a time).
+    let build_menu_ctx = () ->
+        let sm = alloc(save_menu_ctx {
+            slots = alloc(slot_info[num_slots] {})!,
+            label_scratch = alloc(u8[32] {})!,
+            hex_scratch = alloc(u8[1] {})!,
+            edit_buf = alloc(u8[32] {})!,
+            edit_len = 0
+        })!
+        sm
 
     // Split a save-file line on spaces, compacting consecutive
     // separators so the padded-width floats we write (e.g. "%14.6f")
@@ -770,7 +813,7 @@ module save =
                                 // lv->{tilemap,doors,pushwall,sprites,enemies}
                                 // which we'll immediately overwrite
                                 // with the saved state below.
-                                reload_level_data(w, vs)
+                                level.reload(w, vs)
                                 level_loaded = true
                         else if text.starts_with(line, "oldscore ") then
                             let toks = split_ws(line)
@@ -1004,6 +1047,26 @@ module save =
 // tie-break still counts as not qualifying.
 // ============================================================
 
+// High-scores screen state — process-wide, persists across games.
+// `scores` is the 7-row table loaded once at startup (or seeded with
+// the original game's defaults on first launch) and rewritten whenever a
+// new score qualifies. Edit fields drive the inline name-entry that
+// activates on a qualifying finish. `edit_index` is `none` outside the
+// editing flow; while editing it carries the row in `scores` that was
+// just inserted (and `edit_buf` / `edit_len` mirror the typed name
+// until the player presses Enter to commit).
+struct highscore_ctx =
+    scores: highscore.entry[]
+    edit_index: i32?
+    edit_active: bool
+    edit_buf: u8[]
+    edit_len: i32
+    // True the frame the player exits the high-scores screen after a
+    // qualifying-and-named entry, so the post-screen routing (back to
+    // title) can persist the table once. Cleared on next entry.
+    pending_save: bool
+
+
 module highscore =
     import io from std::
     import text from std::
@@ -1030,6 +1093,24 @@ module highscore =
         score: i32
         completed: i32       // 1..10 (matches the original's level+1 convention)
         episode: i32         // 0..5
+
+    // Allocate the high-score context: the 7-row table seeded with id
+    // Software's defaults (then overlaid from `~/.wolf-fc/highscores` if
+    // present) plus the inline name-entry buffer. Single instance per
+    // process — the screen / death flow / menu all reach for it via
+    // `world.hs`.
+    let build_ctx = () ->
+        let scores = alloc(entry[max_scores] {})!
+        reset_to_defaults(scores)
+        load(scores)
+        alloc(highscore_ctx {
+            scores       = scores,
+            edit_index   = none(i32),
+            edit_active  = false,
+            edit_buf     = alloc(u8[max_name_len + 1] {})!,
+            edit_len     = 0,
+            pending_save = false
+        })!
 
     // Copy `src` (a const str) into the entry's inline name buffer,
     // truncating to `max_name_len` bytes if needed and zero-filling

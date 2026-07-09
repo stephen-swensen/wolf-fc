@@ -39,20 +39,22 @@ The project also serves as an end-to-end demo of FC: stdlib usage, modules, gene
 
 Runs the engine with no window, no audio, deterministic RNG (both PCG32 streams seeded to 0). Args after `--test` are processed left-to-right with `dt = 1.0 / 35.0` per simulated tick. `ss:path.png` writes a PNG of the current frame with game-state in a tEXt chunk.
 
-**Entry point:** `run_test_cmd` in `main.fc`. **User-facing reference:** `README.md`.
+**Entry point:** `testmode.run_cmd` in `testmode.fc`. **User-facing reference:** `README.md`.
 
 - **stderr vs stdout:** the `bad` helper writes malformed-arg errors to `stderr`; `state`, `facetile`, `ss:` go to `stdout`. Use `2>&1` if you need to see warnings in captured output.
-- **Adding a command:** add an `else if` branch in `run_test_cmd`. Prefix commands use `text.starts_with` + `text.parse_i32`. Branches that produce text end in `void()` so all arms have matching types. If the command advances time, call `tick(w, dt)`; otherwise don't. Document it in `README.md`.
+- **Adding a command:** add an `else if` branch in `testmode.run_cmd`. Prefix commands use `text.starts_with` + `text.parse_i32`. Branches that produce text end in `void()` so all arms have matching types. If the command advances time, call `flow.tick(w, dt)`; otherwise don't. Document it in `README.md`.
 - **Regression suite:** `tests/run-tests.sh`, with `assert_contains` / `assert_not_contains` / `assert_regex` helpers, grouped by `section "name"` headers. One assertion per test, failing for one clear reason. When you change AI / RNG-consuming logic expect golden-value churn — the failures are loud.
 - **Probing landmarks** (level 0, default spawn `(29.5, 57.5)` facing east): door at `(32, 57)`, elevator switch at `(25, 46)`, push-wall at `(10, 13)`, first-aid at `(29, 24)`, cross at `(7, 14)`. The `probe` command dumps bbox tiles + nearby enemies — first stop for movement-blocker reports.
 
 ## Architecture: single sources of truth
 
-Three orchestrator functions live in `main.fc`. **Always extend them, never bypass them:**
+The orchestrators live in `module flow` (`flow.fc`), plus the test-command dispatcher in `testmode.fc`. **Always extend them, never bypass them:**
 
-- **`tick(w, dt)`** — the *only* per-frame update path. Drives timer decay, then dispatches by `g.phase`: `playing` runs `player.update` → `doors.update` → `pushwall.update` → `player.update_weapon` → `enemies.ai.update_enemies` → `projectiles.update_all` → `pickups.check` → `hud.update_face`; cutscene phases run their own `.tick`. Always ends with `update_phase_transitions`. Both the interactive loop and every tick-advancing `--test` command (`fwd`, `back`, `space`, `wait`, `fire`, …) go through this. Adding per-frame work anywhere else risks the "animation frozen in test mode" class of bug.
-- **`render_frame(w, vs, pal)`** — the *only* render path. Phase-dispatches to title / menu / playing / dying / intermission / bj_victory / death_cam / episode_end / endart / high_scores. The 's' screenshot key, `ss:` test command, and main loop all call it. Add a new render layer here.
-- **`run_test_cmd(w, arg, pal, dt)`** — the *only* test-mode command dispatcher.
+- **`flow.tick(w, dt)`** — the *only* per-frame update path. Drives timer decay, then dispatches by `g.phase`: `playing` runs `player.update` → `doors.update` → `pushwall.update` → `player.update_weapon` → `enemies.ai.update_enemies` → `projectiles.update_all` → `pickups.check` → `hud.update_face`; cutscene phases run their own `.tick`. Always ends with `flow.update_phase_transitions`. Both the interactive loop and every tick-advancing `--test` command (`fwd`, `back`, `space`, `wait`, `fire`, …) go through this. Adding per-frame work anywhere else risks the "animation frozen in test mode" class of bug.
+- **`flow.render_frame(w, vs, pal)`** — the *only* render path. Phase-dispatches to title / menu / playing / dying / intermission / bj_victory / death_cam / episode_end / endart / high_scores. The 's' screenshot key (via `flow.take_screenshot`), `ss:` test command, and main loop all call it. Add a new render layer here.
+- **`testmode.run_cmd(w, arg, pal, dt)`** — the *only* test-mode command dispatcher.
+
+`flow.fc` also owns the phase routing: `advance_next_level`, `restart_current_level`, `start_new_game_here`, `return_to_menu_post_episode`, `update_phase_transitions`. `oldscore` is captured on every level entry and consumed by `restart_current_level` on death-with-lives (matches OG's `gamestate.oldscore`). Level lifecycle (`level.build` / `level.destroy` / `level.reload` / `level.reset_counters`) lives in `level.fc` as the type-associated `module level`.
 
 The `goto:X,Y` test command is intentionally *not* a tick — it teleports + calls `check_pickups` once.
 
@@ -71,7 +73,7 @@ struct world =
     font: font.info*                      // small UI font (VGAGRAPH chunk 1)
 ```
 
-Orchestrators take `world*`; narrow functions take only the sub-contexts they touch, so dependencies are visible in signatures. Factories: `build_level`, `build_render_ctx`, `build_save_menu_ctx`, `build_highscore_ctx`; `free_level` runs on level transition.
+Orchestrators take `world*`; narrow functions take only the sub-contexts they touch, so dependencies are visible in signatures. Each ctx struct lives beside its owning subsystem (`game`/`world` in `world.fc`, `level` in `level.fc`, `render_ctx` in `render.fc`, `audio_ctx` in `sfx.fc`, menu ctxs in `save.fc`) with its factory in that file's module: `level.build`, `video.build_render_ctx`, `save.build_menu_ctx`, `highscore.build_ctx`; `level.destroy` runs on level transition (inside `level.reload`).
 
 ### No file-scope mutable state
 
@@ -81,9 +83,9 @@ Process-wide mutable state goes on a context struct (`game`, `level`, `render_ct
 
 The 3D viewport and framebuffer adapt to display aspect ratio; UI stays 320-wide and centres in `ui_offset_x = (fb_w − 320) / 2`. The framebuffer is upscaled by an integer `rc.scale ∈ [2..6]` (picked at startup from `SDL_GetRendererOutputSize`) to a `screen_w × screen_h` dbuf, then nearest-neighbor stretched. Live geometry is on `render_ctx`: `fb_w`, `fb_h` (200, fixed), `scale`, `screen_w/h`, `view_render_h`, `drawable_w/h`, `ui_offset_x`. FOV-derived math reads `g.plane_factor`, not the constant `fov_factor`.
 
-Optional 2× SSAA on the 3D viewport adds a fourth buffer, `ssaa_buf` (`2·screen_w × 2·view_render_h`, viewport only — HUD is bitmap art). The 3D pipeline (raycaster, billboards, weapon, death-cam sprite) writes through `vbuf` / `vzbuf` slices that alias either dbuf's top rows (SSAA off) or `ssaa_buf` / `ssaa_zbuf` (SSAA on); `rebind_vbuf` is the single chokepoint that flips the aliasing. After the 3D pass `overlay.ssaa_downsample` box-filters `ssaa_buf` into dbuf's viewport region (no-op when off); viewport tints / dissolves then operate on dbuf at the cheaper resolution. **When writing 3D-phase pixels, use `rc.vbuf` / `rc.vzbuf` / `rc.vbuf_w` / `rc.vbuf_h` — never `dbuf`/`zbuf`/`screen_w`/`view_render_h` directly.** Those still belong to overlay / HUD / composite code, which runs after the downsample.
+Optional 2× SSAA on the 3D viewport adds a fourth buffer, `ssaa_buf` (`2·screen_w × 2·view_render_h`, viewport only — HUD is bitmap art). The 3D pipeline (raycaster, billboards, weapon, death-cam sprite) writes through `vbuf` / `vzbuf` slices that alias either dbuf's top rows (SSAA off) or `ssaa_buf` / `ssaa_zbuf` (SSAA on); `video.rebind_vbuf` is the single chokepoint that flips the aliasing. After the 3D pass `overlay.ssaa_downsample` box-filters `ssaa_buf` into dbuf's viewport region (no-op when off); viewport tints / dissolves then operate on dbuf at the cheaper resolution. **When writing 3D-phase pixels, use `rc.vbuf` / `rc.vzbuf` / `rc.vbuf_w` / `rc.vbuf_h` — never `dbuf`/`zbuf`/`screen_w`/`view_render_h` directly.** Those still belong to overlay / HUD / composite code, which runs after the downsample.
 
-Test mode pins `fb_w = 320`, `scale = 2`, SSAA off so the regression suite stays bit-stable. **When touching viewport geometry read `rc.fb_w`/`rc.scale`/`g.plane_factor`, never the file-scope constants.** The CHANGE VIEW menu calls `apply_view_mode` / `apply_scale_factor` / `apply_ssaa` to re-alloc buffers, rescale the player's heading vector (`apply_view_mode` only), and recreate the SDL texture when `screen_w/h` changed (`apply_ssaa` doesn't touch the texture since `screen_w/h` are unchanged).
+Test mode pins `fb_w = 320`, `scale = 2`, SSAA off so the regression suite stays bit-stable. **When touching viewport geometry read `rc.fb_w`/`rc.scale`/`g.plane_factor`, never the file-scope constants.** The CHANGE VIEW menu calls `video.apply_view_mode` / `video.apply_scale_factor` / `video.apply_ssaa_mode` to re-alloc buffers, rescale the player's heading vector (`apply_view_mode` only), and recreate the SDL texture via `video.recreate_texture` when `screen_w/h` changed (`apply_ssaa_mode` doesn't touch the texture since `screen_w/h` are unchanged).
 
 ## Source Files
 
@@ -91,38 +93,41 @@ All project `.fc` sources live in `src/` (the Makefile's `SRCS_FC` prefixes them
 
 | File | Modules | What's in it |
 |---|---|---|
-| `sdl2.fc` | `sdl2` | SDL2 C-interop bindings. |
+| `sdl2.fc` | `sdl2` | SDL2 C-interop bindings (+ top-level `sdl_display_mode` mirror struct). |
 | `opl2.fc` | `opl2` | YM3812 FM synth emulator + AdLib driver runner. |
 | `png.fc` | `png` | Pure-FC PNG writer with optional tEXt. |
-| `sound.fc` | `imf`, `adlib`, `digi`, `mixer` | Wolf3D sound-format drivers. |
-| `data.fc` | `bytes`, `palette`, `vswap`, `maps`, `vgagraph`, `audio` | `.WL6` loaders + decompressors (Carmack/RLEW/Huffman). |
-| `sfx.fc` | `sfx` (nested `id`) | SFX trigger helpers + 73 sound IDs + `digi_slot` / `adlib_chunk` tables. |
+| `sound.fc` | `imf`, `adlib`, `digi`, `mixer`, `spsc`, `audio_q` | Wolf3D sound-format drivers + the lock-free ring the audio thread consumes. |
+| `data.fc` | `bytes`, `palette`, `vswap`, `maps`, `vgagraph`, `audio`, `data_path` | `.WL6` loaders + decompressors (Carmack/RLEW/Huffman). |
+| `world.fc` | `episode`, `score` | Cross-cutting game vocabulary: `union game_phase`, `struct game`, `struct world`; episode structure + per-episode stat accounting; score/extra-life rules (`score.add` is the single score chokepoint — honors IDKFA lock + 40k extra-life). |
+| `video.fc` | `video` | Display geometry: fb_w-from-aspect, supersample-scale pick, `render_ctx` alloc/resize, SSAA buffer rebind, on-the-fly `apply_view_mode`/`apply_scale_factor`/`apply_ssaa_mode`, texture rebuild; `struct video_state` (window/renderer/texture handles). |
+| `sfx.fc` | `sfx` (nested `id`), `audio_thread` | `struct audio_ctx`; SFX trigger helpers + 73 sound IDs + `digi_slot` / `adlib_chunk` tables; the command-ring consumer (`audio_thread.drain`) + SDL audio callback. |
 | `ui.fc` | `music`, `pics` (nested `id`), `font`, `hud` | Music track IDs + per-level `songs[]`, VGAGRAPH pic blitter, font, status bar, BJ face animation. |
-| `save.fc` | `paths`, `save`, `config`, `highscore` | Save slot I/O, config file, high-score persistence. `paths` is a leaf module (shared with `overlay`). |
+| `save.fc` | `paths`, `diag`, `save`, `config`, `highscore` | `struct save_menu_ctx` / `highscore_ctx` + factories; save slot I/O, config file, high-score persistence, crash-surviving diag log. `paths` is a leaf module (shared with `overlay` / `flow` / `quit_prompts`). |
 | `combat.fc` | `dir`, `enemies` (nested `ai`), `projectiles`, `hitscan` | Enemy data + AI + projectiles + player hitscan. |
-| `level.fc` | `difficulty`, `tilemap`, `areas`, `spawn`, `doors`, `pushwall`, `pickups` | Level geometry, spawning, doors/pushwall, pickup collection. |
+| `level.fc` | `difficulty`, `tilemap`, `areas`, `spawn`, `doors`, `pushwall`, `pickups`, `level` | `struct level` + geometry, spawning, doors/pushwall, pickup collection, and the type-associated lifecycle module (`level.build`/`destroy`/`reload`/`reset_counters`). |
 | `cutscenes.fc` | `bj_victory`, `death_cam` (nested `sub`), `intermission`, `episode_end`, `endart_screen`, `pg13_screen`, `high_scores_screen`, `title_screen` | Per-phase state machines + renderers. `endart_screen` parses the OG article-markup language. |
-| `menu.fc` | `menu` (nested `nav`) | Main menu and submenus. |
-| `render.fc` | `raycaster`, `billboards`, `overlay` | DDA raycaster, billboard sort+draw, viewport tints/dissolve/upscale, 2× SSAA box-downsample, screenshot. |
-| `player.fc` | `player` (nested `cheats`) | Movement, collision, camera, weapon firing, MLI/BAT/IDDQD cheats, life/respawn helpers. |
+| `menu.fc` | `menu` (nested `nav`), `quit_prompts` | Main menu and submenus + the quit-confirm prompt pool. |
+| `render.fc` | `raycaster`, `billboards`, `overlay` | `struct billboard` / `render_ctx`; DDA raycaster, billboard sort+draw, viewport tints/dissolve/upscale, 2× SSAA box-downsample, PNG screenshot encode. |
+| `player.fc` | `player` (nested `cheats`) | Movement, collision, camera, weapon firing, MLI/BAT/IDDQD cheats, life/respawn helpers, `give_full_kit`. |
+| `flow.fc` | `flow` | Orchestrators: `tick`, `render_frame`, phase routing, `take_screenshot` (see above). |
+| `input.fc` | `input` | SDL event pump + every per-phase key binding (`input.handle_events`, called once per main-loop iteration). |
+| `testmode.fc` | `testmode` | The `--test` command interpreter (`testmode.run_cmd`). |
 
-### `main.fc` — entry point + orchestration
+### `main.fc` — entry point only
 
-What's left in `main.fc` is cross-subsystem only:
+`main.fc` is the platform shell — nothing game-logic-shaped lives there anymore:
 
-- **Resolution constants:** `game_w`/`game_h` (320×200, the UI grid), `view_h` (160, 3D viewport), `map_size`/`tex_size` (64), `tile_area` (107, first non-solid tile), `fov_factor` (`tan(36°)` ≈ 0.7269; the OG horizontal half-FOV).
-- **`module episode`** — `levels_per` (10), `count` (6), `back_to[6]`, `title(ep)`, `next_level_num(level_num, went_secret)`.
-- **`union game_phase`** — `pg13`, `title`, `main_menu`, `playing`, `dying`, `intermission`, `bj_victory`, `death_cam`, `episode_end`, `endart`, `high_scores`. WL6 has no all-episodes-cleared cutscene; episode 6's endart returns to main menu via the high-scores screen. Death with no lives routes straight to `high_scores`.
-- **Core structs:** `world`, `game`, `level`, `render_ctx`, `audio_ctx`, `save_menu_ctx`, `highscore_ctx`, `billboard`.
-- **Factories:** `build_*`, `free_level`, plus `compute_fb_w_for_view_mode` / `pick_scale_factor` / `resize_render_ctx` / `rebind_vbuf` / `apply_view_mode` / `apply_scale_factor` / `apply_ssaa` (resolution + AA helpers).
-- **Cross-subsystem helpers** — `add_score(g, amount)` (single chokepoint for score gains; honors IDKFA lock + 40k extra-life), `give_full_kit(g)` (full pickup set; shared by MLI / IDKFA / `--cheat` / IDKFA-respawn).
-- **Phase routing** — `reset_level_counters`, `reload_level_data`, `advance_next_level`, `advance_next_episode`, `restart_current_level`, `start_new_game_here`, `update_phase_transitions`. `oldscore` is captured on every level entry and consumed by `restart_current_level` on death-with-lives (matches OG's `gamestate.oldscore`).
-- **Dispatchers** — `tick`, `render_frame`, `run_test_cmd` (see above), plus `main`.
+- **Program-wide constants** (the one legitimate use of entry-file top-level `let`s — bare names visible to every module): `game_w`/`game_h` (320×200, the UI grid), `view_h` (160, 3D viewport), `map_size` (64), `fov_factor` (`tan(36°)` ≈ 0.7269; the OG horizontal half-FOV), audio-callback sizing.
+- **`main`** — CLI parsing, `.WL6` asset loading, `world` assembly, SDL window/renderer/texture/audio-device wiring, the interactive game-loop skeleton (dt snap, `input.handle_events`, `flow.tick`, music swap, frame-skip predicate, `flow.render_frame`, present), and the deliberately-minimal shutdown.
+
+On `union game_phase` (world.fc): WL6 has no all-episodes-cleared cutscene; episode 6's endart returns to main menu via the high-scores screen. Death with no lives routes straight to `high_scores`.
 
 ### FC module rules that bite
 
-- **Only the entry-point file (`main.fc`) may have top-level `let` bindings.** Top-level `struct`/`union`/`module` are allowed in *any* `.fc` file (and `struct`/`union`/`let` may also live inside a module body). In practice our non-`main` files are still organized as modules, but a top-level type in a leaf file is permitted when it has no natural module home.
-- **No circular module references.** When two modules mutually need each other, break the cycle by either (a) parameterizing the contract instead of cross-importing (e.g. `doors.update` takes `player_radius`), or (b) extracting the shared piece into a leaf module (`paths` in `save.fc`).
+- **Only the entry-point file (`main.fc`) may have top-level `let` bindings.** Top-level `struct`/`union`/`module` are allowed in *any* `.fc` file. Entry-file top-level `let`s are visible to every `global::` module — but reserve them for program-wide *constants*. Shared helpers belong in real (usually leaf) modules so the module DAG stays honest; entry-file scope sits outside the module graph, and parking helpers there is how main.fc once grew to 4.5k lines.
+- **No circular module references.** When two modules mutually need each other, break the cycle properly: (a) parameterize the contract (e.g. `doors.update` takes `player_radius`), (b) extract the shared piece into a leaf module (`paths` in `save.fc`; `score`/`episode` in `world.fc`), or (c) move the function to its right altitude (`take_screenshot` orchestrates `render_frame`, so it lives in `flow`, not `overlay`).
+- **Type-associated modules** (a module sharing a *struct*'s name, e.g. `struct level` + `module level`) work at top level, even across files. The *union*-companion form does **not**: variant fall-through (`game_phase.playing` with a `module game_phase` present) only resolves when both are nested inside a module — a top-level companion module shadows the union's variants (that's why `diag.phase_code` lives in `diag`, not in a `game_phase` module).
+- `free` is an FC builtin and can't be a module-member name — hence `level.destroy`.
 
 ## Key Data Formats (since wolf4sdl is GPL, document here)
 

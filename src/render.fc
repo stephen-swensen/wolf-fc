@@ -7,6 +7,154 @@
 //                screenshot / PNG pipeline
 
 
+// One drawable billboard emitted each frame — a merged queue of static sprites
+// and enemies, sorted back-to-front so farther items draw first and nearer
+// ones paint over them. Kept in a process-wide scratch buffer on render_ctx
+// rather than freshly allocated per frame.
+struct billboard =
+    x: f64
+    y: f64
+    shape_page: i32
+    // Perpendicular depth (distance along the view axis), not Euclidean
+    // range. This is the metric the original sorts and depth-tests
+    // against, and it matches the wall z-buffer so sprite ordering is
+    // consistent with sprite-vs-wall clipping. Sorting by Euclidean
+    // range instead would mis-order two near-equidistant sprites when
+    // one is well off-axis.
+    depth: f64
+    // Alpha multiplier for the sprite. 1.0 = fully opaque (default for
+    // statics, projectiles, live enemies). 0..1 = blended against the
+    // existing vbuf pixel — used by Mommy Mode to fade dying enemies
+    // out to invisible in place of the original die_frames. 0 = skip
+    // drawing entirely.
+    alpha: f64
+
+// Renderer scratch buffers. Process-wide and rewritten every frame; not
+// part of save-state. Held in its own struct so no one reaches for globals.
+struct render_ctx =
+    // Hor+ widescreen geometry. `fb_w` is the framebuffer width — set
+    // at startup from the display aspect (320 for 4:3, 384 for 16:10,
+    // 428 for 16:9, etc.); the OG vertical FOV is preserved (game_h
+    // stays 200) and the horizontal FOV grows so the player sees more
+    // peripheral world. UI elements live in a 320-wide region centred
+    // at `ui_offset_x = (fb_w - 320) / 2`; the 3D viewport (raycaster
+    // + billboards) and full-screen fills span 0..fb_w.
+    fb_w: i32
+    fb_h: i32
+    // Supersample factor in [2..6]. Picked at startup from the renderer
+    // output size so dbuf approaches the drawable pixel count. `screen_w`
+    // / `screen_h` / `view_render_h` are derived (cached so they don't
+    // multiply on every read in hot raycaster loops).
+    scale: i32
+    screen_w: i32        // = scale * fb_w  — dbuf width / texture width
+    screen_h: i32        // = scale * fb_h  — dbuf height / texture height
+    view_render_h: i32   // = scale * view_h — 3D viewport row count in dbuf
+    // Cached renderer drawable size in real pixels (last known value
+    // from SDL_GetRendererOutputSize). Updated on startup and on
+    // SDL_WINDOWEVENT_SIZE_CHANGED. Used by the Change View menu to
+    // show the full geometry pipeline; not a load-bearing input
+    // anywhere — the scale-pick path queries SDL directly.
+    drawable_w: i32
+    drawable_h: i32
+    ui_offset_x: i32
+    fb: u32[]      // fb_w x fb_h ARGB — primary software-rendered frame
+    dbuf: u32[]    // screen_w x screen_h ARGB — Nx nearest-neighbor upscale of fb
+    zbuf: f64[]    // per-column wall perp-distance, for sprite clipping
+
+    // 3D-viewport render target. The raycaster, billboards, weapon
+    // overlay, and death-cam sprite write into `vbuf` (stride
+    // `vbuf_w`, height `vbuf_h`) and consult `vzbuf` for depth.
+    // After the 3D pipeline completes, `ssaa_downsample` blits /
+    // averages the result into the viewport region of dbuf.
+    //
+    // ssaa_mode 0 (off): vbuf aliases dbuf, vzbuf aliases zbuf,
+    //           vbuf_w == screen_w, vbuf_h == view_render_h. The 3D
+    //           pipeline writes directly into dbuf's top rows and
+    //           `ssaa_downsample` is a no-op.
+    // ssaa_mode 1 (vertical-only 2×): vbuf aliases ssaa_buf, vbuf_w ==
+    //           screen_w, vbuf_h == 2*view_render_h. `ssaa_downsample`
+    //           does a vertical 2:1 average into dbuf.
+    // ssaa_mode 2 (full 2×2): vbuf aliases ssaa_buf, vbuf_w ==
+    //           2*screen_w, vbuf_h == 2*view_render_h. `ssaa_downsample`
+    //           does a 2×2 box-filter into dbuf.
+    //
+    // ss_h / ss_v are the per-axis supersample factors (1 or 2) derived
+    // from ssaa_mode; the 3D projection scales the *vertical* focal
+    // length by ss_v/ss_h so anisotropic (vertical-only) modes keep
+    // walls/sprites the right on-screen height. Slice fields + ss_h/ss_v
+    // are re-derived by `video.rebind_vbuf` whenever the buffers are realloc'd.
+    ssaa_mode: i32
+    ss_h: i32          // horizontal supersample: 1 (off/vertical) or 2 (full)
+    ss_v: i32          // vertical supersample: 1 (off) or 2 (vertical/full)
+    ssaa_buf: u32[]    // vbuf_w x vbuf_h — only allocated when ssaa_mode != 0
+    ssaa_zbuf: f64[]   // vbuf_w — only allocated when ssaa_mode != 0
+    vbuf: u32[]
+    vzbuf: f64[]
+    vbuf_w: i32
+    vbuf_h: i32
+    billboards: billboard[]    // back-to-front draw list (statics + enemies)
+    num_billboards: i32
+    // Cache of the title screen, pre-decoded and palette-applied at startup.
+    // Used as the backdrop for both title and main_menu — without this
+    // cache, every menu frame re-Huffman-decompresses the title pic (~64KB of
+    // per-bit tree-walk) and re-palettizes 64,000 pixels, which dropped the
+    // frame rate enough to underrun the audio queue and kill the music.
+    title_bg: u32[]
+    // Pre-rendered god-mode BJ face: FACE1A palette-applied with the
+    // blue iris pixels recolored gold. Built once at startup; the HUD
+    // blits it as a plain memcpy while god mode is on, so the recolor
+    // doesn't run per frame. 24×32 ARGB.
+    god_face: u32[]
+    // Lazy cache of VGAGRAPH pic chunks as pre-palettized ARGB buffers.
+    // Indexed by chunk id; `.len == 0` means not yet cached. Populated on
+    // first draw via `pics.draw` — turns every subsequent draw of the
+    // same chunk (HUD background, digits, face, weapon, intermission
+    // L-font, etc.) into a plain memcpy. Palette is fixed for the process
+    // lifetime, so caching is safe.
+    pic_cache: u32[][]
+    // Rotating screenshot slot counter (wraps at overlay.screenshot_max_slots).
+    screenshot_slot: i32
+    // Per-iteration counter for the main loop's frame-skip optimization
+    // (see the should_render predicate in the game loop). Wraps freely.
+    frame_counter: u64
+    // One-shot "the next render_frame must paint the full HUD strip"
+    // signal. Set by video.resize_render_ctx after dbuf realloc (zero-init'd
+    // memory) and by the screenshot paths (to guarantee full-fidelity
+    // captures regardless of skip cadence). Consumed + cleared at the
+    // top of render_frame.
+    force_redraw: bool
+    // The vsync interval in ms (1000/refresh_rate), derived from the active
+    // desktop display mode at startup and re-derived on a cross-monitor move.
+    // 0 when SDL reports an unknown refresh rate. This is a genuine engine
+    // timing parameter, NOT a debug field: the main loop's frame-pacing snap
+    // rounds dt to whole multiples of it (see the snap in the game loop), so
+    // it IS read by the simulation. The debug overlay also uses it as the
+    // fixed denominator its work / drop / jitter readouts are judged against.
+    refresh_interval_ms: f64
+    // Debug overlay (TAB+D / --debug) live perf state, updated once per
+    // main-loop iteration by debug_update_timing. dbg_fps / dbg_ms track the
+    // full loop period (top-of-loop to top-of-loop, including the vsync wait
+    // in present()) — that's the true cadence, so dbg_fps reads the refresh
+    // rate under clean vsync. dbg_work_ms is the EMA of just the per-frame
+    // *work* (everything before present blocks) — the number that actually
+    // tells you how much budget headroom is left, judged against
+    // refresh_interval_ms (or the measured cadence when that's 0). dbg_jitter_ms
+    // is the EMA of |period − interval| — the sub-frame wobble in when present()
+    // returns (scheduler / compositor wake latency), the "how tight is my
+    // timing" signal; it does NOT mean frames were lost. dbg_drops, by
+    // contrast, accumulates only genuinely missed vblanks (a period spanning
+    // 1.5+ intervals). dbg_hitch_flash counts down so the readout shows red for
+    // a moment after a real drop. Purely a display concern — never read by the
+    // simulation, so test mode (which doesn't run the main loop) leaves these
+    // at zero.
+    dbg_fps: f64
+    dbg_ms: f64
+    dbg_work_ms: f64
+    dbg_jitter_ms: f64
+    dbg_drops: i32
+    dbg_hitch_flash: f64
+
+
 // ============================================================
 // Raycaster — DDA wall rendering
 // ============================================================
@@ -1323,28 +1471,3 @@ module overlay =
                 free(entries)
                 if deleted > 0 then
                     discard io.write(alloca("[screenshot] cleared %d{deleted} old file(s) from %s{ss_dir}\n"), stdout)
-
-    // Take an interactive screenshot: renders, picks the next
-    // rotating slot in $WOLF_FC_HOME/screenshots (or
-    // ~/.wolf-fc/screenshots), writes a PNG, and prints the path to
-    // stdout.
-    let take_screenshot = (w: world*, vs: const vswap.vswap_file*, pal: const u32[]) ->
-        match paths.wolf_data_dir() with
-        | none ->
-            discard io.write("[screenshot] HOME not set; skipping\n", stdout)
-        | some(dir) ->
-            defer free(dir)
-            // Best-effort: a real dir-creation failure resurfaces when
-            // save_png below can't write. ensure_dir keeps an existing dir
-            // from reading as a failure.
-            discard io.ensure_dir(dir)
-            discard io.ensure_dir(alloca("%s{dir}/screenshots"))
-            let slot = w.rc.screenshot_slot
-            w.rc.screenshot_slot = (w.rc.screenshot_slot + 1) % screenshot_max_slots
-            let path = alloca("%s{dir}/screenshots/ss_%03d{slot}.png")
-            // Force a full HUD redraw so the snapshot is full-fidelity
-            // regardless of the main loop's frame-skip cadence.
-            w.rc.force_redraw = true
-            render_frame(w, vs, pal)
-            discard save_png(w, path)
-            discard io.write(alloca("[screenshot] saved %s{path} (+ -raw.png, -display.png)\n"), stdout)

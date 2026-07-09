@@ -64,10 +64,10 @@ module bj_victory =
     let enter = (g: game*, ac: audio_ctx*) ->
         g.phase = game_phase.bj_victory
         g.phase_timer = 0.0
-        add_score(g, intermission.compute_level_bonus(g), ac)
+        score.add(g, intermission.compute_level_bonus(g), ac)
         // bj_victory bypasses intermission, so record the boss-level
         // stats here so they show up in the episode-end averages.
-        record_level_for_episode(g)
+        episode.record_level_for_episode(g)
         g.bj_x = g.pos_x
         g.bj_y = g.pos_y
         g.bj_tile_x = (i32) g.pos_x
@@ -574,14 +574,14 @@ module intermission =
         // Snapshot the just-finished level's ratios + time into the
         // per-episode running totals before the screen runs (it will
         // mutate inter_target_* but the source counters stay stable).
-        record_level_for_episode(g)
+        episode.record_level_for_episode(g)
         // Secret-level intermissions short-circuit the whole ticker:
         // a flat 15000-point bonus, the stage counter parked at 4
         // (animation done), and a static "SECRET FLOOR / COMPLETED!"
         // screen (see render). Matches the original's secret-level
         // intermission branch.
         if is_secret_level(g.level_num) then
-            add_score(g, secret_floor_bonus, ac)
+            score.add(g, secret_floor_bonus, ac)
             g.inter_stage = 4
             g.inter_counter = 0
             g.inter_progress = 0.0
@@ -599,7 +599,7 @@ module intermission =
         // and carries into the next level. The classic screen
         // animates the ticker counting up to this value; awarding
         // once up front keeps save/advance simpler.
-        add_score(g, compute_level_bonus(g), ac)
+        score.add(g, compute_level_bonus(g), ac)
         // Cache the animation targets. Stage starts at 0 (time
         // bonus counting).
         g.inter_stage = 0

@@ -1,0 +1,454 @@
+// Wolf-FC game-flow orchestration — the per-frame and per-phase glue
+// above every subsystem. `tick` is the only per-frame simulation path,
+// `render_frame` the only render path, and the phase-routing helpers
+// (advance / restart / new-game / update_phase_transitions) the only
+// level-transition paths. Always extend these, never bypass them: both
+// the interactive loop (main.fc) and the headless test commands go
+// through here, so per-frame work added anywhere else produces the
+// "animation frozen in test mode" class of bug.
+
+module flow =
+    import io from std::
+    import math from std::
+
+    // Clear held gameplay-input flags. Called on ack-screen exits (intermission /
+    // episode-end advance) so the "any key" press that dismissed the screen
+    // doesn't carry into playing as a held movement / fire — e.g. a ctrl-press
+    // to advance the episode-end screen would otherwise leave the gatling firing
+    // as soon as the next episode's map 0 loads.
+    // Advance to the next map per episode routing. Called after the intermission
+    // space-press on levels 0..7 and level 9; level 8 → episode-end is handled
+    // by `episode_end.enter` at the caller. Preserves score, lives, weapon; clears
+    // keys. The `went_secret` latch is consumed and reset here.
+    let advance_next_level = (w: world*, vs: const vswap.vswap_file*) ->
+        let g = w.g
+        // Capture the score-at-start-of-the-next-level for the OG-style
+        // death-rewind. By the time we get here the just-completed
+        // level's intermission bonus has already landed in `score`
+        // (intermission.enter / bj_victory.enter / death_cam advance
+        // all call `score.add(g, compute_level_bonus(g), ...)`), so
+        // `oldscore = score` snapshots "score at the moment you walked
+        // into the next level". A subsequent death on the new level
+        // will rewind here in `restart_current_level`. Mirrors the
+        // original's "snapshot score at level completion" behavior.
+        g.oldscore = g.score
+        g.level_num = episode.next_level_num(g.level_num, g.went_secret)
+        g.went_secret = false
+        // Wolf3D clears keys between levels — but IDKFA's "all keys"
+        // promise outranks that, so the latch keeps them across the
+        // transition (otherwise IDKFA-locked players hit a locked door
+        // on the next floor with no recourse).
+        if !g.idkfa_mode then
+            g.has_gold_key = false
+            g.has_silver_key = false
+        // Re-arm per-episode recording for the upcoming level.
+        g.ep_recorded_current = false
+        level.reload(w, vs)
+        spawn.find_player_start(w.lv_data, g)
+        level.reset_counters(g, w.lv)
+        areas.update_player_area(w.lv, g)
+        areas.connect(w.lv, g.area_number)
+        g.phase = game_phase.playing
+        g.phase_timer = 0.0
+        g.made_noise = false
+        player.clear_input_keys(g)
+        pics.trigger_get_psyched(g)
+
+    // End-of-episode → main menu. The original returns to the control
+    // panel after a victorious episode; players replay individual
+    // episodes from the menu, with no auto-advance to the next one.
+    // Used by the endart phase exit + by the test-mode `advance` command
+    // when leaving episode_end / endart.
+    let return_to_menu_post_episode = (g: game*) ->
+        g.phase = game_phase.main_menu
+        g.menu_level = menu.nav.main
+        g.menu_sel = 0     // NEW GAME row — game ended, BACK TO GAME locked
+        g.has_active_game = false
+        g.has_gold_key = false
+        g.has_silver_key = false
+
+    // Restart the current level (death with lives remaining). Resets player
+    // health / ammo / weapon, rewinds score to the start-of-this-level value
+    // (`oldscore`); decrements lives at the caller to keep the pre/post-death
+    // accounting legible. Score rewind matches the original game: every
+    // failed run forfeits the points earned within that run. The lethal
+    // life is handled by the caller routing to `high_scores_screen.enter`
+    // instead of here, so the high-scores entry sees the un-rewound score.
+    let restart_current_level = (w: world*, vs: const vswap.vswap_file*) ->
+        let g = w.g
+        g.score = g.oldscore
+        // Re-arm episode recording so re-finishing the level still
+        // contributes to the running totals.
+        g.ep_recorded_current = false
+        level.reload(w, vs)
+        spawn.find_player_start(w.lv_data, g)
+        level.reset_counters(g, w.lv)
+        player.reset_for_life(g)
+        // Clear any movement key still held when the death animation ended,
+        // so the respawned player doesn't walk off on its own. Mirrors
+        // advance_next_level, which clears held keys the same way the
+        // original does on respawn.
+        player.clear_input_keys(g)
+        areas.update_player_area(w.lv, g)
+        areas.connect(w.lv, g.area_number)
+        g.phase = game_phase.playing
+        g.phase_timer = 0.0
+        // Seed the respawn uncover: the new scene renders under a full red
+        // stipple that thins out rapidly, rather than a hard cut to gameplay.
+        g.respawn_fade_timer = player.respawn_fade_time
+        pics.trigger_get_psyched(g)
+
+    // Start a new game at the current level_num (set by the episode picker).
+    // Resets player state (3 lives, score 0, full HP, pistol 8 ammo) +
+    // rebuilds the level + clears per-episode running totals.
+    let start_new_game_here = (w: world*, vs: const vswap.vswap_file*) ->
+        let g = w.g
+        episode.reset_episode_totals(g)
+        level.reload(w, vs)
+        spawn.find_player_start(w.lv_data, g)
+        level.reset_counters(g, w.lv)
+        // A new game starts cheat-free regardless of what the prior session
+        // had latched. Clear before reset_for_new_game — reset_for_life
+        // re-grants the IDKFA full kit if idkfa_mode is still latched, which
+        // would leak ammo / keys / chain gun into the new game.
+        player.cheats.clear_modes(g)
+        player.reset_for_new_game(g)
+        // reset_for_new_game zeros `score`; mirror that into `oldscore`
+        // so the death-rewind has a sane baseline (rewinds to 0, not
+        // whatever score the previous game ended on).
+        g.oldscore = 0
+        // Consume the BOSS FIGHT latch: teleport to the boss if the map has one.
+        // Done after spawn.find_player_start + level.reset_counters so the teleport
+        // overrides the map's default spawn while the level state is otherwise
+        // fresh. areas.update_player_area / areas.connect below anchor the flood to
+        // the post-teleport tile.
+        if g.want_near_boss then
+            spawn.near_boss(w.lv, g)
+            g.want_near_boss = false
+        areas.update_player_area(w.lv, g)
+        areas.connect(w.lv, g.area_number)
+        g.phase = game_phase.playing
+        g.phase_timer = 0.0
+        g.went_secret = false
+        pics.trigger_get_psyched(g)
+
+    // Game-state phase transitions triggered by timers / flags. Called every
+    // frame from both the interactive loop and (between test commands) the
+    // test-mode scripted play. Returns true if a level reload happened — the
+    // caller uses that to refresh level-bound audio (new music).
+    //
+    // Order matters:
+    //   1. Elevator flag    -> enter intermission (freezes gameplay)
+    //   2. Death timer up   -> restart level (lives left) or high-scores
+    //                          screen (lives exhausted)
+    // Intermission / high-scores ack keys are handled by the caller (they
+    // need input access), not by this function.
+    let update_phase_transitions = (w: world*, vs: const vswap.vswap_file*) ->
+        let g = w.g
+        let mut level_changed = false
+        if g.next_level && g.phase == game_phase.playing
+           && g.next_level_delay <= 0.0 then
+            g.next_level = false
+            // Boss-map exits route through BJ victory; everything else goes
+            // through the regular intermission → advance flow. In normal
+            // play boss maps fire BJ via the exit-tile check in player.update
+            // (which doesn't set next_level), so this branch is reached only
+            // by the synthetic `endepisode` test command on a boss map.
+            if g.level_num % episode.levels_per == 8 then
+                bj_victory.enter(g, w.ac)
+            else
+                intermission.enter(g, w.ac)
+        if g.phase == game_phase.dying && g.phase_timer >= player.death_anim_time then
+            if g.lives > 0 then
+                g.lives = g.lives - 1
+                restart_current_level(w, vs)
+                level_changed = true
+            else
+                // Out of lives: route through the high-scores screen,
+                // matching the original's lives-exhausted → high-scores
+                // flow. The screen handles the score insertion +
+                // optional name entry; on dismiss it routes back to the
+                // title (see the high_scores keydown handler in the main
+                // loop). The level is intentionally NOT reloaded — the
+                // next NEW GAME / LOAD GAME will rebuild as needed.
+                high_scores_screen.enter(g, w.hs, high_scores_screen.from_death,
+                    g.score, g.level_num + 1, g.level_num / episode.levels_per)
+                g.has_active_game = false
+        // Death-cam cutscene has finished its replay hold; hand off
+        // straight to the episode-end Victory screen — the original
+        // skips the per-level tally on a victorious episode end, so
+        // the boss kill jumps directly from cutscene to the victory
+        // screen. Mirror the bj_victory finalisation: award the
+        // level-completion bonus and record the boss level into the
+        // per-episode totals so it shows up in the averages.
+        if g.phase == game_phase.death_cam && g.dc_sub == death_cam.sub.done then
+            score.add(g, intermission.compute_level_bonus(g), w.ac)
+            episode.record_level_for_episode(g)
+            episode_end.enter(g)
+        // PG-13 splash auto-advances to the title after a short hold so a
+        // walked-away player doesn't come back to a stuck splash. Any keypress
+        // also advances (handled in the main loop, not here).
+        if g.phase == game_phase.pg13 && g.phase_timer >= pg13_screen.auto_advance_time then
+            g.phase = game_phase.title
+            g.phase_timer = 0.0
+        level_changed
+    // One simulation tick — runs all per-frame game-state updates in order.
+    // Used by both the interactive game loop and the headless test mode so
+    // they stay in sync. Add new per-frame systems here, not at each caller.
+    let tick = (w: world*, dt: f64) ->
+        let g = w.g
+        // Damage flash and respawn fade decay every frame regardless of phase.
+        if g.damage_flash_timer > 0.0 then
+            g.damage_flash_timer = g.damage_flash_timer - dt
+            if g.damage_flash_timer < 0.0 then g.damage_flash_timer = 0.0
+        if g.respawn_fade_timer > 0.0 then
+            g.respawn_fade_timer = g.respawn_fade_timer - dt
+            if g.respawn_fade_timer < 0.0 then g.respawn_fade_timer = 0.0
+        // Same for the message-banner timer.
+        if g.msg_timer > 0.0 then
+            g.msg_timer = g.msg_timer - dt
+            if g.msg_timer < 0.0 then g.msg_timer = 0.0
+        // "Got Gatling!" face swap decays regardless of phase — the face cell
+        // keeps refreshing even during frozen phases; the original gated on
+        // its sound-busy check, which we approximate with this timer.
+        if g.got_gatling_timer > 0.0 then
+            g.got_gatling_timer = g.got_gatling_timer - dt
+            if g.got_gatling_timer < 0.0 then g.got_gatling_timer = 0.0
+        // Outside playing only phase_timer advances + the phase-transition
+        // handler runs (so death collapse → restart, etc. can fire). Enemies,
+        // doors, pickups, weapon, player: all frozen.
+        match g.phase with
+        | playing ->
+            // "GET PSYCHED!" load overlay: freeze everything while visible so
+            // the player can't walk into a wall on the first frame after a
+            // level transition. Processed before `next_level` so a player who
+            // hits the elevator during the overlay (impossible, but defensive)
+            // still sees the level-done flow resume cleanly once it finishes.
+            if g.get_psyched_timer > 0.0 then
+                g.get_psyched_timer = g.get_psyched_timer - dt
+                if g.get_psyched_timer < 0.0 then g.get_psyched_timer = 0.0
+            // Elevator-switch pre-intermission wait: freeze all gameplay for
+            // `next_level_delay` seconds so the level-done sound plays out in
+            // the world before the tally screen takes over. update_phase_transitions
+            // won't enter the intermission phase until the delay has elapsed.
+            // We keep gameplay frozen for the whole `next_level` window (even
+            // on the tick where delay reaches 0) so the phase transition fires
+            // cleanly at end of tick without one stray gameplay frame sneaking
+            // in.
+            else if g.next_level then
+                if g.next_level_delay > 0.0 then
+                    g.next_level_delay = g.next_level_delay - dt
+                    if g.next_level_delay < 0.0 then g.next_level_delay = 0.0
+                // Even with the rest of gameplay frozen, dying actors keep
+                // animating so anything mid-die when the elevator switch fired
+                // finishes its death cascade before the tally screen.
+                enemies.ai.update_dying_enemies(w.lv, w.g, dt)
+            else
+                // The original resets its "made noise" flag at the top of each
+                // frame; we follow suit so noise from one tick only wakes
+                // enemies on the same tick. update_weapon raises it again when
+                // the player fires a gun, and enemies.ai.damage_enemy raises
+                // it on a knife hit.
+                g.made_noise = false
+                g.level_time = g.level_time + dt
+                player.update(w.lv, g, dt, w.ac)
+                doors.update(w.lv, g, dt, w.ac, player.radius)
+                pushwall.update(w.lv, dt)
+                player.update_weapon(w, dt)
+                enemies.ai.update_enemies(w, dt)
+                projectiles.update_all(w.lv, g, w.ac, dt)
+                pickups.check(w.lv, g, w.ac)
+                hud.update_face(g, dt)
+        | _ ->
+            g.phase_timer = g.phase_timer + dt
+            if g.phase == game_phase.title
+                    && g.phase_timer >= title_screen.cycle_total then
+                g.phase_timer = g.phase_timer - title_screen.cycle_total
+            if g.phase == game_phase.dying then
+                // Swing the heading toward whoever just killed us, like
+                // the original's death rotation. No-op once aligned (or
+                // when no killer was latched, e.g. the synthetic `kill`
+                // test command).
+                player.update_death_swing(g, dt)
+            else if g.phase == game_phase.intermission then
+                intermission.tick(g, w.ac, dt)
+            else if g.phase == game_phase.bj_victory then
+                bj_victory.tick(w.lv, g, w.ac, dt)
+                // Boss corpse + any other dying actors keep animating during
+                // the BJ run so the player sees the death animation finish
+                // (not just the first die frame freeze-framed under BJ).
+                enemies.ai.update_dying_enemies(w.lv, w.g, dt)
+            else if g.phase == game_phase.death_cam then
+                // Pump the dying boss's animation frames before the phase
+                // logic inspects e->state — death_cam.sub.pre_fade and
+                // death_cam.sub.replay_hold both advance on the die → dead
+                // transition, so the tick order matters.
+                enemies.ai.update_dying_enemies(w.lv, w.g, dt)
+                death_cam.tick(w.lv, g, w.ac, dt)
+        // Phase transitions (death collapse → restart / game-over). Main loop
+        // layers music switching on top of this; test mode doesn't need music
+        // so it can ignore the return value.
+        let _changed = update_phase_transitions(w, w.ac.vs)
+        // Headless test mode has no audio thread to drain cmd_ring, so pump it
+        // synchronously each tick: this runs the real producer -> ring -> consumer
+        // path (not a bypass) and keeps digi / sfx state observable to the test
+        // harness. Per-tick so a long `wait:N` can't overflow the ring. Gated on
+        // test_mode because the interactive game drains on the audio thread, and
+        // the ring is single-consumer.
+        if w.g.test_mode then
+            audio_thread.drain(w.ac)
+            atomic_store_release(&w.ac.adlib_busy_flag, w.ac.sfx.active)
+
+    // Render the full game frame to fb (used before saving a screenshot).
+    let render_frame = (w: world*, vs: const vswap.vswap_file*, pal: const u32[]) ->
+        // HUD-skip predicate for 3D phases (playing / dying / bj_victory /
+        // death_cam). The HUD strip in dbuf carries across frames since the
+        // 3D pipeline only writes rows 0..view_render_h, so on odd frames we
+        // skip hud.render / hud.render_message / composite_hud and the prior
+        // frame's HUD pixels remain visible. Bypassed when (a) force_redraw
+        // is set — the dbuf was just reallocated and the HUD strip is zero
+        // — or (b) the elevator fade is active, since dbuf_tint_full would
+        // otherwise compound onto already-tinted HUD pixels.
+        //
+        // Invariant: only paths that write to dbuf[view_render_h..screen_h]
+        // (the HUD strip) belong inside the !skip_hud branch. Writes into
+        // fb's viewport region (rows < view_h) must run every frame because
+        // composite_view_overlay always runs and would otherwise miss them
+        // — e.g. hud.render_message stays outside the skip.
+        let force = w.rc.force_redraw
+        w.rc.force_redraw = false
+        let skip_hud = (w.rc.frame_counter & 1u64) != 0u64
+                       && !force
+                       && !w.g.next_level
+        match w.g.phase with
+        | pg13 ->
+            pg13_screen.render(w.rc, w.vg, pal)
+            overlay.upscale_nx(w.rc)
+            return
+        | title ->
+            title_screen.render(w.rc, w.vg, pal, w.font, w.hs, w.g.phase_timer)
+            overlay.upscale_nx(w.rc)
+            return
+        | main_menu ->
+            menu.render_main(w.rc, w.sm, w.vg, pal, w.font, w.g, w.ac)
+            overlay.upscale_nx(w.rc)
+            return
+        | intermission ->
+            intermission.render(w.rc, w.vg, pal, w.g)
+            overlay.upscale_nx(w.rc)
+            return
+        | episode_end ->
+            episode_end.render(w.rc, w.vg, pal, w.font, w.g)
+            overlay.upscale_nx(w.rc)
+            return
+        | endart ->
+            endart_screen.render(w.rc, w.vg, pal, w.font, w.g)
+            overlay.upscale_nx(w.rc)
+            return
+        | high_scores ->
+            high_scores_screen.render(w.rc, w.vg, pal, w.font, w.hs, w.g.phase_timer)
+            overlay.upscale_nx(w.rc)
+            return
+        | death_cam ->
+            // Pre-clear fb's top region: low-res viewport overlays (banner
+            // text, etc.) draw into fb at alpha=0xFF; the composite step
+            // skips alpha=0 sentinel pixels so the high-res raycaster
+            // content shows through everywhere else.
+            overlay.clear_view_sentinel(w.rc)
+            death_cam.render(w, vs, pal, w.vg)
+            if !skip_hud then hud.render(w.rc, w.vg, pal, w.g)
+            overlay.render_map(w.rc, w.lv, w.g)
+            overlay.composite_view_overlay(w.rc)
+            if !skip_hud then overlay.composite_hud(w.rc)
+            return
+        | _ -> void()
+        // 3D phases (playing / dying / bj_victory): raycaster and
+        // viewport effects render into vbuf — either dbuf's top region
+        // (SSAA off) or a 2× ssaa_buf that gets box-filtered into dbuf
+        // after the weapon render (SSAA on). HUD and low-res viewport
+        // overlays go to fb and are composited afterward.
+        overlay.clear_view_sentinel(w.rc)
+        raycaster.render_walls(w.lv, w.rc, w.g, vs, pal)
+        billboards.build(w.lv, w.rc, w.g, vs.sprite_start)
+        billboards.render(w.rc, w.g, vs, pal)
+        player.render_weapon(w.rc, vs, pal, w.g)
+        // Resolve SSAA buffer into dbuf's viewport region before any
+        // viewport tints / dissolves run — those operate on dbuf so we
+        // want the downsample to land first. No-op when SSAA is off.
+        overlay.ssaa_downsample(w.rc)
+        // Damage / death red overlays — applied over the 3D view, under the HUD.
+        // Phase-filtered renderers above return early, so this block only runs
+        // during playing or dying. Damage flash is a brief uniform alpha
+        // blend; the longer death + respawn transitions use a spatial-hash
+        // stipple so the scene fills / clears as speckled grains of red.
+        let red_tint = 0x00C00000u32
+        let flash_a = if w.g.damage_flash_timer > 0.0 then
+            w.g.damage_flash_timer / player.damage_flash_time * 0.45
+        else 0.0
+        if flash_a > 0.0 then overlay.viewport_tint(w.rc, red_tint, flash_a)
+        let stipple_progress = match w.g.phase with
+        | dying ->
+            // Ramp 0 → 1 over player.death_fade_time, then hold at 1 until
+            // player.death_anim_time elapses and the phase transition fires.
+            math.min(w.g.phase_timer / player.death_fade_time, 1.0)
+        | _ ->
+            // Quick uncover back to the new scene on respawn.
+            if w.g.respawn_fade_timer > 0.0 then
+                w.g.respawn_fade_timer / player.respawn_fade_time
+            else 0.0
+        overlay.dissolve_stipple(w.rc, red_tint, stipple_progress)
+        if !skip_hud then hud.render(w.rc, w.vg, pal, w.g)
+        // hud.render_message writes to fb's viewport region, not the HUD
+        // strip — it's composited via composite_view_overlay (always runs),
+        // so it must paint every frame or the banner blinks.
+        hud.render_message(w.rc, w.font, w.g)
+        overlay.render_map(w.rc, w.lv, w.g)
+        // "GET PSYCHED!" level-entry overlay. The original fills the 3D
+        // viewport with the standard background grey (palette 0x7f), draws
+        // the pic centered, and paints a progress bar across the bottom of
+        // the pic frame. We replicate the same layout and animate the bar
+        // 0→100% over the hold duration so it reads as genuine progress
+        // rather than a static always-full bar. Drawn AFTER hud.render so
+        // the status bar stays visible underneath, matching the original.
+        if w.g.get_psyched_timer > 0.0 then
+            pics.render_get_psyched_overlay(w.rc, w.vg, pal,
+                w.g.get_psyched_timer, pics.get_psyched_time)
+        overlay.composite_view_overlay(w.rc)
+        if !skip_hud then overlay.composite_hud(w.rc)
+        // Pre-intermission fade-to-black: while `next_level` is latched and
+        // gameplay is frozen, darken the entire frame linearly as next_level_delay
+        // ticks down. Gives the player immediate visual feedback that the
+        // elevator/boss activation registered, rather than a silent 1s hitch
+        // followed by a sudden jump to the tally screen. Applied AFTER
+        // composite so both viewport and HUD fade as one unit.
+        if w.g.next_level && player.elevator_wait_time > 0.0 then
+            let frac = 1.0 - w.g.next_level_delay / player.elevator_wait_time
+            let alpha = if frac < 0.0 then 0.0 else if frac > 1.0 then 1.0 else frac
+            overlay.dbuf_tint_full(w.rc, 0x000000u32, alpha)
+
+    // Take an interactive screenshot: renders, picks the next
+    // rotating slot in $WOLF_FC_HOME/screenshots (or
+    // ~/.wolf-fc/screenshots), writes a PNG, and prints the path to
+    // stdout. Lives here (not in overlay) because it *orchestrates* —
+    // force a redraw, run the full render_frame, then hand the pixels
+    // to overlay.save_png.
+    let take_screenshot = (w: world*, vs: const vswap.vswap_file*, pal: const u32[]) ->
+        match paths.wolf_data_dir() with
+        | none ->
+            discard io.write("[screenshot] HOME not set; skipping\n", stdout)
+        | some(dir) ->
+            defer free(dir)
+            // Best-effort: a real dir-creation failure resurfaces when
+            // save_png below can't write. ensure_dir keeps an existing dir
+            // from reading as a failure.
+            discard io.ensure_dir(dir)
+            discard io.ensure_dir(alloca("%s{dir}/screenshots"))
+            let slot = w.rc.screenshot_slot
+            w.rc.screenshot_slot = (w.rc.screenshot_slot + 1) % overlay.screenshot_max_slots
+            let path = alloca("%s{dir}/screenshots/ss_%03d{slot}.png")
+            // Force a full HUD redraw so the snapshot is full-fidelity
+            // regardless of the main loop's frame-skip cadence.
+            w.rc.force_redraw = true
+            render_frame(w, vs, pal)
+            discard overlay.save_png(w, path)
+            discard io.write(alloca("[screenshot] saved %s{path} (+ -raw.png, -display.png)\n"), stdout)
