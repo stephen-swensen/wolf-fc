@@ -2093,8 +2093,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         match text.parse_i32(arg[9..arg.len]) with
         | ok(n) ->
             if n >= 2 && n <= 8 then
-                apply_scale_factor(w, w.vg, pal, n)
-                void()
+                discard apply_scale_factor(w, w.vg, pal, n)
             else bad("scale in [2,8]")
         | err(_) -> bad("integer scale factor")
     else if text.starts_with(arg, "setssaa:") then
@@ -2105,8 +2104,7 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
         match text.parse_i32(arg[8..arg.len]) with
         | ok(n) ->
             let m = if n < 0 then 0 else if n > 2 then 2 else n
-            apply_ssaa_mode(w, m)
-            void()
+            discard apply_ssaa_mode(w, m)
         | err(_) -> bad("0, 1, or 2")
     else if text.starts_with(arg, "bench:") then
         // Render `n` full frames and report total/per-frame wall time.
@@ -2157,7 +2155,6 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                 else 0.0
             io.write("audiobench n=%d{n}s samples=%d{total_samples} total=%d{total_ms}ms ns/sample=%6.1f{ns_per_sample} realtime=%6.1f{realtime_x}x\n", stdout)
             imf.destroy(ms)
-            void()
         | err(_) -> bad("integer seconds")
     else if text.starts_with(arg, "benchparts:") then
         // Per-section profile: time each chunk of the playing-phase
@@ -2281,7 +2278,6 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             if pw > 0 || ph > 0 then
                 let ch = i + vgagraph.start_pics
                 io.write("pic %d{ch}: %d{pw}x%d{ph}\n", stdout)
-        void()
     else if arg == "level_stats" then
         // Dump total enemy/pushwall/treasure counts as counted by build_level.
         discard io.write("level_stats: enemies=%d{w.lv.total_enemies} pushwalls=%d{w.lv.total_pushwalls} treasures=%d{w.lv.total_treasures}\n", stdout)
@@ -2420,7 +2416,6 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                 io.write("slot %d{i}: E%d{ep}M%d{lvl} diff=%d{s.difficulty} score=%d{s.score} label=", stdout)
                 if lbl_chars.len > 0 then io.write(lbl_chars, stdout)
                 discard io.write("\n", stdout)
-        void()
     else if arg == "endepisode" then
         // Force the episode-end path: sets next_level on level 8 of the
         // current episode so the intermission → episode-end flow runs.
@@ -2593,7 +2588,6 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             io.write("score[%d{i}] %d{e.score} L%d{e.completed} E%d{e.episode + 1} ", stdout)
             if nm.len > 0 then io.write(nm, stdout)
             io.write("\n", stdout)
-        void()
     else if arg == "phase" then
         let phase_s = match g.phase with
         | pg13         -> "pg13"
@@ -2699,7 +2693,6 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             if d < 2.5 then
                 let bs = if s.blocks then "BLOCKS" else "walk"
                 io.write(alloca("  sprite[%d{i}] tile(%d{(i32) s.x},%d{(i32) s.y}) page=%d{s.shape_page} %s{bs} d=%5.3f{d}\n"), stdout)
-        void()
     else if arg == "arrows" then
         // Dump every path-arrow marker tile baked into the level. Lets a
         // test author find a tile to walk a patrolling enemy through to verify
@@ -2709,7 +2702,6 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
                 let v = (i32) w.lv.path_arrows[(i64) x * 64 + (i64) y]
                 if v != dir.nodir then
                     io.write("arrow (%d{x},%d{y}) dir=%d{v}\n", stdout)
-        void()
     else if arg == "enemylist" then
         // Per-enemy dump: grid position, kind, state, dir. Handy to locate
         // a specific enemy for a scripted screenshot or attack test.
@@ -2743,7 +2735,6 @@ let run_test_cmd = (w: world*, arg: const str, pal: const u32[], dt: f64) ->
             | dead  -> "dead"
             let area = (i32) w.lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
             io.write(alloca("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp} area=%d{area} vis=%d{(i32) e.last_visible}\n"), stdout)
-        void()
     else if arg == "pickups" then
         // Per-level pickup inventory: dumps every live sprite whose
         // item_type is something the player could actually grab
@@ -2890,8 +2881,7 @@ let drain_audio_commands = (ac: audio_ctx*) ->
                     // that older outgoing player back to the main thread now.
                     match ac.music_prev with
                     | some(old) ->
-                        spsc.enqueue(ac.free_ring, old)
-                        void()
+                        discard spsc.enqueue(ac.free_ring, old)
                     | none -> void()
                     ac.music_prev = ac.music
                     ac.music_xfade = if ac.music.is_some then music_xfade_samples else 0
@@ -2940,7 +2930,6 @@ let audio_callback = (userdata: any*, stream: u8*, len: i32) ->
         | none -> void()
     // Publish AdLib-busy for the main thread's use-key rhythm gate.
     atomic_store_release(&ac.adlib_busy_flag, ac.sfx.active)
-    void()
 
 // ============================================================
 // Entry point
@@ -3116,8 +3105,7 @@ let main = (args: str[]) ->
         sdl2.set_hint(c"SDL_AUDIODRIVER", c"pipewire")
         if sdl2.init(sdl2.init_audio) != 0 then
             sdl2.set_hint(c"SDL_AUDIODRIVER", c"")
-            sdl2.init(sdl2.init_audio)
-            void()
+            discard sdl2.init(sdl2.init_audio)
         let adrv = sdl2.get_current_audio_driver()
         if adrv != default(const cstr) then
             let mut pref = default(sdl2.audio_spec)
@@ -3375,8 +3363,7 @@ let main = (args: str[]) ->
     // (For a system-wide cure independent of this app, Intel users can
     // also enable the modesetting DDX's Option "TearFree" "true".)
     if !on_wsl then
-        sdl2.set_hint(c"SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", c"0")
-        void()
+        discard sdl2.set_hint(c"SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", c"0")
     // (Video and audio subsystems were already initialized in the
     // audio-driver selection block at startup, before the world was built —
     // the chip constructors needed the detected device rate.)
@@ -3684,8 +3671,7 @@ let main = (args: str[]) ->
                     if fullscreen then
                         if on_wsl then sdl2.maximize_window(win)
                         else
-                            sdl2.set_fullscreen(win, sdl2.window_fullscreen_desktop)
-                            void()
+                            discard sdl2.set_fullscreen(win, sdl2.window_fullscreen_desktop)
                     else
                         if on_wsl then
                             // restore_window alone doesn't drop the
@@ -4062,8 +4048,7 @@ let main = (args: str[]) ->
                                 // pipeline), so `resized` stays false and
                                 // the SDL texture doesn't need recreating.
                                 let next = (g.ssaa_mode + dir + 3) % 3
-                                apply_ssaa_mode(w, next)
-                                void()
+                                discard apply_ssaa_mode(w, next)
                             config.save(config.snapshot(w))
                             if resized then
                                 sdl2.destroy_texture(tex)

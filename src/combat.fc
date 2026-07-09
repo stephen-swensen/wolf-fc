@@ -1000,7 +1000,7 @@ module enemies =
             if dmg_in <= 0 then return
             match g.phase with
             | playing -> void()
-            | _          -> return
+            | _       -> return
             // IDDQD god mode: silently swallow damage. Intentionally
             // no damage flash or pain sound so the cheat reads as
             // "nothing even touched you" rather than a hit absorbed.

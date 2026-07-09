@@ -1195,4 +1195,3 @@ module highscore =
                     io.write("score %d{e.score} %d{e.completed} %d{e.episode} ", f)
                     if nm.len > 0 then io.write(nm, f)
                     io.write("\n", f)
-                void()

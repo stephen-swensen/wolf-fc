@@ -421,10 +421,9 @@ module sfx =
     private let trigger_panned_gain = (sound_id: i32, ac: audio_ctx*,
                                 pan: f64, gain: f64) ->
         if sound_id < 0 || sound_id >= count then return
-        spsc.enqueue(ac.cmd_ring, audio_q.cmd {
+        discard spsc.enqueue(ac.cmd_ring, audio_q.cmd {
             kind = audio_q.play_sfx, sfx_id = sound_id,
             pan = pan, gain = gain, player = none(imf.player*) })
-        void()
 
     // Consumer side (audio thread only): perform the trigger the ring carried.
     // Digi pack is preferred when DIGITIZED SOUND is on and a sample exists;
