@@ -435,14 +435,14 @@ module flow =
     let take_screenshot = (w: world*, vs: const vswap.vswap_file*, pal: const u32[]) ->
         match paths.wolf_data_dir() with
         | none ->
-            discard io.write("[screenshot] HOME not set; skipping\n", stdout)
+            ignore io.write("[screenshot] HOME not set; skipping\n", stdout)
         | some(dir) ->
             defer free(dir)
             // Best-effort: a real dir-creation failure resurfaces when
             // save_png below can't write. ensure_dir keeps an existing dir
             // from reading as a failure.
-            discard io.ensure_dir(dir)
-            discard io.ensure_dir(alloca("%s{dir}/screenshots"))
+            ignore io.ensure_dir(dir)
+            ignore io.ensure_dir(alloca("%s{dir}/screenshots"))
             let slot = w.rc.screenshot_slot
             w.rc.screenshot_slot = (w.rc.screenshot_slot + 1) % overlay.screenshot_max_slots
             let path = alloca("%s{dir}/screenshots/ss_%03d{slot}.png")
@@ -450,5 +450,5 @@ module flow =
             // regardless of the main loop's frame-skip cadence.
             w.rc.force_redraw = true
             render_frame(w, vs, pal)
-            discard overlay.save_png(w, path)
-            discard io.write(alloca("[screenshot] saved %s{path} (+ -raw.png, -display.png)\n"), stdout)
+            ignore overlay.save_png(w, path)
+            ignore io.write(alloca("[screenshot] saved %s{path} (+ -raw.png, -display.png)\n"), stdout)

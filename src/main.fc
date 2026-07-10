@@ -224,7 +224,7 @@ let main = (args: str[]) ->
         sdl2.set_hint(c"SDL_AUDIODRIVER", c"pipewire")
         if sdl2.init(sdl2.init_audio) != 0 then
             sdl2.set_hint(c"SDL_AUDIODRIVER", c"")
-            discard sdl2.init(sdl2.init_audio)
+            ignore sdl2.init(sdl2.init_audio)
         let adrv = sdl2.get_current_audio_driver()
         if adrv != default(const cstr) then
             let mut pref = default(sdl2.audio_spec)
@@ -482,7 +482,7 @@ let main = (args: str[]) ->
     // (For a system-wide cure independent of this app, Intel users can
     // also enable the modesetting DDX's Option "TearFree" "true".)
     if !on_wsl then
-        discard sdl2.set_hint(c"SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", c"0")
+        ignore sdl2.set_hint(c"SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", c"0")
     // (Video and audio subsystems were already initialized in the
     // audio-driver selection block at startup, before the world was built —
     // the chip constructors needed the detected device rate.)

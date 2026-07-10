@@ -116,7 +116,7 @@ module input =
                         if vid.fullscreen then
                             if vid.on_wsl then sdl2.maximize_window(vid.win)
                             else
-                                discard sdl2.set_fullscreen(vid.win, sdl2.window_fullscreen_desktop)
+                                ignore sdl2.set_fullscreen(vid.win, sdl2.window_fullscreen_desktop)
                         else
                             if vid.on_wsl then
                                 // restore_window alone doesn't drop the
@@ -493,7 +493,7 @@ module input =
                                     // pipeline), so `resized` stays false and
                                     // the SDL texture doesn't need recreating.
                                     let next = (g.ssaa_mode + dir + 3) % 3
-                                    discard video.apply_ssaa_mode(w, next)
+                                    ignore video.apply_ssaa_mode(w, next)
                                 config.save(config.snapshot(w))
                                 if resized then
                                     video.recreate_texture(vid, w.rc)

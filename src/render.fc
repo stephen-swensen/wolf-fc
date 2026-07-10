@@ -1457,17 +1457,17 @@ module overlay =
             // Best-effort: if the dir can't be made, list_dir below just finds
             // nothing to clear. ensure_dir keeps a pre-existing dir from
             // reading as a failure.
-            discard io.ensure_dir(dir)
-            discard io.ensure_dir(ss_dir)
+            ignore io.ensure_dir(dir)
+            ignore io.ensure_dir(ss_dir)
             match io.list_dir(ss_dir) with
             | err(_) -> void()
             | ok(entries) ->
                 let mut deleted = 0
                 for name in entries do
                     if text.starts_with(name, "ss_") && text.ends_with(name, ".png") then
-                        discard io.remove(alloca("%s{ss_dir}/%s{name}"))
+                        ignore io.remove(alloca("%s{ss_dir}/%s{name}"))
                         deleted = deleted + 1
                     free(name)
                 free(entries)
                 if deleted > 0 then
-                    discard io.write(alloca("[screenshot] cleared %d{deleted} old file(s) from %s{ss_dir}\n"), stdout)
+                    ignore io.write(alloca("[screenshot] cleared %d{deleted} old file(s) from %s{ss_dir}\n"), stdout)
