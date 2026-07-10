@@ -55,6 +55,25 @@ union game_phase =
                     // qualified, the new row enters an inline name-edit
                     // mode; otherwise any ack key dismisses → title screen.
 
+// Type-associated companion module: variant fall-through means
+// `game_phase.playing` etc. still resolve through it.
+module game_phase =
+    // Compact integer code for the diagnostic log (the union has no
+    // numeric form). Keep in sync with the variant list above.
+    let code = (p: game_phase) ->
+        match p with
+        | pg13 -> 0
+        | title -> 1
+        | main_menu -> 2
+        | playing -> 3
+        | dying -> 4
+        | intermission -> 5
+        | bj_victory -> 6
+        | death_cam -> 7
+        | episode_end -> 8
+        | endart -> 9
+        | high_scores -> 10
+
 // Menu navigation state. `menu_level` picks which list to show:
 //   main        (NEW GAME / SOUND / LOAD GAME / SAVE GAME / RESUME / QUIT)
 //   difficulty  (under NEW GAME, after episode select)

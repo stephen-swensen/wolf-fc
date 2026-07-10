@@ -99,23 +99,6 @@ module diag =
             io.write(alloca("%d{sys.time() - start_ms} %s{label}\n"), f)
             sync_line(f)
 
-    // Compact integer code for the current phase, for the diagnostic log
-    // (game_phase is a union with no numeric form). Keep in sync with the
-    // union. Union references are type-only, so this adds no module edge.
-    let phase_code = (p: game_phase) ->
-        match p with
-        | pg13 -> 0
-        | title -> 1
-        | main_menu -> 2
-        | playing -> 3
-        | dying -> 4
-        | intermission -> 5
-        | bj_victory -> 6
-        | death_cam -> 7
-        | episode_end -> 8
-        | endart -> 9
-        | high_scores -> 10
-
     // Per-frame heartbeat: frame counter, phase + menu_level ints (to spot
     // the quit prompt = menu nav.quit), and the audio-callback count — if
     // `cb` stops advancing across beats, the audio thread has stalled.

@@ -679,7 +679,7 @@ let main = (args: str[]) ->
         // a freeze names the frame + phase + menu we hung in; a `cb` that
         // stops advancing across beats means the audio thread stalled.
         diag_frame = diag_frame + 1i64
-        diag.beat(diag_file, diag_start, diag_frame, diag.phase_code(g.phase),
+        diag.beat(diag_file, diag_start, diag_frame, game_phase.code(g.phase),
                   menu.nav_code(g.menu_level), atomic_load_acquire(&w.ac.cb_count))
 
         // Delta time

@@ -102,7 +102,7 @@ module input =
                     // they hit, so the trail shows e.g. "Y at the quit modal" right
                     // before a freeze. No-op unless $WOLF_FC_DIAG.
                     if !is_key_repeat then
-                        diag.key(diag_file, diag_start, k, diag.phase_code(g.phase),
+                        diag.key(diag_file, diag_start, k, game_phase.code(g.phase),
                                  menu.nav_code(g.menu_level), atomic_load_acquire(&w.ac.cb_count))
                     // Fullscreen toggle — always works (even from menu / pause).
                     // F11 is our own shortcut; Alt+Enter matches the original
