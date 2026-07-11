@@ -76,11 +76,11 @@ struct level =
 // selection.
 // ============================================================
 
-module difficulty =
-    let baby   = 0
-    let easy   = 1
-    let medium = 2
-    let hard   = 3
+enum difficulty =
+    | baby
+    | easy
+    | medium
+    | hard
 
 
 // ============================================================
@@ -88,7 +88,7 @@ module difficulty =
 // ============================================================
 
 module doors =
-    union door_state =
+    enum door_state =
         | closed
         | opening
         | open
@@ -97,14 +97,14 @@ module doors =
     // Outcome of a use-action on a tile in front of the player. Callers
     // pattern-match on this to decide whether the press was "handled"
     // (in which case we skip the generic "do nothing" fall-through).
-    union door_action =
+    enum door_action =
         | no_door        // tile isn't a door, or is already opening/open
         | door_opened    // closed door started opening
         | door_locked    // closed door needs a key the player doesn't have
 
     // Six lock variants encoded in plane-0 door tiles (90..101). Render
     // and key-required logic both pattern-match on this.
-    union door_lock =
+    enum door_lock =
         | normal_a       // 0 — standard door, primary texture
         | gold_key       // 1 — gold key required
         | silver_key     // 2 — silver key required
@@ -113,16 +113,13 @@ module doors =
         | elevator_b     // 5 — second elevator variant
 
     // Decode the (lock_index, vertical) bits from a plane-0 door tile
-    // (90..101). Vertical means tile is even.
+    // (90..101). Vertical means tile is even. The lock index is the enum's
+    // value; anything outside the declared set falls back to a normal door.
     let lock_from_tile = (tile: i32) ->
         let idx = if tile % 2 == 0 then (tile - 90) / 2 else (tile - 91) / 2
-        match idx with
-        | 1 -> door_lock.gold_key
-        | 2 -> door_lock.silver_key
-        | 3 -> door_lock.normal_b
-        | 4 -> door_lock.elevator_a
-        | 5 -> door_lock.elevator_b
-        | _ -> door_lock.normal_a
+        match enum_of(door_lock, idx) with
+        | some(l) -> l
+        | none -> door_lock.normal_a
 
     struct door_obj =
         tile_x: i32
@@ -367,7 +364,7 @@ module pushwall =
 // ============================================================
 
 module pickups =
-    union item_kind =
+    enum item_kind =
         | decoration    // static sprite, no pickup behavior
         // Health
         | dog_food      // +4 health
@@ -459,30 +456,30 @@ module pickups =
             | clip ->
                 // If player was out of ammo (dropped to knife),
                 // restore their best firearm when the clip comes in.
-                if g.ammo == 0 && g.weapon == 0 then g.weapon = g.best_weapon
+                if g.ammo == 0 && g.weapon == weapon.knife then g.weapon = g.best_weapon
                 g.ammo = g.ammo + 8
                 if g.ammo > 99 then g.ammo = 99
                 true
             | clip_small ->
                 // Enemy drops — half the ammo of a map-placed clip
                 // (matches the original's small-clip pickup).
-                if g.ammo == 0 && g.weapon == 0 then g.weapon = g.best_weapon
+                if g.ammo == 0 && g.weapon == weapon.knife then g.weapon = g.best_weapon
                 g.ammo = g.ammo + 4
                 if g.ammo > 99 then g.ammo = 99
                 true
             | machine_gun ->
-                if g.ammo == 0 && g.weapon == 0 then g.weapon = 2
+                if g.ammo == 0 && g.weapon == weapon.knife then g.weapon = weapon.machine_gun
                 g.ammo = g.ammo + 6
                 if g.ammo > 99 then g.ammo = 99
-                if g.weapon < 2 then g.weapon = 2
-                if g.best_weapon < 2 then g.best_weapon = 2
+                if g.weapon < weapon.machine_gun then g.weapon = weapon.machine_gun
+                if g.best_weapon < weapon.machine_gun then g.best_weapon = weapon.machine_gun
                 true
             | chain_gun ->
-                if g.ammo == 0 && g.weapon == 0 then g.weapon = 3
+                if g.ammo == 0 && g.weapon == weapon.knife then g.weapon = weapon.chain_gun
                 g.ammo = g.ammo + 6
                 if g.ammo > 99 then g.ammo = 99
-                if g.weapon < 3 then g.weapon = 3
-                if g.best_weapon < 3 then g.best_weapon = 3
+                if g.weapon < weapon.chain_gun then g.weapon = weapon.chain_gun
+                if g.best_weapon < weapon.chain_gun then g.best_weapon = weapon.chain_gun
                 true
             | gold_key ->
                 g.has_gold_key = true
@@ -1043,9 +1040,11 @@ module spawn =
     // Allocate one enemy entry from plane-1 data. dir4 0..3 is
     // east/north/west/south; multiplied by 2 to land on the cardinal
     // dirs of the 8-dir direction encoding.
-    private let one_enemy = (lv: level*, tx: i32, ty: i32, info: enemy_spawn_info, difficulty: i32) ->
+    private let one_enemy = (lv: level*, tx: i32, ty: i32, info: enemy_spawn_info, difficulty: difficulty) ->
         if lv.num_enemies >= enemies.max_enemies then return
-        let dir8 = info.dir4 * 2   // 0,2,4,6
+        let dir8 = match enum_of(dir, info.dir4 * 2) with   // 0,2,4,6 = E/N/W/S
+                   | some(d8) -> d8
+                   | none -> dir.nodir
         let is_ghost = enemies.kind_is_ghost(info.kind)
         // Pacman ghosts (E1M10) start in chase, never sleep — matches
         // the original's ghost spawn, which goes straight to chase.
@@ -1099,12 +1098,12 @@ module spawn =
     // >= medium; +72 at >= hard. Mirror the same check here so
     // lowering difficulty actually thins the roster. Pre-killed
     // corpses (tier 0, tile 124) spawn unconditionally.
-    private let tier_allowed = (tier: i32, diff: i32) ->
+    private let tier_allowed = (tier: i32, diff: difficulty) ->
         if tier <= 0 then true
         else if tier == 1 then diff >= difficulty.medium
         else diff >= difficulty.hard
 
-    let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: i32, mommy_mode: bool) ->
+    let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: difficulty, mommy_mode: bool) ->
         lv.num_enemies = 0
         for y in 0..map_size do
             for x in 0..map_size do
@@ -1176,7 +1175,7 @@ module spawn =
                 if obj >= 90 && obj <= 97 then
                     lv.path_arrows[idx] = (u8) (obj - 90)
                 else
-                    lv.path_arrows[idx] = (u8) dir.nodir
+                    lv.path_arrows[idx] = (u8) ((i32) dir.nodir)
 
 
 // ============================================================
@@ -1190,7 +1189,7 @@ module level =
     // Allocate a level from the decoded wolf3d map data. Builds tilemap,
     // spawns static sprites, and marks push-wall tiles. Caller must call
     // `level.destroy` when the level is no longer needed.
-    let build = (lv_data: maps.level*, sprite_start: i32, difficulty: i32, mommy_mode: bool) ->
+    let build = (lv_data: maps.level*, sprite_start: i32, difficulty: difficulty, mommy_mode: bool) ->
         let lv = alloc(level {
             tilemap = alloc(u8[map_size * map_size] {})!,
             pushwall_tiles = alloc(bool[map_size * map_size] {})!,

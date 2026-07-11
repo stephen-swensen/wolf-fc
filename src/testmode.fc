@@ -76,7 +76,10 @@ module testmode =
             | err(_) -> bad("integer HP value")
         else if text.starts_with(arg, "setweapon:") then
             match text.parse_i32(arg[10..arg.len]) with
-            | ok(n) -> g.weapon = n
+            | ok(n) ->
+                match enum_of(weapon, n) with
+                | some(wp) -> g.weapon = wp
+                | none -> bad("integer weapon index (0-3)")
             | err(_) -> bad("integer weapon index (0-3)")
         else if text.starts_with(arg, "setammo:") then
             match text.parse_i32(arg[8..arg.len]) with
@@ -264,7 +267,7 @@ module testmode =
             | err(_) -> bad("integer frame count")
         else if arg == "state" then
             io.write("pos=(%8.4f{g.pos_x}, %8.4f{g.pos_y}) dir=(%8.4f{g.dir_x}, %8.4f{g.dir_y})\n", stdout)
-            io.write("health=%d{g.health} ammo=%d{g.ammo} score=%d{g.score} lives=%d{g.lives} level=%d{g.level_num} weapon=%d{g.weapon} best=%d{g.best_weapon}\n", stdout)
+            io.write("health=%d{g.health} ammo=%d{g.ammo} score=%d{g.score} lives=%d{g.lives} level=%d{g.level_num} weapon=%d{(i32) g.weapon} best=%d{(i32) g.best_weapon}\n", stdout)
             let gk = if g.has_gold_key then 1 else 0
             let sk = if g.has_silver_key then 1 else 0
             let gm = if g.god_mode then 1 else 0
@@ -285,7 +288,7 @@ module testmode =
             | endart       -> "endart"
             | high_scores  -> "high_scores"
             let par = if g.level_num < 60 then intermission.par_times[g.level_num] else 0
-            io.write(alloca("phase=%s{phase_s} difficulty=%d{g.difficulty}\n"), stdout)
+            io.write(alloca("phase=%s{phase_s} difficulty=%d{(i32) g.difficulty}\n"), stdout)
             io.write("kills=%d{g.kills}/%d{g.total_kills} secrets=%d{g.secrets}/%d{g.total_secrets} treasures=%d{g.treasures}/%d{g.total_treasures}\n", stdout)
             ignore io.write("time=%6.2f{g.level_time} par=%d{par}\n", stdout)
         else if text.starts_with(arg, "vgrender:") then
@@ -395,7 +398,9 @@ module testmode =
             // reflects it. Useful for testing tier gating (base/+36/+72 tiles).
             match text.parse_i32(arg[14..arg.len]) with
             | ok(n) ->
-                g.difficulty = if n < 0 then 0 else if n > 3 then 3 else n
+                g.difficulty = match enum_of(difficulty, n) with
+                               | some(d) -> d
+                               | none -> if n < 0 then difficulty.baby else difficulty.hard
                 // Re-run spawn.spawn_enemies on the existing level. Since difficulty
                 // only affects which plane-1 enemy tiles spawn, we can clear
                 // lv->num_enemies and re-scan without rebuilding the tilemap.
@@ -759,7 +764,7 @@ module testmode =
             for y in 0..map_size do
                 for x in 0..map_size do
                     let v = (i32) w.lv.path_arrows[(i64) x * 64 + (i64) y]
-                    if v != dir.nodir then
+                    if v != (i32) dir.nodir then
                         io.write("arrow (%d{x},%d{y}) dir=%d{v}\n", stdout)
         else if arg == "enemylist" then
             // Per-enemy dump: grid position, kind, state, dir. Handy to locate
@@ -793,7 +798,7 @@ module testmode =
                 | die   -> "die"
                 | dead  -> "dead"
                 let area = (i32) w.lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
-                io.write(alloca("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{e.dir} hp=%d{e.hp} area=%d{area} vis=%d{(i32) e.last_visible}\n"), stdout)
+                io.write(alloca("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{(i32) e.dir} hp=%d{e.hp} area=%d{area} vis=%d{(i32) e.last_visible}\n"), stdout)
         else if arg == "pickups" then
             // Per-level pickup inventory: dumps every live sprite whose
             // item_type is something the player could actually grab

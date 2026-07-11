@@ -17,7 +17,7 @@ module menu =
     // `main` is the first variant so zero-initialised game state lands
     // there by default. `quit` is a sub-page rather than a separate
     // phase since it draws over the menu chrome and only intercepts Y/N.
-    union nav =
+    enum nav =
         | main
         | difficulty
         | episode
@@ -27,21 +27,6 @@ module menu =
         | options
         | changeview
         | quit
-
-    // Compact integer code for the active menu level, for the diagnostic
-    // log (nav is a union). 8 is the quit (Y/N) modal. Keep in sync with
-    // the union.
-    let nav_code = (m: nav) ->
-        match m with
-        | main -> 0
-        | difficulty -> 1
-        | episode -> 2
-        | savelist -> 3
-        | loadlist -> 4
-        | sound -> 5
-        | options -> 6
-        | changeview -> 7
-        | quit -> 8
 
     // Menu-chrome palette indices, matched to the original. We
     // resolve them through `pal[]` at draw time so they always come
@@ -123,7 +108,7 @@ module menu =
 
     // How a row reacts to input. Used by the sfx dispatch in main.fc
     // to pick the right confirm cue for every setting-changed event.
-    union option_kind =
+    enum option_kind =
         | toggle    // row flips on Enter or ←/→ (sound, options)
         | slider    // row steps on ←/→ (sound gain, options shadow/speed
                     // sliders, changeview multi-option cyclers)

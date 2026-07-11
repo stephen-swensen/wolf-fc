@@ -8,17 +8,21 @@
 // (east=0, NE=1, N=2, ... SE=7). Dir 8 = "nodir" (stationary / blocked-in).
 // ============================================================
 
-module dir =
-    let east      = 0
-    let northeast = 1
-    let north     = 2
-    let northwest = 3
-    let west      = 4
-    let southwest = 5
-    let south     = 6
-    let southeast = 7
-    let nodir     = 8
+enum dir =
+    | east
+    | northeast
+    | north
+    | northwest
+    | west
+    | southwest
+    | south
+    | southeast
+    | nodir          // stationary / blocked-in; never a table index
 
+// Companion module: direction lookup tables, width 8 — `nodir` is a valid
+// heading but never a movement, so every indexing site gates on it first
+// (an ungated nodir index would abort on the bounds check).
+module dir =
     // Unit-vector lookup (wolf-fc game coords: +x east, +y south).
     let vx = f64[8] { 1.0,  0.7071068,  0.0, -0.7071068, -1.0, -0.7071068,  0.0,  0.7071068 }
     let vy = f64[8] { 0.0, -0.7071068, -1.0, -0.7071068,  0.0,  0.7071068,  1.0,  0.7071068 }
@@ -26,7 +30,8 @@ module dir =
     let dx = i32[8]   { 1,  1,  0, -1, -1, -1,  0,  1 }
     let dy = i32[8]   { 0, -1, -1, -1,  0,  1,  1,  1 }
     // Opposite direction (for "don't turn straight around first").
-    let opposite = i32[8] { 4, 5, 6, 7, 0, 1, 2, 3 }
+    let opposite = dir[8] { dir.west, dir.southwest, dir.south, dir.southeast,
+                            dir.east, dir.northeast, dir.north, dir.northwest }
 
 
 // ============================================================
@@ -51,7 +56,7 @@ module enemies =
     let rnd_byte = (g: game*) ->
         (i32) (random.pcg_random.next_u32(&g.rng_enemy) & 0xFFu32)
 
-    union enemy_kind =
+    enum enemy_kind =
         | guard
         | officer
         | ss
@@ -78,7 +83,7 @@ module enemies =
         | clyde
         | inky
 
-    union enemy_state =
+    enum enemy_state =
         | stand      // idle — transitions to chase/shoot on sight
         | path       // patrolling along pre-set direction
         | chase      // actively pursuing player
@@ -93,7 +98,7 @@ module enemies =
     // of being latched after the fact by each caller. Add a variant
     // here and the match inside damage_player flags the gap at compile
     // time.
-    union damage_source =
+    enum damage_source =
         | bullet     // enemy hitscan (guard / officer / SS / humanoid bosses)
         | bite       // dog melee
         | rocket     // Gift / Fat missile
@@ -111,7 +116,7 @@ module enemies =
         tile_y: i32
         kind: enemy_kind
         state: enemy_state
-        dir: i32              // 0..7 or 8 (nodir)
+        dir: dir              // heading (nodir = stationary / blocked-in)
         hp: i32
         anim_frame: i32       // index into the state's frame list (walk 0-3, shoot 0-2, die 0-3)
         anim_timer: f64       // seconds until next anim transition
@@ -214,10 +219,13 @@ module enemies =
     // per-difficulty starting-HP table. Mutants, fake Hitler, and every
     // boss scale up from baby → death incarnate; grunts and dogs are
     // constant across difficulties.
-    let hp_for_kind = (k: enemy_kind, d: i32) ->
-        let diff_pick = (baby: i32, easy: i32, med: i32, hard: i32) ->
-            if d == 0 then baby else if d == 1 then easy
-            else if d == 2 then med else hard
+    let hp_for_kind = (k: enemy_kind, d: difficulty) ->
+        let diff_pick = (hp_baby: i32, hp_easy: i32, hp_med: i32, hp_hard: i32) ->
+            match d with
+            | baby -> hp_baby
+            | easy -> hp_easy
+            | medium -> hp_med
+            | hard -> hp_hard
         match k with
         | guard        -> 25
         | officer      -> 50
@@ -844,7 +852,7 @@ module enemies =
         // For diagonal moves we also insist both orthogonal neighbors
         // are open so enemies don't clip the corner of a wall (matches
         // the original's corner-cutting check).
-        private let try_enemy_walk = (lv: level*, g: game*, self_idx: i32, d: i32) ->
+        private let try_enemy_walk = (lv: level*, g: game*, self_idx: i32, d: dir) ->
             if d == dir.nodir then false
             else
                 let e = &lv.enemies[self_idx]
@@ -891,7 +899,7 @@ module enemies =
             if old_dir != dir.nodir && old_dir != turnaround then
                 e.dir = old_dir
                 if try_enemy_walk(lv, g, self_idx, old_dir) then return
-            let cardinals = i32[4] { dir.east, dir.north, dir.west, dir.south }
+            let cardinals = dir[4] { dir.east, dir.north, dir.west, dir.south }
             let start = rnd_byte(g) % 4
             for k in 0..4 do
                 let d = cardinals[(start + k) % 4]
@@ -911,7 +919,9 @@ module enemies =
         let select_path_dir = (lv: level*, g: game*, self_idx: i32) ->
             let e = &lv.enemies[self_idx]
             let arrow = (i32) lv.path_arrows[(i64) e.tile_x * 64 + (i64) e.tile_y]
-            if arrow != dir.nodir then e.dir = arrow
+            match enum_of(dir, arrow) with
+            | some(a) -> if a != dir.nodir then e.dir = a else void()
+            | none -> void()
             if e.dir == dir.nodir || !try_enemy_walk(lv, g, self_idx, e.dir) then
                 e.dir = dir.nodir
 
@@ -1062,33 +1072,34 @@ module enemies =
         // Pool of guard death screams. The original picks one of eight
         // at random for guard-class enemies so repeated kills don't
         // sound identical.
-        private let guard_death_sounds = i32[8] {
-            29, 30, 31, 33, 34, 36, 37, 38
-            // sfx.id.death_1..9 without #6 — the original reserves #6
+        private let guard_death_sounds = sfx.id[8] {
+            sfx.id.death_1, sfx.id.death_2, sfx.id.death_3, sfx.id.death_4,
+            sfx.id.death_5, sfx.id.death_7, sfx.id.death_8, sfx.id.death_9
+            // death_1..9 without #6 — the original reserves #6
             // for a map-9 easter-egg roll (1/256), not part of the
             // regular pool; not currently emulated here.
         }
 
         // Per-kind death vocal (matches the original's per-kind death
         // scream lookup). Mutants are silent; ghosts (pacman) are
-        // silent. Returns -1 for those cases so callers can skip the
+        // silent. Returns none for those cases so callers can skip the
         // sfx.trigger_at call.
         let death_scream_for_kind = (k: enemy_kind, g: game*) ->
             match k with
-            | dog          -> sfx.id.dog_death
-            | ss           -> sfx.id.leben        // "Mein Leben!"
-            | officer      -> sfx.id.nein_sovass
-            | mutant       -> sfx.id.ahhhg
-            | guard        -> guard_death_sounds[rnd_byte(g) & 7]
-            | hans         -> sfx.id.mutti        // "Mutti!"
-            | gretel       -> sfx.id.mein
-            | giftmacher   -> sfx.id.donner
-            | fat          -> sfx.id.rose
-            | schabbs      -> sfx.id.meingott     // "Mein Gott!"
-            | hitler_fake  -> sfx.id.hitlerha
-            | mecha_hitler -> sfx.id.scheist
-            | hitler       -> sfx.id.eva
-            | blinky | pinky | clyde | inky -> -1
+            | dog          -> some(sfx.id.dog_death)
+            | ss           -> some(sfx.id.leben)        // "Mein Leben!"
+            | officer      -> some(sfx.id.nein_sovass)
+            | mutant       -> some(sfx.id.ahhhg)
+            | guard        -> some(guard_death_sounds[rnd_byte(g) & 7])
+            | hans         -> some(sfx.id.mutti)        // "Mutti!"
+            | gretel       -> some(sfx.id.mein)
+            | giftmacher   -> some(sfx.id.donner)
+            | fat          -> some(sfx.id.rose)
+            | schabbs      -> some(sfx.id.meingott)     // "Mein Gott!"
+            | hitler_fake  -> some(sfx.id.hitlerha)
+            | mecha_hitler -> some(sfx.id.scheist)
+            | hitler       -> some(sfx.id.eva)
+            | blinky | pinky | clyde | inky -> none(sfx.id)
 
         // Transition this enemy into die: play death sound, drop any
         // pickup they carry, and let the animation timer tick out the
@@ -1129,8 +1140,9 @@ module enemies =
             e.anim_frame = 0
             e.anim_timer = die_frame_time
             e.dir = dir.nodir
-            let snd = death_scream_for_kind(e.kind, g)
-            if snd >= 0 then sfx.trigger_at(snd, ac, g, e.x, e.y)
+            match death_scream_for_kind(e.kind, g) with
+            | some(snd) -> sfx.trigger_at(snd, ac, g, e.x, e.y)
+            | none -> void()
             let drop = drop_for_kind(e.kind)
             match drop with
             | decoration -> void()
@@ -1257,21 +1269,23 @@ module enemies =
                 // Mutants are silent (no vocalization). Ghosts are
                 // silent. Each boss has a signature line.
                 let snd = match e.kind with
-                | guard        -> sfx.id.halt
-                | officer      -> sfx.id.spion       // "Spion!"
-                | ss           -> sfx.id.schutzad    // "Schutzstaffel!"
-                | dog          -> sfx.id.dog_bark
-                | mutant       -> -1              // silent
-                | hans         -> sfx.id.gutentag    // "Guten Tag!"
-                | gretel       -> sfx.id.kein
-                | giftmacher   -> sfx.id.eine
-                | fat          -> sfx.id.erlauben
-                | schabbs      -> sfx.id.schabbsha
-                | hitler_fake  -> sfx.id.tot_hund
-                | mecha_hitler -> sfx.id.die
-                | hitler       -> sfx.id.die
-                | blinky | pinky | clyde | inky -> -1    // silent
-                if snd >= 0 then sfx.trigger_at(snd, ac, g, e.x, e.y)
+                | guard        -> some(sfx.id.halt)
+                | officer      -> some(sfx.id.spion)       // "Spion!"
+                | ss           -> some(sfx.id.schutzad)    // "Schutzstaffel!"
+                | dog          -> some(sfx.id.dog_bark)
+                | mutant       -> none(sfx.id)          // silent
+                | hans         -> some(sfx.id.gutentag)    // "Guten Tag!"
+                | gretel       -> some(sfx.id.kein)
+                | giftmacher   -> some(sfx.id.eine)
+                | fat          -> some(sfx.id.erlauben)
+                | schabbs      -> some(sfx.id.schabbsha)
+                | hitler_fake  -> some(sfx.id.tot_hund)
+                | mecha_hitler -> some(sfx.id.die)
+                | hitler       -> some(sfx.id.die)
+                | blinky | pinky | clyde | inky -> none(sfx.id)    // silent
+                match snd with
+                | some(sn) -> sfx.trigger_at(sn, ac, g, e.x, e.y)
+                | none -> void()
 
         // Enemy firing an attack at the player, called from the shoot
         // frames. Ports the original's distance-based hit chance and
@@ -1559,7 +1573,7 @@ module enemies =
 module projectiles =
     import math from std::
 
-    union projectile_kind =
+    enum projectile_kind =
         | needle    // Schabbs syringe: 4-frame flip-book, non-rotating
         | rocket    // Giftmacher / Fat missile: 8 rotating angles, explodes
         | fire      // Fake Hitler flamethrower: 2-frame animation, dissipates
@@ -1653,11 +1667,13 @@ module projectiles =
             anim_timer = anim_time
         }
         let snd = match k with
-        | needle -> sfx.id.schabbs_throw
-        | rocket -> sfx.id.missile_fire
-        | fire   -> sfx.id.flamethrower
-        | boom   -> -1
-        if snd >= 0 then sfx.trigger_at(snd, ac, g, e.x, e.y)
+        | needle -> some(sfx.id.schabbs_throw)
+        | rocket -> some(sfx.id.missile_fire)
+        | fire   -> some(sfx.id.flamethrower)
+        | boom   -> none(sfx.id)
+        match snd with
+        | some(sn) -> sfx.trigger_at(sn, ac, g, e.x, e.y)
+        | none -> void()
 
     // Wall / closed-door collision for a projectile point at (x, y).
     // Matches the original's 3x3 tile scan within the projectile
@@ -1832,8 +1848,8 @@ module hitscan =
     // knife reach is ~1.5 tiles). `tile_dist` is the Chebyshev
     // (max-axis) distance in tile units, which is what the gun
     // damage bands key off.
-    private let weapon_damage_roll = (g: game*, weapon: i32, euclid_dist: f64, tile_dist: i32) ->
-        if weapon == 0 then
+    private let weapon_damage_roll = (g: game*, wp: weapon, euclid_dist: f64, tile_dist: i32) ->
+        if wp == weapon.knife then
             // Knife — flat roll within melee reach, zero beyond.
             if euclid_dist > 1.5 then 0
             else enemies.rnd_byte(g) >> 4   // 0-15
@@ -1864,7 +1880,7 @@ module hitscan =
         // ai.damage_enemy below) when it actually connects. So gate
         // on weapon > 0 here, and let ai.damage_enemy cover the
         // knife-hit case.
-        if g.weapon > 0 then g.made_noise = true
+        if g.weapon > weapon.knife then g.made_noise = true
         let sprite_start = ac.vs.sprite_start
         let idx = find_hit_enemy(lv, g)
         if idx < 0 then return

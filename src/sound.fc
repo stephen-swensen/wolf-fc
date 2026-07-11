@@ -686,11 +686,12 @@ module spsc =
 // main) as bare `imf.player*` over a second ring, since only the main thread
 // may free them.
 module audio_q =
-    let play_sfx  = 0    // sfx_id + pan + gain are set; trigger a sound
-    let set_music = 1    // player is set; install it as the new track
+    enum op =
+        | play_sfx       // sfx_id + pan + gain are set; trigger a sound
+        | set_music      // player is set; install it as the new track
 
     struct cmd =
-        kind: i32
+        kind: op
         sfx_id: i32
         pan: f64
         gain: f64

@@ -45,7 +45,9 @@ module bj_victory =
     // loop advances one tile before consulting the arrow table again.
     private let select_path_dir = (lv: level*, g: game*) ->
         let arrow = (i32) lv.path_arrows[(i64) g.bj_tile_x * 64 + (i64) g.bj_tile_y]
-        if arrow != dir.nodir then g.bj_dir = arrow
+        match enum_of(dir, arrow) with
+        | some(a) -> if a != dir.nodir then g.bj_dir = a else void()
+        | none -> void()
         g.bj_distance = 1.0
         if g.bj_dir == dir.nodir then return
         let nx = g.bj_tile_x + dir.dx[g.bj_dir]
@@ -373,8 +375,9 @@ module death_cam =
                     e.anim_frame = 0
                     e.anim_timer = enemies.die_frame_time
                     e.dir = dir.nodir
-                    let snd = enemies.ai.death_scream_for_kind(e.kind, g)
-                    if snd >= 0 then sfx.trigger_at(snd, ac, g, e.x, e.y)
+                    match enemies.ai.death_scream_for_kind(e.kind, g) with
+                    | some(snd) -> sfx.trigger_at(snd, ac, g, e.x, e.y)
+                    | none -> void()
                 | _ -> void()
                 g.dc_sub = sub.replay_anim
                 g.dc_timer = 0.0

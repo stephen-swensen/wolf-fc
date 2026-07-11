@@ -94,7 +94,7 @@ let main = (args: str[]) ->
     //                           values below 2 are clamped up.
     let mut test_mode = false
     let mut start_level = none(i32)
-    let mut start_difficulty = none(i32)
+    let mut start_difficulty = none(difficulty)
     let mut start_near_boss = false
     let mut start_near_goldkey = false
     let mut start_near_silverkey = false
@@ -122,7 +122,10 @@ let main = (args: str[]) ->
             | err(_)    -> void()
         if text.starts_with(a, "--difficulty=") then
             match text.parse_i32(a[13..a.len]) with
-            | ok(n) -> if n >= 0 && n < 4 then start_difficulty = some(n)
+            | ok(n) ->
+                match enum_of(difficulty, n) with
+                | some(d) -> start_difficulty = some(d)
+                | none -> void()
             | err(_)    -> void()
         if text.starts_with(a, "--max-scale=") then
             match text.parse_i32(a[12..a.len]) with
@@ -265,7 +268,7 @@ let main = (args: str[]) ->
         level_num = 0,
         has_gold_key = false, has_silver_key = false,
         next_level = false, next_level_delay = 0.0,
-        weapon = 1, best_weapon = 1, went_secret = false,
+        weapon = weapon.pistol, best_weapon = weapon.pistol, went_secret = false,
         fire_timer = 0.0, weapon_frame = 0,
         face_frame = 0, face_count = 0.0,
         area_number = -1, made_noise = false, player_running = false, want_near_boss = false,
@@ -679,8 +682,8 @@ let main = (args: str[]) ->
         // a freeze names the frame + phase + menu we hung in; a `cb` that
         // stops advancing across beats means the audio thread stalled.
         diag_frame = diag_frame + 1i64
-        diag.beat(diag_file, diag_start, diag_frame, game_phase.code(g.phase),
-                  menu.nav_code(g.menu_level), atomic_load_acquire(&w.ac.cb_count))
+        diag.beat(diag_file, diag_start, diag_frame, (i32) g.phase,
+                  (i32) g.menu_level, atomic_load_acquire(&w.ac.cb_count))
 
         // Delta time
         let now = sdl2.get_ticks()
@@ -798,7 +801,7 @@ let main = (args: str[]) ->
         if want_chunk != w.ac.music_chunk && audio_dev > 0u32 && want_chunk < ad.num_chunks then
             let np = font.music_load(ad, want_chunk, (f64) w.ac.sample_rate)
             let posted = spsc.enqueue(w.ac.cmd_ring, audio_q.cmd {
-                kind = audio_q.set_music, sfx_id = 0,
+                kind = audio_q.op.set_music, sfx_id = 0,
                 pan = 0.0, gain = 0.0, player = some(np) })
             if posted then
                 w.ac.music_chunk = want_chunk

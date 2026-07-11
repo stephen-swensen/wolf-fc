@@ -1430,7 +1430,7 @@ module overlay =
         if phase_has_3d_view then flatten_view_to_fb(w.rc)
         let gk = if g.has_gold_key then 1 else 0
         let sk = if g.has_silver_key then 1 else 0
-        let meta = alloc("level=%d{g.level_num + 1}\npos=(%7.3f{g.pos_x}, %7.3f{g.pos_y})\ndir=(%7.4f{g.dir_x}, %7.4f{g.dir_y})\nhealth=%d{g.health}\nammo=%d{g.ammo}\nscore=%d{g.score}\nlives=%d{g.lives}\nweapon=%d{g.weapon}\nkeys=gold:%d{gk},silver:%d{sk}")!
+        let meta = alloc("level=%d{g.level_num + 1}\npos=(%7.3f{g.pos_x}, %7.3f{g.pos_y})\ndir=(%7.4f{g.dir_x}, %7.4f{g.dir_y})\nhealth=%d{g.health}\nammo=%d{g.ammo}\nscore=%d{g.score}\nlives=%d{g.lives}\nweapon=%d{(i32) g.weapon}\nkeys=gold:%d{gk},silver:%d{sk}")!
         defer free(meta)
         png.write(path, w.rc.fb, w.rc.fb_w, game_h, meta)?
         let raw_path = derive_path(path, "-raw")

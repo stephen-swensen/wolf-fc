@@ -18,7 +18,16 @@ import random from std::    // game.rng_enemy / rng_face field types
 //   playing       — normal gameplay
 //   dying         — collapse animation + red screen tint after HP=0
 //   intermission  — stats screen between levels (press space to continue)
-union game_phase =
+// Player weapons in tier order. The numeric values are the save-file codes
+// and the indices of the per-weapon tables in player.fc (fire_rate,
+// weapon_fire_snd, weapon_sprite_base).
+enum weapon =
+    | knife
+    | pistol
+    | machine_gun
+    | chain_gun
+
+enum game_phase =
     | pg13          // PG-13 parental-advisory splash shown once at startup;
                     // any key (or a short auto-timer) advances to title.
                     // Original Wolf3D had a SIGNON banner (a separate
@@ -54,25 +63,6 @@ union game_phase =
                     // entry points to the score table. If the ending game
                     // qualified, the new row enters an inline name-edit
                     // mode; otherwise any ack key dismisses → title screen.
-
-// Type-associated companion module: variant fall-through means
-// `game_phase.playing` etc. still resolve through it.
-module game_phase =
-    // Compact integer code for the diagnostic log (the union has no
-    // numeric form). Keep in sync with the variant list above.
-    let code = (p: game_phase) ->
-        match p with
-        | pg13 -> 0
-        | title -> 1
-        | main_menu -> 2
-        | playing -> 3
-        | dying -> 4
-        | intermission -> 5
-        | bj_victory -> 6
-        | death_cam -> 7
-        | episode_end -> 8
-        | endart -> 9
-        | high_scores -> 10
 
 // Menu navigation state. `menu_level` picks which list to show:
 //   main        (NEW GAME / SOUND / LOAD GAME / SAVE GAME / RESUME / QUIT)
@@ -182,8 +172,8 @@ struct game =
     // 0 the intermission phase is entered. Gives the level-done sound
     // ("elevator ding") time to play in the world before the tally screen pops.
     next_level_delay: f64
-    weapon: i32          // 0=knife, 1=pistol, 2=machine gun, 3=chain gun
-    best_weapon: i32     // highest-tier firearm owned (pistol..chain). When
+    weapon: weapon       // currently equipped weapon
+    best_weapon: weapon  // highest-tier firearm owned (pistol..chain). When
                          // ammo runs out we drop to knife; picking ammo up
                          // again restores this weapon (matches the original).
     // Latched when the player uses the alt-elevator switch (plane-0 raw tile
@@ -230,7 +220,7 @@ struct game =
     bj_y: f64
     bj_tile_x: i32     // current tile (for path-arrow lookup)
     bj_tile_y: i32
-    bj_dir: i32        // current heading (dir.east..dir.southeast, or dir.nodir)
+    bj_dir: dir        // current heading (east..southeast, or nodir)
     bj_distance: f64   // tiles remaining until BJ reaches next tile center
     bj_run_tiles_left: i32  // tiles to run before starting the jump (counts down from 6)
     bj_anim_frame: i32
@@ -364,13 +354,13 @@ struct game =
                                // the original used a sound-busy wait for
                                // the same purpose.
 
-    // Difficulty: 0=Daddy, 1=Don't Hurt Me, 2=Bring 'em On, 3=Death Incarnate.
+    // Difficulty (Daddy / Don't Hurt Me / Bring 'em On / Death Incarnate).
     // Controls which tile blocks spawn enemies (base/+36/+72 difficulty
     // tiers). Initialised to `difficulty.medium` to match the original's
     // difficulty-picker default. The picker remembers the last pick within
-    // a session via `menu_sel = g->difficulty`; `setdifficulty` dials it
-    // externally.
-    difficulty: i32
+    // a session via `menu_sel = (i32) g->difficulty`; `setdifficulty` dials
+    // it externally.
+    difficulty: difficulty
 
     // Camera plane length. Combined with `dir_x/dir_y` it sets the
     // raycaster's horizontal FOV: the column at the right edge of the

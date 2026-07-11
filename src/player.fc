@@ -85,8 +85,8 @@ module player =
     let give_full_kit = (g: game*) ->
         g.health = 100
         g.ammo = 99
-        g.weapon = 3
-        g.best_weapon = 3
+        g.weapon = weapon.chain_gun
+        g.best_weapon = weapon.chain_gun
         g.has_gold_key = true
         g.has_silver_key = true
 
@@ -97,8 +97,8 @@ module player =
     let reset_for_life = (g: game*) ->
         g.health = 100
         g.ammo = 8
-        g.weapon = 1
-        g.best_weapon = 1
+        g.weapon = weapon.pistol
+        g.best_weapon = weapon.pistol
         g.fire_timer = 0.0
         g.weapon_frame = 0
         g.face_frame = 0
@@ -399,9 +399,11 @@ module player =
             if g.health > 100 then g.health = 100
             g.ammo = g.ammo + 50
             if g.ammo > 99 then g.ammo = 99
-            if g.best_weapon < 3 then
-                g.best_weapon = g.best_weapon + 1
-                g.weapon = g.best_weapon
+            match enum_of(weapon, (i32) g.best_weapon + 1) with
+            | some(wp) ->
+                g.best_weapon = wp
+                g.weapon = wp
+            | none -> void()
             score.add(g, 100000, ac)
             hud.show_message(g, "Free items!")
             g.msg_timer = msg_time
@@ -610,18 +612,17 @@ module player =
     // MG: frames 2↔3 loop while held = 12 tics ≈ 0.171s/shot.
     // Chaingun: fires on both frame 2 and 3 of the 2-frame loop =
     // 6 tics ≈ 0.086s/shot.
-    let fire_rate = f64[4] { 0.343, 0.343, 0.171, 0.086 }
+    let fire_rate = f64[weapon.count] { 0.343, 0.343, 0.171, 0.086 }
 
-    // Per-weapon firing sound. Values are sfx.id.atk_knife / .atk_pistol
-    // / .atk_mg / .atk_gat (raw integers — FC const-expr init can't
-    // resolve across module boundaries yet).
-    private let weapon_fire_snd = i32[4] { 3, 2, 4, 5 }
+    // Per-weapon firing sound.
+    private let weapon_fire_snd = sfx.id[weapon.count] {
+        sfx.id.atk_knife, sfx.id.atk_pistol, sfx.id.atk_mg, sfx.id.atk_gat }
 
     // Base sprite index in VSWAP for each weapon's "ready" pose. The
     // 4 attack frames follow sequentially (ready, atk1..atk4).
     // Derived from the original's per-weapon attack-frame layout:
     // knife ready at 416, pistol at 421, MG at 426, chain at 431.
-    private let weapon_sprite_base = i32[4] { 416, 421, 426, 431 }
+    private let weapon_sprite_base = i32[weapon.count] { 416, 421, 426, 431 }
 
     // Per-frame weapon-animation pump.
     let update_weapon = (w: world*, dt: f64) ->
@@ -636,7 +637,7 @@ module player =
                 g.fire_timer = 0.0
                 // The original auto-switches to the knife at the end
                 // of an attack if ammo ran out.
-                if g.weapon > 0 && g.ammo == 0 then g.weapon = 0
+                if g.weapon > weapon.knife && g.ammo == 0 then g.weapon = weapon.knife
             else
                 let total = fire_rate[g.weapon]
                 let progress = 1.0 - g.fire_timer / total
@@ -645,11 +646,11 @@ module player =
                     else if progress < 0.75 then 3
                     else 4
         if g.key_fire && g.fire_timer <= 0.0 then
-            if g.weapon == 0 then
+            if g.weapon == weapon.knife then
                 // Knife — no ammo needed
-                g.fire_timer = fire_rate[0]
+                g.fire_timer = fire_rate[weapon.knife]
                 g.weapon_frame = 1
-                sfx.trigger(weapon_fire_snd[0], ac)
+                sfx.trigger(weapon_fire_snd[weapon.knife], ac)
                 hitscan.fire_player(w)
             else if g.ammo > 0 then
                 if !g.idkfa_mode then g.ammo = g.ammo - 1

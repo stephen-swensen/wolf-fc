@@ -8,7 +8,7 @@
 // row number into the `digi_slot` / `adlib_chunk` tables below.
 //
 // To add a new sound:
-//   1. Append a constant to `module sfx.id` and bump `sfx.count`,
+//   1. Append a variant to `enum sfx.id` (tables below are sized by id.count),
 //   2. extend `digi_slot` and `adlib_chunk` with the right lookup row,
 //   3. call `sfx.trigger(sfx.id.new_one, ac)` from the new site.
 
@@ -84,103 +84,99 @@ module sfx =
     // Sound IDs — indexes into the sfx_digi_slot / sfx_adlib_chunk
     // tables in main.fc. Not Wolf3D AUDIOT enum values, and not digi-
     // pack slot numbers. The tables translate.
-    module id =
-        let open_door      = 0
-        let close_door     = 1
-        let atk_pistol     = 2
-        let atk_knife      = 3
-        let atk_mg         = 4
-        let atk_gat        = 5
-        let get_key        = 6
-        let get_ammo       = 7
-        let bonus1         = 8    // cross
-        let pain           = 9
-        let push_wall      = 10
-        let get_mg         = 11
-        let get_gat        = 12
-        let hit_wall       = 13
-        let no_action      = 14
-        let no_way         = 15
-        let bonus2         = 16   // chalice
-        let bonus3         = 17   // bible
-        let bonus4         = 18   // crown
-        let bonus1up       = 19   // extra life
-        let health1        = 20   // dog food / food
-        let health2        = 21   // first aid
-        let halt           = 22   // guard/officer alert ("Halt!")
-        let schutzad       = 23   // SS alert ("Schutzstaffel!")
-        let dog_bark       = 24   // dog alert
-        let nazi_fire      = 25   // guard/officer fire
-        let ss_fire        = 26   // SS rapid fire
-        let dog_attack     = 27   // dog bite
-        let dog_death      = 28
-        let death_1        = 29   // guard death scream
-        let death_2        = 30   // officer death scream
-        let death_3        = 31   // SS death scream
+    enum id =
+        | open_door
+        | close_door
+        | atk_pistol
+        | atk_knife
+        | atk_mg
+        | atk_gat
+        | get_key
+        | get_ammo
+        | bonus1    // cross
+        | pain
+        | push_wall
+        | get_mg
+        | get_gat
+        | hit_wall
+        | no_action
+        | no_way
+        | bonus2   // chalice
+        | bonus3   // bible
+        | bonus4   // crown
+        | bonus1up   // extra life
+        | health1   // dog food / food
+        | health2   // first aid
+        | halt   // guard/officer alert ("Halt!")
+        | schutzad   // SS alert ("Schutzstaffel!")
+        | dog_bark   // dog alert
+        | nazi_fire   // guard/officer fire
+        | ss_fire   // SS rapid fire
+        | dog_attack   // dog bite
+        | dog_death
+        | death_1   // guard death scream
+        | death_2   // officer death scream
+        | death_3   // SS death scream
         // The original's audio enum has a "hit enemy" entry, but it's
         // never played anywhere — kept as a table slot for completeness.
-        let hit_enemy      = 32   // bullet impact on flesh — unused
+        | hit_enemy   // bullet impact on flesh — unused
         // Expanded guard death scream pool — the original picks one of
         // 8 at random for guard-class enemies. First three are
         // death_1..3.
-        let death_4        = 33
-        let death_5        = 34
-        let death_6        = 35
-        let death_7        = 36
-        let death_8        = 37
-        let death_9        = 38
+        | death_4
+        | death_5
+        | death_6
+        | death_7
+        | death_8
+        | death_9
         // Per-kind / per-boss vocals. Sighting = one-shot vocal
         // played once when enemy wakes. Death = played on death.
-        let spion          = 39   // officer sighting
-        let nein_sovass    = 40   // officer death
-        let leben          = 41   // SS death ("Mein Leben!")
-        let ahhhg          = 42   // mutant death
-        let gutentag       = 43   // Hans sighting
-        let mutti          = 44   // Hans death ("Mutti!")
-        let kein           = 45   // Gretel sighting
-        let mein           = 46   // Gretel death
-        let eine           = 47   // Giftmacher sighting
-        let donner         = 48   // Giftmacher death
-        let erlauben       = 49   // Fat Face sighting
-        let rose           = 50   // Fat Face death
-        let schabbsha      = 51   // Schabbs sighting
-        let meingott       = 52   // Schabbs death
-        let tot_hund       = 53   // Fake Hitler sighting
-        let hitlerha       = 54   // Fake Hitler death
-        let die            = 55   // Mecha/Real Hitler sighting
-        let scheist        = 56   // Mecha Hitler death
-        let eva            = 57   // Real Hitler death
+        | spion   // officer sighting
+        | nein_sovass   // officer death
+        | leben   // SS death ("Mein Leben!")
+        | ahhhg   // mutant death
+        | gutentag   // Hans sighting
+        | mutti   // Hans death ("Mutti!")
+        | kein   // Gretel sighting
+        | mein   // Gretel death
+        | eine   // Giftmacher sighting
+        | donner   // Giftmacher death
+        | erlauben   // Fat Face sighting
+        | rose   // Fat Face death
+        | schabbsha   // Schabbs sighting
+        | meingott   // Schabbs death
+        | tot_hund   // Fake Hitler sighting
+        | hitlerha   // Fake Hitler death
+        | die   // Mecha/Real Hitler sighting
+        | scheist   // Mecha Hitler death
+        | eva   // Real Hitler death
         // Intermission / elevator sounds
-        let level_done     = 58   // elevator switch "ding"
-        let end_bonus1     = 59   // per-tick counter during countup
-        let end_bonus2     = 60   // counter stopped (non-100%)
-        let percent100     = 61   // 100% ratio bonus
-        let no_bonus       = 62   // 0% ratio
+        | level_done   // elevator switch "ding"
+        | end_bonus1   // per-tick counter during countup
+        | end_bonus2   // counter stopped (non-100%)
+        | percent100   // 100% ratio bonus
+        | no_bonus   // 0% ratio
         // Boss-specific attack sounds. The original dispatches per
         // actor class; wolf-fc previously routed every non-SS boss
         // to nazi_fire, which sounded wrong for bosses.
-        let boss_fire      = 63   // Hans, Mecha/Real Hitler gun
-        let schabbs_throw  = 64   // Schabbs syringe (AdLib only)
-        let flamethrower   = 65   // Fake Hitler (AdLib only)
-        let missile_fire   = 66   // Gift / Fat rocket
+        | boss_fire   // Hans, Mecha/Real Hitler gun
+        | schabbs_throw   // Schabbs syringe (AdLib only)
+        | flamethrower   // Fake Hitler (AdLib only)
+        | missile_fire   // Gift / Fat rocket
         // Placeholders: mapping is filled so late-landing callers don't
         // revisit this table. No current trigger site — mech_step
         // waits on a separate Mecha Hitler stage and yeah waits on the
         // BJ-yell hook.
-        let mech_step      = 67   // Mecha Hitler walk stomp
-        let yeah           = 68   // BJ victory-jump exclamation
+        | mech_step   // Mecha Hitler walk stomp
+        | yeah   // BJ victory-jump exclamation
         // Menu UI sounds. AdLib-only — none have digi versions.
-        let move_gun1      = 69   // menu cursor move
-        let shoot          = 70   // menu item confirm
-        let esc_pressed    = 71   // menu cancel / back
-        let missile_hit    = 72   // rocket wall explosion
-        let slurpie        = 73   // gibs pickup slurp
-        let move_gun2      = 74   // menu commit / setting changed
-        let player_death   = 75   // BJ's dying scream on lethal hit
-
-    // Total number of sfx.id.* entries. The sfx_digi_slot / sfx_adlib_chunk
-    // tables in main.fc are sized to this.
-    private let count = 76
+        | move_gun1   // menu cursor move
+        | shoot   // menu item confirm
+        | esc_pressed   // menu cancel / back
+        | missile_hit   // rocket wall explosion
+        | slurpie   // gibs pickup slurp
+        | move_gun2   // menu commit / setting changed
+        | player_death   // BJ's dying scream on lethal hit
 
     // --- AUDIOT enum IDs the original triggered but wolf-fc still doesn't.
     //     Append a new `id.*` above when wiring one up. Tracked in TODO.md.
@@ -483,12 +479,12 @@ module sfx =
     // audio command ring. The actual digi/adlib dispatch and chip/slot
     // mutation happen on the audio thread in `apply_trigger`, drained from
     // `ac->cmd_ring`. A full ring just drops the sound (never a stall). The
-    // id is validated here so we never enqueue an out-of-range index.
-    private let trigger_panned_gain = (sound_id: i32, ac: audio_ctx*,
+    // id type is a closed set, so an out-of-range index can't be constructed;
+    // it crosses the ring as its integer value.
+    private let trigger_panned_gain = (sound_id: id, ac: audio_ctx*,
                                 pan: f64, gain: f64) ->
-        if sound_id < 0 || sound_id >= count then return
         ignore spsc.enqueue(ac.cmd_ring, audio_q.cmd {
-            kind = audio_q.play_sfx, sfx_id = sound_id,
+            kind = audio_q.op.play_sfx, sfx_id = (i32) sound_id,
             pan = pan, gain = gain, player = none(imf.player*) })
 
     // Consumer side (audio thread only): perform the trigger the ring carried.
@@ -515,10 +511,10 @@ module sfx =
                     adlib.play(ac.sfx, adlib.parse(ac.ad.raw, off),
                                priority[sound_id])
 
-    private let trigger_panned = (sound_id: i32, ac: audio_ctx*, pan: f64) ->
+    private let trigger_panned = (sound_id: id, ac: audio_ctx*, pan: f64) ->
         trigger_panned_gain(sound_id, ac, pan, 1.0)
 
-    let trigger = (sound_id: i32, ac: audio_ctx*) ->
+    let trigger = (sound_id: id, ac: audio_ctx*) ->
         trigger_panned_gain(sound_id, ac, 0.0, 1.0)
 
     // Center-pan trigger with an explicit gain multiplier. `gain > 1`
@@ -526,7 +522,7 @@ module sfx =
     // clip region; `gain < 1` attenuates a cue that's perceptually
     // too loud against the rest of the mix (doors). 1.0 = same as
     // `trigger`.
-    let trigger_gain = (sound_id: i32, ac: audio_ctx*, gain: f64) ->
+    let trigger_gain = (sound_id: id, ac: audio_ctx*, gain: f64) ->
         trigger_panned_gain(sound_id, ac, 0.0, gain)
 
     // Spatial variant: pans a source in the stereo field AND attenuates
@@ -545,7 +541,7 @@ module sfx =
     // 15-step attenuation curve, which also silenced sources beyond
     // that radius. Sounds past the cutoff are dropped entirely so
     // distant enemies don't eat mix slots.
-    let trigger_at = (sound_id: i32, ac: audio_ctx*, g: game*,
+    let trigger_at = (sound_id: id, ac: audio_ctx*, g: game*,
                        x: f64, y: f64) ->
         let dx = x - g.pos_x
         let dy = y - g.pos_y
@@ -595,9 +591,10 @@ module audio_thread =
         loop
             match spsc.dequeue(ac.cmd_ring) with
             | some(c) ->
-                if c.kind == audio_q.play_sfx then
+                match c.kind with
+                | play_sfx ->
                     sfx.apply_trigger(c.sfx_id, ac, c.pan, c.gain)
-                else if c.kind == audio_q.set_music then
+                | set_music ->
                     match c.player with
                     | some(np) ->
                         // Demote the current track to crossfade out. If a prior

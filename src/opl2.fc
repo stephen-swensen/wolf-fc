@@ -63,7 +63,7 @@ module opl2 =
 
     // Envelope stages. Tag 0 = `off`, which lets a zero-initialised
     // chip start every operator in the silent stage automatically.
-    union envelope_stage =
+    enum envelope_stage =
         | off
         | attack
         | decay

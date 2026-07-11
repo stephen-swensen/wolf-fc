@@ -848,10 +848,10 @@ module hud =
             pics.draw(rc, vg, pal, face, ox + 136, bar_top + 4)
         // Weapon icon on the right.
         let weapon_chunk = match g.weapon with
-        | 1 -> pics.id.pistol
-        | 2 -> pics.id.mg
-        | 3 -> pics.id.chain
-        | _ -> pics.id.knife
+        | pistol -> pics.id.pistol
+        | machine_gun -> pics.id.mg
+        | chain_gun -> pics.id.chain
+        | knife -> pics.id.knife
         pics.draw(rc, vg, pal, weapon_chunk, ox + 256, bar_top + 8)
         // Key indicators — two slots on the right edge. Positions
         // match the original status-bar key-slot coords (top/bottom)

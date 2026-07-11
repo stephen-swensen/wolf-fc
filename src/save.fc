@@ -561,75 +561,6 @@ module save =
         | ok(x) -> x
         | err(_)    -> 0.0
 
-    // Numeric kind/state codes for serialization. Preserving ordering
-    // so older saves stay loadable if we add new variants at the end.
-    private let enemy_kind_to_int = (k: enemies.enemy_kind) ->
-        match k with
-        | guard        -> 0
-        | officer      -> 1
-        | ss           -> 2
-        | dog          -> 3
-        | mutant       -> 4
-        | hans         -> 5
-        | schabbs      -> 6
-        | gretel       -> 7
-        | giftmacher   -> 8
-        | fat          -> 9
-        | hitler_fake  -> 10
-        | hitler       -> 11
-        | blinky       -> 12
-        | pinky        -> 13
-        | clyde        -> 14
-        | inky         -> 15
-        | mecha_hitler -> 16
-
-    private let int_to_enemy_kind = (n: i32) ->
-        match n with
-        | 0  -> enemies.enemy_kind.guard
-        | 1  -> enemies.enemy_kind.officer
-        | 2  -> enemies.enemy_kind.ss
-        | 3  -> enemies.enemy_kind.dog
-        | 4  -> enemies.enemy_kind.mutant
-        | 5  -> enemies.enemy_kind.hans
-        | 6  -> enemies.enemy_kind.schabbs
-        | 7  -> enemies.enemy_kind.gretel
-        | 8  -> enemies.enemy_kind.giftmacher
-        | 9  -> enemies.enemy_kind.fat
-        | 10 -> enemies.enemy_kind.hitler_fake
-        | 11 -> enemies.enemy_kind.hitler
-        | 12 -> enemies.enemy_kind.blinky
-        | 13 -> enemies.enemy_kind.pinky
-        | 14 -> enemies.enemy_kind.clyde
-        | 15 -> enemies.enemy_kind.inky
-        | _  -> enemies.enemy_kind.mecha_hitler
-
-    private let enemy_state_to_int = (s: enemies.enemy_state) ->
-        match s with
-        | stand -> 0
-        | path  -> 1
-        | chase -> 2
-        | shoot -> 3
-        | pain  -> 4
-        | die   -> 5
-        | dead  -> 6
-
-    private let int_to_enemy_state = (n: i32) ->
-        match n with
-        | 0 -> enemies.enemy_state.stand
-        | 1 -> enemies.enemy_state.path
-        | 2 -> enemies.enemy_state.chase
-        | 3 -> enemies.enemy_state.shoot
-        | 4 -> enemies.enemy_state.pain
-        | 5 -> enemies.enemy_state.die
-        | _ -> enemies.enemy_state.dead
-
-    private let int_to_door_state = (n: i32) ->
-        match n with
-        | 0 -> doors.door_state.closed
-        | 1 -> doors.door_state.opening
-        | 2 -> doors.door_state.open
-        | _ -> doors.door_state.closing
-
     // Write the running world state to a save-slot file. Overwrites
     // any existing slot. Metadata label is auto-generated from the
     // current level + time.
@@ -659,7 +590,7 @@ module save =
                     let lvl = g.level_num % episode.levels_per + 1
                     io.write("label E%d{ep}M%d{lvl}\n", f)
                 io.write(
-                    "game %d{g.level_num} %d{g.difficulty} %d{g.lives} %d{g.score} %d{g.health} %d{g.ammo} %d{g.weapon} %d{g.best_weapon} %d{if g.has_gold_key then 1 else 0} %d{if g.has_silver_key then 1 else 0} %d{if g.went_secret then 1 else 0}\n", f)
+                    "game %d{g.level_num} %d{(i32) g.difficulty} %d{g.lives} %d{g.score} %d{g.health} %d{g.ammo} %d{(i32) g.weapon} %d{(i32) g.best_weapon} %d{if g.has_gold_key then 1 else 0} %d{if g.has_silver_key then 1 else 0} %d{if g.went_secret then 1 else 0}\n", f)
                 // OG-style start-of-level score, used by death-rewind.
                 // Written on its own line so older saves (lacking it)
                 // load with `oldscore = score` defaulted in `from_slot`.
@@ -675,11 +606,7 @@ module save =
                 io.write("doors %d{lv.num_doors}\n", f)
                 for i in 0..lv.num_doors do
                     let d = &lv.doors[i]
-                    let st = match d.state with
-                    | closed  -> 0
-                    | opening -> 1
-                    | open    -> 2
-                    | closing -> 3
+                    let st = (i32) d.state
                     io.write(
                         "door %d{i} %d{d.tile_x} %d{d.tile_y} %d{st} %14.6f{d.open_timer} %14.6f{lv.door_pos[i]}\n", f)
                 // Pushwall.
@@ -706,12 +633,12 @@ module save =
                 io.write("enemies %d{lv.num_enemies}\n", f)
                 for i in 0..lv.num_enemies do
                     let e = &lv.enemies[i]
-                    let ki = enemy_kind_to_int(e.kind)
-                    let si = enemy_state_to_int(e.state)
+                    let ki = (i32) e.kind
+                    let si = (i32) e.state
                     let amb = if e.ambush then 1 else 0
                     let nfd = if e.notified then 1 else 0
                     io.write(
-                        "enemy %d{i} %14.6f{e.x} %14.6f{e.y} %d{e.tile_x} %d{e.tile_y} %d{ki} %d{si} %d{e.dir} %d{e.hp} %d{e.anim_frame} %14.6f{e.anim_timer} %14.6f{e.move_remaining} %d{amb} %d{nfd} %14.6f{e.reaction_timer} %14.6f{e.touch_cooldown}\n", f)
+                        "enemy %d{i} %14.6f{e.x} %14.6f{e.y} %d{e.tile_x} %d{e.tile_y} %d{ki} %d{si} %d{(i32) e.dir} %d{e.hp} %d{e.anim_frame} %14.6f{e.anim_timer} %14.6f{e.move_remaining} %d{amb} %d{nfd} %14.6f{e.reaction_timer} %14.6f{e.touch_cooldown}\n", f)
                 // PRNG state. Bits round-trip through signed i64
                 // (same width as u64 under 2's complement); load
                 // reinterprets via (u64). Older saves lack this
@@ -773,13 +700,19 @@ module save =
                             defer free_split(toks)
                             if toks.len >= 12 then
                                 g.level_num    = unwrap_int(toks[1])
-                                g.difficulty   = unwrap_int(toks[2])
+                                g.difficulty   = match enum_of(difficulty, unwrap_int(toks[2])) with
+                                                 | some(d) -> d
+                                                 | none -> difficulty.medium
                                 g.lives        = unwrap_int(toks[3])
                                 g.score        = unwrap_int(toks[4])
                                 g.health       = unwrap_int(toks[5])
                                 g.ammo         = unwrap_int(toks[6])
-                                g.weapon       = unwrap_int(toks[7])
-                                g.best_weapon  = unwrap_int(toks[8])
+                                g.weapon       = match enum_of(weapon, unwrap_int(toks[7])) with
+                                                 | some(wp) -> wp
+                                                 | none -> weapon.knife
+                                g.best_weapon  = match enum_of(weapon, unwrap_int(toks[8])) with
+                                                 | some(wp) -> wp
+                                                 | none -> weapon.pistol
                                 g.has_gold_key   = unwrap_int(toks[9]) != 0
                                 g.has_silver_key = unwrap_int(toks[10]) != 0
                                 g.went_secret  = unwrap_int(toks[11]) != 0
@@ -853,7 +786,9 @@ module save =
                                 let di = unwrap_int(toks[1])
                                 if di >= 0 && di < w.lv.num_doors then
                                     let d = &w.lv.doors[di]
-                                    d.state = int_to_door_state(unwrap_int(toks[4]))
+                                    d.state = match enum_of(doors.door_state, unwrap_int(toks[4])) with
+                                              | some(st) -> st
+                                              | none -> doors.door_state.closing
                                     d.open_timer = unwrap_float(toks[5])
                                     w.lv.door_pos[di] = unwrap_float(toks[6])
                         else if text.starts_with(line, "pushwall ") && level_loaded then
@@ -902,9 +837,15 @@ module save =
                                     e.y              = unwrap_float(toks[3])
                                     e.tile_x         = unwrap_int(toks[4])
                                     e.tile_y         = unwrap_int(toks[5])
-                                    e.kind           = int_to_enemy_kind(unwrap_int(toks[6]))
-                                    e.state          = int_to_enemy_state(unwrap_int(toks[7]))
-                                    e.dir            = unwrap_int(toks[8])
+                                    e.kind           = match enum_of(enemies.enemy_kind, unwrap_int(toks[6])) with
+                                                       | some(k) -> k
+                                                       | none -> enemies.enemy_kind.mecha_hitler
+                                    e.state          = match enum_of(enemies.enemy_state, unwrap_int(toks[7])) with
+                                                       | some(st) -> st
+                                                       | none -> enemies.enemy_state.dead
+                                    e.dir            = match enum_of(dir, unwrap_int(toks[8])) with
+                                                       | some(d) -> d
+                                                       | none -> dir.nodir
                                     e.hp             = unwrap_int(toks[9])
                                     e.anim_frame     = unwrap_int(toks[10])
                                     e.anim_timer     = unwrap_float(toks[11])
