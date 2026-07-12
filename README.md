@@ -13,7 +13,7 @@ The engine is software-rendered and software-mixed end-to-end: a DDA raycaster p
 
 ## Development Transparency
 
-Wolf-FC was developed with heavy AI assistance — primarily **Anthropic's Claude Opus 4.5/6/7** driven through **[Claude Code](https://claude.com/claude-code)**. The human author (Stephen Swensen) designed the project, set direction, reviewed every change, drove architectural decisions, and took responsibility for correctness, style, and the licensing posture described below. The AI generated the bulk of the FC code, test scaffolding, and documentation under that direction.
+Wolf-FC was developed with heavy AI assistance — primarily **Anthropic's Claude Opus 4.5/6/7/8** driven through **[Claude Code](https://claude.com/claude-code)**. The human author (Stephen Swensen) designed the project, set direction, reviewed every change, drove architectural decisions, and took responsibility for correctness, style, and the licensing posture described below. The AI generated the bulk of the FC code, test scaffolding, and documentation under that direction.
 
 This is disclosed up front because the project is also intended as a demonstration of what a well-directed human/AI collaboration can produce on a non-trivial systems programming task (FC is a niche language with no training-data precedent for a full raycasting engine), and because readers evaluating the code or using it as a reference for FC deserve to know how it was written.
 
@@ -149,7 +149,7 @@ Classic Wolfenstein 3D controls:
 | 1 – 4 | Select weapon (knife / pistol / machine gun / chain gun) |
 | S | Save screenshot to `~/.wolf-fc/screenshots/ss_NNN.png` |
 | F11 or Alt + Enter | Toggle fullscreen |
-| Escape | Quit |
+| Escape | Open the menu (pauses gameplay). QUIT lives on the menu; Esc backs out of submenus |
 
 ### Secret cheat codes
 
@@ -223,8 +223,10 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `psyched` | Force the "GET PSYCHED!" full-screen load overlay timer (debug — bypasses the test-mode gate so `ss:` can capture it) |
 | `gotgatling` | Force the GOTGATLINGPIC face-cell swap timer (debug — paints over the BJ face slot in render_hud for the duration) |
 | `facetile` | Print the tile the player is facing and the `next_level` flag (debug) |
+| `probe` | Movement diagnostic: dump the player's bbox tiles, any wall/door blocking each, and every live enemy within 2 tiles (distance + tile). First stop for "player can't move here" reports. |
 | `enemies` | Print totals per enemy kind and per state |
 | `enemylist` | Print each enemy: index, tile, kind, state, direction, hp, area number, `vis` (1 = on screen this tick, the sight-falloff flag) |
+| `projectiles` | Dump every live enemy projectile: index, kind (needle/rocket/fire/boom), position, travel angle, animation frame |
 | `killenemy:N` | Overkill enemy at index N via `damage_enemy` (drops, score, kill counter all fire as if shot) |
 | `kill` | Instant-kill the player; transitions straight to the dying phase. Leaves `killer_active` false, so the death-cam swing is a no-op. |
 | `killby:X,Y` | Like `kill`, but latches `(X, Y)` as the killer's world position so the dying-phase camera swing has a target to rotate toward. |
@@ -245,11 +247,21 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `load:N` | Read save slot N back into the world (level reloaded, state overlaid) |
 | `listsaves` | Dump each save slot (`slot N: E<ep>M<lvl> diff=... score=... label=...` or `EMPTY`) |
 | `counters` | Print kills/secrets/treasures counters + par time + phase |
+| `level_stats` | Print the totals `level.build` counted for the current map (enemies / pushwalls / treasures) |
 | `phase` | Print current phase + timer + lives |
-| `setscale:N` | Force the supersample factor to N (2..6), reallocating dbuf/zbuf/ssaa buffers. Combine with `bench:` to measure render-pipeline cost at a specific upscale level. |
+| `prefs` | Dump the current persistent preferences (music/SFX/digi on-off, per-source gains, mommy-mode, shadow-depth, BJ/enemy speed %, automap) |
+| `setscale:N` | Force the supersample factor to N (2..8), reallocating dbuf/zbuf/ssaa buffers. Combine with `bench:` to measure render-pipeline cost at a specific upscale level. |
+| `setssaa:N` | Force the Anti-Alias mode: `0` = off, `1` = vertical-only 2×, `2` = full 2×2. Test mode defaults to off for bit-stable screenshots; combine with `bench:` / `benchparts:` to profile the supersampled raycaster + downsample paths. |
 | `bench:N` | Render N full frames at the current scale and report total / per-frame / fps. Set position+state first with the usual `fwd:`/`goto:`/`setlevel:` commands. |
 | `benchparts:N` | Per-section render profile (raycaster, billboards, weapon, SSAA downsample, HUD, composites) over N iterations. Useful for spotting which pipeline stage dominates at a given scale. |
 | `audiobench:N` | Render N seconds of WONDERIN through the OPL2 music chip and report total / per-sample / realtime-multiplier. Used to compare OPL2 emulator performance across implementations. |
+| `digi_slots` | Dump the 4-voice digi-mixer slot table (per-slot `playing` + `sound_num` + active count). Verifies the retrigger-dedup policy. |
+| `dcsprite` | Dump the death-cam sprite layout (`dx/dy/dw/dh` in dbuf-cell units) that `death_cam.render_sprite` would use — guards against the fb-vs-dbuf coordinate mixup. |
+| `endartnext` / `endartexit` / `endart_state` | Endart-article testing: step forward one page / simulate Esc back to the menu / print the current page and total page count. |
+| `vginfo:N` | Print the decoded width/height/offset of VGAGRAPH chunk N (verifies the Huffman decoder). |
+| `vgrender:CHUNK,FILE.png` | Render one VGAGRAPH pic to the framebuffer, top-left aligned, and save it as a PNG. |
+| `vgrenderfont:FILE.png` | Render the whole font ASCII range (32–126) to the framebuffer and save it, for verifying glyph extraction. |
+| `vgtable` | Dump the VGAGRAPH picture-dimensions table (every pic chunk → `WxH`). |
 
 ### Examples
 
@@ -315,7 +327,7 @@ All project `.fc` sources live in `src/`. All project modules are declared at th
 
 **Rendering and UI**
 
-- **`render.fc`** — The `render_ctx` framebuffer struct, DDA wall raycaster, billboard sort + draw, and the viewport-overlay pipeline (damage flash, elevator fade, dying-phase stipple, supersample upscaler, optional 2× SSAA box-downsample, PNG screenshot encode). See [Display pipeline](#display-pipeline).
+- **`render.fc`** — The `render_ctx` framebuffer struct, DDA wall raycaster, billboard sort + draw, the opt-in top-left automap overlay (Options → Map; a wolf-fc divergence — the original has none), and the viewport-overlay pipeline (damage flash, elevator fade, dying-phase stipple, supersample upscaler, optional 2× SSAA box-downsample, PNG screenshot encode). See [Display pipeline](#display-pipeline).
 - **`video.fc`** — Display geometry management: framebuffer width from display aspect (Hor+ widescreen), supersample-factor pick from drawable size, `render_ctx` allocation / resize, SSAA buffer rebinding, and SDL texture rebuild — the machinery behind the Change View menu and window-resize handling.
 - **`ui.fc`** — UI primitives shared by every non-3D phase: music track IDs + the per-level `songs[]` table, the cached VGAGRAPH pic blitter, font, and the status-bar HUD with BJ-face animation.
 - **`menu.fc`** — Main menu and submenus (episode, difficulty, map, save / load slot list, change-view), plus the quit-confirmation prompt pool.
@@ -324,13 +336,13 @@ All project `.fc` sources live in `src/`. All project modules are declared at th
 **Audio**
 
 - **`sound.fc`** — Format drivers (`imf` music, `adlib` SFX, `digi` PCM) and the additive `mixer` that consumes them. See [Audio pipeline](#audio-pipeline).
-- **`sfx.fc`** — The `audio_ctx` handle, sound-effect trigger helpers, the 73 sound-ID enum, the `digi_slot[]` / `adlib_chunk[]` lookup tables that pick the right delivery path per ID, and the audio-thread side of the pipeline (the SDL audio callback + lock-free command-ring consumer).
+- **`sfx.fc`** — The `audio_ctx` handle, sound-effect trigger helpers, the 76 sound-ID enum, the `digi_slot[]` / `adlib_chunk[]` lookup tables that pick the right delivery path per ID, and the audio-thread side of the pipeline (the SDL audio callback + lock-free command-ring consumer).
 - **`opl2.fc`** — Standalone YM3812 FM synth emulator: chip state, register writes, sample generation, AdLib instrument helpers, and the shared `fill_ticked` driver runner. Not wolf-specific.
 
 **I/O and host**
 
 - **`data.fc`** — Wolf3D asset loading: `bytes` (little-endian readers), `palette` (256-entry VGA), `vswap` (wall textures, sprites, PCM), `maps` (Carmack + RLEW map decompression), `vgagraph` (Huffman-coded UI graphics), `audio` (AUDIOHED / AUDIOT chunk index).
-- **`save.fc`** — Save / load slots and the on-disk encoding, `~/.wolf-fc/config` persistence (music / SFX / digi toggles, per-source gain percentages, mommy-mode, shadow-depth, view-mode, scale-factor, SSAA, speeds), and a leaf `paths` module that resolves `~/.wolf-fc/` directory locations.
+- **`save.fc`** — Save / load slots and the on-disk encoding, `~/.wolf-fc/config` persistence (music / SFX / digi toggles, per-source gain percentages, mommy-mode, shadow-depth, view-mode, scale-factor, Anti-Alias mode, BJ / enemy speeds, automap toggle), and a leaf `paths` module that resolves `~/.wolf-fc/` directory locations.
 - **`input.fc`** — The SDL event pump and every per-phase key binding: menu navigation, the save-name and high-score inline editors, gameplay keys, cheats, fullscreen toggle, and window-resize handling.
 - **`sdl2.fc`** — Flat `extern` FFI against `SDL2/SDL.h`: lifecycle, window (incl. fullscreen-desktop + high-DPI), the accelerated 2D renderer (used only as a blit primitive for one streaming ARGB8888 texture), keyboard events, and the audio device.
 - **`png.fc`** — Pure-FC PNG writer (CRC-32, Adler-32, stored deflate, optional tEXt metadata) used by the screenshot path.
@@ -343,7 +355,7 @@ Wolf-fc renders one ARGB frame per tick entirely in FC, then hands it to SDL2 as
 
 - **`fb`** (`fb_w × 200`) — logical framebuffer for the HUD, menus, fonts, and low-resolution viewport overlays (banner messages, GET PSYCHED!). Stable layout — UI code never has to know about supersampling.
 - **`dbuf`** (`screen_w × screen_h`, where `screen_w = scale × fb_w` and `screen_h = scale × 200`) — the supersampled buffer that walks out to SDL.
-- **`ssaa_buf`** (`2 × screen_w × 2 × view_render_h`, viewport only) — allocated only when Anti-Alias is on. The 3D viewport renders here at 2× density on both axes and is box-filter downsampled into the viewport region of `dbuf` before any tint / dissolve runs. HUD is not antialiased (it's bitmap pixel art).
+- **`ssaa_buf`** (viewport only) — allocated only when Anti-Alias is on. Two on-modes size it differently: **Vert 2x** is `screen_w × 2 × view_render_h` (2× vertical density only); **Full 2x** is `2 × screen_w × 2 × view_render_h` (2× on both axes). The 3D viewport renders here and is box-filter downsampled into the viewport region of `dbuf` before any tint / dissolve runs. HUD is not antialiased (it's bitmap pixel art).
 
 3D phases (playing / dying / bj_victory / death_cam) write the viewport through a `vbuf` slice that aliases either `dbuf`'s top rows (SSAA off, raycaster writes straight through) or `ssaa_buf` (SSAA on, downsample into `dbuf` afterward). HUD work funnels through `fb`. Two compositor passes merge them at the end of the frame:
 
@@ -375,7 +387,7 @@ Non-3D phases (title / main menu / intermission / endart / high scores) skip the
 
 - **Aspect Ratio** — `Auto` queries the SDL display, computes `fb_w = round(320 × display_aspect / (4/3))`, and clamps to `[320, 640]` (even values only). Any aspect ratio works — ultrawide, vertical, exotic — not just the named presets. `Original (4:3)` pins `fb_w = 320`. `Widescreen (16:10)` pins 384. `Widescreen (16:9)` pins 428.
 - **Scale Factor** — `Auto` picks the largest integer in `[2 .. max_scale]` (default `max_scale = 6`, override with `--max-scale=N`) that fits inside the actual pixel drawable in both axes after the 1.2× VGA-aspect stretch, so the texture matches the panel as closely as possible before SDL's downstream stretch. Or pin to a specific `2x .. 12x` if you want deterministic behaviour regardless of window size.
-- **Anti-Alias** — `OFF` by default. `ON` allocates a `2 × screen_w × 2 × view_render_h` ARGB buffer and renders the 3D viewport into it at 2× horizontal + 2× vertical density on top of the Scale Factor, then box-filter downsamples into `dbuf`. Independent of `max_scale` — the 2× factor stacks regardless, so Scale 6 + AA is a 12× internal raycast. Smooths wall-edge stairsteps, sprite silhouettes, and texture-banding diagonals; doesn't touch the HUD. Costs roughly 4× the raycaster work plus one downsample pass.
+- **Anti-Alias** — `Off` by default, with two on-modes. **Vert 2x** renders the 3D viewport at 2× vertical density (`screen_w × 2 × view_render_h`); **Full 2x** renders at 2× on both axes (`2 × screen_w × 2 × view_render_h`), on top of the Scale Factor. Either mode box-filter downsamples into `dbuf`. Independent of `max_scale` — the 2× factor stacks regardless, so Scale 6 + Full 2x is a 12× internal raycast. Smooths wall-edge stairsteps, sprite silhouettes, and texture-banding diagonals; doesn't touch the HUD. Full 2x costs roughly 4× the raycaster work plus one downsample pass; Vert 2x is the cheaper middle ground (~2×).
 
 All three choices persist in `~/.wolf-fc/config` and apply on the fly without a restart. The auto pick re-runs on cross-monitor moves between different-DPI displays (Windows per-monitor v2) and on aspect-ratio changes (the binding axis differs at fb_w=320 vs 384 vs 428 against the same drawable).
 
@@ -413,24 +425,24 @@ This is deliberately the *whole* of the frame-pacing story. Because the snap loc
 
 ### Audio pipeline
 
-Wolf-fc mixes audio entirely in FC, on demand, from SDL2's audio callback. SDL runs `audio_callback` on its own dedicated audio thread and asks it to fill the device buffer — **44.1 kHz signed 16-bit interleaved stereo**, 512 frames (~11.6 ms) by default — whenever the hardware needs more samples; `mixer.fill_frame` produces those samples straight into SDL's `stream`. No `SDL_mixer`, and crucially no push model: running on SDL's thread fully decouples sound from rendering, so even a heavy supersampling / SSAA frame that blows past its budget can't stutter the audio. The render loop never generates samples — it only *mutates* shared audio state (trigger an SFX, swap the music track), under `SDL_LockAudioDevice` so the callback never reads the OPL2 chips or digi slots mid-write, then releases the lock before the slow 3D pass so the callback keeps pulling throughout.
+Wolf-fc mixes audio entirely in FC, on demand, from SDL2's audio callback. SDL runs `audio_callback` on its own dedicated audio thread and asks it to fill the device buffer — **signed 16-bit interleaved stereo at the device's native rate** (queried from the default output device at startup, 48 kHz on most modern systems and the fallback when detection fails), 1024 frames (~21.3 ms at 48 kHz) by default — whenever the hardware needs more samples; `mixer.fill_frame` produces those samples straight into SDL's `stream`. No `SDL_mixer`, and crucially no push model: running on SDL's thread fully decouples sound from rendering, so even a heavy supersampling / SSAA frame that blows past its budget can't stutter the audio. The render loop never generates samples — it only *mutates* shared audio state (trigger an SFX, swap the music track), under `SDL_LockAudioDevice` so the callback never reads the OPL2 chips or digi slots mid-write, then releases the lock before the slow 3D pass so the callback keeps pulling throughout.
 
 Three format drivers in [`sound.fc`](sound.fc), each consuming bytes from a Wolf3D audio chunk and mixing additively into a shared `i32` buffer:
 
 - **`imf`** (music) — id Music Format. A flat sequence of `(reg, val, delay)` events written to a YM3812 OPL2 chip at a 700 Hz tick rate. Loops the track at end-of-stream. Has a `volume` knob for level-end fade-out. Owns a dedicated chip so its register state never collides with SFX.
 - **`adlib`** (SFX fallback) — id-Software AdLibSound chunks. A 23-byte header (length, priority, 16-byte instrument, block) followed by one F-number byte per 140 Hz tick. One voice on channel 0. Owns a separate OPL2 chip so SFX never disrupts the music chip. Used as the fallback for sounds that have no digitized version.
-- **`digi`** (PCM SFX, preferred) — 8-bit unsigned PCM straight from the trailing pages of `VSWAP.WL6`, recorded at 7042 Hz, nearest-neighbor resampled to 44.1 kHz. Up to 4 simultaneous slots (matches the original Sound Blaster mixing). No chip involved.
+- **`digi`** (PCM SFX, preferred) — 8-bit unsigned PCM straight from the trailing pages of `VSWAP.WL6`, recorded at 7042 Hz, nearest-neighbor resampled to the device rate. Up to 4 simultaneous slots (matches the original Sound Blaster mixing). No chip involved.
 
 Each `sfx.id` constant has both a `digi_slot[id]` and an `adlib_chunk[id]`; `sfx.trigger` prefers digi, falls through to AdLib if no digi exists for that ID. The two SFX paths use different chips, so a fast retrigger of an AdLib effect cleanly preempts itself without ever touching the music chip.
 
 ```
    audio_callback(stream, len)                  on SDL's audio thread; frames = len/4
-   mix_buf := 0                                 i32, frames × 2   (~11.6 ms @ 512)
+   mix_buf := 0                                 i32, frames × 2   (~21.3 ms @ 1024)
        ↓ imf.fill           music chip → mono, duplicated L = R
        ↓ adlib.fill         SFX chip   → mono, duplicated L = R
        ↓ digi.fill          4 slots    → per-slot pan → L, R independently
        ↓ mixer.soft_clip_to_i16    → i16, written straight into ...
-   stream  (SDL device buffer)                  44.1 kHz, S16 stereo
+   stream  (SDL device buffer)                  device rate, S16 stereo
 ```
 
 `mix_buf` is `i32` so the three additive fills can sum freely without per-stage clipping starving later stages of headroom (digi, last in line, was the biggest loser before we widened the intermediate). The final soft-clip is a rational asymptotic curve — linear up to ±24000, then `y = knee + over × range / (range + over)` toward an asymptote at ±32767 — so a single source peak gets ~1.5 dB of compression and three sources peaking together still don't hard-clip. Mirrors how Sound Blaster hardware summed FM and PCM in the analog domain.
@@ -438,12 +450,12 @@ Each `sfx.id` constant has both a `digi_slot[id]` and an `adlib_chunk[id]`; `sfx
 **Ticked event-driven generation.** The OPL2 chip in [`opl2.fc`](opl2.fc) runs at the output sample rate. Both `imf` and `adlib` route their per-sample work through one shared helper, `opl2.fill_ticked`, that advances a `tick_accum` counter every emitted sample and invokes the driver's `advance` closure once per event tick:
 
 ```
-samples_per_tick = sample_rate / tick_rate
-                 = 44100 / 700  =  63   IMF music
-                 = 44100 / 140  = 315   AdLib SFX
+samples_per_tick = sample_rate / tick_rate       (fractional, accumulated)
+                 = 48000 / 700  ≈  68.57   IMF music
+                 = 48000 / 140  ≈ 342.86   AdLib SFX
 ```
 
-So one chip sample → push to buf → maybe advance one event. The same loop body works at any chip / tick-rate combination, which is why both drivers reuse it unmodified.
+(The rate is the detected device rate, so `samples_per_tick` is generally fractional — `tick_accum` carries the remainder across samples.) So one chip sample → push to buf → maybe advance one event. The same loop body works at any chip / tick-rate combination, which is why both drivers reuse it unmodified.
 
 **OPL2 emulator.** [`opl2.fc`](opl2.fc) is a from-scratch YM3812 emulator: 18 operators, 9 channels, 4 waveforms, ADSR envelopes, KSL/KSR, feedback FM, soft tremolo / vibrato. The pieces that audibly differentiate OPL2 from a generic FM synth — log-domain envelopes (linear in dB), EGT-controlled sustain release, fast key-scale rate, 256-entry log-sin table per quadrant — are modeled directly. The pieces Wolf3D doesn't use (rhythm mode, CSM, NTS) are skipped on purpose. Two independent chip instances run simultaneously, one for music and one for AdLib SFX, so triggering an effect never glitches the music's register state.
 
@@ -454,9 +466,9 @@ So one chip sample → push to buf → maybe advance one event. The same loop bo
 - **AdLib SFX** runs one chunk at a time on its dedicated chip. New triggers honour an `SD_PlaySound`-style priority gate: a strictly lower priority is dropped, equal-or-greater preempts. So an incidental wall bump can't trample an in-flight pickup confirmation, but cross→cross retriggers restart audibly.
 - **Digi** has 4 slots. Slot selection is: (1) if the same `sound_num` is already playing in any slot, rewind that slot in place and update its pan — no overlap, no stacking; (2) otherwise pick the first idle slot; (3) otherwise steal slot 0. The dedup in step 1 keeps held-down wall-bump retriggers from burning through all four slots in a few hundred ms, so a single spammed effect can't crowd out every other digitized sound.
 
-**Loudness alignment.** Digi's `pcm_scale = 172` is chosen so a centered 8-bit PCM peak hits ~±22000 in `mix_buf` — the same scale OPL2's `sample` function emits at full envelope. Music, AdLib SFX, and digi therefore sit at roughly equal hardware-mixer loudness without any explicit gain matching, mirroring what the original Sound Blaster delivered through its analog mixer.
+**Loudness alignment.** Digi's `pcm_scale = 100` places a centered 8-bit PCM peak in the same loudness neighborhood as a typical multi-channel music passage. It's set by ear roughly 2 dB below strict Sound-Blaster parity (~128), which felt slightly hot against level music; a few PCM cues that still stood out at 100 (notably doors) get per-sound attenuation in `sfx.fc` rather than dragging the global scale lower and underweighting pickups / weapon fires / enemy deaths. (It was historically `172`, calibrated against the OPL2's old clamped ±22000 output before the emulator rewrite removed the internal clamp.) Music, AdLib SFX, and digi therefore sit at roughly equal hardware-mixer loudness, mirroring what the original Sound Blaster delivered through its analog mixer.
 
-**Threading and latency.** Because SDL pulls samples on its own thread, there's no queue to keep topped up and no backpressure logic — the callback fills exactly what the device asks for each time. End-to-end latency is the device buffer (`audio_buffer_frames = 512` ≈ 11.6 ms) plus whatever the OS audio layer stacks underneath; drop it to 256 for snappier SFX, or raise to 1024 if a CPU-starved audio thread (e.g. WSLg under software rendering) misses its deadline and you hear underruns. The one hard rule is the lock: every main-thread mutation of audio state runs inside `SDL_LockAudioDevice` / `SDL_UnlockAudioDevice`, and the loop releases the lock *before* the expensive render so the callback runs fully concurrent with the 3D pass and its vsync wait. Music chunk swaps (phase change) happen under that lock — the new IMF player is loaded and the outgoing one is handed to the callback as `music_prev`, which crossfades it out over `music_xfade_samples` (256 samples ≈ 5.8 ms) so the track change doesn't click.
+**Threading and latency.** Because SDL pulls samples on its own thread, there's no queue to keep topped up and no backpressure logic — the callback fills exactly what the device asks for each time. End-to-end latency is the device buffer (`audio_buffer_frames = 1024` ≈ 21.3 ms at 48 kHz, chosen to match PipeWire's default graph quantum so our wakeups align 1:1 with the graph instead of beating against it) plus whatever the OS audio layer stacks underneath; drop it to 512 or 256 for snappier SFX, or raise it further if a CPU-starved audio thread (e.g. WSLg under software rendering) misses its deadline and you hear underruns. The one hard rule is the lock: every main-thread mutation of audio state runs inside `SDL_LockAudioDevice` / `SDL_UnlockAudioDevice`, and the loop releases the lock *before* the expensive render so the callback runs fully concurrent with the 3D pass and its vsync wait. Music chunk swaps (phase change) happen under that lock — the new IMF player is loaded and the outgoing one is handed to the callback as `music_prev`, which crossfades it out over `music_xfade_samples` (256 samples, ~5 ms) so the track change doesn't click.
 
 ### Customising the quit prompt
 
