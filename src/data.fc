@@ -383,7 +383,7 @@ module maps =
 // Chunk 0 is always STRUCTPIC (the picture-table): one (u16 width, u16
 // height) pair per picture, picture index = chunk - STARTPICS. Fonts sit at
 // STARTFONT..STARTFONT+NUMFONT-1. Status-bar, title, face, digit, etc. are
-// pictures referenced by absolute chunk number (see main.fc vg_* constants).
+// pictures referenced by absolute chunk number (see the `pics.id` enum in ui.fc).
 
 module vgagraph =
     import io from std::

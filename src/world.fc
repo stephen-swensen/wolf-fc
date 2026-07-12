@@ -11,13 +11,6 @@ import random from std::    // game.rng_enemy / rng_face field types
 // Game state
 // ============================================================
 
-// High-level game phase. Drives tick() (most systems freeze outside playing)
-// and the main loop's input handling (intermission / high_scores consume space
-// to advance; playing dispatches keys into the normal game code).
-//
-//   playing       — normal gameplay
-//   dying         — collapse animation + red screen tint after HP=0
-//   intermission  — stats screen between levels (press space to continue)
 // Player weapons in tier order. The numeric values are the save-file codes
 // and the indices of the per-weapon tables in player.fc (fire_rate,
 // weapon_fire_snd, weapon_sprite_base).
@@ -27,6 +20,13 @@ enum weapon =
     | machine_gun
     | chain_gun
 
+// High-level game phase. Drives tick() (most systems freeze outside playing)
+// and input.fc's per-phase key dispatch (intermission / high_scores consume
+// space to advance; playing dispatches keys into the normal game code).
+//
+//   playing       — normal gameplay
+//   dying         — collapse animation + red screen tint after HP=0
+//   intermission  — stats screen between levels (press space to continue)
 enum game_phase =
     | pg13          // PG-13 parental-advisory splash shown once at startup;
                     // any key (or a short auto-timer) advances to title.
@@ -63,14 +63,6 @@ enum game_phase =
                     // entry points to the score table. If the ending game
                     // qualified, the new row enters an inline name-edit
                     // mode; otherwise any ack key dismisses → title screen.
-
-// Menu navigation state. `menu_level` picks which list to show:
-//   main        (NEW GAME / SOUND / LOAD GAME / SAVE GAME / RESUME / QUIT)
-//   difficulty  (under NEW GAME, after episode select)
-//   episode     (under NEW GAME, before difficulty)
-//   savelist    (Save Game — 10 slots)
-//   loadlist    (Load Game — 10 slots)
-//   sound       (Music ON/OFF + Sound Effects ON/OFF)
 
 struct game =
     // Camera / player
@@ -457,8 +449,9 @@ struct game =
     menu_level: menu.nav
 
     // Save-slot inline name entry. While true, the savelist menu is
-    // showing a typing caret on the selected slot; main-loop keydowns
-    // mutate `save_menu_ctx.edit_buf` instead of moving the cursor.
+    // showing a typing caret on the selected slot; input.fc's savelist
+    // keydown handler mutates `save_menu_ctx.edit_buf` instead of moving
+    // the cursor.
     // Enter commits + writes the slot, Esc cancels back to the slot
     // list. Mirrors the original's inline-line-input flow.
     save_edit_active: bool
@@ -504,7 +497,7 @@ struct game =
 // Everything the running game needs in one handle. Functions that only need
 // one sub-context (e.g. `raycaster.render_walls` only touches level + render_ctx) keep
 // their narrow signatures so their dependencies are visible in their types;
-// only orchestrators (`tick`, `render_frame`, `run_test_cmd`) take `world*`.
+// only orchestrators (`tick`, `render_frame`, `testmode.run_cmd`) take `world*`.
 // Wrapping this way unlocks save-state and multi-world scenarios without
 // having to thread four pointers through every caller.
 struct world =

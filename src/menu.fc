@@ -1,7 +1,7 @@
 // Wolf-FC menu — main menu + submenus (episode picker, difficulty,
 // sound, save / load slot list). Rendering only; the actual menu
-// navigation logic (cursor movement, selection) lives in main.fc's
-// event loop since it has to observe every phase of the game.
+// navigation logic (cursor movement, selection) lives in module input
+// (input.fc), whose handle_events observes every phase of the game.
 //
 // Visual style mirrors the original's control panel: solid red
 // border backdrop, black title stripe at y=10, header pic above
@@ -95,7 +95,7 @@ module menu =
     let sound_is_toggle = (row: i32) -> (row % 2) == 0
 
     // Options submenu — wolf-fc mods. Grow this list as new toggles /
-    // sliders land; matched by `render_options_list` and by main.fc's
+    // sliders land; matched by `render_options_list` and by input.fc's
     // options-nav handler. The RESET row is always the last entry —
     // bumps stay simple by keeping it at `options_len - 1`.
     //   0 Mommy Mode    (toggle)
@@ -106,7 +106,7 @@ module menu =
     //   5 Reset         (action — restores every row to its default)
     let options_len = 6
 
-    // How a row reacts to input. Used by the sfx dispatch in main.fc
+    // How a row reacts to input. Used by the menu sfx dispatch in input.fc
     // to pick the right confirm cue for every setting-changed event.
     enum option_kind =
         | toggle    // row flips on Enter or ←/→ (sound, options)
@@ -501,8 +501,8 @@ module menu =
 
     let changeview_len = 3
 
-    // Public so main.fc's nav handler can reach for the cycle bounds
-    // without duplicating the row → field mapping.
+    // Public so input.fc's changeview nav handler can reach for the cycle
+    // bounds without duplicating the row → field mapping.
     let changeview_aspect_row = 0
     let changeview_scale_row  = 1
     let changeview_ssaa_row   = 2
@@ -710,7 +710,7 @@ module menu =
     // with the deactive/bord2 bevel — which is why we don't reuse
     // `draw_window` here. The size hugs the text plus the original's
     // 10 px padding; centred horizontally and vertically. The prompt
-    // index is rolled at the QUIT row's confirm site (main.fc) and
+    // index is rolled at the QUIT row's confirm site (input.fc) and
     // stashed on `g->quit_prompt_idx` so the prompt stays stable
     // while the modal is up.
     private let render_quit_modal = (rc: render_ctx*,

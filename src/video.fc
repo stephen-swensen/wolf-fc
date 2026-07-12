@@ -21,21 +21,6 @@ struct video_state =
     on_wsl: bool      // WSLg: maximized window instead of fullscreen-desktop
 
 module video =
-    // Allocate renderer scratch buffers. One instance per process. `fb_w`
-    // is the framebuffer width — typically the OG 320, or wider for
-    // Hor+ widescreen (384 / 428 / etc., set from the display aspect).
-    // `fb_h` stays 200 (vertical FOV preserved). `scale` is the supersample
-    // factor [2..6] — dbuf is `scale * fb_w` × `scale * fb_h`. Test mode
-    // pins scale = 2 to keep regression screenshots bit-stable; interactive
-    // mode picks the value via `compute_scale_factor` after the renderer is
-    // up. Decodes the title-screen backdrop once so pics.blit_title_bg is a
-    // cheap memcpy on every menu frame, and sizes pic_cache to hold one ARGB
-    // buffer per VGAGRAPH chunk (lazily populated on first draw).
-    // (Re-)alias the viewport-render slices to whichever underlying
-    // buffer matches the current SSAA state. Call after any change to
-    // dbuf / zbuf / ssaa_buf / ssaa_zbuf or to the `ssaa` flag — the 3D
-    // pipeline reads only vbuf / vzbuf / vbuf_w / vbuf_h, so this is the
-    // single chokepoint that decides which buffer they hit.
     // SSAA viewport geometry, all derived from ssaa_mode (0=off, 1=vertical-
     // only 2×, 2=full 2×2). Width doubles only in full mode; height doubles
     // in vertical + full. These are the single source of truth for the
@@ -51,6 +36,11 @@ module video =
     let ssaa_zbuf_len = (mode: i32, screen_w: i32) ->
         if mode == 0 then 0 else ssaa_vbuf_w(mode, screen_w)
 
+    // (Re-)alias the viewport-render slices to whichever underlying
+    // buffer matches the current SSAA state. Call after any change to
+    // dbuf / zbuf / ssaa_buf / ssaa_zbuf or to the `ssaa` flag — the 3D
+    // pipeline reads only vbuf / vzbuf / vbuf_w / vbuf_h, so this is the
+    // single chokepoint that decides which buffer they hit.
     let rebind_vbuf = (rc: render_ctx*) ->
         if rc.ssaa_mode == 0 then
             rc.vbuf = rc.dbuf
@@ -63,6 +53,16 @@ module video =
         rc.ss_h = if rc.ssaa_mode == 2 then 2 else 1
         rc.ss_v = if rc.ssaa_mode == 0 then 1 else 2
 
+    // Allocate renderer scratch buffers. One instance per process. `fb_w`
+    // is the framebuffer width — typically the OG 320, or wider for
+    // Hor+ widescreen (384 / 428 / etc., set from the display aspect).
+    // `fb_h` stays 200 (vertical FOV preserved). `scale` is the supersample
+    // factor [2..6] — dbuf is `scale * fb_w` × `scale * fb_h`. Test mode
+    // pins scale = 2 to keep regression screenshots bit-stable; interactive
+    // mode picks the value via `compute_scale_factor` after the renderer is
+    // up. Decodes the title-screen backdrop once so pics.blit_title_bg is a
+    // cheap memcpy on every menu frame, and sizes pic_cache to hold one ARGB
+    // buffer per VGAGRAPH chunk (lazily populated on first draw).
     let build_render_ctx = (vg: const vgagraph.vgagraph_file*, pal: const u32[],
                             fb_w: i32, fb_h: i32, scale: i32, ssaa_mode: i32) ->
         let screen_w = fb_w * scale
@@ -162,7 +162,7 @@ module video =
 
     // SDL_GetRendererOutputSize wrapped to return the drawable size as a
     // { width, height } tuple instead of writing through two out-pointers.
-    // All callers are in main.fc's display-setup / resize path.
+    // Callers: main.fc's display-setup path and input.fc's window-resize handler.
     let renderer_output_size = (ren: any*) ->
         let mut w = 0i32
         let mut h = 0i32

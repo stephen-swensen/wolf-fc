@@ -376,8 +376,8 @@ module player =
 
         // Original-game TAB+<key> cheats. The original exposed these
         // behind a command-line `-debugmode` flag; we keep them always
-        // available. Dispatched by main.fc's keydown handler whenever
-        // g->key_tab_held is true and the game is in the playing phase.
+        // available. Dispatched by input.fc's keydown handler (input.handle_events)
+        // whenever g->key_tab_held is true and the game is in the playing phase.
 
         // TAB+G — toggle god mode. Same underlying flag as IDDQD (so
         // the two cheats stack coherently), but with a plain "God mode

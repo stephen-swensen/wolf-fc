@@ -81,8 +81,8 @@ struct audio_ctx =
 module sfx =
     import math from std::
 
-    // Sound IDs — indexes into the sfx_digi_slot / sfx_adlib_chunk
-    // tables in main.fc. Not Wolf3D AUDIOT enum values, and not digi-
+    // Sound IDs — indexes into the `digi_slot` / `adlib_chunk`
+    // tables below. Not Wolf3D AUDIOT enum values, and not digi-
     // pack slot numbers. The tables translate.
     enum id =
         | open_door

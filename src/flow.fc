@@ -168,8 +168,8 @@ module flow =
                 // matching the original's lives-exhausted → high-scores
                 // flow. The screen handles the score insertion +
                 // optional name entry; on dismiss it routes back to the
-                // title (see the high_scores keydown handler in the main
-                // loop). The level is intentionally NOT reloaded — the
+                // title (see the high_scores keydown handler in input.fc).
+                // The level is intentionally NOT reloaded — the
                 // next NEW GAME / LOAD GAME will rebuild as needed.
                 high_scores_screen.enter(g, w.hs, high_scores_screen.from_death,
                     g.score, g.level_num + 1, g.level_num / episode.levels_per)
@@ -187,7 +187,7 @@ module flow =
             episode_end.enter(g)
         // PG-13 splash auto-advances to the title after a short hold so a
         // walked-away player doesn't come back to a stuck splash. Any keypress
-        // also advances (handled in the main loop, not here).
+        // also advances (handled in input.fc, not here).
         if g.phase == game_phase.pg13 && g.phase_timer >= pg13_screen.auto_advance_time then
             g.phase = game_phase.title
             g.phase_timer = 0.0

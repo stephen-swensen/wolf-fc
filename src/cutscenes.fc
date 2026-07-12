@@ -1347,7 +1347,7 @@ module title_screen =
     // 10 s, high-scores for 10 s. The original also plays a demo at
     // the tail of every cycle; wolf-fc skips the demo (no recorder)
     // and loops straight back to the title. Any key at any sub-phase
-    // drops into the main menu (handled in main.fc); on re-entry
+    // drops into the main menu (handled in input.fc); on re-entry
     // the cycle restarts from the title because phase_timer resets
     // on phase change.
     let title_hold      = 15.0
