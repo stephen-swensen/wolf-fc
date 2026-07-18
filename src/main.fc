@@ -367,8 +367,8 @@ let main = (args: str[]) ->
             // (a handful of triggers per frame); the ring drops on overflow
             // rather than stalling. free_ring rarely holds more than the one
             // or two players a swap retires.
-            cmd_ring = spsc.make<audio_q.cmd, 64>(),
-            free_ring = spsc.make<imf.player*, 16>(),
+            cmd_ring = default(spsc.ring<audio_q.cmd, 64>),
+            free_ring = default(spsc.ring<imf.player*, 16>),
             adlib_busy_flag = false,
             cb_count = 0i64
         })!,
@@ -786,7 +786,7 @@ let main = (args: str[]) ->
         // drain and destroy them here. Empty (a no-op) in test mode, where no
         // callback ever runs.
         loop
-            match spsc.dequeue(w.ac.free_ring) with
+            match spsc.dequeue(&w.ac.free_ring) with
             | some(p) -> imf.destroy(p)
             | none -> break
 
@@ -800,7 +800,7 @@ let main = (args: str[]) ->
         let want_chunk = font.music_chunk_for_phase(g.phase, g.level_num)
         if want_chunk != w.ac.music_chunk && audio_dev > 0u32 && want_chunk < ad.num_chunks then
             let np = font.music_load(ad, want_chunk, (f64) w.ac.sample_rate)
-            let posted = spsc.enqueue(w.ac.cmd_ring, audio_q.cmd {
+            let posted = spsc.enqueue(&w.ac.cmd_ring, audio_q.cmd {
                 kind = audio_q.op.set_music, sfx_id = 0,
                 pan = 0.0, gain = 0.0, player = some(np) })
             if posted then

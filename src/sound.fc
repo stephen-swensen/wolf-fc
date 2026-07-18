@@ -643,21 +643,22 @@ module mixer =
 // modulo, and keeps the mapping exact even across the theoretical usize wrap
 // (a power of two divides 2⁶⁴ evenly). SPSC only — exactly one producer thread
 // and one consumer thread (multiple call sites on the *same* thread are fine).
+//
+// Because 'cap is a compile-time constant the slots live inline in the struct,
+// so a ring is a plain value with no heap of its own — embed it by value in an
+// owner (see `audio_ctx.cmd_ring`) and it shares that owner's single
+// allocation. Pass its address to enqueue/dequeue; a stable owner pointer makes
+// `&r.tail` a stable atomic address across the producer/consumer threads. A
+// fresh ring is just the zero value (`default(spsc.ring<T, cap>)`): head ==
+// tail == 0 with zeroed slots is the valid empty state, so an owner's
+// zero-inited allocation already holds a usable empty ring — no constructor.
 module spsc =
     struct ring =
         static_assert('cap > 0 && ('cap & ('cap - 1)) == 0,
             "spsc.ring capacity must be a power of two")
-        buf: 'a['cap]    // slots stored inline: the whole ring is one allocation
+        buf: 'a['cap]    // slots stored inline: no separate buffer allocation
         head: usize      // consumer-owned: only the consumer advances it
         tail: usize      // producer-owned: only the producer advances it
-
-    // Allocate a ring. Capacity is the const-generic 'cap, so the slot storage
-    // is inline in the struct — a single allocation, no separate buffer — and
-    // alloc zero-inits head, tail, and the slots. Neither parameter is
-    // inferable from the (empty) argument list, so call sites name both:
-    // `spsc.make<audio_q.cmd, 64>()`.
-    let make = <'a, 'cap>() ->
-        alloc(ring<'a, 'cap>)!
 
     // Producer side. Returns false when the ring is full (caller drops the
     // item — for audio that means a sound is skipped, never a stall).

@@ -49,8 +49,8 @@ struct audio_ctx =
     // mirrors `sfx->active` across the boundary: the callback publishes it
     // each call (release) and sfx.adlib_busy reads it (acquire) for the
     // use-key "do-do-do" rhythm gate, which runs on the main thread.
-    cmd_ring: spsc.ring<audio_q.cmd, 64>*
-    free_ring: spsc.ring<imf.player*, 16>*
+    cmd_ring: spsc.ring<audio_q.cmd, 64>
+    free_ring: spsc.ring<imf.player*, 16>
     adlib_busy_flag: bool
     // Audio-callback heartbeat: bumped + published once per callback. The
     // main loop's diagnostic beat reads it (acquire) to tell a stalled audio
@@ -483,7 +483,7 @@ module sfx =
     // it crosses the ring as its integer value.
     private let trigger_panned_gain = (sound_id: id, ac: audio_ctx*,
                                 pan: f64, gain: f64) ->
-        ignore spsc.enqueue(ac.cmd_ring, audio_q.cmd {
+        ignore spsc.enqueue(&ac.cmd_ring, audio_q.cmd {
             kind = audio_q.op.play_sfx, sfx_id = (i32) sound_id,
             pan = pan, gain = gain, player = none(imf.player*) })
 
@@ -589,7 +589,7 @@ module audio_thread =
     // path rather than a bypass. Single-consumer either way.
     let drain = (ac: audio_ctx*) ->
         loop
-            match spsc.dequeue(ac.cmd_ring) with
+            match spsc.dequeue(&ac.cmd_ring) with
             | some(c) ->
                 match c.kind with
                 | play_sfx ->
@@ -602,7 +602,7 @@ module audio_thread =
                         // that older outgoing player back to the main thread now.
                         match ac.music_prev with
                         | some(old) ->
-                            ignore spsc.enqueue(ac.free_ring, old)
+                            ignore spsc.enqueue(&ac.free_ring, old)
                         | none -> void()
                         ac.music_prev = ac.music
                         ac.music_xfade = if ac.music.is_some then music_xfade_samples else 0
@@ -646,7 +646,7 @@ module audio_thread =
         if xfade_before > 0 && ac.music_xfade == 0 then
             match ac.music_prev with
             | some(old) ->
-                spsc.enqueue(ac.free_ring, old)
+                spsc.enqueue(&ac.free_ring, old)
                 ac.music_prev = none(imf.player*)
             | none -> void()
         // Publish AdLib-busy for the main thread's use-key rhythm gate.
