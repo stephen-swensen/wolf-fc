@@ -367,8 +367,8 @@ let main = (args: str[]) ->
             // (a handful of triggers per frame); the ring drops on overflow
             // rather than stalling. free_ring rarely holds more than the one
             // or two players a swap retires.
-            cmd_ring = spsc.make<audio_q.cmd>(64),
-            free_ring = spsc.make<imf.player*>(16),
+            cmd_ring = spsc.make<audio_q.cmd, 64>(),
+            free_ring = spsc.make<imf.player*, 16>(),
             adlib_busy_flag = false,
             cb_count = 0i64
         })!,

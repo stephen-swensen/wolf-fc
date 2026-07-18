@@ -49,8 +49,8 @@ struct audio_ctx =
     // mirrors `sfx->active` across the boundary: the callback publishes it
     // each call (release) and sfx.adlib_busy reads it (acquire) for the
     // use-key "do-do-do" rhythm gate, which runs on the main thread.
-    cmd_ring: spsc.ring<audio_q.cmd>*
-    free_ring: spsc.ring<imf.player*>*
+    cmd_ring: spsc.ring<audio_q.cmd, 64>*
+    free_ring: spsc.ring<imf.player*, 16>*
     adlib_busy_flag: bool
     // Audio-callback heartbeat: bumped + published once per callback. The
     // main loop's diagnostic beat reads it (acquire) to tell a stalled audio

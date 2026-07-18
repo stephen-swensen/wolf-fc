@@ -638,43 +638,47 @@ module mixer =
 // that exposes it. The slot payload itself is ordinary (non-atomic) data;
 // the index ordering carries it across the thread boundary. Indices grow
 // monotonically (usize, never wraps in practice); the live slot is
-// `index % capacity`. SPSC only — exactly one producer thread and one
-// consumer thread (multiple call sites on the *same* thread are fine).
+// `index & (capacity − 1)`. Capacity is a const-generic that a `static_assert`
+// pins to a power of two — that lets the slot index be a mask instead of a
+// modulo, and keeps the mapping exact even across the theoretical usize wrap
+// (a power of two divides 2⁶⁴ evenly). SPSC only — exactly one producer thread
+// and one consumer thread (multiple call sites on the *same* thread are fine).
 module spsc =
     struct ring =
-        buf: 'a[]
+        static_assert('cap > 0 && ('cap & ('cap - 1)) == 0,
+            "spsc.ring capacity must be a power of two")
+        buf: 'a['cap]    // slots stored inline: the whole ring is one allocation
         head: usize      // consumer-owned: only the consumer advances it
         tail: usize      // producer-owned: only the producer advances it
 
-    // Allocate a ring with `cap` slots. The element type appears nowhere in
-    // the arguments, so call sites name it explicitly: `spsc.make<audio_q.cmd>(64)`.
-    let make = <'a>(cap: i64) ->
-        let r = alloc(ring<'a>)!
-        r.buf = alloc('a[cap] { })!
-        r.head = 0usize
-        r.tail = 0usize
-        r
+    // Allocate a ring. Capacity is the const-generic 'cap, so the slot storage
+    // is inline in the struct — a single allocation, no separate buffer — and
+    // alloc zero-inits head, tail, and the slots. Neither parameter is
+    // inferable from the (empty) argument list, so call sites name both:
+    // `spsc.make<audio_q.cmd, 64>()`.
+    let make = <'a, 'cap>() ->
+        alloc(ring<'a, 'cap>)!
 
     // Producer side. Returns false when the ring is full (caller drops the
     // item — for audio that means a sound is skipped, never a stall).
-    let enqueue = (r: ring<'a>*, v: 'a) ->
-        let cap = (usize) r.buf.len
+    let enqueue = (r: ring<'a, 'cap>*, v: 'a) ->
+        let cap = (usize) 'cap
         let t = atomic_load_acquire(&r.tail)
         let h = atomic_load_acquire(&r.head)
         if t - h == cap then false
         else
-            r.buf[t % cap] = v
+            r.buf[t & (cap - 1usize)] = v
             atomic_store_release(&r.tail, t + 1usize)
             true
 
     // Consumer side. Returns none when the ring is empty.
-    let dequeue = (r: ring<'a>*) ->
-        let cap = (usize) r.buf.len
+    let dequeue = (r: ring<'a, 'cap>*) ->
+        let cap = (usize) 'cap
         let t = atomic_load_acquire(&r.tail)
         let h = atomic_load_acquire(&r.head)
         if t == h then none('a)
         else
-            let v = r.buf[h % cap]
+            let v = r.buf[h & (cap - 1usize)]
             atomic_store_release(&r.head, h + 1usize)
             some(v)
 
