@@ -622,7 +622,7 @@ let main = (args: str[]) ->
     // callback reaches all mutable audio state through `userdata = ac`, and is
     // its sole mutator: the main loop only posts commands onto the lock-free
     // cmd_ring (see audio_thread.callback), so it never blocks on the audio thread.
-    let mut spec = sdl2.audio_spec {
+    let spec = sdl2.audio_spec {
         freq = w.ac.sample_rate, format = sdl2.audio_s16sys,
         channels = 2u8, silence = 0u8, samples = (u16) audio_buffer_frames,
         padding = 0u16, size = 0u32,
