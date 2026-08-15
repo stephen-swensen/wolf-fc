@@ -294,6 +294,24 @@ module adlib =
             priority = 0
         })!
 
+    // Key-off the way the original AdLib effect driver did it: a bare 0
+    // written to channel 0's key-on/block/F-number-high register, which
+    // clears the key bit *and* zeroes block plus the F-number's top two
+    // bits. Not the same thing as `opl2.note_off`, which deliberately
+    // preserves block/F-number so a released voice rings out at its own
+    // pitch — right for a general MIDI voice, wrong here. This format was
+    // authored against the bare-0 register stream: with block forced to 0
+    // the phase generator crawls (fnum_low * 2^-1 * 49716/2^19, a couple of
+    // Hz), so the release tail is subsonic and the effect is heard as its
+    // keyed notes and nothing else. Preserve block instead and every note
+    // that keys off keeps sounding for the whole release — the menu-confirm
+    // effect's last note (F-number 41, block 4) becomes a ~62 Hz drone that
+    // outlasts the 0.19 s effect by more than a second. 76 of the 87 AdLib
+    // effects render differently between the two, so this is the exact-
+    // register-stream path, not a stylistic choice.
+    let key_off = (st: sfx_state*) ->
+        opl2.write(st.chip, 0xB0, 0)
+
     // Start (or restart) playback of `s` on channel 0 with the
     // original's priority gate: skip when the new sound is
     // strictly lower-priority than what's currently playing. Equal or
@@ -302,7 +320,7 @@ module adlib =
     // sounds (wall bump, "do nothing") never trample a deliberate event.
     let play = (st: sfx_state*, s: sfx_data, priority: i32) ->
         if st.active && priority < st.priority then return
-        opl2.note_off(st.chip, 0)
+        key_off(st)
         opl2.load_instrument(st.chip, 0,
             s.m_char, s.c_char, s.m_scale, s.c_scale,
             s.m_atk, s.c_atk, s.m_sus, s.c_sus,
@@ -321,12 +339,12 @@ module adlib =
     let advance_tick = (st: sfx_state*) ->
         if !st.active then return
         if st.pos >= st.data_end then
-            opl2.note_off(st.chip, 0)
+            key_off(st)
             st.active = false
         else
             let b = (i32) st.data[st.pos]
             st.pos = st.pos + 1
-            if b == 0 then opl2.note_off(st.chip, 0)
+            if b == 0 then key_off(st)
             else opl2.note_on(st.chip, 0, st.block, b)
 
     // Mix `count` samples into `buf` from the chip while driving note
