@@ -4,6 +4,15 @@
 # Installer artifacts (`make installer` output)
 /dist/
 
+# DOS (DJGPP) build output — contains copies of the user-supplied *.WL6 data
+# files (never committed, same policy as /data), plus WOLF.EXE, logs, and
+# in-DOS screenshots (dos/out/.WOL/...)
+/dos/out/
+
+# Third-party DPMI host binary — fetched, not vendored (see dos/README.md).
+# Listed explicitly because the *.exe rule above is case-sensitive.
+/dos/CWSDPMI.EXE
+
 # Stray Windows binaries from earlier in-tree builds (run.sh now writes to %TEMP%)
 *.exe
 
