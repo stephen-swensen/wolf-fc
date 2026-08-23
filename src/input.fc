@@ -473,16 +473,12 @@ module input =
                                 let next = (g.view_mode + dir + n) % n
                                 resized = video.apply_view_mode(w, w.vg, pal, next)
                             else if g.menu_sel == menu.changeview_scale_row then
-                                // Scale Factor cycles Auto, 2x..12x as a
-                                // 12-position list (0, 2, 3, ..., 12).
-                                // Compute the next slot in that list and
-                                // map back to the underlying value.
-                                let mut idx = if g.scale_factor == 0 then 0
-                                    else g.scale_factor - 1
-                                let n = config.scale_factor_max
-                                idx = (idx + dir + n) % n
-                                let next = if idx == 0 then 0 else idx + 1
-                                g.scale_factor = next
+                                // Scale Factor cycles Auto, 1x..12x. The
+                                // value list is contiguous (0 = Auto, then
+                                // 1..scale_factor_max explicit), so the
+                                // cycle is a plain wrap over 0..max.
+                                let n = config.scale_factor_max + 1
+                                g.scale_factor = (g.scale_factor + dir + n) % n
                                 let new_scale = video.pick_scale_factor(w.rc.drawable_w, w.rc.drawable_h,
                                     w.rc.fb_w, w.rc.fb_h, g.max_scale, g.scale_factor)
                                 resized = video.apply_scale_factor(w, w.vg, pal, new_scale)

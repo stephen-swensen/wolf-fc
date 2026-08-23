@@ -20,7 +20,7 @@ let game_w = 320       // the UI grid width; the 3D fb may be wider (rc->fb_w,
 let game_h = 200
 let view_h = 160       // 3D viewport height in game coords (HUD takes bottom 40)
 // The 3D viewport's CPU-rendered vertical resolution is `rc->view_render_h
-// = rc->scale * view_h`. `rc->scale` is the supersample factor [2..6],
+// = rc->scale * view_h`. `rc->scale` is the supersample factor [1..12],
 // picked at startup from `SDL_GetRendererOutputSize` so the dbuf is as
 // close as possible to the actual drawable pixel area before SDL's final
 // nearest-neighbor stretch. Higher scale → finer ray density and finer
@@ -90,8 +90,10 @@ let main = (args: str[]) ->
     //                           that stutter at the auto-pick; raise
     //                           for high-end machines where 4K+ panels
     //                           could benefit from more rays. Floor is
-    //                           2 (the OG-doubled raycaster density);
-    //                           values below 2 are clamped up.
+    //                           1 (native-resolution render, no super-
+    //                           sampling — what a 320×200 VGA drawable
+    //                           auto-picks anyway); values below 1 are
+    //                           ignored.
     let mut test_mode = false
     let mut start_level = none(i32)
     let mut start_difficulty = none(difficulty)
@@ -104,7 +106,7 @@ let main = (args: str[]) ->
     let mut arg_debug = false
     // Default supersample cap. Hardcoded ceiling matches the original
     // pre-CLI clamp; --max-scale lets the user move it in either
-    // direction. Floor stays at 2 inside video.compute_scale_factor.
+    // direction (down to 1 = force native-resolution rendering).
     let mut max_scale = 6
     for i in 1..(i32) args.len do
         let a = args[(i64) i]
@@ -129,7 +131,7 @@ let main = (args: str[]) ->
             | err(_)    -> void()
         if text.starts_with(a, "--max-scale=") then
             match text.parse_i32(a[12..a.len]) with
-            | ok(n) -> if n >= 2 then max_scale = n
+            | ok(n) -> if n >= 1 then max_scale = n
             | err(_)    -> void()
 
     // PRNG seed: deterministic 0 in --test mode so scripted scenarios

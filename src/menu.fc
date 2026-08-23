@@ -535,7 +535,7 @@ module menu =
                     config.view_mode_label(g.view_mode), color)
             else if i == changeview_scale_row then
                 font.draw_text(rc, f, x_label, row_y, "Scale Factor", color)
-                // Show the user's choice (Auto vs 2x..12x). The
+                // Show the user's choice (Auto vs 1x..12x). The
                 // resolved supersample factor is exposed by the
                 // footer's "Texture" line below.
                 if g.scale_factor == 0 then

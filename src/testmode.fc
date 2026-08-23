@@ -154,9 +154,9 @@ module testmode =
             // probe higher-scale codepaths headlessly.
             match text.parse_i32(arg[9..arg.len]) with
             | ok(n) ->
-                if n >= 2 && n <= 8 then
+                if n >= 1 && n <= 12 then
                     ignore video.apply_scale_factor(w, w.vg, pal, n)
-                else bad("scale in [2,8]")
+                else bad("scale in [1,12]")
             | err(_) -> bad("integer scale factor")
         else if text.starts_with(arg, "setssaa:") then
             // Set the SSAA mode (0=off, 1=vertical-only 2×, 2=full 2×2).

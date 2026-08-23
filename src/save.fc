@@ -234,10 +234,11 @@ module config =
         | _ -> 0
 
     // Scale-factor (supersample) preference. 0 means "auto-pick from
-    // the renderer's drawable size" (capped by --max-scale); 2..12
-    // are explicit and bypass the cap.
+    // the renderer's drawable size" (capped by --max-scale); 1..12
+    // are explicit and bypass the cap (1 = native-resolution render,
+    // no supersampling).
     let scale_factor_auto = 0
-    let scale_factor_min  = 2
+    let scale_factor_min  = 1
     let scale_factor_max  = 12
 
     let defaults = () ->
@@ -262,7 +263,7 @@ module config =
             view_mode = 0,
             // Auto-pick the supersample factor from the drawable size
             // (capped by --max-scale). Users can pin an explicit
-            // 2..12 from the Change View menu.
+            // 1..12 from the Change View menu.
             scale_factor = scale_factor_auto,
             ssaa_mode = 0,
             bj_speed_pct = 100,

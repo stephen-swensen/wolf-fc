@@ -372,7 +372,7 @@ struct game =
     view_mode: i32
     // Supersample-factor preference (Change View menu).
     // 0=auto-pick from drawable size (capped by --max-scale), or an
-    // explicit 2..12 that bypasses the cap. Read by the resize
+    // explicit 1..12 that bypasses the cap. Read by the resize
     // handler, the initial scale pick, and `apply_view_mode` — when
     // non-zero the auto-pick path is skipped entirely.
     scale_factor: i32

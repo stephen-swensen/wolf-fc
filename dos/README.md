@@ -9,9 +9,11 @@ directory, linked against the exact `build/linux/wolf-fc.c` the Linux build uses
 - `sdl_dos.c` — the real DOS backend behind that API: VGA mode 13h with
   dynamic palette allocation (15-bit nearest-color cache), raw INT 9 keyboard
   with scancode→SDLK translation and typematic-repeat tagging, uclock()/PIT
-  timing, vsync-paced Present that point-samples the game's supersampled ARGB
-  buffer down to 320×200. Audio is deliberately absent for now (the game
-  detects "no driver" and runs silent).
+  timing, vsync-paced Present. The 320×200 drawable makes the game auto-pick
+  supersample scale 1 (native-resolution render — supersampling would be
+  discarded by the point-sampling Present anyway), so Present degenerates to
+  a straight quantize-copy into VGA memory. Audio is deliberately absent for
+  now (the game detects "no driver" and runs silent).
 - `sdl_stub.c` — inert no-op backend (`STUB=1 ./build-dos.sh`) for headless
   `--test` work; this is the backend the byte-identical determinism proof used.
 - `dos_shim.h` — the complete DJGPP 2.05 libc-gap list for wolf-fc + stdlib:
@@ -46,6 +48,13 @@ mkdir -p out/data && cp ../data/*.WL6 out/data/
 dosbox -conf dosbox.conf -c "mount c out" -c "set HOME=C:\\" -c c: -c wolf
 ```
 
+DOSBox starts fullscreen (`dosbox.conf`: `fullscreen=true`,
+`fullresolution=desktop`, `output=opengl`, `aspect=true`) — the program just
+writes 320×200 VGA memory and DOSBox owns all scaling, including the 1.2×
+vertical stretch a real 4:3 CRT would apply to mode 13h's non-square pixels
+(`aspect=true`; without it the picture is subtly squashed). Alt+Enter toggles
+back to a window.
+
 Controls are the usual: arrows move/turn, Ctrl fires, Space opens doors,
 Enter/Esc drive the menus, `s` saves a screenshot (lands in
 `out/.WOL/SCREENSH/` — the `~/.wolf-fc/screenshots` path after DOS 8.3
@@ -61,7 +70,8 @@ truncation).
   existing SDL-style audio callback from the SB IRQ.
 - F11 fullscreen and window management are no-ops (there is no window).
 - Config/screenshot paths land under `C:\.WOL` via `HOME=C:\`.
-- Speed is untuned for real hardware: the game renders at its minimum
-  supersample (640×400) and Present downsamples; a native 320×200 path
-  (scale=1) would roughly quarter the raycasting work if real-386 targets
-  ever matter. DOSBox at `cycles=max` is comfortable.
+- The game renders natively at 320×200 (supersample scale 1, auto-picked
+  from the drawable — verified via the engine's own in-DOS screenshot
+  coming out 320×200). That's ~¼ the raycasting work of the old scale-2
+  minimum, whose extra pixels the point-sampling Present threw away anyway.
+  DOSBox at `cycles=max` is comfortable; real-386 viability is untested.

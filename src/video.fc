@@ -57,7 +57,9 @@ module video =
     // is the framebuffer width — typically the OG 320, or wider for
     // Hor+ widescreen (384 / 428 / etc., set from the display aspect).
     // `fb_h` stays 200 (vertical FOV preserved). `scale` is the supersample
-    // factor [2..6] — dbuf is `scale * fb_w` × `scale * fb_h`. Test mode
+    // factor [1..12] — dbuf is `scale * fb_w` × `scale * fb_h` (scale=1
+    // renders at native fb resolution, no supersampling — the right pick
+    // when the drawable IS the framebuffer, e.g. VGA mode 13h). Test mode
     // pins scale = 2 to keep regression screenshots bit-stable; interactive
     // mode picks the value via `compute_scale_factor` after the renderer is
     // up. Decodes the title-screen backdrop once so pics.blit_title_bg is a
@@ -147,12 +149,16 @@ module video =
             let scale_w = out_w / fb_w
             let scale_h = out_h * 5 / (fb_h * 6)
             let mut s = if scale_w < scale_h then scale_w else scale_h
-            if s < 2 then s = 2
+            // Floor of 1, not 2: when the drawable is no bigger than the
+            // framebuffer (a 320×200 VGA target, or a tiny window) any
+            // supersample work is discarded by the downstream stretch, so
+            // native-resolution rendering is strictly better.
+            if s < 1 then s = 1
             if s > max_scale then s = max_scale
             s
 
     // Resolve the player's `scale_factor` preference into a concrete
-    // supersample factor. An explicit non-zero choice (2..12, set from
+    // supersample factor. An explicit non-zero choice (1..12, set from
     // the Change View menu) wins outright and bypasses --max-scale; Auto
     // (0) falls through to the auto-pick which honours the CLI cap.
     let pick_scale_factor = (out_w: i32, out_h: i32, fb_w: i32, fb_h: i32,

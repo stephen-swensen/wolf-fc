@@ -3,7 +3,7 @@
 //   billboards — enemies + sprites + projectiles sorted back-to-front
 //                and drawn over the wall frame with the z-buffer
 //   overlay    — viewport tints, dissolve stipples, final Nx upscale
-//                (N = rc->scale, the supersample factor in [2..6]),
+//                (N = rc->scale, the supersample factor in [1..12]),
 //                screenshot / PNG pipeline
 
 
@@ -41,7 +41,8 @@ struct render_ctx =
     // + billboards) and full-screen fills span 0..fb_w.
     fb_w: i32
     fb_h: i32
-    // Supersample factor in [2..6]. Picked at startup from the renderer
+    // Supersample factor in [1..12] (1 = native, no supersampling).
+    // Picked at startup from the renderer
     // output size so dbuf approaches the drawable pixel count. `screen_w`
     // / `screen_h` / `view_render_h` are derived (cached so they don't
     // multiply on every read in hot raycaster loops).
@@ -1233,7 +1234,7 @@ module overlay =
                         rc.dbuf[drow + (i64) x] = 0xFF000000u32 | (r << 16) | (gg << 8) | b
 
     let render_debug = (rc: render_ctx*, f: const font.info*) ->
-        // Half the UI scale (rc->scale is 2..6) so the readout stays small.
+        // Half the UI scale (floored at 1 for scale=1) so the readout stays small.
         let s = if rc.scale / 2 < 1 then 1 else rc.scale / 2
         let ssaa = if rc.ssaa_mode == 2 then "2x"
                    else if rc.ssaa_mode == 1 then "2xV"
