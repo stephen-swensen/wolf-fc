@@ -222,13 +222,36 @@ void SDL_PumpEvents(void) { /* IRQ fills the ring; nothing to do */ }
 static int vid_active;                         /* mode 13h entered */
 static unsigned char vga_shadow[320 * 200];    /* next frame, palette indices */
 
-/* Dynamic palette: colors are allocated DAC slots on first sight; when all
- * 256 are taken, later colors take the nearest allocated slot. A 15-bit
- * RGB555 cache makes the per-pixel cost one table lookup after warmup. */
+/* Dynamic palette, earned by the frame. Colors are allocated DAC slots on
+ * first sight (a 15-bit RGB555 cache makes the steady-state per-pixel cost
+ * one table lookup); when all 256 are taken, later colors take the nearest
+ * allocated slot. First-come-forever allocation alone looks terrible in
+ * practice — the boot screens (PG13 / title / menus) claim slots gameplay
+ * then can't have, transient blends (damage flash, fades) squat forever,
+ * and a plain gameplay frame legitimately draws from more than 256 colors
+ * (base palette + the 0.75-dim side-wall twin). So Present histograms the
+ * frame as it quantizes, and when too many pixels lack an exact slot for a
+ * few consecutive frames, the palette is REBUILT from the frame's 256 most
+ * popular colors: the DAC reprogram lands in the same vertical retrace as
+ * that frame's blit, so the swap is never visible against stale indices.
+ * Hysteresis (miss threshold + streak + cooldown) keeps a stable scene from
+ * ever rebuilding, so there is no shimmer in normal play. */
 static unsigned char pal_r[256], pal_g[256], pal_b[256];
 static int pal_used;
-static unsigned char q_lut[32768];
-static unsigned char q_set[32768];
+static unsigned char q_lut[32768];        /* key -> DAC slot */
+#define Q_EMPTY  0
+#define Q_EXACT  1                        /* slot holds this exact color */
+#define Q_APPROX 2                        /* nearest match — a "miss" */
+static unsigned char q_state[32768];
+static uint32_t q_rep[32768];             /* true 8-bit color behind a key */
+static uint16_t q_hist[32768];            /* pixel counts, current frame */
+static uint16_t q_touched[32768];         /* keys with q_hist != 0 */
+static int q_ntouched;
+static long q_miss_px;                    /* this frame's APPROX pixels */
+static int q_miss_streak;                 /* consecutive over-threshold frames */
+static int q_cooldown;                    /* frames until next rebuild allowed */
+static int q_rebuild_pending;
+static int q_dac_dirty;                   /* full DAC write at next retrace */
 
 static void vga_set_dac(int slot, int r, int g, int b) {
     outportb(0x3C8, (unsigned char)slot);
@@ -237,10 +260,27 @@ static void vga_set_dac(int slot, int r, int g, int b) {
     outportb(0x3C9, (unsigned char)(b >> 2));
 }
 
+static void vga_write_dac_all(void) {
+    outportb(0x3C8, 0);
+    for (int i = 0; i < 256; i++) {
+        outportb(0x3C9, (unsigned char)(pal_r[i] >> 2));
+        outportb(0x3C9, (unsigned char)(pal_g[i] >> 2));
+        outportb(0x3C9, (unsigned char)(pal_b[i] >> 2));
+    }
+}
+
 static unsigned char quantize(uint32_t argb) {
     int r = (argb >> 16) & 0xFF, g = (argb >> 8) & 0xFF, b = argb & 0xFF;
     int key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
-    if (q_set[key]) return q_lut[key];
+    if (q_hist[key]++ == 0) {
+        q_touched[q_ntouched++] = (uint16_t)key;
+        q_rep[key] = argb;
+    }
+    unsigned char st = q_state[key];
+    if (st != Q_EMPTY) {
+        if (st == Q_APPROX) q_miss_px++;
+        return q_lut[key];
+    }
     unsigned char idx;
     if (pal_used < 256) {
         idx = (unsigned char)pal_used;
@@ -248,18 +288,55 @@ static unsigned char quantize(uint32_t argb) {
         pal_b[idx] = (unsigned char)b;
         vga_set_dac(idx, r, g, b);
         pal_used++;
+        st = Q_EXACT;
     } else {
+        /* Luma-weighted nearest — the eye resolves green differences far
+         * better than blue, so weight the channels accordingly. */
         long best = 0x7FFFFFFF; int bi = 0;
         for (int i = 0; i < 256; i++) {
             int dr = r - pal_r[i], dg = g - pal_g[i], db = b - pal_b[i];
-            long d = (long)dr * dr + (long)dg * dg + (long)db * db;
+            long d = 3L * dr * dr + 6L * dg * dg + 1L * db * db;
             if (d < best) { best = d; bi = i; }
         }
         idx = (unsigned char)bi;
+        st = Q_APPROX;
+        q_miss_px++;
     }
-    q_set[key] = 1;
+    q_state[key] = st;
     q_lut[key] = idx;
     return idx;
+}
+
+/* Rebuild the palette from the previous frame's histogram: its 256 most
+ * popular colors get exact DAC slots (any spare slots stay allocatable for
+ * colors that appear later). Runs at the top of Present, so the frame about
+ * to be quantized uses the new palette and its retrace writes the DAC. */
+static int q_item_cmp(const void *a, const void *b) {
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return x < y ? 1 : x > y ? -1 : 0;   /* descending */
+}
+
+static void palette_rebuild(void) {
+    static uint32_t items[32768];        /* count << 15 | key (count < 2^17) */
+    int n = q_ntouched;
+    for (int i = 0; i < n; i++) {
+        uint16_t key = q_touched[i];
+        items[i] = ((uint32_t)q_hist[key] << 15) | key;
+    }
+    qsort(items, (size_t)n, sizeof items[0], q_item_cmp);
+    int slots = n < 256 ? n : 256;
+    memset(q_state, 0, sizeof q_state);
+    for (int i = 0; i < slots; i++) {
+        int key = (int)(items[i] & 0x7FFF);
+        uint32_t c = q_rep[key];
+        pal_r[i] = (unsigned char)((c >> 16) & 0xFF);
+        pal_g[i] = (unsigned char)((c >> 8) & 0xFF);
+        pal_b[i] = (unsigned char)(c & 0xFF);
+        q_state[key] = Q_EXACT;
+        q_lut[key] = (unsigned char)i;
+    }
+    pal_used = slots;
+    q_dac_dirty = 1;
 }
 
 static void vga_wait_vsync(void) {
@@ -327,8 +404,10 @@ void *SDL_CreateWindow(const char *t, int32_t x, int32_t y, int32_t w, int32_t h
     set_mode(0x13);
     vid_active = 1;
     pal_used = 0;
-    memset(q_set, 0, sizeof q_set);
+    memset(q_state, 0, sizeof q_state);
     memset(vga_shadow, 0, sizeof vga_shadow);
+    q_ntouched = 0; q_miss_px = 0; q_miss_streak = 0;
+    q_cooldown = 0; q_rebuild_pending = 0; q_dac_dirty = 0;
     quantize(0xFF000000u);                     /* slot 0 = black */
     return &dummy_window;
 }
@@ -397,9 +476,20 @@ void SDL_RenderPresent(void *r) {
     (void)r;
     if (!vid_active || !tex0.live || !tex0.pixels || tex0.w <= 0 || tex0.h <= 0)
         return;
+    /* A rebuild decided at the end of the previous frame runs now, so THIS
+     * frame quantizes against the new palette and its own retrace writes
+     * the DAC — the swap is never displayed against old indices. The
+     * rebuild reads the previous frame's histogram, which is reset only
+     * afterwards. */
+    if (q_rebuild_pending) {
+        palette_rebuild();
+        q_rebuild_pending = 0;
+    }
+    for (int i = 0; i < q_ntouched; i++) q_hist[q_touched[i]] = 0;
+    q_ntouched = 0;
+    q_miss_px = 0;
     /* Point-sample the game's screen_w x screen_h ARGB buffer down to
-     * 320x200. Integer steps: with the forced scale=2 this reads every
-     * second pixel of every second row. */
+     * 320x200 (identity at scale 1). */
     int xstep = tex0.w / 320;  if (xstep < 1) xstep = 1;
     int ystep = tex0.h / 200;  if (ystep < 1) ystep = 1;
     int stride = tex0.pitch / 4;
@@ -410,7 +500,25 @@ void SDL_RenderPresent(void *r) {
         for (int x = 0; x < 320; x++)
             *dst++ = quantize(row[x * xstep]);
     }
+    /* Hysteresis: rebuild when > ~1.5% of pixels lacked an exact slot for
+     * 3 consecutive frames, at most once per 16 frames. A stable scene
+     * that fits the palette never trips this; one that genuinely needs
+     * more than 256 colors settles instead of thrashing. */
+    if (q_cooldown > 0) q_cooldown--;
+    if (q_miss_px > (320L * 200L) / 64) {
+        if (++q_miss_streak >= 3 && q_cooldown == 0) {
+            q_rebuild_pending = 1;
+            q_miss_streak = 0;
+            q_cooldown = 16;
+        }
+    } else {
+        q_miss_streak = 0;
+    }
     vga_wait_vsync();
+    if (q_dac_dirty) {
+        vga_write_dac_all();
+        q_dac_dirty = 0;
+    }
     dosmemput(vga_shadow, sizeof vga_shadow, 0xA0000);
 }
 

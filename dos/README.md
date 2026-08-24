@@ -7,7 +7,11 @@ directory, linked against the exact `build/linux/wolf-fc.c` the Linux build uses
 - `SDL2/SDL.h` — stub header declaring the SDL2 surface wolf-fc binds
   (struct layouts match `src/sdl2.fc`; this header *is* the ABI here).
 - `sdl_dos.c` — the real DOS backend behind that API: VGA mode 13h with
-  dynamic palette allocation (15-bit nearest-color cache), raw INT 9 keyboard
+  a frame-earned dynamic palette (Present histograms the frame through a
+  15-bit cache; when too many pixels lack an exact DAC slot, the palette
+  is rebuilt from the frame's 256 most popular colors, with the DAC
+  reprogram landing in that frame's vertical retrace — hysteresis keeps
+  stable scenes from ever rebuilding), raw INT 9 keyboard
   with scancode→SDLK translation and typematic-repeat tagging, uclock()/PIT
   timing, vsync-paced Present. The 320×200 drawable makes the game auto-pick
   supersample scale 1 (native-resolution render — supersampling would be
