@@ -12,9 +12,15 @@
 
 struct timespec { time_t tv_sec; long tv_nsec; };
 
+/* Sub-second resolution via DJGPP's uclock() (PIT-based, ~838 ns/tick).
+ * The epoch is program start, not 1970 — wolf-fc uses sys.time() only for
+ * durations (frame dt, benches) and PRNG seeding, both of which want the
+ * resolution far more than the epoch. time(NULL)'s whole seconds would
+ * quantize every measured duration to 1000 ms. */
 static inline int timespec_get(struct timespec *ts, int base) {
-    ts->tv_sec = time(NULL);
-    ts->tv_nsec = 0;
+    uclock_t u = uclock();
+    ts->tv_sec = (time_t)(u / UCLOCKS_PER_SEC);
+    ts->tv_nsec = (long)((u % UCLOCKS_PER_SEC) * 838);
     return base;
 }
 
