@@ -519,12 +519,27 @@ void SDL_RenderPresent(void *r) {
         for (int x = 0; x < 320; x++)
             *dst++ = quantize(row[x * xstep]);
     }
-    /* Hysteresis: rebuild when > ~1.5% of pixels lacked an exact slot for
-     * 3 consecutive frames, at most once per 16 frames. A stable scene
-     * that fits the palette never trips this; one that genuinely needs
-     * more than 256 colors settles instead of thrashing. */
+    /* Rebuild policy, two regimes:
+     *
+     * Wholesale change (> 12.5% of pixels missed): a full-screen blend —
+     * damage flash, death stipple, a fade — has replaced the frame's
+     * colors outright. Rebuild immediately, every frame: the palette then
+     * tracks the effect with one frame of lag (adjacent blend frames are
+     * near-identical, so matches stay near-exact), and the churn is
+     * invisible because the whole screen is changing anyway. Waiting out
+     * the streak/cooldown here is what painted rainbow speckle over
+     * flashes: thousands of fresh blend colors nearest-matched into a
+     * palette several frames stale.
+     *
+     * Drift (> ~1.5% for 3 consecutive frames, 16-frame cooldown): the
+     * gentle path for scene changes. A stable scene that fits the
+     * palette never trips either regime. */
     if (q_cooldown > 0) q_cooldown--;
-    if (q_miss_px > (320L * 200L) / 64) {
+    if (q_miss_px > (320L * 200L) / 8) {
+        q_rebuild_pending = 1;
+        q_miss_streak = 0;
+        q_cooldown = 0;
+    } else if (q_miss_px > (320L * 200L) / 64) {
         if (++q_miss_streak >= 3 && q_cooldown == 0) {
             q_rebuild_pending = 1;
             q_miss_streak = 0;
