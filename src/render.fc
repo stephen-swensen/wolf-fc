@@ -58,7 +58,12 @@ struct render_ctx =
     drawable_w: i32
     drawable_h: i32
     ui_offset_x: i32
-    fb: u32[]      // fb_w x fb_h ARGB — primary software-rendered frame
+    // fb_w x fb_h ARGB — the 320x200-grid frame all UI code draws
+    // into. At scale 1 this ALIASES dbuf (identical dims; see
+    // video.build_render_ctx) so UI writes land directly in the
+    // output and the fb→dbuf stitching passes no-op; at scale ≥ 2
+    // it is an independently-owned staging buffer.
+    fb: u32[]
     dbuf: u32[]    // screen_w x screen_h ARGB — Nx nearest-neighbor upscale of fb
     zbuf: f64[]    // per-column wall perp-distance, for sprite clipping
 
@@ -1056,6 +1061,9 @@ module overlay =
     // source pixel paints a `scale × scale` block. Stride uses
     // rc->screen_w so widescreen framebuffers blit correctly.
     let upscale_nx = (rc: render_ctx*) ->
+        // scale 1: fb IS dbuf (video.build_render_ctx aliases them),
+        // so the content is already in place.
+        if rc.scale == 1 then return
         let s = rc.scale
         let sw = (i64) rc.screen_w
         let fbw = (i64) rc.fb_w
@@ -1082,7 +1090,15 @@ module overlay =
     // (alpha == 0). Composite_top_to_dbuf only blits non-sentinel
     // pixels, so untouched cells let the high-res raycaster content
     // show through. Every UI write to fb uses opaque ARGB (alpha=0xFF).
+    //
+    // scale 1: the whole sentinel/composite mechanism no-ops — fb
+    // aliases dbuf, so UI writes land directly in the output and
+    // painter's order (3D first, UI after) replaces the two-buffer
+    // merge. Clearing here would wipe nothing useful (the raycaster
+    // repaints every viewport pixel) at the cost of a full-region
+    // store pass.
     let clear_view_sentinel = (rc: render_ctx*) ->
+        if rc.scale == 1 then return
         let total = (i64) view_h * (i64) rc.fb_w
         for i in 0..total do
             rc.fb[i] = 0u32
@@ -1092,6 +1108,8 @@ module overlay =
     // nearest neighbor. Sentinel pixels (alpha == 0) are skipped so
     // the high-res raycaster content stays visible underneath.
     let composite_view_overlay = (rc: render_ctx*) ->
+        // scale 1: fb aliases dbuf — already composited by construction.
+        if rc.scale == 1 then return
         let s = rc.scale
         let sw = (i64) rc.screen_w
         let fbw = (i64) rc.fb_w
@@ -1110,6 +1128,8 @@ module overlay =
     // scale × scale nearest-neighbor blit of fb's HUD region (rows
     // view_h..fb_h) → dbuf's HUD region (rows view_render_h..screen_h).
     let composite_hud = (rc: render_ctx*) ->
+        // scale 1: fb aliases dbuf — already composited by construction.
+        if rc.scale == 1 then return
         let s = rc.scale
         let sw = (i64) rc.screen_w
         let fbw = (i64) rc.fb_w
@@ -1366,6 +1386,9 @@ module overlay =
     // corner of each scale × scale block (cheap, matches the upscale
     // pixel layout).
     let flatten_view_to_fb = (rc: render_ctx*) ->
+        // scale 1: fb aliases dbuf — the copy would be a same-index
+        // self-copy of every viewport pixel.
+        if rc.scale == 1 then return
         let s = rc.scale
         let sw = (i64) rc.screen_w
         let fbw = (i64) rc.fb_w

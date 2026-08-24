@@ -70,6 +70,15 @@ module video =
         let screen_w = fb_w * scale
         let view_render_h = view_h * scale
         let dbuf = alloc(u32[screen_w * (fb_h * scale)] {})!
+        // At scale 1, fb and dbuf have identical dimensions, so fb
+        // ALIASES dbuf (same pattern as vbuf/vzbuf below): UI code
+        // draws straight into the output buffer and the whole
+        // fb→dbuf stitching layer (clear_view_sentinel, upscale_nx,
+        // composite_view_overlay, composite_hud) no-ops — that layer
+        // exists only to bridge resolutions. resize_render_ctx
+        // maintains the invariant "fb aliases dbuf iff scale == 1"
+        // across every transition.
+        let fb = if scale == 1 then dbuf else alloc(u32[fb_w * fb_h] {})!
         let zbuf = alloc(f64[screen_w] {})!
         let ssaa_buf = alloc(u32[ssaa_buf_len(ssaa_mode, screen_w, view_render_h)] {})!
         let ssaa_zbuf = alloc(f64[ssaa_zbuf_len(ssaa_mode, screen_w)] {})!
@@ -83,7 +92,7 @@ module video =
             drawable_w = 0,
             drawable_h = 0,
             ui_offset_x = (fb_w - 320) / 2,
-            fb = alloc(u32[fb_w * fb_h] {})!,
+            fb = fb,
             dbuf = dbuf,
             zbuf = zbuf,
             ssaa_mode = ssaa_mode,
@@ -201,9 +210,18 @@ module video =
         let scale_changed = new_scale != rc.scale
         if !fb_w_changed && !scale_changed then false
         else
+            // Invariant: fb aliases dbuf iff scale == 1 (see
+            // build_render_ctx). fb is freed only when it is
+            // independently owned AND going away — replaced by a
+            // wider one (fb_w change) or collapsing into an alias
+            // (new scale 1). When it was aliased, freeing dbuf below
+            // already releases the shared storage.
+            let was_aliased = rc.scale == 1
+            let will_alias = new_scale == 1
             if fb_w_changed then
-                free(rc.fb)
                 free(rc.title_bg)
+            if !was_aliased && (fb_w_changed || will_alias) then
+                free(rc.fb)
             free(rc.dbuf)
             free(rc.zbuf)
             if rc.ssaa_mode != 0 then
@@ -216,9 +234,12 @@ module video =
             rc.view_render_h = view_h * new_scale
             rc.ui_offset_x = (new_fb_w - 320) / 2
             if fb_w_changed then
-                rc.fb = alloc(u32[new_fb_w * rc.fb_h] {})!
                 rc.title_bg = pics.build_title_bg_cache(vg, pal, new_fb_w, rc.fb_h)
             rc.dbuf = alloc(u32[rc.screen_w * rc.screen_h] {})!
+            if will_alias then
+                rc.fb = rc.dbuf
+            else if was_aliased || fb_w_changed then
+                rc.fb = alloc(u32[new_fb_w * rc.fb_h] {})!
             rc.zbuf = alloc(f64[rc.screen_w] {})!
             if rc.ssaa_mode != 0 then
                 rc.ssaa_buf = alloc(u32[ssaa_buf_len(rc.ssaa_mode, rc.screen_w, rc.view_render_h)] {})!
