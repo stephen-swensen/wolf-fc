@@ -17,11 +17,13 @@
  *                               tracked into keysym.mod (SDL KMOD_* layout).
  *   timing                   -> uclock() (PIT-based, ~1.19 MHz) for GetTicks
  *                               and the performance counter; Delay yields.
- *   audio                    -> deliberately absent: SDL_Init(AUDIO) fails
- *                               and GetCurrentAudioDriver returns NULL, which
- *                               wolf-fc already handles as "running silent".
- *                               (A Sound Blaster DMA backend can slot in
- *                               later behind the same OpenAudioDevice call.)
+ *   audio                    -> Sound Blaster 16: 16-bit signed stereo
+ *                               auto-init DMA at 8000 Hz, the SB IRQ
+ *                               calling the game's SDL-style callback per
+ *                               half-buffer (see the audio section below
+ *                               for the rate rationale). No SB detected:
+ *                               SDL_Init(AUDIO) fails and the game runs
+ *                               silent as before.
  *
  * The display is reported as 320x240 (4:3): mode 13h pixels on a CRT are
  * non-square and the physical aspect is 4:3, so wolf-fc's Hor+ logic picks
@@ -37,10 +39,17 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <time.h>
+#include <crt0.h>
 #include <dpmi.h>
 #include <go32.h>
 #include <pc.h>
 #include <sys/movedata.h>
+
+/* The Sound Blaster ISR calls the game's whole mixer (FC code, music and
+ * SFX data), so every page it might touch must be resident. Locking all
+ * program memory is the standard DJGPP answer for ISR-heavy programs —
+ * CWSDPMI then never pages any of it out. */
+int _crt0_startup_flags = _CRT0_FLAG_LOCK_MEMORY;
 
 /* ------------------------------------------------------------------ */
 /* Timing                                                              */
@@ -351,7 +360,13 @@ static void set_mode(int mode) {
     __dpmi_int(0x10, &r);
 }
 
+static void sb_shutdown(void);
+static void sb_parse_blaster(void);
+static int sb_reset(void);
+static int sb_present;
+
 static void dos_cleanup(void) {
+    sb_shutdown();
     kb_remove();
     if (vid_active) { set_mode(0x03); vid_active = 0; }
 }
@@ -371,7 +386,11 @@ static int dummy_window, dummy_renderer;
 static struct { const void *pixels; int32_t pitch, w, h; int live; } tex0;
 
 int32_t SDL_Init(uint32_t flags) {
-    if (flags == SDL_INIT_AUDIO) return -1;    /* deliberate: run silent */
+    if (flags == SDL_INIT_AUDIO) {
+        sb_parse_blaster();
+        sb_present = sb_reset();
+        return sb_present ? 0 : -1;            /* no SB: game runs silent */
+    }
     static int hooked;
     if (!hooked) { atexit(dos_cleanup); signal(SIGABRT, on_abort); hooked = 1; }
     return 0;
@@ -526,12 +545,213 @@ void SDL_RenderPresent(void *r) {
 /* Audio: absent by design (wolf-fc runs silent when driver == NULL)   */
 /* ------------------------------------------------------------------ */
 
-uint32_t SDL_OpenAudioDevice(void *n, int32_t c, const SDL_AudioSpec *w, SDL_AudioSpec *h, int32_t g) {
-    (void)n; (void)c; (void)w; (void)h; (void)g; return 0;
+/* Sound Blaster 16, 16-bit signed stereo auto-init DMA at 8000 Hz.
+ *
+ * Rate: the game asks the backend for its preferred rate (via
+ * SDL_GetDefaultAudioInfo) and runs its whole mixer at whatever we say.
+ * The OPL2 music emulator costs ~18 us of emulated CPU per sample under
+ * DOSBox (measured with --test audiobench:), so 8000 Hz keeps the mix at
+ * ~15% of the CPU — 44100 would eat more than all of it.
+ *
+ * Delivery: a 2-half auto-init DMA loop in DOS memory. The DSP raises the
+ * SB IRQ at each half-buffer boundary; the ISR calls the game's SDL-style
+ * callback to synthesize the next half (~2-3 ms every 16 ms) and copies it
+ * into the finished half while the other one plays. The callback is
+ * designed for exactly this (it is the sole mutator of audio state; the
+ * main loop only posts to a lock-free command ring), so no locking beyond
+ * the ISR context itself is needed. Pausing keeps the DMA loop running and
+ * feeds it silence — simpler than stopping the DSP, and restart-glitch-free. */
+
+#define SB_RATE        8000
+#define SB_HALF_FRAMES 128                       /* 16 ms per half */
+#define SB_HALF_BYTES  (SB_HALF_FRAMES * 4)      /* s16 stereo */
+
+static int sb_base = 0x220, sb_irq = 7, sb_dma16 = 5;
+static int sb_opened, sb_started, sb_paused = 1;   /* sb_present declared above */
+static void (*sb_cb)(void *, unsigned char *, int32_t);
+static void *sb_ud;
+static int sb_dos_sel = -1;                      /* DOS-memory selector */
+static unsigned long sb_phys;                    /* DMA buffer physical addr */
+static int sb_half;                              /* half to refill next */
+static unsigned char sb_mix[SB_HALF_BYTES];
+static _go32_dpmi_seginfo sb_old_isr, sb_new_isr;
+static int sb_isr_installed;
+
+static void sb_dsp_write(int v) {
+    for (int t = 0; t < 65536 && (inportb(sb_base + 0xC) & 0x80); t++) ;
+    outportb(sb_base + 0xC, (unsigned char)v);
 }
-void SDL_PauseAudioDevice(uint32_t d, int32_t p) { (void)d; (void)p; }
-void SDL_CloseAudioDevice(uint32_t d) { (void)d; }
-const char *SDL_GetCurrentAudioDriver(void) { return NULL; }
+
+static int sb_reset(void) {
+    outportb(sb_base + 0x6, 1);
+    for (volatile int i = 0; i < 200; i++) ;     /* >= 3 us */
+    outportb(sb_base + 0x6, 0);
+    for (int t = 0; t < 65536; t++)
+        if (inportb(sb_base + 0xE) & 0x80)
+            return inportb(sb_base + 0xA) == 0xAA;
+    return 0;
+}
+
+/* BLASTER=A220 I7 D1 H5 T6 — DOSBox exports it; real installs set it too.
+ * We need A (base), I (IRQ), and H (16-bit DMA channel). */
+static void sb_parse_blaster(void) {
+    const char *e = getenv("BLASTER");
+    if (!e) return;
+    for (; *e; e++) {
+        if (*e == 'A' || *e == 'a') sb_base = (int)strtol(e + 1, NULL, 16);
+        else if (*e == 'I' || *e == 'i') sb_irq = (int)strtol(e + 1, NULL, 10);
+        else if (*e == 'H' || *e == 'h') sb_dma16 = (int)strtol(e + 1, NULL, 10);
+    }
+}
+
+static void sb_fill_half(int half) {
+    if (sb_paused || !sb_cb) memset(sb_mix, 0, sizeof sb_mix);
+    else sb_cb(sb_ud, sb_mix, (int32_t)sizeof sb_mix);
+    dosmemput(sb_mix, sizeof sb_mix, sb_phys + (unsigned long)half * SB_HALF_BYTES);
+}
+
+static void sb_isr(void) {
+    outportb(sb_base + 0x4, 0x82);               /* mixer: IRQ status reg */
+    if (inportb(sb_base + 0x5) & 0x02) {         /* 16-bit DMA IRQ = ours */
+        inportb(sb_base + 0xF);                  /* ack 16-bit transfer */
+        /* The game's mixer is f64-heavy FC code, and the iret wrapper
+         * saves only the integer registers — without saving the x87
+         * state too, the mixer's float instructions corrupt whatever
+         * f64 computation the interrupt landed in (the raycaster works
+         * column-at-a-time, so the symptom is transient vertical glitch
+         * stripes). fnsave stores the interrupted context's full FPU
+         * state AND reinitializes the FPU, handing the callback a clean
+         * stack; frstor puts the interrupted math back exactly as it
+         * was. ISRs don't nest (IF stays clear), so one static save
+         * area is enough. */
+        static unsigned char sb_fpu[112];
+        __asm__ __volatile__ ("fnsave %0" : "=m" (sb_fpu) :: "memory");
+        sb_fill_half(sb_half);
+        sb_half ^= 1;
+        __asm__ __volatile__ ("frstor %0" : : "m" (sb_fpu) : "memory");
+    }
+    if (sb_irq >= 8) outportb(0xA0, 0x20);
+    outportb(0x20, 0x20);
+}
+
+static void sb_start(void) {
+    /* Prime both halves, then arm the DMA loop and the DSP. */
+    sb_fill_half(0);
+    sb_fill_half(1);
+    sb_half = 0;
+    int ch = sb_dma16 & 3;                       /* channel on the 2nd 8237 */
+    int abase = 0xC0 + ch * 4;
+    int pagereg = ch == 1 ? 0x8B : ch == 2 ? 0x89 : 0x8A;
+    unsigned waddr = (unsigned)((sb_phys >> 1) & 0xFFFF);
+    unsigned words = SB_HALF_FRAMES * 2 * 2 - 1; /* both halves, 16-bit words - 1 */
+    outportb(0xD4, 0x04 | ch);                   /* mask channel */
+    outportb(0xD8, 0);                           /* clear flip-flop */
+    outportb(0xD6, 0x58 | ch);                   /* single, auto-init, playback */
+    outportb(abase, waddr & 0xFF);
+    outportb(abase, (waddr >> 8) & 0xFF);
+    outportb(pagereg, (unsigned char)((sb_phys >> 16) & 0xFF));
+    outportb(abase + 2, words & 0xFF);
+    outportb(abase + 2, (words >> 8) & 0xFF);
+    outportb(0xD4, ch);                          /* unmask */
+    sb_dsp_write(0x41);                          /* set output rate */
+    sb_dsp_write((SB_RATE >> 8) & 0xFF);
+    sb_dsp_write(SB_RATE & 0xFF);
+    sb_dsp_write(0xB6);                          /* 16-bit auto-init DAC, FIFO */
+    sb_dsp_write(0x30);                          /* mode: signed stereo */
+    unsigned blk = SB_HALF_FRAMES * 2 - 1;       /* IRQ block: one half, in words */
+    sb_dsp_write(blk & 0xFF);
+    sb_dsp_write((blk >> 8) & 0xFF);
+    sb_started = 1;
+}
+
+static void sb_shutdown(void) {
+    if (sb_started) {
+        sb_reset();                              /* stops DSP + IRQs */
+        outportb(0xD4, 0x04 | (sb_dma16 & 3));   /* mask DMA channel */
+        sb_started = 0;
+    }
+    if (sb_isr_installed) {
+        int vec = sb_irq < 8 ? 8 + sb_irq : 0x70 + (sb_irq - 8);
+        _go32_dpmi_set_protected_mode_interrupt_vector(vec, &sb_old_isr);
+        _go32_dpmi_free_iret_wrapper(&sb_new_isr);
+        sb_isr_installed = 0;
+    }
+    if (sb_dos_sel >= 0) {
+        __dpmi_free_dos_memory(sb_dos_sel);
+        sb_dos_sel = -1;
+    }
+    sb_opened = 0;
+}
+
+uint32_t SDL_OpenAudioDevice(void *n, int32_t c, const SDL_AudioSpec *want, SDL_AudioSpec *have, int32_t g) {
+    (void)n; (void)c; (void)g;
+    if (!sb_present || sb_opened || !want || !want->callback) return 0;
+    /* DMA buffer in DOS memory. 16-bit DMA must not cross a 128 KB bank;
+     * allocate double and use whichever aligned half fits (the buffer is
+     * only 1 KB, so one of them always does). */
+    int sel = 0;
+    int seg = __dpmi_allocate_dos_memory((2 * SB_HALF_BYTES * 2 + 15) / 16, &sel);
+    if (seg < 0) return 0;
+    sb_dos_sel = sel;
+    sb_phys = (unsigned long)seg << 4;
+    unsigned long in_bank = sb_phys & 0x1FFFF;
+    if (in_bank + 2 * SB_HALF_BYTES > 0x20000)
+        sb_phys += 0x20000 - in_bank;
+    /* SB IRQ handler (iret wrapper, same pattern as the keyboard hook). */
+    int vec = sb_irq < 8 ? 8 + sb_irq : 0x70 + (sb_irq - 8);
+    _go32_dpmi_get_protected_mode_interrupt_vector(vec, &sb_old_isr);
+    sb_new_isr.pm_offset = (unsigned long)sb_isr;
+    sb_new_isr.pm_selector = _go32_my_cs();
+    if (_go32_dpmi_allocate_iret_wrapper(&sb_new_isr) != 0) {
+        __dpmi_free_dos_memory(sb_dos_sel); sb_dos_sel = -1;
+        return 0;
+    }
+    _go32_dpmi_set_protected_mode_interrupt_vector(vec, &sb_new_isr);
+    sb_isr_installed = 1;
+    /* Unmask at the PIC (and the cascade for slave IRQs). */
+    if (sb_irq < 8) {
+        outportb(0x21, inportb(0x21) & ~(1 << sb_irq));
+    } else {
+        outportb(0xA1, inportb(0xA1) & ~(1 << (sb_irq - 8)));
+        outportb(0x21, inportb(0x21) & ~(1 << 2));
+    }
+    sb_cb = (void (*)(void *, unsigned char *, int32_t))want->callback;
+    sb_ud = want->userdata;
+    if (have) {
+        have->freq = SB_RATE;
+        have->format = AUDIO_S16SYS;
+        have->channels = 2;
+        have->silence = 0;
+        have->samples = SB_HALF_FRAMES;
+        have->padding = 0;
+        have->size = SB_HALF_BYTES;
+        have->callback = want->callback;
+        have->userdata = want->userdata;
+    }
+    sb_paused = 1;                               /* SDL devices open paused */
+    sb_opened = 1;
+    return 2;                                    /* SDL device ids start at 2 */
+}
+
+void SDL_PauseAudioDevice(uint32_t d, int32_t p) {
+    (void)d;
+    if (!sb_opened) return;
+    sb_paused = p ? 1 : 0;
+    if (!sb_paused && !sb_started) sb_start();
+}
+
+void SDL_CloseAudioDevice(uint32_t d) { (void)d; sb_shutdown(); }
+
+const char *SDL_GetCurrentAudioDriver(void) {
+    return sb_present ? "dossb16" : NULL;
+}
+
 int32_t SDL_GetDefaultAudioInfo(void *n, SDL_AudioSpec *s, int32_t c) {
-    (void)n; (void)s; (void)c; return -1;
+    (void)n; (void)c;
+    if (!sb_present || !s) return -1;
+    memset(s, 0, sizeof *s);
+    s->freq = SB_RATE;
+    s->format = AUDIO_S16SYS;
+    s->channels = 2;
+    return 0;
 }

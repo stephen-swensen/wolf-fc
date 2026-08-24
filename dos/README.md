@@ -16,8 +16,13 @@ directory, linked against the exact `build/linux/wolf-fc.c` the Linux build uses
   timing, vsync-paced Present. The 320×200 drawable makes the game auto-pick
   supersample scale 1 (native-resolution render — supersampling would be
   discarded by the point-sampling Present anyway), so Present degenerates to
-  a straight quantize-copy into VGA memory. Audio is deliberately absent for
-  now (the game detects "no driver" and runs silent).
+  a straight quantize-copy into VGA memory. Audio is Sound Blaster 16:
+  16-bit signed stereo auto-init DMA at 8000 Hz, the SB IRQ driving the
+  game's SDL-style mixer callback per half-buffer (BLASTER env parsed;
+  no SB detected → the game runs silent as before). 8000 Hz because the
+  game synthesizes its music through an OPL2 *emulator* written in FC,
+  which costs ~18 µs of emulated CPU per sample under DOSBox — 44.1 kHz
+  would eat the whole machine, 8 kHz keeps the mixer near 15%.
 - `sdl_stub.c` — inert no-op backend (`STUB=1 ./build-dos.sh`) for headless
   `--test` work; this is the backend the byte-identical determinism proof used.
 - `dos_shim.h` — the complete DJGPP 2.05 libc-gap list for wolf-fc + stdlib:
@@ -70,8 +75,12 @@ truncation).
   in-game rendering with correct palette, movement, firing (ammo/HUD update),
   the engine's own PNG screenshots, and the headless `--test` determinism
   check (byte-identical to the Linux build from the same generated C).
-- No audio yet — a Sound Blaster DMA backend can later drive the game's
-  existing SDL-style audio callback from the SB IRQ.
+- Audio plays (music + digitized SFX) through the SB16 DMA backend at
+  8000 Hz. The fidelity ceiling is the FC OPL2 emulator's per-sample cost
+  under CPU emulation; routing the music's register stream to the Sound
+  Blaster's *real* OPL2 at port 388h instead (DOSBox synthesizes it for
+  free) would give authentic AdLib quality and a higher digi rate, at the
+  cost of a small game-side hook.
 - F11 fullscreen and window management are no-ops (there is no window).
 - Config/screenshot paths land under `C:\.WOL` via `HOME=C:\`.
 - The game renders natively at 320×200 (supersample scale 1, auto-picked
