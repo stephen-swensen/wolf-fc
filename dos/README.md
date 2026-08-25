@@ -64,6 +64,11 @@ vertical stretch a real 4:3 CRT would apply to mode 13h's non-square pixels
 (`aspect=true`; without it the picture is subtly squashed). Alt+Enter toggles
 back to a window.
 
+`SET WOLFDOS_STATS=1` before running makes the backend write `STATS.TXT`
+every ~7 seconds (and at exit): frame count, palette-rebuild counts, and
+the shares of emulated CPU spent in Present vs the audio ISR — the first
+thing to look at if audio stutters or the frame rate sags.
+
 Controls are the usual: arrows move/turn, Ctrl fires, Space opens doors,
 Enter/Esc drive the menus, `s` saves a screenshot (lands in
 `out/.WOL/SCREENSH/` — the `~/.wolf-fc/screenshots` path after DOS 8.3

@@ -37,6 +37,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <signal.h>
 #include <time.h>
 #include <crt0.h>
@@ -278,16 +279,18 @@ static void vga_write_dac_all(void) {
     }
 }
 
-static unsigned char quantize(uint32_t argb) {
+/* count = 1: normal pass (histogram + miss accounting). count = 0: the
+ * re-quantize pass after a same-frame rebuild — map only, stats frozen. */
+static unsigned char quantize_map(uint32_t argb, int count) {
     int r = (argb >> 16) & 0xFF, g = (argb >> 8) & 0xFF, b = argb & 0xFF;
     int key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
-    if (q_hist[key]++ == 0) {
+    if (count && q_hist[key]++ == 0) {
         q_touched[q_ntouched++] = (uint16_t)key;
         q_rep[key] = argb;
     }
     unsigned char st = q_state[key];
     if (st != Q_EMPTY) {
-        if (st == Q_APPROX) q_miss_px++;
+        if (st == Q_APPROX && count) q_miss_px++;
         return q_lut[key];
     }
     unsigned char idx;
@@ -309,17 +312,23 @@ static unsigned char quantize(uint32_t argb) {
         }
         idx = (unsigned char)bi;
         st = Q_APPROX;
-        q_miss_px++;
+        if (count) q_miss_px++;
     }
     q_state[key] = st;
     q_lut[key] = idx;
     return idx;
 }
 
-/* Rebuild the palette from the previous frame's histogram: its 256 most
+static unsigned char quantize(uint32_t argb) { return quantize_map(argb, 1); }
+
+/* Rebuild the palette from the accumulated frame histogram: its 256 most
  * popular colors get exact DAC slots (any spare slots stay allocatable for
- * colors that appear later). Runs at the top of Present, so the frame about
- * to be quantized uses the new palette and its retrace writes the DAC. */
+ * colors that appear later). Two call sites: deferred at the top of Present
+ * (drift regime — the histogram is the previous frame's), and mid-Present
+ * right after quantizing a wholesale-changed frame (the histogram is that
+ * same frame's, which is then re-quantized against the fresh palette).
+ * Either way the DAC write lands in the retrace of the frame quantized
+ * with the new palette. */
 static int q_item_cmp(const void *a, const void *b) {
     uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
     return x < y ? 1 : x > y ? -1 : 0;   /* descending */
@@ -365,10 +374,39 @@ static void sb_parse_blaster(void);
 static int sb_reset(void);
 static int sb_present;
 
+/* Opt-in perf accounting ($WOLFDOS_STATS=1): shares of the emulated CPU
+ * spent in Present vs the audio ISR, plus rebuild counts. rdtsc under
+ * DOSBox counts emulated cycles — exactly the budget being shared. Dumped
+ * to STATS.TXT at cleanup. */
+static unsigned long long st_t0, st_present, st_isr;
+static long st_frames, st_reb_now, st_reb_def, st_isr_calls;
+static int st_on;
+static unsigned long long rdtsc(void) {
+    unsigned long lo, hi;
+    __asm__ __volatile__ ("rdtsc" : "=a" (lo), "=d" (hi));
+    return ((unsigned long long)hi << 32) | lo;
+}
+static void st_dump(void) {
+    if (!st_on || !st_frames) return;
+    FILE *f = fopen("STATS.TXT", "w");
+    if (!f) return;
+    unsigned long long total = rdtsc() - st_t0;
+    fprintf(f, "frames=%ld rebuilds_now=%ld rebuilds_deferred=%ld isr_calls=%ld\n",
+            st_frames, st_reb_now, st_reb_def, st_isr_calls);
+    fprintf(f, "present_share=%.1f%% isr_share=%.1f%% (of emulated cycles)\n",
+            100.0 * (double)st_present / (double)total,
+            100.0 * (double)st_isr / (double)total);
+    fprintf(f, "present_avg_kcyc=%.0f isr_avg_kcyc=%.0f\n",
+            st_frames ? (double)st_present / st_frames / 1000.0 : 0.0,
+            st_isr_calls ? (double)st_isr / st_isr_calls / 1000.0 : 0.0);
+    fclose(f);
+}
+
 static void dos_cleanup(void) {
     sb_shutdown();
     kb_remove();
     if (vid_active) { set_mode(0x03); vid_active = 0; }
+    st_dump();
 }
 
 static void on_abort(int sig) {
@@ -392,7 +430,11 @@ int32_t SDL_Init(uint32_t flags) {
         return sb_present ? 0 : -1;            /* no SB: game runs silent */
     }
     static int hooked;
-    if (!hooked) { atexit(dos_cleanup); signal(SIGABRT, on_abort); hooked = 1; }
+    if (!hooked) {
+        atexit(dos_cleanup); signal(SIGABRT, on_abort); hooked = 1;
+        const char *sv = getenv("WOLFDOS_STATS");
+        if (sv && *sv == '1') { st_on = 1; st_t0 = rdtsc(); }
+    }
     return 0;
 }
 void SDL_Quit(void) { dos_cleanup(); }
@@ -495,6 +537,7 @@ void SDL_RenderPresent(void *r) {
     (void)r;
     if (!vid_active || !tex0.live || !tex0.pixels || tex0.w <= 0 || tex0.h <= 0)
         return;
+    unsigned long long st_in = st_on ? rdtsc() : 0;
     /* A rebuild decided at the end of the previous frame runs now, so THIS
      * frame quantizes against the new palette and its own retrace writes
      * the DAC — the swap is never displayed against old indices. The
@@ -521,32 +564,49 @@ void SDL_RenderPresent(void *r) {
     }
     /* Rebuild policy, two regimes:
      *
-     * Wholesale change (> 12.5% of pixels missed): a full-screen blend —
-     * damage flash, death stipple, a fade — has replaced the frame's
-     * colors outright. Rebuild immediately, every frame: the palette then
-     * tracks the effect with one frame of lag (adjacent blend frames are
-     * near-identical, so matches stay near-exact), and the churn is
-     * invisible because the whole screen is changing anyway. Waiting out
-     * the streak/cooldown here is what painted rainbow speckle over
-     * flashes: thousands of fresh blend colors nearest-matched into a
-     * palette several frames stale.
+     * Wholesale change (> 12.5% of pixels missed — only a full-screen
+     * blend does that: damage flash, death stipple, a fade): rebuild
+     * from THIS frame's histogram right now and re-quantize the frame
+     * against its own fresh palette, so even the first frame of a flash
+     * displays with colors chosen for it — no one-frame lag, no rainbow
+     * speckle. The threshold is deliberately high: the immediate path
+     * costs a double quantize plus a full DAC reprogram (768 port
+     * writes — expensive under emulation), and a lower cut once let
+     * muzzle flashes and door reveals trip it many times a second in
+     * combat, starving the audio ISR of emulated CPU. Moderate changes
+     * belong to the drift path below — their few distinct sprite-art
+     * colors land in spare slots or match closely, unlike a blend's
+     * thousands of fresh colors.
      *
      * Drift (> ~1.5% for 3 consecutive frames, 16-frame cooldown): the
-     * gentle path for scene changes. A stable scene that fits the
-     * palette never trips either regime. */
+     * gentle deferred path for scene changes. A stable scene that fits
+     * the palette never trips either regime. */
     if (q_cooldown > 0) q_cooldown--;
     if (q_miss_px > (320L * 200L) / 8) {
-        q_rebuild_pending = 1;
+        st_reb_now++;
+        palette_rebuild();
+        dst = vga_shadow;
+        for (int y = 0; y < 200; y++) {
+            const uint32_t *row = src + (size_t)(y * ystep) * stride;
+            for (int x = 0; x < 320; x++)
+                *dst++ = quantize_map(row[x * xstep], 0);
+        }
         q_miss_streak = 0;
         q_cooldown = 0;
     } else if (q_miss_px > (320L * 200L) / 64) {
         if (++q_miss_streak >= 3 && q_cooldown == 0) {
             q_rebuild_pending = 1;
+            st_reb_def++;
             q_miss_streak = 0;
             q_cooldown = 16;
         }
     } else {
         q_miss_streak = 0;
+    }
+    if (st_on) {
+        st_present += rdtsc() - st_in;
+        st_frames++;
+        if ((st_frames & 255) == 0) st_dump();   /* survive unclean exits */
     }
     vga_wait_vsync();
     if (q_dac_dirty) {
@@ -640,10 +700,12 @@ static void sb_isr(void) {
          * was. ISRs don't nest (IF stays clear), so one static save
          * area is enough. */
         static unsigned char sb_fpu[112];
+        unsigned long long st_in = st_on ? rdtsc() : 0;
         __asm__ __volatile__ ("fnsave %0" : "=m" (sb_fpu) :: "memory");
         sb_fill_half(sb_half);
         sb_half ^= 1;
         __asm__ __volatile__ ("frstor %0" : : "m" (sb_fpu) : "memory");
+        if (st_on) { st_isr += rdtsc() - st_in; st_isr_calls++; }
     }
     if (sb_irq >= 8) outportb(0xA0, 0x20);
     outportb(0x20, 0x20);
