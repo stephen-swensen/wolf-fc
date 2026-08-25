@@ -260,7 +260,7 @@ static int q_ntouched;
 static long q_miss_px;                    /* this frame's APPROX pixels */
 static int q_miss_streak;                 /* consecutive over-threshold frames */
 static int q_cooldown;                    /* frames until next rebuild allowed */
-static int q_rebuild_pending;
+
 static int q_dac_dirty;                   /* full DAC write at next retrace */
 
 static void vga_set_dac(int slot, int r, int g, int b) {
@@ -279,15 +279,15 @@ static void vga_write_dac_all(void) {
     }
 }
 
-/* count = 1: normal pass (histogram + miss accounting). count = 0: the
- * re-quantize pass after a same-frame rebuild — map only, stats frozen. */
+/* count = 1: normal pass (miss accounting). count = 0: the re-quantize
+ * pass after a same-frame rebuild — map only, stats frozen. The per-pixel
+ * path deliberately does NO histogramming: an early version histogrammed
+ * every pixel of every frame and roughly doubled Present's emulated-CPU
+ * cost, dragging gameplay from 35 to ~23 fps. The histogram is a separate
+ * pass that runs only when a rebuild actually triggers. */
 static unsigned char quantize_map(uint32_t argb, int count) {
     int r = (argb >> 16) & 0xFF, g = (argb >> 8) & 0xFF, b = argb & 0xFF;
     int key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
-    if (count && q_hist[key]++ == 0) {
-        q_touched[q_ntouched++] = (uint16_t)key;
-        q_rep[key] = argb;
-    }
     unsigned char st = q_state[key];
     if (st != Q_EMPTY) {
         if (st == Q_APPROX && count) q_miss_px++;
@@ -321,14 +321,32 @@ static unsigned char quantize_map(uint32_t argb, int count) {
 
 static unsigned char quantize(uint32_t argb) { return quantize_map(argb, 1); }
 
-/* Rebuild the palette from the accumulated frame histogram: its 256 most
- * popular colors get exact DAC slots (any spare slots stay allocatable for
- * colors that appear later). Two call sites: deferred at the top of Present
- * (drift regime — the histogram is the previous frame's), and mid-Present
- * right after quantizing a wholesale-changed frame (the histogram is that
- * same frame's, which is then re-quantized against the fresh palette).
- * Either way the DAC write lands in the retrace of the frame quantized
- * with the new palette. */
+/* Histogram one frame (the same sampling grid Present uses) into
+ * q_hist/q_touched/q_rep. Runs ONLY when a rebuild has been decided — the
+ * cost lives on rebuild frames, never on the steady-state per-pixel path. */
+static void palette_histogram(const uint32_t *src, int stride, int xstep, int ystep) {
+    for (int i = 0; i < q_ntouched; i++) q_hist[q_touched[i]] = 0;
+    q_ntouched = 0;
+    for (int y = 0; y < 200; y++) {
+        const uint32_t *row = src + (size_t)(y * ystep) * stride;
+        for (int x = 0; x < 320; x++) {
+            uint32_t c = row[x * xstep];
+            int key = (((int)(c >> 16) & 0xFF) >> 3 << 10) |
+                      (((int)(c >> 8) & 0xFF) >> 3 << 5) |
+                      (((int)c & 0xFF) >> 3);
+            if (q_hist[key]++ == 0) {
+                q_touched[q_ntouched++] = (uint16_t)key;
+                q_rep[key] = c;
+            }
+        }
+    }
+}
+
+/* Rebuild the palette from the just-collected frame histogram: its 256
+ * most popular colors get exact DAC slots (any spare slots stay
+ * allocatable for colors that appear later). The caller re-quantizes the
+ * same frame against the fresh palette, so the DAC write lands in the
+ * retrace of the frame quantized with it. */
 static int q_item_cmp(const void *a, const void *b) {
     uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
     return x < y ? 1 : x > y ? -1 : 0;   /* descending */
@@ -358,8 +376,16 @@ static void palette_rebuild(void) {
 }
 
 static void vga_wait_vsync(void) {
-    while (inportb(0x3DA) & 0x08) ;            /* in retrace: wait out */
-    while (!(inportb(0x3DA) & 0x08)) ;         /* wait for next retrace */
+    /* Timeout at ~1.5 refresh periods: the audio ISR (a few ms of mixing)
+     * can eclipse the ~0.6 ms retrace pulse entirely — without a bound the
+     * poll would then spin a whole extra frame waiting for a pulse it
+     * already missed. */
+    uclock_t limit = uclock() + (uclock_t)(UCLOCKS_PER_SEC / 47);
+    int spin = 0;
+    while (inportb(0x3DA) & 0x08)
+        if ((++spin & 63) == 0 && uclock() > limit) return;
+    while (!(inportb(0x3DA) & 0x08))
+        if ((++spin & 63) == 0 && uclock() > limit) return;
 }
 
 static void set_mode(int mode) {
@@ -380,6 +406,7 @@ static int sb_present;
  * to STATS.TXT at cleanup. */
 static unsigned long long st_t0, st_present, st_isr;
 static long st_frames, st_reb_now, st_reb_def, st_isr_calls;
+static uclock_t st_u0;
 static int st_on;
 static unsigned long long rdtsc(void) {
     unsigned long lo, hi;
@@ -391,8 +418,11 @@ static void st_dump(void) {
     FILE *f = fopen("STATS.TXT", "w");
     if (!f) return;
     unsigned long long total = rdtsc() - st_t0;
+    double wall_s = (double)(uclock() - st_u0) / UCLOCKS_PER_SEC;
     fprintf(f, "frames=%ld rebuilds_now=%ld rebuilds_deferred=%ld isr_calls=%ld\n",
             st_frames, st_reb_now, st_reb_def, st_isr_calls);
+    fprintf(f, "wall=%.1fs present_fps=%.1f\n", wall_s,
+            wall_s > 0.0 ? st_frames / wall_s : 0.0);
     fprintf(f, "present_share=%.1f%% isr_share=%.1f%% (of emulated cycles)\n",
             100.0 * (double)st_present / (double)total,
             100.0 * (double)st_isr / (double)total);
@@ -433,7 +463,7 @@ int32_t SDL_Init(uint32_t flags) {
     if (!hooked) {
         atexit(dos_cleanup); signal(SIGABRT, on_abort); hooked = 1;
         const char *sv = getenv("WOLFDOS_STATS");
-        if (sv && *sv == '1') { st_on = 1; st_t0 = rdtsc(); }
+        if (sv && *sv == '1') { st_on = 1; st_t0 = rdtsc(); st_u0 = uclock(); }
     }
     return 0;
 }
@@ -468,7 +498,7 @@ void *SDL_CreateWindow(const char *t, int32_t x, int32_t y, int32_t w, int32_t h
     memset(q_state, 0, sizeof q_state);
     memset(vga_shadow, 0, sizeof vga_shadow);
     q_ntouched = 0; q_miss_px = 0; q_miss_streak = 0;
-    q_cooldown = 0; q_rebuild_pending = 0; q_dac_dirty = 0;
+    q_cooldown = 0; q_dac_dirty = 0;
     quantize(0xFF000000u);                     /* slot 0 = black */
     return &dummy_window;
 }
@@ -538,17 +568,6 @@ void SDL_RenderPresent(void *r) {
     if (!vid_active || !tex0.live || !tex0.pixels || tex0.w <= 0 || tex0.h <= 0)
         return;
     unsigned long long st_in = st_on ? rdtsc() : 0;
-    /* A rebuild decided at the end of the previous frame runs now, so THIS
-     * frame quantizes against the new palette and its own retrace writes
-     * the DAC — the swap is never displayed against old indices. The
-     * rebuild reads the previous frame's histogram, which is reset only
-     * afterwards. */
-    if (q_rebuild_pending) {
-        palette_rebuild();
-        q_rebuild_pending = 0;
-    }
-    for (int i = 0; i < q_ntouched; i++) q_hist[q_touched[i]] = 0;
-    q_ntouched = 0;
     q_miss_px = 0;
     /* Point-sample the game's screen_w x screen_h ARGB buffer down to
      * 320x200 (identity at scale 1). */
@@ -582,8 +601,24 @@ void SDL_RenderPresent(void *r) {
      * gentle deferred path for scene changes. A stable scene that fits
      * the palette never trips either regime. */
     if (q_cooldown > 0) q_cooldown--;
+    int rebuild = 0;
     if (q_miss_px > (320L * 200L) / 8) {
         st_reb_now++;
+        rebuild = 1;                   /* wholesale change: no cooldown */
+        q_miss_streak = 0;
+        q_cooldown = 0;
+    } else if (q_miss_px > (320L * 200L) / 64) {
+        if (++q_miss_streak >= 3 && q_cooldown == 0) {
+            st_reb_def++;
+            rebuild = 1;               /* sustained drift */
+            q_miss_streak = 0;
+            q_cooldown = 16;
+        }
+    } else {
+        q_miss_streak = 0;
+    }
+    if (rebuild) {
+        palette_histogram(src, stride, xstep, ystep);
         palette_rebuild();
         dst = vga_shadow;
         for (int y = 0; y < 200; y++) {
@@ -591,17 +626,6 @@ void SDL_RenderPresent(void *r) {
             for (int x = 0; x < 320; x++)
                 *dst++ = quantize_map(row[x * xstep], 0);
         }
-        q_miss_streak = 0;
-        q_cooldown = 0;
-    } else if (q_miss_px > (320L * 200L) / 64) {
-        if (++q_miss_streak >= 3 && q_cooldown == 0) {
-            q_rebuild_pending = 1;
-            st_reb_def++;
-            q_miss_streak = 0;
-            q_cooldown = 16;
-        }
-    } else {
-        q_miss_streak = 0;
     }
     if (st_on) {
         st_present += rdtsc() - st_in;
