@@ -141,18 +141,20 @@ struct render_ctx =
     // main-loop iteration by debug_update_timing. dbg_fps / dbg_ms track the
     // full loop period (top-of-loop to top-of-loop, including the vsync wait
     // in present()) — that's the true cadence, so dbg_fps reads the refresh
-    // rate under clean vsync. dbg_work_ms is the EMA of just the per-frame
-    // *work* (everything before present blocks) — the number that actually
-    // tells you how much budget headroom is left, judged against
-    // refresh_interval_ms (or the measured cadence when that's 0). dbg_jitter_ms
-    // is the EMA of |period − interval| — the sub-frame wobble in when present()
+    // rate under clean vsync (or its locked fraction: 35 on DOS's 70 Hz).
+    // dbg_work_ms is the EMA of just the per-frame *work* (everything before
+    // present blocks) — the number that actually tells you how much budget
+    // headroom is left, judged against the LOCKED CADENCE's budget
+    // (round(period/interval) × interval; the measured cadence when the
+    // refresh rate is unknown). dbg_jitter_ms is the EMA of
+    // |period − cadence·interval| — the sub-frame wobble in when present()
     // returns (scheduler / compositor wake latency), the "how tight is my
     // timing" signal; it does NOT mean frames were lost. dbg_drops, by
-    // contrast, accumulates only genuinely missed vblanks (a period spanning
-    // 1.5+ intervals). dbg_hitch_flash counts down so the readout shows red for
-    // a moment after a real drop. Purely a display concern — never read by the
-    // simulation, so test mode (which doesn't run the main loop) leaves these
-    // at zero.
+    // contrast, accumulates only frames genuinely late against the locked
+    // cadence (a period spanning ≥ half an interval beyond it). dbg_hitch_flash
+    // counts down so the readout shows red for a moment after a real drop.
+    // Purely a display concern — never read by the simulation, so test mode
+    // (which doesn't run the main loop) leaves these at zero.
     dbg_fps: f64
     dbg_ms: f64
     dbg_work_ms: f64
@@ -1169,34 +1171,49 @@ module overlay =
     // in present() for the rest of that interval, so its period lands at ~1×
     // the interval; a frame that misses a vblank spans 2+ intervals.
     //
-    // Two distinct signals, both keyed off the period vs. the refresh interval:
+    // Two distinct signals, both keyed off the period vs. the LOCKED CADENCE
+    // — the whole multiple of the refresh interval the steady state runs at:
+    // 1 on a 60 Hz host holding 60 fps, 2 on DOS holding 35 of mode 13h's
+    // 70 Hz. A deliberate half-rate (or third-rate) vsync lock is a clean,
+    // evenly-paced cadence, not a stream of missed frames — judging against
+    // a single interval there would pin drops climbing and the readout red
+    // forever while nothing is actually wrong.
     //
-    //  • dbg_drops counts MISSED VBLANKS: round(period / interval) − 1. A
-    //    period within half an interval of 1× counts as 0, so sub-interval
-    //    wobble never registers — only a period of ~1.5×+ (an actually dropped
-    //    frame) ticks it, by the number of intervals dropped.
-    //  • dbg_jitter_ms is the EMA of |period − interval| — the sub-frame
-    //    wobble itself (scheduler / compositor wake latency in when present()
-    //    returns). This is what climbs when work sits a few ms under budget
-    //    and present() barely blocks; it's healthy variance, not lost frames.
+    //  • dbg_drops counts frames that MISS THE LOCKED CADENCE:
+    //    round(period / interval) − cadence. A period within half an
+    //    interval of the cadence counts as 0, so sub-interval wobble never
+    //    registers — only a genuinely late frame (3 intervals amid a locked
+    //    2) ticks it, by the number of extra intervals.
+    //  • dbg_jitter_ms is the EMA of |period − cadence·interval| — the
+    //    sub-frame wobble around the lock (scheduler / compositor wake
+    //    latency in when present() returns). This is what climbs when work
+    //    sits a few ms under budget and present() barely blocks; it's
+    //    healthy variance, not lost frames.
     //
-    // The reference interval is the true refresh budget when known; otherwise
-    // the smoothed cadence (best-effort: a sustained slowdown then becomes the
-    // new "1×" and stops registering as drops, which the refresh path avoids).
+    // The cadence derives from the smoothed period, so one hitch can't
+    // relock it — but a *sustained* slowdown does (35 → 23.3 relocks 2 → 3
+    // after the EMA crosses over, and drops stop ticking): the readout
+    // reports deviation from the current steady state, by design. The
+    // reference interval is the true refresh interval when known; otherwise
+    // the smoothed cadence itself (degenerating to the old behavior).
     let debug_update_timing = (rc: render_ctx*, ms: f64, work_ms: f64) ->
         // EMA from BEFORE folding in this sample, so a frame is judged against
         // the recent steady state, not itself. First call seeds it (== ms).
         let baseline = if rc.dbg_ms > 0.0 then rc.dbg_ms else ms
         let interval = if rc.refresh_interval_ms > 0.0 then rc.refresh_interval_ms else baseline
-        let dropped = if interval > 0.0 then (i32) (ms / interval + 0.5) - 1 else 0
+        let mut cadence = if interval > 0.0 then (i32) (baseline / interval + 0.5) else 1
+        if cadence < 1 then cadence = 1
+        let target = (f64) cadence * interval
+        let dropped = if interval > 0.0 then (i32) (ms / interval + 0.5) - cadence else 0
         if dropped > 0 then
             rc.dbg_drops = rc.dbg_drops + dropped
             rc.dbg_hitch_flash = 0.4
         else if rc.dbg_hitch_flash > 0.0 then
             rc.dbg_hitch_flash = rc.dbg_hitch_flash - ms / 1000.0
-        // Jitter EMA — |period − interval|, seeded on the first frame (where
-        // dbg_ms is still 0) since a deviation of exactly 0 is legitimate.
-        let dev = math.abs(ms - interval)
+        // Jitter EMA — |period − cadence·interval|, seeded on the first frame
+        // (where dbg_ms is still 0) since a deviation of exactly 0 is
+        // legitimate.
+        let dev = math.abs(ms - target)
         rc.dbg_jitter_ms = if rc.dbg_ms > 0.0 then
             rc.dbg_jitter_ms * 0.9 + dev * 0.1
         else dev
@@ -1260,12 +1277,18 @@ module overlay =
                    else if rc.ssaa_mode == 1 then "2xV"
                    else "off"
         let fps_i = (i32) (rc.dbg_fps + 0.5)
-        // Denominator is the fixed vsync budget when known, else the measured
-        // cadence. The work line reads "<prep> / <budget> ms" — e.g. 5/17 at
-        // a comfortable 60 Hz, climbing toward (and past) the budget as the
-        // scene gets heavy. When prep exceeds the budget present() can't pace
-        // the frame any more, so the period inflates and desync starts to tick.
-        let budget = if rc.refresh_interval_ms > 0.0 then rc.refresh_interval_ms else rc.dbg_ms
+        // Denominator is the locked-cadence budget when the refresh rate is
+        // known — cadence × interval, same derivation as debug_update_timing
+        // (16.7 at 60-of-60 Hz, 28.6 at 35-of-70 Hz on DOS) — else the
+        // measured cadence. The work line reads "<prep> / <budget> ms",
+        // climbing toward (and past) the budget as the scene gets heavy.
+        // When prep exceeds the budget present() can't pace the frame any
+        // more, so the period inflates and drops start to tick.
+        let budget = if rc.refresh_interval_ms > 0.0 then
+            let mut n = (i32) (rc.dbg_ms / rc.refresh_interval_ms + 0.5)
+            if n < 1 then n = 1
+            (f64) n * rc.refresh_interval_ms
+        else rc.dbg_ms
         let work_i = (i32) (rc.dbg_work_ms + 0.5)
         let budget_i = (i32) (budget + 0.5)
         let over_budget = rc.dbg_work_ms > budget && budget > 0.0
