@@ -242,7 +242,8 @@ module adlib =
         c_sus: i32
         m_wave: i32
         c_wave: i32
-        n_conn: i32
+        n_conn: i32     // parsed for completeness; deliberately NOT sent to
+                        // the chip — see the forced 0xC0=0 in `play`
         block: i32
 
     // Parse an AdLibSound chunk starting at `offset` in `bytes`.
@@ -321,10 +322,23 @@ module adlib =
     let play = (st: sfx_state*, s: sfx_data, priority: i32) ->
         if st.active && priority < st.priority then return
         key_off(st)
+        // Feedback/connection is forced to 0 (FM connection, no feedback),
+        // NOT the instrument's nConn byte — because that is what the
+        // original game's driver did: it loaded the ten operator bytes
+        // from the instrument but deliberately zeroed the feedback/
+        // connection register, a compatibility concession to older
+        // authoring-tool data. The AUDIOT data begs to differ — 86 of the
+        // 87 AdLib effects carry a nonzero nConn (74 of them additive) —
+        // but no player ever heard those bits: every effect the original
+        // produced was 2-op FM. Honoring the data instead renders e.g.
+        // the ammo pickup as a single bright ding at the carrier's
+        // wave-3 octave, where the original's FM (with the modulator at
+        // MULT=0 = half the carrier rate) is a denser, lower cluster at
+        // half-fundamental spacing. Verified against the OG under DOSBox.
         opl2.load_instrument(st.chip, 0,
             s.m_char, s.c_char, s.m_scale, s.c_scale,
             s.m_atk, s.c_atk, s.m_sus, s.c_sus,
-            s.m_wave, s.c_wave, s.n_conn)
+            s.m_wave, s.c_wave, 0)
         st.data = s.bytes
         st.data_end = s.data_off + s.data_len
         st.pos = s.data_off
