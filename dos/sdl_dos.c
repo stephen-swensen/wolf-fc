@@ -408,6 +408,17 @@ static unsigned long long st_t0, st_present, st_isr;
 static long st_frames, st_reb_now, st_reb_def, st_isr_calls;
 static uclock_t st_u0;
 static int st_on;
+static unsigned long long rdtsc(void);
+/* Accumulate a timing delta, discarding garbage: DOSBox's rdtsc is
+ * derived from the emulated cycle counter, and with cycles=max the
+ * auto-tuning can rescale it so a later read comes out BEHIND an
+ * earlier one — one wrapped (negative) delta then dwarfs the real
+ * total. Skip anything negative or absurdly large (>1s of cycles). */
+static void st_add(unsigned long long *acc, unsigned long long t_in) {
+    long long d = (long long)(rdtsc() - t_in);
+    if (d >= 0 && d < 1000000000LL) *acc += (unsigned long long)d;
+}
+
 static unsigned long long rdtsc(void) {
     unsigned long lo, hi;
     __asm__ __volatile__ ("rdtsc" : "=a" (lo), "=d" (hi));
@@ -628,7 +639,7 @@ void SDL_RenderPresent(void *r) {
         }
     }
     if (st_on) {
-        st_present += rdtsc() - st_in;
+        st_add(&st_present, st_in);
         st_frames++;
         if ((st_frames & 255) == 0) st_dump();   /* survive unclean exits */
     }
@@ -729,7 +740,7 @@ static void sb_isr(void) {
         sb_fill_half(sb_half);
         sb_half ^= 1;
         __asm__ __volatile__ ("frstor %0" : : "m" (sb_fpu) : "memory");
-        if (st_on) { st_isr += rdtsc() - st_in; st_isr_calls++; }
+        if (st_on) { st_add(&st_isr, st_in); st_isr_calls++; }
     }
     if (sb_irq >= 8) outportb(0xA0, 0x20);
     outportb(0x20, 0x20);
