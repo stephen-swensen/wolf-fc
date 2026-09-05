@@ -34,10 +34,13 @@
 //     respectively, giving equal-tempered intermediate speeds within
 //     each 4-rate doubling group.
 //
-//     Fast regime (eff_rate 48..63): step every sample. Within each
+//     Fast regime (eff_rate 48 and up): step every sample. Within each
 //     4-rate sub-group the step amount doubles (1, 2, 4, 8 per sample
 //     at the slowest sub-rate of each group), so AR=15 with full KSR
-//     traverses the envelope in a single-digit number of samples.
+//     traverses the envelope in a single-digit number of samples. The
+//     regime deliberately has no upper bound — 63 is the hardware's
+//     ceiling, but `env_rate_bias` can push past it at output rates too
+//     coarse to express the chip's fastest envelopes any other way.
 //
 //   Phase generator: 256-entry log-sin table covers the first
 //     quadrant; the other three quadrants come from index mirroring
@@ -49,9 +52,29 @@
 //     quarter-pulse (whose two rising quarters both sound).
 //
 // We sample at the host audio rate (44.1 kHz typical) rather than the
-// chip's native 49716 Hz. The rate counter increments per output
-// sample, so the rate constants are calibrated against the output
-// rate; this matches Adlib reference timing within a small constant.
+// chip's native 49716 Hz. The ladder above is calibrated in chip clocks,
+// so the rate-generator counter must run on chip clocks too — tie it to
+// the output sample and every envelope stretches by exactly
+// 49716 / output_rate: a rounding error at 44.1 / 48 kHz, but a 6x
+// stretch at the 8 kHz an emulated OPL2 can afford on a retro target,
+// where a half-second release tail becomes a 40-second drone that
+// outlives by minutes the effect that keyed it.
+//
+// So the correction is split in two, and between them envelope timing is
+// exactly output-rate-independent:
+//
+//   `env_rate_bias` takes out the whole doublings. Four ladder steps are
+//     one doubling, so a shift of 4k is an exact 2^k time-scale — and
+//     only a multiple of 4 is, because the four rates within a group are
+//     4, 5, 6, 7, spaced 1.25, 1.2, 1.167, 1.143 rather than evenly.
+//   `env_step` carries what is left, always in [1, 2): the counter
+//     advances that many chip clocks per output sample, one or two at a
+//     time, with an accumulator holding the fraction.
+//
+// The leftover costs an extra envelope tick on `env_step - 1` of samples
+// — 3.6% of them at 48 kHz, 55% at 8 kHz — which measures at roughly 3%
+// of the chip's total cost for a whole extra tick, because the expense
+// here is the phase / log-sin / gain path, not the rate generator.
 
 // A YM3812 (OPL2) FM synthesizer in pure FC, written against the chip's
 // application manual and the Adlib programmer's manual. Nine melodic
@@ -242,6 +265,13 @@ module opl2 =
         // ---- Global state ----
         rate: f64        // output sample rate
         counter: u64     // free-running rate-generator counter
+        // Rate-generator time base, both set once by `init` (see there).
+        // The whole-doubling half of the output-rate correction, applied to
+        // every effective rate; and the leftover, in chip clocks per output
+        // sample, with `env_accum` carrying its fraction between samples.
+        env_rate_bias: i32
+        env_step: f64
+        env_accum: f64
         lfo_am_phase: f64
         lfo_vib_phase: f64
         dam: bool        // tremolo depth (false=1.0 dB, true=4.8 dB)
@@ -265,6 +295,33 @@ module opl2 =
     // Initialization
     // ============================================================
 
+    // The chip's own clock. The envelope rate ladder is calibrated against
+    // it, and the rate-generator correction measures every output rate from
+    // here: one output sample is worth native_rate / sample_rate chip clocks.
+    let native_rate = 49716.0
+
+    // The whole-doubling half of that correction, as a ladder shift. Four
+    // steps are one doubling, so this is 4 * floor(log2(ratio)) — floor, not
+    // round, so what is left over is always a speed-UP of less than 2x and
+    // `rate_step_per_sample` never has to slow the counter back down.
+    // Positive below 49716 Hz, negative above it, zero across the whole
+    // 24.9-49.7 kHz band that every desktop output rate falls in.
+    private let rate_bias_for = (sample_rate: f64) ->
+        if sample_rate <= 0.0 then 0
+        else
+            let b = 4 * (i32) math.floor(math.log2(native_rate / sample_rate))
+            if b > 32 then 32 else if b < -32 then -32 else b
+
+    // The remainder: chip clocks per output sample once `bias` has taken out
+    // the doublings. In [1, 2) for every rate the bias clamp doesn't bite,
+    // and clamped to a sane band regardless so `sample`'s tick loop stays
+    // short.
+    private let rate_step_per_sample = (sample_rate: f64, bias: i32) ->
+        if sample_rate <= 0.0 then 1.0
+        else
+            let r = (native_rate / sample_rate) / math.pow(2.0, (f64) bias / 4.0)
+            if r < 0.0625 then 0.0625 else if r > 16.0 then 16.0 else r
+
     // Allocate and initialize a chip for the given output sample rate (Hz).
     // Every operator starts silent in the `off` stage. The caller owns the
     // returned chip*.
@@ -272,6 +329,9 @@ module opl2 =
         let c = alloc(chip)!
         c.rate = sample_rate
         c.counter = 0u64
+        c.env_rate_bias = rate_bias_for(sample_rate)
+        c.env_step = rate_step_per_sample(sample_rate, c.env_rate_bias)
+        c.env_accum = 0.0
         for i in 0..18 do
             c.op_tl[i] = 63
             c.op_mult[i] = 1
@@ -308,15 +368,38 @@ module opl2 =
     let key_scale = (block: i32, fnum: i32) ->
         (block << 1) | ((fnum >> 9) & 1)
 
-    // Effective rate (0..63). rate=0 is special-cased to "frozen"
-    // regardless of KSR (the chip never advances when the rate field
-    // is zero).
-    let effective_rate = (rate: i32, ksr: bool, ks: i32) ->
+    // Ceiling for a bias-shifted effective rate. 63 is the hardware's own
+    // maximum; the extra 32 units are eight further doublings of headroom
+    // for very low output rates, and keep `rate_step`'s `1 << rate_class`
+    // far short of anything an i32 minds.
+    let max_eff_rate = 95
+
+    // Effective rate. rate=0 is special-cased to "frozen" regardless of
+    // KSR (the chip never advances when the rate field is zero); anything
+    // else lands on the hardware's 0..63 ladder and is then shifted by
+    // `bias`, the whole-doubling half of the output-rate correction (see
+    // `env_rate_bias` in `init`). `bias` is always a multiple of 4, which
+    // is what makes the shift an exact 2^k time-scale rather than an
+    // approximate one — the four rates within a doubling group are spaced
+    // 1.25, 1.2, 1.167, 1.143, so a shift of 1, 2 or 3 stretches slow and
+    // fast rates by different amounts.
+    //
+    // The shifted result may exceed 63. That is not a hardware rate but
+    // "faster than the chip's fastest, because this output rate has fewer
+    // samples to spend on the envelope"; `rate_step`'s fast regime extends
+    // past 63 on its own. It is floored at 4 rather than allowed down into
+    // the frozen band, so a slow rate sampled above 49716 Hz just stays
+    // slow instead of stopping dead.
+    let effective_rate = (rate: i32, ksr: bool, ks: i32, bias: i32) ->
         if rate <= 0 then 0
         else
             let bump = if ksr then ks else ks >> 2
             let eff = (rate << 2) + bump
-            if eff > 63 then 63 else eff
+            let hw = if eff > 63 then 63 else eff
+            let adj = hw + bias
+            if adj < 4 then 4
+            else if adj > max_eff_rate then max_eff_rate
+            else adj
 
     // Sub-rate fire pattern, indexed [sub * 8 + cycle]. For each of the
     // 4 sub-rates within a rate-doubling group, fires on a fraction of
@@ -338,9 +421,11 @@ module opl2 =
     //   eff_rate 4..47: step once every 2^shift samples, by
     //                   eg_inc_fire(eff_rate & 3, (counter >> shift) & 7).
     //                   shift = 12 - (eff_rate >> 2), range 11..1.
-    //   eff_rate 48..63: step every sample; the step amount doubles
-    //                    per 4-rate sub-group (1, 2, 4, 8 per sample
-    //                    at the slowest sub of each group).
+    //   eff_rate 48+  : step every sample; the step amount doubles
+    //                   per 4-rate sub-group (1, 2, 4, 8 per sample
+    //                   at the slowest sub of each group). Rates above
+    //                   the hardware's 63 arrive here from env_rate_bias
+    //                   and keep doubling — there is no clamp.
     let rate_step = (counter: u64, eff_rate: i32) ->
         if eff_rate < 4 then 0
         else if eff_rate < 48 then
@@ -458,9 +543,12 @@ module opl2 =
     // rate generator reads the cache every sample, so it is refreshed here
     // on write rather than recomputed in the inner loop.
     let recompute_op_rates = (c: chip*, idx: i32, ks: i32) ->
-        c.op_eff_ar[idx] = effective_rate(c.op_ar[idx], c.op_ksr[idx], ks)
-        c.op_eff_dr[idx] = effective_rate(c.op_dr[idx], c.op_ksr[idx], ks)
-        c.op_eff_rr[idx] = effective_rate(c.op_rr[idx], c.op_ksr[idx], ks)
+        c.op_eff_ar[idx] = effective_rate(c.op_ar[idx], c.op_ksr[idx], ks,
+            c.env_rate_bias)
+        c.op_eff_dr[idx] = effective_rate(c.op_dr[idx], c.op_ksr[idx], ks,
+            c.env_rate_bias)
+        c.op_eff_rr[idx] = effective_rate(c.op_rr[idx], c.op_ksr[idx], ks,
+            c.env_rate_bias)
 
     // Refresh both of a channel's operators after its block or F-number
     // moved — the two things that feed key scale, and so every rate and KSL
@@ -713,8 +801,6 @@ module opl2 =
         let sd = 15
         let tt = 16
         let tc = 17
-        for op in 14..18 do
-            env_advance(c, op)
         let hh_idx = step_op(c, hh, 7, vib_mul)
         ignore step_op(c, sd, 7, vib_mul)
         let tt_idx = step_op(c, tt, 8, vib_mul)
@@ -759,10 +845,24 @@ module opl2 =
         c.rm_tc_bit5 = (tc_idx >> 5) & 1
         sum
 
-    // Produce one output sample. Advances the global counter, both
-    // LFOs, and every active channel's envelopes and phase generators.
+    // Produce one output sample. Advances the rate generator, both LFOs,
+    // and every active channel's envelopes and phase generators.
     let sample = (c: chip*) ->
-        c.counter = c.counter + 1u64
+        // Rate generator, on chip clocks rather than output samples: one
+        // output sample is worth `env_step` of them (see `init`), with
+        // `env_accum` carrying the fraction, so this runs once or twice.
+        // Every envelope in the chip steps once per counter tick, which is
+        // why the advance is hoisted here out of the per-voice loops below
+        // — the counter is global, so it cannot be advanced inside them.
+        // The stage test is what `env_advance` would do on entry for an
+        // `off` operator anyway, paid here without the call.
+        c.env_accum = c.env_accum + c.env_step
+        let env_ticks = (i32) c.env_accum
+        c.env_accum = c.env_accum - (f64) env_ticks
+        for t in 0..env_ticks do
+            c.counter = c.counter + 1u64
+            for op in 0..18 do
+                if c.op_stage[op] != envelope_stage.off then env_advance(c, op)
         // LFO advance. Tremolo at 3.7 Hz and vibrato at 6.1 Hz per the
         // Adlib programmer's manual. We approximate the chip's
         // staircase patterns with smooth sin curves of the same period
@@ -801,12 +901,9 @@ module opl2 =
             if c.rhythm && ch >= 7 then continue
             let mi = ch * 2
             let ci = ch * 2 + 1
-            // Skip channels with both ops idle — no audible output.
-            if c.op_stage[ci] == envelope_stage.off && c.op_stage[mi] == envelope_stage.off then continue
-            // Envelopes advance every sample for active stages.
-            env_advance(c, mi)
-            env_advance(c, ci)
-            // If carrier is silent after this advance, skip the rest.
+            // Envelopes have already advanced for this sample (see the top
+            // of this function). A silent carrier means no audible output
+            // whatever the modulator is doing, so the whole voice drops out.
             if c.op_stage[ci] == envelope_stage.off then continue
             let fnum = c.ch_fnum[ch]
             let block = c.ch_block[ch]
