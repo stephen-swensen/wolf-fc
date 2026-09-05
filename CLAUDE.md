@@ -20,7 +20,7 @@ The project also serves as an end-to-end demo of FC: stdlib usage, modules, gene
 
   Use the **installed** `fcc` (on `PATH`). Refresh after compiler changes with `cd ../fc-lang && sudo make install`. `run.sh` auto-derives the stdlib path; `FCC_STDLIB` overrides.
 
-  `sdl2.fc` and `opl2.fc` are vendored from `fc-lang/demos/shared/` so wolf-fc can evolve them independently.
+  `sdl2.fc`, `opl2.fc`, and `opl2_tables.fc` are vendored from `fc-lang/demos/shared/` so wolf-fc can evolve them independently. `opl2_tables.fc` is GENERATED — never hand-edit; regenerate with `tools/mk_opl2_tables.fc` (byte-identical twin of fc-lang's copy; see its header for the invocation — wolf-fc passes no namespace argument).
 
 - **`../wolf4sdl/`** — C reference port of Wolf3D. **Read for format details and gameplay correctness; don't transcribe.** GPLv2. See `reference_wolf3d_original_source.md` for the id DOS source at `../wolf3d` (same license rules).
 

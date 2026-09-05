@@ -86,7 +86,7 @@ endif
 
 # Source list. Order doesn't matter to fcc, but keep main.fc last for
 # readability — it's the entry point. All project FC sources live in src/.
-SRCS_FC := $(addprefix src/,sdl2.fc opl2.fc sound.fc png.fc data.fc \
+SRCS_FC := $(addprefix src/,sdl2.fc opl2.fc opl2_tables.fc sound.fc png.fc data.fc \
            world.fc video.fc sfx.fc flow.fc ui.fc save.fc combat.fc level.fc cutscenes.fc \
            menu.fc player.fc render.fc input.fc testmode.fc main.fc)
 
