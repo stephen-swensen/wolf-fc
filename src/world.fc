@@ -64,6 +64,52 @@ enum game_phase =
                     // qualified, the new row enters an inline name-edit
                     // mode; otherwise any ack key dismisses → title screen.
 
+// ============================================================
+// Mommy Mode — opt-in content filter (leaf module, no deps)
+// ============================================================
+
+// Four settings, stored as an int so the config file stays greppable
+// and so the two independent effects read as bit flags:
+//
+//   0  off   — the OG path: dogs spawn, deaths play their die_frames,
+//              every gore decoration is on the map. The default.
+//   1  dogs  — bit 0: `spawn.spawn_enemies` never spawns a dog.
+//   2  gore  — bit 1: every enemy death (dogs included) fades the last
+//              live sprite out instead of playing die_frames, corpses
+//              are not drawn, BJ's HUD face stops before the bloodied
+//              rows, and the gore decorations (blood puddles, bones,
+//              gib piles, the hanged man, the caged skeleton) are
+//              filtered out of the static-sprite list.
+//   3  both  — dogs + gore. This is what the old boolean "On" did,
+//              plus the decoration filtering.
+//
+// Legacy configs wrote `mommy_mode 0|1`; a stale `1` now reads as
+// `dogs` (see config.load). Repurposing beats a version bump — the
+// worst case is a player who had it on gets the milder setting until
+// they touch the Options row again.
+module mommy =
+    let off   = 0
+    let dogs  = 1
+    let gore  = 2
+    let both  = 3
+    let count = 4
+
+    let clamp = (m: i32) -> if m < off || m > both then off else m
+
+    let hides_dogs = (m: i32) -> (clamp(m) & dogs) != 0
+    let hides_gore = (m: i32) -> (clamp(m) & gore) != 0
+
+    // Options-row value text.
+    let label = (m: i32) ->
+        if m == dogs then "Dogs"
+        else if m == gore then "Gore"
+        else if m == both then "Both"
+        else "Off"
+
+    // Options row is a 4-way cycler: Enter / Right step forward,
+    // Left steps back, both wrap.
+    let cycle = (m: i32, delta: i32) -> (clamp(m) + delta + count) % count
+
 struct game =
     // Camera / player
     pos_x: f64
@@ -390,13 +436,14 @@ struct game =
     // it buys most of the edge-AA at half the cost of full 2×2.
     ssaa_mode: i32
 
-    // Mommy Mode toggle. Set from the Options menu (persisted in
-    // ~/.wolf-fc/config) or from the --mommy-mode CLI flag at launch.
-    // Two effects: spawn.spawn_enemies skips every dog (takes effect on
-    // the next level build), and every enemy death plays as a fade-out
-    // of the last live sprite instead of the original die_frames
+    // Mommy Mode setting — one of `mommy.off` / `.dogs` / `.gore` /
+    // `.both`. Set from the Options menu (persisted in
+    // ~/.wolf-fc/config) or from the --mommy-mode[=mode] CLI flag at
+    // launch. `mommy.hides_dogs` gates dog spawning (takes effect on
+    // the next level build) and static gore filtering; `mommy.hides_gore`
+    // gates the death fade-out, corpse hiding, and the HUD face cap
     // (read every frame by enemies.update_enemy + billboards.build).
-    mommy_mode: bool
+    mommy_mode: i32
     // Upper clamp on the auto-picked supersample factor. CLI-only
     // (--max-scale=N), default 6. Read by `compute_scale_factor`
     // both at startup and on view-mode changes — stashed on game
@@ -493,10 +540,10 @@ struct game =
     rng_enemy: random.pcg_random
     rng_face: random.pcg_random
 
-// CLI flag `--mommy-mode`: when true, spawn.spawn_enemies skips every enemies.enemy_kind.dog
-// AND every enemy death replaces die_frames with a fade-to-invisible. Pre-dead
-// dog corpses don't exist in the data (the "dead guard" marker is tile 124,
-// a guard), so no carve-out is needed for those.
+// CLI flag `--mommy-mode[=off|dogs|gore|both]`: bare `--mommy-mode` means
+// `both` (what the old boolean flag did). Pre-dead dog corpses don't exist
+// in the data (the "dead guard" marker is tile 124, a guard), so no carve-out
+// is needed for those — the gore arm hides every `dead`-state actor anyway.
 
 // Everything the running game needs in one handle. Functions that only need
 // one sub-context (e.g. `raycaster.render_walls` only touches level + render_ctx) keep

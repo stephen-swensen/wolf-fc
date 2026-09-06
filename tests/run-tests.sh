@@ -1059,7 +1059,7 @@ assert_contains "save:episode-totals-round-trip" \
     "epstats: levels=1 time=1 kr=8 sr=0 tr=0 recorded=0"
 
 section "config / preferences"
-# Default prefs (no config file): toggles ON, mommy_mode OFF, shadow_depth 55.
+# Default prefs (no config file): toggles ON, mommy_mode Off (0), shadow_depth 55.
 # WOLF_FC_HOME is per-test fresh, so on a clean run no config has been written.
 assert_contains "config:defaults-music-on"        "prefs"   "music=1"
 assert_contains "config:defaults-sfx-on"          "prefs"   "sfx=1"
@@ -1075,11 +1075,25 @@ assert_contains "config:loads-sfx-off"            "prefs"   "sfx=0"
 printf 'WLFC_CONFIG 1\nmusic 1\nsfx 0\n' > "$WOLF_FC_TEST_HOME/config"
 assert_contains "config:mixed-music-on"           "prefs"   "music=1"
 assert_contains "config:mixed-sfx-off"            "prefs"   "sfx=0"
-# Options-section prefs round-trip too: a config with mommy_mode=1 +
+# Options-section prefs round-trip too: a config with mommy_mode=2 +
 # shadow_depth=80 should be reflected on the next launch.
-printf 'WLFC_CONFIG 1\nmusic 1\nsfx 1\nmommy_mode 1\nshadow_depth 80\n' > "$WOLF_FC_TEST_HOME/config"
-assert_contains "config:loads-mommy-mode-on"      "prefs"   "mommy_mode=1"
+printf 'WLFC_CONFIG 1\nmusic 1\nsfx 1\nmommy_mode 2\nshadow_depth 80\n' > "$WOLF_FC_TEST_HOME/config"
+assert_contains "config:loads-mommy-mode-gore"    "prefs"   "mommy_mode=2"
 assert_contains "config:loads-shadow-80"          "prefs"   "shadow_depth=80"
+# Every one of the four Mommy Mode values survives a round-trip.
+printf 'WLFC_CONFIG 1\nmommy_mode 3\n' > "$WOLF_FC_TEST_HOME/config"
+assert_contains "config:loads-mommy-mode-both"    "prefs"   "mommy_mode=3"
+# Pre-split configs wrote a 0/1 boolean. A stale 1 is repurposed as
+# `dogs` rather than rejected, so an old config never crashes or
+# resets the rest of the file.
+printf 'WLFC_CONFIG 1\nmommy_mode 1\nshadow_depth 80\n' > "$WOLF_FC_TEST_HOME/config"
+assert_contains "config:legacy-mommy-mode-becomes-dogs" "prefs" "mommy_mode=1"
+assert_contains "config:legacy-mommy-mode-keeps-rest"   "prefs" "shadow_depth=80"
+# Out-of-range Mommy Mode values clamp to Off.
+printf 'WLFC_CONFIG 1\nmommy_mode 9\n' > "$WOLF_FC_TEST_HOME/config"
+assert_contains "config:mommy-mode-clamps-high"   "prefs"   "mommy_mode=0"
+printf 'WLFC_CONFIG 1\nmommy_mode -3\n' > "$WOLF_FC_TEST_HOME/config"
+assert_contains "config:mommy-mode-clamps-low"    "prefs"   "mommy_mode=0"
 # Out-of-range shadow_depth is clamped to 0..100 on load.
 printf 'WLFC_CONFIG 1\nshadow_depth 500\n' > "$WOLF_FC_TEST_HOME/config"
 assert_contains "config:shadow-clamps-high"       "prefs"   "shadow_depth=100"
@@ -1097,9 +1111,15 @@ assert_contains "config:loads-enemy-speed-60"     "prefs"   "enemy_speed_pct=60"
 printf 'WLFC_CONFIG 1\nbj_speed_pct 500\nenemy_speed_pct 1\n' > "$WOLF_FC_TEST_HOME/config"
 assert_contains "config:bj-speed-clamps-high"     "prefs"   "bj_speed_pct=200"
 assert_contains "config:enemy-speed-clamps-low"   "prefs"   "enemy_speed_pct=20"
-# CLI --mommy-mode forces the toggle on, even if the config has it off.
+# Bare CLI --mommy-mode still means "everything" (3 = Both), even if
+# the config says Off.
 printf 'WLFC_CONFIG 1\nmommy_mode 0\n' > "$WOLF_FC_TEST_HOME/config"
-assert_contains "config:cli-mommy-mode-overrides" "--mommy-mode prefs"  "mommy_mode=1"
+assert_contains "config:cli-mommy-mode-overrides" "--mommy-mode prefs"  "mommy_mode=3"
+# --mommy-mode=MODE pins a specific arm over the config.
+printf 'WLFC_CONFIG 1\nmommy_mode 3\n' > "$WOLF_FC_TEST_HOME/config"
+assert_contains "config:cli-mommy-mode-dogs"      "--mommy-mode=dogs prefs"  "mommy_mode=1"
+assert_contains "config:cli-mommy-mode-gore"      "--mommy-mode=gore prefs"  "mommy_mode=2"
+assert_contains "config:cli-mommy-mode-off"       "--mommy-mode=off prefs"   "mommy_mode=0"
 # Reset config so subsequent runs of this script start clean.
 rm -f "$WOLF_FC_TEST_HOME/config"
 
@@ -1109,7 +1129,7 @@ assert_contains "cli:setphase-optionsmenu" \
     "phase=menu"
 
 section "mommy mode"
-# spawn_enemies skips every dog when mommy_mode is set. Level 1 has
+# spawn_enemies skips every dog when the dogs arm is set. Level 1 has
 # 10 dogs in the WL6 data; with --mommy-mode the dog count is zero.
 assert_contains "mommy:dogs-removed-on-level-1" \
     "--mommy-mode setlevel:1 enemylist" \
@@ -1117,14 +1137,49 @@ assert_contains "mommy:dogs-removed-on-level-1" \
 assert_not_contains "mommy:no-dogs-spawned-with-mommy-mode" \
     "--mommy-mode setlevel:1 enemylist" \
     "kind=dog"
+# The dogs arm on its own also clears them.
+assert_not_contains "mommy:dogs-arm-removes-dogs" \
+    "--mommy-mode=dogs setlevel:1 enemylist" \
+    "kind=dog"
+# ...and the gore arm on its own leaves them alone — the two effects
+# are independent, not a severity ladder.
+assert_contains "mommy:gore-arm-keeps-dogs" \
+    "--mommy-mode=gore setlevel:1 enemylist" \
+    "kind=dog"
 # Sanity check the default branch: without --mommy-mode level 1
 # spawns its dogs.
 assert_contains "mommy:dogs-spawn-without-mommy-mode" \
     "setlevel:1 enemylist" \
     "kind=dog"
+# Gore decorations (blood puddles, bones, gib piles, the hanged man,
+# the caged skeleton) are filtered out of the static-sprite list by the
+# gore arm. Level 1 carries 28 of them; the dogs arm leaves them all.
+assert_contains "mommy:statics-gore-present-by-default" \
+    "setlevel:1 statics" \
+    "gore=28"
+assert_contains "mommy:statics-gore-filtered" \
+    "--mommy-mode=gore setlevel:1 statics" \
+    "gore=0"
+assert_contains "mommy:statics-gore-kept-by-dogs-arm" \
+    "--mommy-mode=dogs setlevel:1 statics" \
+    "gore=28"
+# The filter drops the hanged man (a blocker) but keeps the caged
+# skeleton as an empty cage, so level 3's blocker count is unchanged
+# while its sprite count falls.
+assert_contains "mommy:statics-blockers-survive-swap" \
+    "--mommy-mode=gore setlevel:3 statics" \
+    "blocking=53"
+# The gibs pickups are gore too — gone from the pickup inventory on a
+# map that has them (E1M2), present without the filter.
+assert_contains "mommy:gibs-present-by-default" \
+    "setlevel:1 pickups" \
+    "kind=gibs"
+assert_not_contains "mommy:gibs-filtered-by-gore-arm" \
+    "--mommy-mode=gore setlevel:1 pickups" \
+    "kind=gibs"
 # Fade-on-death timing. Guard's natural die animation finishes around
 # tick 23 (3 die_frames × 15/70 = 0.64s at dt=1/35), so without
-# mommy-mode `wait:10` still shows state=die. With --mommy-mode the
+# mommy-mode `wait:10` still shows state=die. With the gore arm the
 # fade is the same duration ballpark — mid-fade at wait:10, fully
 # faded (state=dead) by wait:30 (0.86s, past mommy_fade_duration=0.7).
 assert_contains "mommy:enemy-fading-mid-death" \
@@ -1132,6 +1187,11 @@ assert_contains "mommy:enemy-fading-mid-death" \
     "state=die"
 assert_contains "mommy:enemy-dead-after-fade" \
     "--mommy-mode killenemy:0 wait:30 enemylist" \
+    "state=dead"
+# The fade rides on the gore arm alone — the dogs arm leaves the
+# original die_frames animation in place.
+assert_contains "mommy:gore-arm-fades-death" \
+    "--mommy-mode=gore killenemy:0 wait:30 enemylist" \
     "state=dead"
 
 section "high scores"

@@ -1123,13 +1123,13 @@ module enemies =
             e.reaction_timer = 0.0
 
         let kill_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, sprite_start: i32) ->
-            // Mommy Mode: snapshot whichever live sprite the enemy was
+            // Mommy Mode's gore arm: snapshot whichever live sprite the enemy was
             // showing this tick (walk-angle, shoot-pose, pain frame —
             // whatever sprite_page would resolve to under the current
             // state) BEFORE we flip state to `die`, so the fade-out
             // shows the last living pose instead of the die_frames
             // (which are the gory ones, especially on bosses).
-            if g.mommy_mode then
+            if mommy.hides_gore(g.mommy_mode) then
                 e.mommy_fade_page = sprite_page(e, g.pos_x, g.pos_y)
                 e.mommy_fade_t = 0.0
             e.state = enemy_state.die
@@ -1339,7 +1339,7 @@ module enemies =
             match e.state with
             | dead -> void()
             | die ->
-                if g.mommy_mode then
+                if mommy.hides_gore(g.mommy_mode) then
                     // Mommy Mode: skip the gory die_frames entirely.
                     // Hold on the cached last-live sprite and fade alpha
                     // 0 → 1 over mommy_fade_duration. Mecha still morphs

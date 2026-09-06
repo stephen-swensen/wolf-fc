@@ -624,6 +624,32 @@ module tilemap =
         | 69 -> true   // spears
         | _  -> false
 
+    // Static decorations Mommy Mode's gore arm removes from the map.
+    // Tile = 23 + sprite index, same as `tile_blocks_player`.
+    // Everything here is walk-through in the original except the
+    // hanged man (28) — dropping a blocker can only open floor space,
+    // never seal a route, so it's safe to filter him out wholesale.
+    // The caged skeleton (41) is a blocker we keep: `gore_swap` turns
+    // it into the empty hanging cage (40) so the blocker survives with
+    // the bones gone.
+    let tile_is_gore = (tile: i32) ->
+        match tile with
+        | 23 -> true   // blood puddle
+        | 28 -> true   // hanged man
+        | 32 -> true   // skeleton, flat
+        | 42 -> true   // skeleton, relaxed
+        | 46 -> true   // gib pile (pure decoration)
+        | 57 -> true   // gibs (the +1 HP pickup)
+        | 61 -> true   // gibs 2 (the +1 HP pickup)
+        | _  -> false
+
+    // Gore-arm art substitution for tiles worth keeping as geometry.
+    // Returns the tile to spawn instead; identity for everything else.
+    let gore_swap = (tile: i32) ->
+        match tile with
+        | 41 -> 40     // skeleton in cage -> empty hanging cage
+        | _  -> tile
+
 
 // ============================================================
 // Area connectivity (matches the original)
@@ -904,11 +930,17 @@ module spawn =
 
     // Populate sprite list from level plane 1 data.
     // Tile values 23-72 are static objects. Shape = 2 + (tile - 23).
-    let sprites = (lv: level*, lv_data: maps.level*, sprite_start: i32) ->
+    let sprites = (lv: level*, lv_data: maps.level*, sprite_start: i32, mommy_mode: i32) ->
         lv.num_sprites = 0
+        let no_gore = mommy.hides_gore(mommy_mode)
         for y in 0..map_size do
             for x in 0..map_size do
-                let obj = (i32) lv_data.objects[(i64) y * 64 + (i64) x]
+                let raw = (i32) lv_data.objects[(i64) y * 64 + (i64) x]
+                // Mommy Mode's gore arm drops the bloody decorations
+                // outright and swaps the caged skeleton for an empty
+                // cage; every other tile passes through untouched.
+                if no_gore && tilemap.tile_is_gore(raw) then continue
+                let obj = if no_gore then tilemap.gore_swap(raw) else raw
                 if obj >= 23 && obj <= 72 && lv.num_sprites < tilemap.max_sprites then
                     let shape = 2 + obj - 23
                     let page = sprite_start + shape
@@ -1101,7 +1133,7 @@ module spawn =
         else if tier == 1 then diff >= difficulty.medium
         else diff >= difficulty.hard
 
-    let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: difficulty, mommy_mode: bool) ->
+    let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: difficulty, mommy_mode: i32) ->
         lv.num_enemies = 0
         for y in 0..map_size do
             for x in 0..map_size do
@@ -1113,7 +1145,7 @@ module spawn =
                     let is_dog = match info.kind with
                         | dog -> true
                         | _   -> false
-                    if mommy_mode && is_dog then continue
+                    if mommy.hides_dogs(mommy_mode) && is_dog then continue
                     if info.dead || tier_allowed(info.tier, difficulty) then
                         let before = lv.num_enemies
                         one_enemy(lv, x, y, info, difficulty)
@@ -1187,7 +1219,7 @@ module level =
     // Allocate a level from the decoded wolf3d map data. Builds tilemap,
     // spawns static sprites, and marks push-wall tiles. Caller must call
     // `level.destroy` when the level is no longer needed.
-    let build = (lv_data: maps.level*, sprite_start: i32, difficulty: difficulty, mommy_mode: bool) ->
+    let build = (lv_data: maps.level*, sprite_start: i32, difficulty: difficulty, mommy_mode: i32) ->
         let lv = alloc(level {
             tilemap = alloc(u8[map_size * map_size] {})!,
             pushwall_tiles = alloc(bool[map_size * map_size] {})!,
@@ -1210,7 +1242,7 @@ module level =
             total_treasures = 0
         })!
         tilemap.build(lv, lv_data, sprite_start)
-        spawn.sprites(lv, lv_data, sprite_start)
+        spawn.sprites(lv, lv_data, sprite_start, mommy_mode)
         spawn.mark_pushwalls(lv, lv_data)
         spawn.mark_exit_tiles(lv, lv_data)
         spawn.mark_path_arrows(lv, lv_data)

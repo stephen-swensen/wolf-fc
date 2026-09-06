@@ -512,11 +512,15 @@ module input =
                             g.menu_sel = (g.menu_sel + 1) % menu.options_len
                         else if (is_confirm || is_left_right) && kind == menu.option_kind.toggle then
                             // Toggle rows: 0 = Mommy Mode, 4 = Map.
-                            // Either Enter or ←/→ flips — matches the
+                            // Either Enter or ←/→ acts — matches the
                             // Sound submenu's toggle behaviour for
-                            // cross-menu consistency.
+                            // cross-menu consistency. Mommy Mode is a
+                            // 4-way cycler rather than a flip, so Left
+                            // walks it backwards; Enter goes forward
+                            // like Right.
                             if g.menu_sel == 0 then
-                                g.mommy_mode = !g.mommy_mode
+                                let step = if k == sdl2.key_left then -1 else 1
+                                g.mommy_mode = mommy.cycle(g.mommy_mode, step)
                             else if g.menu_sel == 4 then
                                 g.show_map = !g.show_map
                             config.save(config.snapshot(w))

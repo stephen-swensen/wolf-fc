@@ -710,22 +710,24 @@ module billboards =
                 alpha = 1.0
             }
             n = n + 1
+        let no_gore = mommy.hides_gore(g.mommy_mode)
         for i in 0..lv.num_enemies do
             let e = &lv.enemies[i]
-            // Mommy Mode: dead enemies (post-fade) are gone — no corpse
-            // sprite. The original always draws the dead_frame, but the
-            // whole point of Mommy Mode is that we don't leave bodies.
-            let skip_dead = g.mommy_mode && match e.state with
+            // Mommy Mode gore arm: dead enemies (post-fade, and the
+            // pre-placed corpses the map data seeds) are gone — no
+            // corpse sprite. The original always draws the dead_frame,
+            // but the whole point of the filter is to leave no bodies.
+            let skip_dead = no_gore && match e.state with
                 | dead -> true
                 | _    -> false
             if skip_dead then continue
-            let page_rel = enemies.sprite_page_with_mode(e, g.pos_x, g.pos_y, g.mommy_mode)
+            let page_rel = enemies.sprite_page_with_mode(e, g.pos_x, g.pos_y, no_gore)
             let dx = e.x - g.pos_x
             let dy = e.y - g.pos_y
-            // Mommy Mode fade-on-death: dying enemy renders at
-            // 1 - mommy_fade_t opacity (1 → 0 over mommy_fade_duration).
-            // Non-die states and non-mommy-mode play opaque.
-            let mommy_dying = g.mommy_mode && match e.state with
+            // Fade-on-death: dying enemy renders at 1 - mommy_fade_t
+            // opacity (1 → 0 over mommy_fade_duration). Non-die states
+            // and a clear gore arm play opaque.
+            let mommy_dying = no_gore && match e.state with
                 | die -> true
                 | _   -> false
             let alpha = if mommy_dying then 1.0 - e.mommy_fade_t else 1.0

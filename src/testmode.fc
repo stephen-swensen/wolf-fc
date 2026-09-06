@@ -670,7 +670,7 @@ module testmode =
             let m = if w.ac.music_on then 1 else 0
             let s = if w.ac.sfx_on then 1 else 0
             let d = if w.ac.digi_on then 1 else 0
-            let nd = if g.mommy_mode then 1 else 0
+            let nd = g.mommy_mode
             let sm = if g.show_map then 1 else 0
             ignore io.write("prefs music=%d{m} sfx=%d{s} digi=%d{d} sfx_gain=%d{w.ac.sfx_gain_pct} digi_gain=%d{w.ac.digi_gain_pct} music_gain=%d{w.ac.music_gain_pct} mommy_mode=%d{nd} shadow_depth=%d{g.shadow_depth} bj_speed_pct=%d{g.bj_speed_pct} enemy_speed_pct=%d{g.enemy_speed_pct} show_map=%d{sm}\n", stdout)
         else if arg == "digi_slots" then
@@ -826,6 +826,24 @@ module testmode =
                 io.write(alloca("[%d{i}] (%d{tx},%d{ty}) kind=%s{ks}\n"), stdout)
                 count = count + 1
             ignore io.write("pickups: count=%d{count}\n", stdout)
+        else if arg == "statics" then
+            // Static-sprite census for the current level: how many
+            // decorations survived `spawn.sprites`, how many of them
+            // block, and how many sit on a VSWAP page that Mommy
+            // Mode's gore arm is supposed to filter out. `gore=0` is
+            // the assertion the gore-arm tests hang off; the pages are
+            // sprite_start-relative shapes (2 + tile - 23).
+            let mut blocking = 0
+            let mut gore = 0
+            for i in 0..w.lv.num_sprites do
+                let sp = w.lv.sprites[i]
+                if !sp.alive then continue
+                if sp.blocks then blocking = blocking + 1
+                // Recover the plane-1 tile from the shape page to reuse
+                // the one gore table rather than restating it here.
+                let tile = sp.shape_page - w.ac.vs.sprite_start - 2 + 23
+                if tilemap.tile_is_gore(tile) then gore = gore + 1
+            ignore io.write("statics: count=%d{w.lv.num_sprites} blocking=%d{blocking} gore=%d{gore}\n", stdout)
         else if arg == "exittiles" then
             // List every exit-tile marker (plane-1 tile 99) on the current map.
             // Boss-level maps place exactly one of these behind the gold-key

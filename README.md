@@ -110,7 +110,7 @@ make uninstall                      # remove the binary + share/wolf-fc/ tree
 
 | Flag | Effect |
 |------|--------|
-| `--mommy-mode` | Skip spawning all dog enemies AND replace every enemy death animation with a fade-to-invisible on the last live sprite (for sensitive players). Works in both interactive and `--test` modes; may appear before or after `--test`. |
+| `--mommy-mode[=MODE]` | Content filter for sensitive players (also on the Options menu, where it persists). `MODE` is `off`, `dogs`, `gore`, or `both`; bare `--mommy-mode` means `both`. **`dogs`** skips spawning every dog enemy. **`gore`** replaces every enemy death animation (dogs included) with a fade-to-invisible on the last live sprite, draws no corpses, stops BJ's HUD face short of the bloodied art, and filters the gore decorations — blood puddles, bones, gib piles, the hanged man, the caged skeleton (which becomes an empty cage so it still blocks) — out of the map. Works in both interactive and `--test` modes; may appear before or after `--test`. |
 | `--level=N` | Skip the title / menu and drop straight into map N in playing phase. `N` is `0..59` (six episodes of ten maps). Handy for jumping to a specific boss fight — see table below. |
 | `--difficulty=N` | Override the starting difficulty: `0` = Can I play Daddy, `1` = Don't Hurt Me, `2` = Bring 'Em On, `3` = I Am Death Incarnate (default). Combines with `--level`. |
 | `--near-boss` | After the level loads, teleport the player to an open tile adjacent to the first boss enemy on the map, facing the boss. No-op on maps without a boss. Combine with `--level=N` to start a specific boss fight immediately. |
@@ -233,6 +233,7 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `arrows` | Print every plane-1 ICONARROWS path-marker tile (`x,y` and dir 0..7) |
 | `exittiles` | Print every plane-1 EXITTILE marker (`x,y`) on the current map — boss-map exits that fire the BJ-victory cutscene when stepped on |
 | `pickups` | Print every live pickup sprite on the current map (`[idx] (tx,ty) kind=<name>`), filtering out static decorations. Enemy drops show up after the corpse lands. |
+| `statics` | Print the static-sprite census for the current map: total live decorations, how many of them block, and how many are gore sprites (`gore=0` is what Mommy Mode's gore arm guarantees) |
 | `setlevel:N` | Load level N (0..59) and enter gp_playing. Clears the pending level-transition latches, so it is safe to use straight after `endepisode`. |
 | `setepisode:N` | Jump to the start of episode N (0..5) — level=N*10 |
 | `setdifficulty:N` | Re-apply difficulty N (0..3) to the current level, re-running spawn filtering |
@@ -250,7 +251,7 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `level_stats` | Print the totals `level.build` counted for the current map (enemies / pushwalls / treasures) |
 | `epstats` | Print the per-episode running totals + the averages the episode-end victory screen derives from them |
 | `phase` | Print current phase + timer + lives + `active` (has_active_game — whether the main menu offers BACK TO GAME / SAVE GAME) |
-| `prefs` | Dump the current persistent preferences (music/SFX/digi on-off, per-source gains, mommy-mode, shadow-depth, BJ/enemy speed %, automap) |
+| `prefs` | Dump the current persistent preferences (music/SFX/digi on-off, per-source gains, mommy-mode `0`=off / `1`=dogs / `2`=gore / `3`=both, shadow-depth, BJ/enemy speed %, automap) |
 | `setscale:N` | Force the supersample factor to N (2..8), reallocating dbuf/zbuf/ssaa buffers. Combine with `bench:` to measure render-pipeline cost at a specific upscale level. |
 | `setssaa:N` | Force the Anti-Alias mode: `0` = off, `1` = vertical-only 2×, `2` = full 2×2. Test mode defaults to off for bit-stable screenshots; combine with `bench:` / `benchparts:` to profile the supersampled raycaster + downsample paths. |
 | `bench:N` | Render N full frames at the current scale and report total / per-frame / fps. Set position+state first with the usual `fwd:`/`goto:`/`setlevel:` commands. |

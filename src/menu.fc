@@ -98,7 +98,7 @@ module menu =
     // sliders land; matched by `render_options_list` and by input.fc's
     // options-nav handler. The RESET row is always the last entry —
     // bumps stay simple by keeping it at `options_len - 1`.
-    //   0 Mommy Mode    (toggle)
+    //   0 Mommy Mode    (4-way cycler: Off / Dogs / Gore / Both)
     //   1 Shadow Depth  (0..100% slider, ±5%, Left/Right adjusts)
     //   2 BJ Speed      (20..200% slider, ±5%, Left/Right adjusts)
     //   3 Enemy Speed   (20..200% slider, ±5%, Left/Right adjusts)
@@ -109,7 +109,8 @@ module menu =
     // How a row reacts to input. Used by the menu sfx dispatch in input.fc
     // to pick the right confirm cue for every setting-changed event.
     enum option_kind =
-        | toggle    // row flips on Enter or ←/→ (sound, options)
+        | toggle    // row advances on Enter or ←/→ (sound on/off, the
+                    // options map toggle, the Mommy Mode 4-way cycler)
         | slider    // row steps on ←/→ (sound gain, options shadow/speed
                     // sliders, changeview multi-option cyclers)
         | action    // row commits on Enter (options Reset)
@@ -474,8 +475,8 @@ module menu =
             // Each row prints its own value because the match arms
             // would mix str / const str otherwise.
             if i == 0 then
-                let v = if g.mommy_mode then "On" else "Off"
-                font.draw_text(rc, f, x_value, row_y, v, color)
+                font.draw_text(rc, f, x_value, row_y,
+                    mommy.label(g.mommy_mode), color)
             else if i == 1 then
                 font.draw_text(rc, f, x_value, row_y,
                     "%d{g.shadow_depth}%", color)

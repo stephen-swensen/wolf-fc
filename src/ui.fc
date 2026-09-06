@@ -591,12 +591,14 @@ module hud =
     // separately by the caller, which swaps in the dead-face pic
     // (or the mutant-BJ pic on needle-death). `frame` is clamped to
     // 0..2 by the caller.
-    private let face_chunk_for = (health: i32, frame: i32, mommy_mode: bool) ->
+    // `no_gore` is Mommy Mode's gore arm: it caps the expression rows
+    // at 3 so BJ never reaches the bloodied-face art.
+    private let face_chunk_for = (health: i32, frame: i32, no_gore: bool) ->
         let mut h = health
         if h > 100 then h = 100
         if h < 1 then h = 1
         let idx = (100 - h) / 16
-        let cap = if mommy_mode then 3 else 6
+        let cap = if no_gore then 3 else 6
         let clamped = if idx > cap then cap else idx
         let f = if frame < 0 then 0 else if frame > 2 then 2 else frame
         pics.id.face_base + clamped * 3 + f
@@ -714,7 +716,7 @@ module hud =
                 else pics.id.face_dead
             let face =
                 if g.got_gatling_timer > 0.0 then pics.id.got_gatling
-                else if g.mommy_mode then face_chunk_for(g.health, g.face_frame, true)
+                else if mommy.hides_gore(g.mommy_mode) then face_chunk_for(g.health, g.face_frame, true)
                 else if g.health <= 0 then dead_face
                 else
                     match g.phase with
