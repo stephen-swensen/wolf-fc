@@ -812,22 +812,20 @@ module spawn =
             { { 1,  0}, {-1.0,  0.0}, {     0.0, 0.0 - pf} },
             { {-2,  0}, { 1.0,  0.0}, {     0.0,      pf} },
             { {-1,  0}, { 1.0,  0.0}, {     0.0,      pf} } }
-        let mut placed = false
         for { off, face, plane } in cands do
-            if !placed then
-                let tx = target_x + off[0]
-                let ty = target_y + off[1]
-                let in_bounds = tx >= 0 && tx < map_size && ty >= 0 && ty < map_size
-                if in_bounds then
-                    let t = (i32) lv.tilemap[(i64) tx * 64 + (i64) ty]
-                    if t == 0 then
-                        g.pos_x = (f64) tx + 0.5
-                        g.pos_y = (f64) ty + 0.5
-                        g.dir_x = face[0]
-                        g.dir_y = face[1]
-                        g.plane_x = plane[0]
-                        g.plane_y = plane[1]
-                        placed = true
+            let tx = target_x + off[0]
+            let ty = target_y + off[1]
+            let in_bounds = tx >= 0 && tx < map_size && ty >= 0 && ty < map_size
+            if in_bounds then
+                let t = (i32) lv.tilemap[(i64) tx * 64 + (i64) ty]
+                if t == 0 then
+                    g.pos_x = (f64) tx + 0.5
+                    g.pos_y = (f64) ty + 0.5
+                    g.dir_x = face[0]
+                    g.dir_y = face[1]
+                    g.plane_x = plane[0]
+                    g.plane_y = plane[1]
+                    break
 
     // Move the player to an open tile adjacent to the level's boss
     // (if any) and face them toward the boss. Tries 2-tile offsets
@@ -839,18 +837,18 @@ module spawn =
         let mut bx = -1
         let mut by = -1
         for i in 0..lv.num_enemies do
-            if bx < 0 then
-                let e = &lv.enemies[i]
-                // Episode-ending bosses only. hitler_fake decoys on
-                // E3M9 are intentionally excluded — the fight target
-                // there is Mecha Hitler, not the flamethrower clones.
-                let is_boss = match e.kind with
-                | hans | schabbs | gretel | giftmacher | fat
-                | mecha_hitler | hitler -> true
-                | _ -> false
-                if is_boss then
-                    bx = e.tile_x
-                    by = e.tile_y
+            let e = &lv.enemies[i]
+            // Episode-ending bosses only. hitler_fake decoys on
+            // E3M9 are intentionally excluded — the fight target
+            // there is Mecha Hitler, not the flamethrower clones.
+            let is_boss = match e.kind with
+            | hans | schabbs | gretel | giftmacher | fat
+            | mecha_hitler | hitler -> true
+            | _ -> false
+            if is_boss then
+                bx = e.tile_x
+                by = e.tile_y
+                break
         if bx < 0 then return
         place_player_adjacent(lv, g, bx, by)
 
@@ -861,11 +859,12 @@ module spawn =
         let mut kx = -1
         let mut ky = -1
         for i in 0..lv.num_sprites do
-            if kx < 0 && lv.sprites[i].alive then
+            if lv.sprites[i].alive then
                 match lv.sprites[i].item_type with
                 | gold_key ->
                     kx = (i32) lv.sprites[i].x
                     ky = (i32) lv.sprites[i].y
+                    break
                 | _ -> void()
         if kx < 0 then return
         place_player_adjacent(lv, g, kx, ky)
@@ -876,11 +875,12 @@ module spawn =
         let mut kx = -1
         let mut ky = -1
         for i in 0..lv.num_sprites do
-            if kx < 0 && lv.sprites[i].alive then
+            if lv.sprites[i].alive then
                 match lv.sprites[i].item_type with
                 | silver_key ->
                     kx = (i32) lv.sprites[i].x
                     ky = (i32) lv.sprites[i].y
+                    break
                 | _ -> void()
         if kx < 0 then return
         place_player_adjacent(lv, g, kx, ky)
@@ -892,11 +892,12 @@ module spawn =
         let mut kx = -1
         let mut ky = -1
         for i in 0..lv.num_sprites do
-            if kx < 0 && lv.sprites[i].alive then
+            if lv.sprites[i].alive then
                 match lv.sprites[i].item_type with
                 | gibs ->
                     kx = (i32) lv.sprites[i].x
                     ky = (i32) lv.sprites[i].y
+                    break
                 | _ -> void()
         if kx < 0 then return
         place_player_adjacent(lv, g, kx, ky)
@@ -1081,9 +1082,6 @@ module spawn =
             hp = hp,
             anim_frame = anim_frame,
             anim_timer = enemies.walk_frame_time,
-            move_remaining = 0.0,
-            dist_to_player = 0.0,
-            dist_flat = 0.0,
             ambush = is_boss && !info.dead,
             notified = false,
             reaction_timer = 0.0,

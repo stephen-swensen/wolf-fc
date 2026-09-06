@@ -19,165 +19,36 @@ one-off fix, and patch.
   widescreen surface can, forcing recomposition. Environmental, out of our
   hands → won't-fix.
 
-## Open findings — 2026-05 audit (re-prioritized 2026-06-09 against id's source)
+## Open findings
 
-A multi-agent audit (2026-05-31) over the whole engine produced 76
-confirmed findings. The license-hygiene, doc-comment, leak, and
-clean-fail-hard fixes were applied (commits `38da848`, `1bf1c5c`); the
-silent-continue bounds-guards were deliberately reverted (see Decisions
-below). **[arch-1]** (enemy `last_visible` moved from the render path into
-`ai.update_enemies`) was applied 2026-06-02 — despite its `[golden re-pin]`
-tag it needed *no* golden churn: the regression scripts never land a
-`rnd_byte` roll in the narrow hitchance gap (≤ dist·8 wide) the flag
-opens, so no hit/miss outcome flipped. The flag is now exercised directly
-via a new `vis=` column on `enemylist` and two `combat:enemy-sight`
-assertions, so the behavior can't silently regress. **[level-1]** (count
-the 1-UP in the treasure denominator, matching the original) was applied
-2026-06-04 with its golden re-pin — only the three level-0 treasure
-assertions churned (`x/22 → x/23`); the predicted churn on other levels
-never materialized because those maps carry no 1-UP. **[cla-door-1]** was
-investigated and retired as a non-bug (the door-LOS code is already
-faithful to the original) — see Decisions below.
+The 2026-05-31 multi-agent audit's 76 confirmed findings are now all
+either applied or retired; see Decisions below for the ones we
+deliberately won't do. The last sweep (2026-09-05) applied every
+remaining P2 / P3 / dead-code / cheap-perf item and closed the audit,
+leaving **[render-fp]** — a structural, golden-busting render pass — as
+the only item carried forward, plus two new findings raised by that
+sweep's own review.
 
-**2026-06-09 recheck.** The original audit ran *without* the OG reference
-tree. It has since been restored at `../wolf3d/WOLFSRC` (id's DOS source;
-wolf4sdl is currently absent, but id's source is authoritative anyway), so
-every open finding was re-read against it. Two were retired as non-issues
-and moved to Decisions:
+Earlier passes, for the record: license-hygiene / doc-comment / leak /
+clean-fail-hard fixes in `38da848` + `1bf1c5c` (the silent-continue
+bounds-guards from that batch were deliberately reverted — see
+Decisions); **[arch-1]** (enemy `last_visible` moved out of the render
+path, 2026-06-02, no golden churn, now pinned by the `vis=` column on
+`enemylist`); **[level-1]** (1-UP counted in the treasure denominator,
+2026-06-04, churned the three level-0 treasure assertions);
+**[player-2]** + **[player-4]** (respawn key-clear and OG-faithful
+number-key weapon switching, 2026-06-09).
 
-- **[main-2]** — the OG's `GivePoints` (`WL_AGENT.C:523`) loops its
-  next-extra counter and fires `BONUS1UPSND` *per* 40k milestone, exactly
-  as our `add_score` does; the proposed "fire the cue once" would
-  *diverge* from the OG, and two `SD_PlaySound` calls in one frame just
-  retrigger the same cue (no glitch). Already faithful.
-- **[sdl2-1]** — a cosmetic `const`-on-extern doc nit with no behavioral
-  effect; the finding itself flagged it skippable.
-
-**[player-2]** and **[player-4]** (the P1 pair) were applied 2026-06-09 —
-both predicted test-safe, and indeed the 208-test suite passed with no
-golden churn (it drives weapons via `setweapon:`, never the number keys,
-and the respawn key-clear is inert in test mode):
-
-- **[player-2]** — `restart_current_level` (`main.fc:1577`) now calls
-  `player.clear_input_keys(g)` right after `reset_for_life`, so a movement
-  key held when the death animation ends no longer walks the respawned
-  player. Mirrors `advance_next_level` and id's `Died → IN_ClearKeysDown`
-  (`WL_GAME.C:1199`).
-- **[player-4]** — the bare `g.weapon = 0..3` number-key handler
-  (`main.fc:4149`) now mirrors id's `CheckWeaponChange` (`WL_AGENT.C:117`):
-  it switches only while playing, only when `g.fire_timer <= 0.0` (id's
-  `T_Attack` never calls `CheckWeaponChange`, so the OG can't switch
-  mid-attack — this was the real cause of the audit's "attack-frame
-  desync"), only with `g.ammo > 0`, and only up to `g.best_weapon`
-  (so `4` no longer selects an unowned chain gun). The `setweapon:` test
-  command stays ungated on purpose.
-
-The rest stand and are ordered below by priority rather than by category.
-
-Tag: **[golden re-pin]** = changes RNG draw order or pinned stats, so it
-must update `tests/run-tests.sh` golden values in the same commit. (The
-old **[needs OG source]** tag is retired — `../wolf3d` is now present.)
-
-### P2 — real, narrower scope or edge cases
-
-- **[save-3] loading a save under a different view mode gives a wrong
-  FOV** (`save.fc:733-738`). `from_slot` restores `plane_x/plane_y`
-  verbatim, but the plane magnitude must equal the live `plane_factor`
-  (view-mode/aspect-derived; `view_mode` lives in config, not the slot),
-  so saving in 4:3 and loading in widescreen (or vice-versa) keeps the
-  stale FOV until the next CHANGE VIEW. Fix: after restoring dir+plane,
-  renormalize the plane to `|plane| == g.plane_factor` (its direction is
-  already perpendicular to dir). No-op in test mode (view mode pinned) →
-  test-safe.
-
-- **[main-4] `setlevel:`/`setepisode:` test commands leave
-  `next_level`/episode latches stale** (`main.fc:2325`, `:2340`). A script
-  doing `endepisode` then `setlevel:N` bounces straight into intermission
-  on the new level. Fix: in both branches clear `next_level=false;
-  next_level_delay=0.0; went_secret=false; ep_recorded_current=false`
-  (mirrors `advance_next_level`). Test-only; existing golden scripts don't
-  pre-set these → test-safe.
-
-- **[opl2-1] additive-connection channel drops the modulator when the
-  carrier env hits 'off'** (`opl2.fc:599`). The whole-channel early-out
-  keys only on the carrier; in an additive (connection-bit) channel a
-  still-audible modulator is cut when the carrier finishes release. Fix:
-  gate the early-out on connection mode and, in the additive branch, emit
-  the modulator alone when the carrier is off. FM mode unchanged.
-  **Latent — confirm reach before investing:** check whether any WL6 SFX
-  instrument or music track ever writes a `0xC0+ch` register with bit 0
-  set; if none do, this is emulator-correctness only with no audible
-  effect on our data.
-
-### P3 — cosmetic / well-definedness / very-low-reach
-
-- **[cutscenes-4] endart `^L` desyncs `st.py` from `st.rowon` for an
-  out-of-range row** (`cutscenes.fc:1248-1253`). `st.rowon` is clamped
-  (`:1250-1252`) but `st.py = snap_y` is derived from the *unclamped*
-  `new_row` (`:1249`) → drawn baseline drifts
-  (cosmetic; `font.draw_char` clips, no OOB). The OG's `^L`
-  (`WL_TEXT.C:231`) keeps them consistent precisely because it derives
-  *both* from one value and clamps *neither* (`rowon = (py-TOPMARGIN)/
-  FONTHEIGHT; py = TOPMARGIN + rowon*FONTHEIGHT`). Simplest faithful fix:
-  mirror the OG — compute `new_row` once, derive both fields from it. The
-  clamp only matters on malformed markup the real `endart` chunk never
-  emits, so this never triggers on shipped data. Endart-only, test-safe.
-
-- **[main-5] `--level` launch doesn't pin `oldscore`**
-  (`main.fc:3170-3179`), unlike `setlevel:` (`:2331`/`:2348`). No-op today
-  (score is 0 and `oldscore` inits to 0) but makes the death-rewind
-  baseline well-defined. Fix: add `g.oldscore = g.score` in the
-  `some(lvl)` branch. Test-safe.
-
-### Dead code — each needs a keep-or-delete call
-
-- **[main-1] redundant 2nd `update_phase_transitions()` in the
-  interactive loop** (`main.fc:4234`; `tick()` already calls it at
-  `:1786`, discarding the returned `level_changed`). A no-op today
-  (idempotent when no transition is pending) but a maintenance trap — a
-  future non-phase-changing transition would run twice interactively, once
-  per test tick. Fix: delete `:4234`; if the loop's music refresh ever
-  needs `level_changed`, read it from `tick()`'s already-returned bool at
-  the single site. Interactive-only, test-safe.
-
-- **[cla-dead-1] unused enemy fields** `move_remaining` / `dist_flat` /
-  `dist_to_player` (`combat.fc:118-120`). Never read for behavior. Fix:
-  drop `dist_flat`/`dist_to_player` + their `level.fc:1034-1035` inits
-  (zero other refs). `move_remaining` is also serialized
-  (`save.fc:611`/`:813`) — removing it changes the save format (renumber
-  later token indices), so version-bump the save or leave that one field.
-
-- **[ui-3] unused HUD number-drawer / mini-font cluster**
-  (`ui.fc:660-673` `draw_digit`/`digit_glyph`/`draw_number`,
-  `ui.fc:712` private `fill_rect`). `hud.draw_number` has no callers.
-  Confirmed 2026-06-09: the 3×5-font path is *also* dead — `hud.draw_text`
-  (`ui.fc:694`) is reached only by `overlay.draw_centered_text`
-  (`render.fc:813`), which itself has no callers. Fix: delete the whole
-  cluster (`draw_number`/`draw_digit`/`digit_glyph` + `char_glyph`/3×5
-  `draw_text` + `draw_centered_text` + the private `fill_rect`). Keep the
-  real font path `font.draw_text` (`ui.fc:545`) — it's live.
-
-- **[ui-2] `pics.extend_pic_horizontally` is never called**
-  (`ui.fc:444`), with a latent OOB (no upper `pic_x` clamp) if wired.
-  Fix: delete; or if kept for future widescreen banners, add the upper
-  clamp + a TODO that it's unwired.
-
-- **[menu-6] `render_quit_modal` has an unused `ac` param**
-  (`menu.fc:722`; call site `:771`). Confirmed `ac` is referenced only in
-  the signature. Fix: drop the param + arg (leave `render_main`'s `ac` —
-  still used by `render_sound_list`). Only if no quit-modal SFX is
-  planned.
-
-### Performance — optional micro-opts (none per-frame-critical)
+### Carried forward
 
 - **[render-fp] move the per-pixel texture coordinate to fixed-point —
-  the one per-frame-critical item in this section, and structural.** The
+  per-frame-critical, and structural.** The
   hot band loop keeps the texel coordinate as a `float64` accumulator and
   converts to a row index *every pixel* with `let tex_y = (int32)
-  bd_tex_pos[k]` (`render.fc:465`, `:478`, `:493`; ~64k+ conversions/frame
-  in the fast/edge bands), then clamps to `[0,63]`. Same shape in the
-  per-column DDA setup (`:326` `(int32)(vfocal/perp_dist)`, `:385-386`
-  step/tex_pos) and the billboard scaler (`:688-690`, `:698`). The float→int
+  bd_tex_pos[k]` (~64k+ conversions/frame in the fast/edge bands), then
+  clamps to `[0,63]`. Same shape in the
+  per-column DDA setup (`(int32)(vfocal/perp_dist)`, step/tex_pos) and the
+  billboard scaler. The float→int
   conversion is the expensive op: at `-O3` an isolated cast+clamp+LUT loop
   measured ~0.035s (bare cast) vs ~0.02s when the coordinate is 16.16
   fixed-point — `let tex_y = (tex[k] >> 16) & 63` is a shift+mask, emits
@@ -186,55 +57,143 @@ old **[needs OG source]** tag is retired — `../wolf3d` is now present.)
   removed, not one). This is the classic Wolf3D/Doom software-rasterizer
   technique: step texcoords in fixed-point, extract the texel with a shift.
   Worth doing "throughout" — wall texturing, floor/ceiling, sprite scaling,
-  DDA — not just the wall band. Also sidesteps the rc5 saturating-cast cost
-  entirely (see below). **Caveat — NOT test-safe:** fixed-point rounds
+  DDA — not just the wall band. **Caveat — NOT test-safe:** fixed-point rounds
   differently from `float64`, so this *changes rendered pixels* and busts
   the bit-stable golden suite — needs a deliberate golden re-pin plus a
   precision review (16.16 has ample headroom for 64-texel textures, but
   verify no visible seams/wobble at grazing angles before re-blessing).
   Bigger than a micro-opt; sequence it as its own pass.
 
-  > Context: rc5's `(int32)float` emits a saturating helper (`fc_f2i32`:
-  > NaN-check + two range branches) instead of rc4's bare `cvttsd2si`,
-  > making each per-pixel conversion ~2.5× costlier. That compiler-side
-  > question resolved upstream as `unguarded`/`guarded` blocks (which
-  > superseded the interim `(T!)` cast), now wrapping every in-range cast
-  > on the hot render path — the per-pixel wall texel (`render.fc` band
-  > loops), per-column line_h / tex_x, `shade_color`'s channel casts, and
-  > the billboard scaler all emit a bare `cvttsd2si` again. The same blocks
-  > also drop the per-store bounds check that previously forced the raw
-  > `vbuf.ptr` / `ssaa_buf.ptr` escape (flat fill, band stores, sprite-col
-  > blend, SSAA downsample now index the slice directly under `unguarded`),
-  > and the per-stripe `… / spr_w` billboard divide skips its divide-by-zero
-  > guard. Disassembly-confirmed: zero `fc_f2*` calls and zero hot-loop
-  > `fc_oob` in `raycaster__render_walls` / `billboards__render`; the
-  > `unguarded` slice form is byte-identical to the old raw pointer; golden
-  > suite unchanged since `unguarded` is bit-identical for in-range inputs.
-  > So the saturation + bounds-check overhead is *already* clawed back; what
-  > remains for this item is the conversion itself — fixed-point removes the
-  > per-pixel float→int op (and its `[0,63]` clamp) outright, a further win.
+  > Context: the rc5 saturating-cast overhead this item used to also
+  > cover is already clawed back — `unguarded` / `guarded` blocks now wrap
+  > every in-range cast on the hot render path (per-pixel wall texel,
+  > per-column line_h / tex_x, `shade_color`'s channel casts, the billboard
+  > scaler), and the same blocks dropped the per-store bounds check that
+  > once forced the raw `vbuf.ptr` / `ssaa_buf.ptr` escape.
+  > Disassembly-confirmed: zero `fc_f2*` calls and zero hot-loop `fc_oob`
+  > in `raycaster__render_walls` / `billboards__render`. What remains for
+  > this item is the conversion itself.
 
-- **[png-1] CRC-32 is bit-by-bit, run ~3× over multi-MB IDAT per
-  screenshot** (`png.fc:11-18`). One-frame hitch on the `s` key / `ss:`
-  only, never per-frame. Fix: 256-entry CRC table (embed as a literal
-  `uint32[256]` at module scope, or build into a context-struct factory
-  — module lets can't compute it). Bit-identical output.
+### New — 2026-09-05 sweep
 
-- **[render-4] per-frame `pal_dim` LUT (256 `shade_color` calls) built
-  even when unused** (`render.fc:72-74`). When `shadow_depth>0` the
-  `shade==0.75` branch is never taken, so the LUT is built-but-unread.
-  Fix: keep the zeroed `let pal_dim` declaration (scope) but guard only
-  the fill loop with `if shadow_floor == 1.0`. Default path unchanged,
-  test-safe.
+- **[inter-1] boss floors still earn a level-completion bonus and still
+  land in the episode averages** (`cutscenes.fc` `bj_victory.enter`,
+  `flow.fc` death-cam → episode-end). The original never runs
+  `LevelCompleted` on a victorious boss floor (`WL_GAME.C:1452`
+  `ex_victorious` → `Victory()` directly), and its `Victory()` averages
+  sum `LevelRatios[0..7]` over a *fixed* divisor of 8 — the boss floor
+  contributes nothing to either. We award `compute_level_bonus` and call
+  `record_level_for_episode` there. The score half of the divergence
+  mostly closed itself when the par table was fixed (boss floors have no
+  par, so the time bonus is now 0; only a 100 % kills / secrets /
+  treasures bonus can still land), but the averages half stands: the
+  boss floor is counted as a played level. This looks like a deliberate
+  pairing with our "divide by levels actually played" divergence
+  (`world.fc:225-231`) rather than an oversight — decide whether to keep
+  it and document it as a divergence, or drop the boss floor from both.
 
-- **[player-5] `blocked_by_map` / `move_blocked_by_enemy` scan all
-  entries after a hit** (`player.fc:156-165, 177-190`). Fix: `break`
-  after `hit = true`. Identical result, test-safe.
+- **[test-1] no coverage for the intermission tally beyond level 0.**
+  The wrong par times below survived because every intermission
+  assertion ran on E1M1, whose par happened to be right. The sweep added
+  three (`intermission:par-time-e1m4-is-210s`,
+  `…-bonus-uses-level-par`, `…boss-floor-has-no-par`), but the ratio /
+  100 %-bonus arms of `compute_level_bonus` are still unasserted on any
+  level. Worth a handful more assertions the next time that code moves.
 
-- **[level-2] `near_boss`/`near_goldkey`/`near_silverkey`/`near_gibs`
-  scan the full array after the first match** (`level.fc:790-851`).
-  Debug-only entry points (CLI flags / BOSS FIGHT menu). Fix: `break`
-  after capturing the tile, or leave as-is.
+### Applied — 2026-09-05
+
+Every item below was applied with the 214-test suite green; the ones
+touching rendered pixels or written files were additionally verified
+byte-identical against the pre-change binary.
+
+- **[save-3]** loading a save no longer keeps a stale FOV. `from_slot`
+  now rebuilds the camera plane from the restored heading
+  (`plane = dir rotated 90° CW, scaled by plane_factor`) instead of
+  trusting the slot's copy, so a game saved in 4:3 and loaded in
+  widescreen picks up the live FOV. Also undoes the perpendicularity
+  drift the slot's 6-decimal formatting introduces. Verified: a
+  save/load round-trip in test mode is pixel-identical.
+
+- **[save-4] (new)** a loaded game is now marked `has_active_game`.
+  It starts false on a fresh launch and is cleared on game over, and
+  `from_slot` never set it — so LOAD GAME from either state resumed a
+  running game whose main menu still read "BACK TO DEMO", greyed out
+  SAVE GAME, and dumped the player on the title screen (discarding the
+  loaded game) on the next Esc. Regression:
+  `save:load-marks-game-active`.
+
+- **[save-5] (new)** the per-episode running totals are now saved.
+  The original persists its `LevelRatios[]` table
+  (`WL_MAIN.C:371-375`); ours lived only in memory, so a game resumed
+  mid-episode reported episode-end averages over just the levels played
+  since the load — and inherited whatever the live session (possibly a
+  different episode) had accumulated. Written as a new `episode` line,
+  so WLFC 2 files stay loadable; the loader zeroes the totals first, so
+  a slot without the line loads a clean baseline. New `epstats` test
+  command; regression: `save:episode-totals-round-trip`.
+
+- **[inter-2] (new)** the par-time table was wrong for 47 of 60 levels.
+  Only E1M1-M3 matched the original; episodes 4-6 were verbatim copies
+  of episodes 1-3, and boss floors carried a bogus 7-minute par where
+  the original has none. Both the tally screen's `PAR` line and the
+  +500/sec time bonus read this table, so scoring was off on nearly
+  every level (E1M4: 150 s vs the correct 210 s = 30 000 points). Now
+  id's `parTimes[]` (`WL_INTER.C:443`) converted from minutes to whole
+  seconds, with 0 for boss / secret floors → "??:??" and no time bonus.
+  Cross-checked the sibling reproduced tables at the same time:
+  `ceil_table`, `episode.back_to`, enemy `hp_for_kind` (incl. the real
+  Hitler morph tiers) and `score_for_kind` all match id exactly.
+
+- **[main-4] / [main-5]** `setlevel:` / `setepisode:` / `--level` now
+  share one path, `flow.jump_to_level`, which clears the
+  level-transition latches (`next_level`, `next_level_delay`,
+  `went_secret`, `ep_recorded_current`) and pins `oldscore`. A script
+  doing `endepisode` then `setlevel:N` used to bounce straight into the
+  intermission on the new map. Regression:
+  `episode:setlevel-clears-pending-transition`.
+
+- **[cutscenes-4]** endart `^L` derives row and baseline from one
+  unclamped value, like the original (`WL_TEXT.C:231`), so a jump can no
+  longer draw text on one line while wrapping it against another's
+  margins. Verified: all 6 episodes × 8 pages render byte-identically,
+  so shipped markup never reaches the case.
+
+- **[opl2-1]** an additive-connection channel no longer drops an
+  audible modulator when the carrier's envelope finishes. Confirmed
+  zero reach on our data first — no WL6 music chunk ever writes
+  `0xC0+ch` with bit 0 set, and the AdLib SFX driver forces
+  feedback/connection to 0 — so this is emulator correctness only.
+
+- **[main-1]** dropped the interactive loop's second
+  `update_phase_transitions` (`flow.tick` already ends in it).
+
+- **[ui-2] / [ui-3] / [menu-6] / [cla-dead-1]** dead code removed:
+  `pics.extend_pic_horizontally`; the whole 3×5 mini-font cluster
+  (`hud.draw_number` / `draw_digit` / `digit_glyph` / `char_glyph` /
+  `hud.draw_text` / `hud`'s private `fill_rect` /
+  `overlay.draw_centered_text`); `render_quit_modal`'s unused `ac`
+  param; the enemy struct's `dist_to_player` / `dist_flat`; and
+  `player.blocked` (an unused back-compat shim found alongside).
+  `move_remaining` was removed from the struct *without* a save-format
+  break — field 12 of the `enemy` line is written as 0 and ignored on
+  load, so WLFC 2 files keep loading and every later field keeps its
+  position.
+
+- **[png-1]** screenshot CRC-32 is table-driven (table built once per
+  `write` on the stack — a module `let` can't compute one), and Adler-32
+  defers its modulo to the standard 5552-byte NMAX blocks. Verified:
+  PNG output is byte-identical and all chunk CRCs validate.
+
+- **[render-4]** the per-frame `pal_dim` pre-shade is skipped when
+  distance shading is on — but gated on the *same* flag as its reader,
+  not just the fill. **The fix as originally written was unsafe:** Shadow
+  Depth 25 % makes `shadow_floor` exactly 0.75, so distant X-side walls
+  hit the `shade == 0.75` branch with the LUT unfilled and would have
+  rendered black. Verified: a shadow-depth-25 frame is byte-identical
+  before and after.
+
+- **[player-5] / [level-2]** the collision and debug-teleport scans
+  `break` on their first hit instead of running to the end of the array.
 
 ## Decisions / retirements
 

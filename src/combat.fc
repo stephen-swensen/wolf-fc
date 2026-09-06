@@ -120,9 +120,6 @@ module enemies =
         hp: i32
         anim_frame: i32       // index into the state's frame list (walk 0-3, shoot 0-2, die 0-3)
         anim_timer: f64       // seconds until next anim transition
-        move_remaining: f64   // distance (tiles) left to reach the next tile center
-        dist_to_player: f64   // squared distance, used for draw sort
-        dist_flat: f64        // tile-grid distance, used for some AI decisions
         ambush: bool          // tile 106 (AMBUSH) — don't wake on sound, only LOS
         notified: bool        // has entered active pursuit at least once (suppresses re-alert sound)
         reaction_timer: f64   // seconds left between first detection and actual wake; 0 when not yet detected (mirrors the original's sight-delay)
@@ -1122,7 +1119,6 @@ module enemies =
             e.anim_frame     = 0
             e.anim_timer     = walk_frame_time
             e.dir            = dir.nodir
-            e.move_remaining = 0.0
             e.notified       = true
             e.reaction_timer = 0.0
 

@@ -98,6 +98,35 @@ module flow =
         g.respawn_fade_timer = player.respawn_fade_time
         pics.trigger_get_psyched(g)
 
+    // Debug / scripted jump straight into level `n`, keeping the running
+    // session (score, lives, health, weapons, cheat latches) intact.
+    // Backs the `--level` launch flag and the `setlevel:` / `setepisode:`
+    // test commands — normal progression goes through advance_next_level,
+    // which additionally routes secret levels and consumes the key latches.
+    let jump_to_level = (w: world*, vs: const vswap.vswap_file*, n: i32) ->
+        let g = w.g
+        g.level_num = n
+        // Pin the death-rewind baseline to the score we arrive with — the
+        // same snapshot advance_next_level takes on a normal transition.
+        g.oldscore = g.score
+        // Clear the level-transition latches. A script that ran
+        // `endepisode` (or an interactive session that hit the elevator)
+        // before jumping would otherwise carry `next_level` into the new
+        // map and bounce straight back into the intermission.
+        g.next_level = false
+        g.next_level_delay = 0.0
+        g.went_secret = false
+        g.ep_recorded_current = false
+        level.reload(w, vs)
+        spawn.find_player_start(w.lv_data, g)
+        level.reset_counters(g, w.lv)
+        areas.update_player_area(w.lv, g)
+        areas.connect(w.lv, g.area_number)
+        g.phase = game_phase.playing
+        g.phase_timer = 0.0
+        g.has_active_game = true
+        pics.trigger_get_psyched(g)
+
     // Start a new game at the current level_num (set by the episode picker).
     // Resets player state (3 lives, score 0, full HP, pistol 8 ammo) +
     // rebuilds the level + clears per-episode running totals.

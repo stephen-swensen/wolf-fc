@@ -233,7 +233,7 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `arrows` | Print every plane-1 ICONARROWS path-marker tile (`x,y` and dir 0..7) |
 | `exittiles` | Print every plane-1 EXITTILE marker (`x,y`) on the current map — boss-map exits that fire the BJ-victory cutscene when stepped on |
 | `pickups` | Print every live pickup sprite on the current map (`[idx] (tx,ty) kind=<name>`), filtering out static decorations. Enemy drops show up after the corpse lands. |
-| `setlevel:N` | Load level N (0..59) and enter gp_playing |
+| `setlevel:N` | Load level N (0..59) and enter gp_playing. Clears the pending level-transition latches, so it is safe to use straight after `endepisode`. |
 | `setepisode:N` | Jump to the start of episode N (0..5) — level=N*10 |
 | `setdifficulty:N` | Re-apply difficulty N (0..3) to the current level, re-running spawn filtering |
 | `setphase:X` | Force phase: `title` / `menu` / `epmenu` / `diffmenu` / `savemenu` / `loadmenu` / `playing` / `viewscores` (View Scores entry into the high-scores screen) |
@@ -248,7 +248,8 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `listsaves` | Dump each save slot (`slot N: E<ep>M<lvl> diff=... score=... label=...` or `EMPTY`) |
 | `counters` | Print kills/secrets/treasures counters + par time + phase |
 | `level_stats` | Print the totals `level.build` counted for the current map (enemies / pushwalls / treasures) |
-| `phase` | Print current phase + timer + lives |
+| `epstats` | Print the per-episode running totals + the averages the episode-end victory screen derives from them |
+| `phase` | Print current phase + timer + lives + `active` (has_active_game — whether the main menu offers BACK TO GAME / SAVE GAME) |
 | `prefs` | Dump the current persistent preferences (music/SFX/digi on-off, per-source gains, mommy-mode, shadow-depth, BJ/enemy speed %, automap) |
 | `setscale:N` | Force the supersample factor to N (2..8), reallocating dbuf/zbuf/ssaa buffers. Combine with `bench:` to measure render-pipeline cost at a specific upscale level. |
 | `setssaa:N` | Force the Anti-Alias mode: `0` = off, `1` = vertical-only 2×, `2` = full 2×2. Test mode defaults to off for bit-stable screenshots; combine with `bench:` / `benchparts:` to profile the supersampled raycaster + downsample paths. |
@@ -499,6 +500,7 @@ A handful of small **data tables** that encode the original game's design are pr
 - The 256-entry VGA palette in [`data.fc`](data.fc) (identical to Wolf4SDL's `wolfpal.inc` and id's original palette).
 - `ceil_table` in [`render.fc`](render.fc) (per-level ceiling colors — identical to `vgaCeiling[]` in Wolf4SDL's `wl_draw.cpp`).
 - `songs` in [`ui.fc`](ui.fc) (per-level music assignments — identical to `songs[]` in Wolf4SDL's `wl_play.cpp`).
+- `par_times` in [`cutscenes.fc`](cutscenes.fc) (per-level par times, driving the tally screen's `PAR` line and the time bonus — the original's `parTimes[]` minutes converted to whole seconds).
 
 These are short tables of indices and color values, not code. The U.S. copyright view of small factual data tables is limited (*Feist v. Rural*), but the selection and ordering of music per level is arguably a creative choice, so we flag it rather than hand-wave it. Anyone who needs maximum licensing purity can replace these tables without touching engine code.
 

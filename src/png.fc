@@ -7,23 +7,47 @@
 module png =
     import io from std::
 
-    // CRC-32 (IEEE 802.3) over buf[start..start+len].
-    let crc32 = (buf: const u8[], start: i64, len: i64) ->
-        let mut c = 0xFFFFFFFFu32
-        for i in 0..len do
-            c = c ^ (u32) buf[start + i]
+    // Build the 256-entry CRC-32 (IEEE 802.3) byte table. Filled once
+    // per `write` into a caller-owned buffer — a module-level `let` can
+    // only hold a constant expression, and the alternative (a literal
+    // 256-word table) is a generated blob nobody can eyeball. The
+    // per-byte loop below then costs one xor + shift + lookup instead
+    // of eight branches, which matters: a screenshot CRCs its whole
+    // multi-MB IDAT, and the `s` key writes three of them.
+    let crc32_fill_table = (tab: u32[]) ->
+        for i in 0..256 do
+            let mut c = (u32) i
             for k in 0..8 do
                 c = if (c & 1u32) != 0u32 then 0xEDB88320u32 ^ (c >> 1)
                     else c >> 1
+            tab[i] = c
+
+    // CRC-32 (IEEE 802.3) over buf[start..start+len], table-driven.
+    let crc32 = (tab: const u32[], buf: const u8[], start: i64, len: i64) ->
+        let mut c = 0xFFFFFFFFu32
+        for i in 0..len do
+            c = tab[(i32) ((c ^ (u32) buf[start + i]) & 0xFFu32)] ^ (c >> 8)
         c ^ 0xFFFFFFFFu32
 
     // Adler-32 checksum over buf[start..start+len] (for zlib wrapper).
+    // The modulo is deferred: s1 stays below 65521 + 255*n and s2 below
+    // n*(65521+255), so 5552 bytes is the largest run that cannot
+    // overflow u32 — the standard zlib NMAX. Reducing per block instead
+    // of per byte drops two divides off every pixel byte.
     let adler32 = (buf: const u8[], start: i64, len: i64) ->
         let mut s1 = 1u32
         let mut s2 = 0u32
-        for i in 0..len do
-            s1 = (s1 + (u32) buf[start + i]) % 65521u32
-            s2 = (s2 + s1) % 65521u32
+        let mut i = 0i64
+        loop
+            if i >= len then break
+            let remaining = len - i
+            let run = if remaining > 5552 then 5552i64 else remaining
+            for k in 0..run do
+                s1 = s1 + (u32) buf[start + i + k]
+                s2 = s2 + s1
+            s1 = s1 % 65521u32
+            s2 = s2 % 65521u32
+            i = i + run
         (s2 << 16) | s1
 
     // Write a big-endian u32 to buf[pos..pos+4].
@@ -43,6 +67,8 @@ module png =
     // `"Wolf-FC"`. Pass `""` to skip metadata.
     let write = (path: const str, fb: const u32[], w: i32, h: i32,
                  metadata: const str) ->
+        let crc_tab = u32[256] {}
+        crc32_fill_table(crc_tab)
         let row_bytes = 1i64 + (i64) w * 3
         let raw_size = (i64) h * row_bytes
 
@@ -110,7 +136,7 @@ module png =
         out[pos + 3] = 0u8    // filter method
         out[pos + 4] = 0u8    // interlace method
         pos = pos + 5
-        put_be32(out, pos, crc32(out, ihdr_type_start, 17))
+        put_be32(out, pos, crc32(crc_tab, out, ihdr_type_start, 17))
         pos = pos + 4
 
         // tEXt chunk (optional): "Wolf-FC\0<metadata>"
@@ -128,7 +154,7 @@ module png =
             for i in 0..metadata.len do
                 out[pos + i] = metadata[i]
             pos = pos + metadata.len
-            put_be32(out, pos, crc32(out, text_type_start, 4 + text_data_size))
+            put_be32(out, pos, crc32(crc_tab, out, text_type_start, 4 + text_data_size))
             pos = pos + 4
 
         // IDAT chunk
@@ -164,7 +190,7 @@ module png =
             raw_pos = raw_pos + block_size
         put_be32(out, pos, adler)
         pos = pos + 4
-        put_be32(out, pos, crc32(out, idat_type_start, 4 + idat_data_size))
+        put_be32(out, pos, crc32(crc_tab, out, idat_type_start, 4 + idat_data_size))
         pos = pos + 4
 
         // IEND chunk (empty data)
@@ -173,7 +199,7 @@ module png =
         let iend_type_start = pos
         put_be32(out, pos, 0x49454E44u32)    // "IEND"
         pos = pos + 4
-        put_be32(out, pos, crc32(out, iend_type_start, 4))
+        put_be32(out, pos, crc32(crc_tab, out, iend_type_start, 4))
         pos = pos + 4
 
         // Flush to file

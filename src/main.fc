@@ -414,16 +414,7 @@ let main = (args: str[]) ->
         areas.connect(w.lv, g.area_number)
     | none -> void()
     match start_level with
-    | some(lvl) ->
-        g.level_num = lvl
-        level.reload(w, vs)
-        spawn.find_player_start(w.lv_data, g)
-        level.reset_counters(g, w.lv)
-        areas.update_player_area(w.lv, g)
-        areas.connect(w.lv, g.area_number)
-        g.phase = game_phase.playing
-        g.has_active_game = true
-        pics.trigger_get_psyched(g)
+    | some(lvl) -> flow.jump_to_level(w, vs, lvl)
     | none -> void()
     if start_near_boss then
         spawn.near_boss(w.lv, w.g)
@@ -747,13 +738,13 @@ let main = (args: str[]) ->
         if g.phase == game_phase.playing then
             player.cheats.check_chords(g)
 
-        // Update
+        // Update. Ends in flow.update_phase_transitions (elevator→intermission,
+        // death→restart/high-scores), so the loop doesn't run that itself —
+        // a second call is a no-op today but would double-fire any future
+        // transition that isn't phase-changing. The music chunk swap below
+        // works off a single source of truth (font.music_chunk_for_phase),
+        // so nothing here needs the "did the level change" return value.
         flow.tick(w, dt)
-
-        // Phase transitions (elevator→intermission, death→restart/high-scores).
-        // Music chunk swap is handled below from a single source of truth
-        // (font.music_chunk_for_phase); no per-call music_switch flag needed.
-        flow.update_phase_transitions(w, vs)
         // Intermission → either episode-end (if we just finished level 8)
         // or next map. The episode-end screen owns its own space-advance.
         // First press of space while the count-up is running skips animation

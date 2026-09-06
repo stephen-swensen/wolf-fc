@@ -343,6 +343,13 @@ module testmode =
         else if arg == "level_stats" then
             // Dump total enemy/pushwall/treasure counts as counted by level.build.
             ignore io.write("level_stats: enemies=%d{w.lv.total_enemies} pushwalls=%d{w.lv.total_pushwalls} treasures=%d{w.lv.total_treasures}\n", stdout)
+        else if arg == "epstats" then
+            // Dump the per-episode running totals and the averages the
+            // episode-end victory screen derives from them (same divisor
+            // rule: levels actually played, floored at 1).
+            let div = if g.ep_levels_played > 0 then g.ep_levels_played else 1
+            let rec = if g.ep_recorded_current then 1 else 0
+            ignore io.write("epstats: levels=%d{g.ep_levels_played} time=%d{g.ep_time_total} kr=%d{g.ep_kr_total / div} sr=%d{g.ep_sr_total / div} tr=%d{g.ep_tr_total / div} recorded=%d{rec}\n", stdout)
         else if arg == "advance" then
             // Simulates the "press space" that dismisses an intermission /
             // game-over / episode-end / victory screen. Test-mode equivalent of
@@ -420,16 +427,7 @@ module testmode =
             match text.parse_i32(arg[9..arg.len]) with
             | ok(n) ->
                 if n < 0 || n >= 60 then bad("level 0..59")
-                else
-                    g.level_num = n
-                    g.oldscore = g.score   // pin start-of-level for death rewind
-                    level.reload(w, w.ac.vs)
-                    spawn.find_player_start(w.lv_data, g)
-                    level.reset_counters(g, w.lv)
-                    areas.update_player_area(w.lv, g)
-                    areas.connect(w.lv, g.area_number)
-                    g.phase = game_phase.playing
-                    g.phase_timer = 0.0
+                else flow.jump_to_level(w, w.ac.vs, n)
             | err(_) -> bad("integer level")
         else if text.starts_with(arg, "setepisode:") then
             // Jump to the start of episode N (level = N*10), preserving
@@ -437,16 +435,7 @@ module testmode =
             match text.parse_i32(arg[11..arg.len]) with
             | ok(n) ->
                 if n < 0 || n >= episode.count then bad("episode 0..5")
-                else
-                    g.level_num = n * episode.levels_per
-                    g.oldscore = g.score   // pin start-of-level for death rewind
-                    level.reload(w, w.ac.vs)
-                    spawn.find_player_start(w.lv_data, g)
-                    level.reset_counters(g, w.lv)
-                    areas.update_player_area(w.lv, g)
-                    areas.connect(w.lv, g.area_number)
-                    g.phase = game_phase.playing
-                    g.phase_timer = 0.0
+                else flow.jump_to_level(w, w.ac.vs, n * episode.levels_per)
             | err(_) -> bad("integer episode 0..5")
         else if text.starts_with(arg, "save:") then
             match text.parse_i32(arg[5..arg.len]) with
@@ -665,7 +654,11 @@ module testmode =
             | episode_end  -> "episode_end"
             | endart       -> "endart"
             | high_scores  -> "high_scores"
-            ignore io.write(alloca("phase=%s{phase_s} timer=%6.3f{g.phase_timer} lives=%d{g.lives}\n"), stdout)
+            // `active` is has_active_game — the latch the main menu reads
+            // to decide whether BACK TO GAME resumes or bounces to the
+            // title (and whether SAVE GAME is selectable).
+            let active = if g.has_active_game then 1 else 0
+            ignore io.write(alloca("phase=%s{phase_s} timer=%6.3f{g.phase_timer} lives=%d{g.lives} active=%d{active}\n"), stdout)
         else if arg == "music" then
             // Print the AUDIOT chunk that would be playing for the current phase.
             // Lets the regression suite verify menu / intermission / victory tracks

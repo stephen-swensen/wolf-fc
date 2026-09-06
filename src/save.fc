@@ -599,6 +599,16 @@ module save =
                 io.write(
                     "counters %d{g.kills} %d{g.total_kills} %d{g.secrets} %d{g.total_secrets} %d{g.treasures} %d{g.total_treasures}\n", f)
                 io.write("time %14.6f{g.level_time}\n", f)
+                // Per-episode running totals for the episode-end
+                // averages. The original saves its LevelRatios[] table
+                // the same way (WL_MAIN.C SaveTheGame), so a game
+                // resumed mid-episode still reports averages over every
+                // level of the run — not just the ones played since the
+                // load. Its own line: saves written before this existed
+                // simply lack it and load with the totals zeroed.
+                let ep_rec = if g.ep_recorded_current then 1 else 0
+                io.write(
+                    "episode %d{g.ep_kr_total} %d{g.ep_sr_total} %d{g.ep_tr_total} %d{g.ep_time_total} %d{g.ep_levels_played} %d{ep_rec}\n", f)
                 io.write("pos %14.6f{g.pos_x} %14.6f{g.pos_y}\n", f)
                 io.write("dir %14.6f{g.dir_x} %14.6f{g.dir_y}\n", f)
                 io.write("plane %14.6f{g.plane_x} %14.6f{g.plane_y}\n", f)
@@ -638,8 +648,14 @@ module save =
                     let si = (i32) e.state
                     let amb = if e.ambush then 1 else 0
                     let nfd = if e.notified then 1 else 0
+                    // Field 12 held `move_remaining`, an enemy field
+                    // nothing ever read. The slot stays in the line so
+                    // WLFC 2 files written by older builds keep loading
+                    // (every field after it is positional); it is written
+                    // as 0 and ignored on load.
+                    let legacy_slot = 0.0
                     io.write(
-                        "enemy %d{i} %14.6f{e.x} %14.6f{e.y} %d{e.tile_x} %d{e.tile_y} %d{ki} %d{si} %d{(i32) e.dir} %d{e.hp} %d{e.anim_frame} %14.6f{e.anim_timer} %14.6f{e.move_remaining} %d{amb} %d{nfd} %14.6f{e.reaction_timer} %14.6f{e.touch_cooldown}\n", f)
+                        "enemy %d{i} %14.6f{e.x} %14.6f{e.y} %d{e.tile_x} %d{e.tile_y} %d{ki} %d{si} %d{(i32) e.dir} %d{e.hp} %d{e.anim_frame} %14.6f{e.anim_timer} %14.6f{legacy_slot} %d{amb} %d{nfd} %14.6f{e.reaction_timer} %14.6f{e.touch_cooldown}\n", f)
                 // PRNG state. Bits round-trip through signed i64
                 // (same width as u64 under 2's complement); load
                 // reinterprets via (u64). Older saves lack this
@@ -686,6 +702,14 @@ module save =
                     // live game had reached.
                     g.rng_enemy = random.pcg_random.make_with_channel(0u64, enemies.rng_channel)
                     g.rng_face  = random.pcg_random.make_with_channel(0u64, hud.rng_channel)
+                    // Same reasoning for the per-episode running
+                    // totals: a save written before the `episode` line
+                    // existed carries none, and inheriting the live
+                    // session's (possibly another episode's) numbers
+                    // would corrupt the victory-screen averages. Zero
+                    // is the honest baseline; the line below overwrites
+                    // it whenever the slot has one.
+                    episode.reset_episode_totals(g)
                     // Loading a slot drops any cheat latches the live
                     // session had picked up (IDDQD / IDKFA / noclip).
                     // Save files don't persist cheat state, so this
@@ -746,6 +770,16 @@ module save =
                                 g.total_secrets   = unwrap_int(toks[4])
                                 g.treasures       = unwrap_int(toks[5])
                                 g.total_treasures = unwrap_int(toks[6])
+                        else if text.starts_with(line, "episode ") then
+                            let toks = split_ws(line)
+                            defer free_split(toks)
+                            if toks.len >= 7 then
+                                g.ep_kr_total         = unwrap_int(toks[1])
+                                g.ep_sr_total         = unwrap_int(toks[2])
+                                g.ep_tr_total         = unwrap_int(toks[3])
+                                g.ep_time_total       = unwrap_int(toks[4])
+                                g.ep_levels_played    = unwrap_int(toks[5])
+                                g.ep_recorded_current = unwrap_int(toks[6]) != 0
                         else if text.starts_with(line, "time ") then
                             let toks = split_ws(line)
                             defer free_split(toks)
@@ -850,7 +884,8 @@ module save =
                                     e.hp             = unwrap_int(toks[9])
                                     e.anim_frame     = unwrap_int(toks[10])
                                     e.anim_timer     = unwrap_float(toks[11])
-                                    e.move_remaining = unwrap_float(toks[12])
+                                    // toks[12] is the retired
+                                    // `move_remaining` slot — see to_slot.
                                     e.ambush         = unwrap_int(toks[13]) != 0
                                     e.notified       = unwrap_int(toks[14]) != 0
                                     e.reaction_timer = unwrap_float(toks[15])
@@ -876,7 +911,28 @@ module save =
                                 w.lv.area_connect[i2] = w.lv.area_connect[i2] + 1u8
                         | _ -> void()
                     areas.connect(w.lv, g.area_number)
-                    // Resume gameplay.
+                    // Rebuild the camera plane from the restored heading
+                    // instead of trusting the slot's copy. The plane's
+                    // magnitude *is* the FOV (`plane_factor`, derived from
+                    // the view mode + aspect), and the view mode lives in
+                    // the config file, not the slot — so a game saved in
+                    // 4:3 and loaded in widescreen (or vice-versa) would
+                    // otherwise keep the stale FOV until the next CHANGE
+                    // VIEW. The plane is always dir rotated 90° CW, which
+                    // is how every other spawn site builds it, so deriving
+                    // it here also undoes the perpendicularity drift the
+                    // slot's 6-decimal formatting introduces.
+                    g.plane_x = 0.0 - g.dir_y * g.plane_factor
+                    g.plane_y = g.dir_x * g.plane_factor
+                    // Resume gameplay. `has_active_game` gates the main
+                    // menu's SAVE GAME row and makes row 7 / Esc read
+                    // "BACK TO GAME" instead of "BACK TO DEMO" — without
+                    // it a game loaded from a fresh launch (or after a
+                    // game over, which clears the latch) would be running
+                    // while the menu still believed there was nothing to
+                    // return to, so Esc out of the menu dropped the
+                    // player on the title screen and discarded it.
+                    g.has_active_game = true
                     g.phase = game_phase.playing
                     g.phase_timer = 0.0
                     g.made_noise = false

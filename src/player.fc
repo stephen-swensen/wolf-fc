@@ -173,7 +173,9 @@ module player =
                     let dy = py - s.y
                     let adx = math.abs(dx)
                     let ady = math.abs(dy)
-                    if adx < reach && ady < reach then hit = true
+                    if adx < reach && ady < reach then
+                        hit = true
+                        break
             hit
 
     // Would moving from (cur_x, cur_y) to (nx, ny) collide with a
@@ -198,14 +200,10 @@ module player =
                     let cur_dx = e.x - cur_x
                     let cur_dy = e.y - cur_y
                     let cur_d2 = cur_dx * cur_dx + cur_dy * cur_dy
-                    if new_d2 < cur_d2 then hit = true
+                    if new_d2 < cur_d2 then
+                        hit = true
+                        break
         hit
-
-    // Back-compat shim: walls-only check for old callers. Prefer the
-    // split above when you know the current (cur_x, cur_y) so enemy
-    // sliding works.
-    private let blocked = (lv: level*, px: f64, py: f64) ->
-        blocked_by_map(lv, px, py)
 
     // Try to move the player by (dx, dy). Attempts per-axis (so the
     // player can slide along a wall when blocked on one axis) and

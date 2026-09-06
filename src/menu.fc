@@ -716,8 +716,7 @@ module menu =
     private let render_quit_modal = (rc: render_ctx*,
                                       vg: const vgagraph.vgagraph_file*,
                                       pal: const u32[],
-                                      f: const font.info*, g: game*,
-                                      ac: audio_ctx*) ->
+                                      f: const font.info*, g: game*) ->
         render_main_list(rc, vg, pal, f, g, g.phase_timer)
         let prompt = quit_prompts.at(g.quit_prompts_override, g.quit_prompt_idx)
         let hint = "Press Y to quit, N to stay"
@@ -762,7 +761,7 @@ module menu =
         | changeview -> render_changeview_list(rc, vg, pal, f, g, time)
         | savelist   -> render_slot(rc, vg, pal, f, g, sm, pics.id.c_savegame, g.menu_sel, false, time)
         | loadlist   -> render_slot(rc, vg, pal, f, g, sm, pics.id.c_loadgame, g.menu_sel, true, time)
-        | quit       -> render_quit_modal(rc, vg, pal, f, g, ac)
+        | quit       -> render_quit_modal(rc, vg, pal, f, g)
 
 
 // Quit-confirmation prompt pool. Mirrors the original game's "are you

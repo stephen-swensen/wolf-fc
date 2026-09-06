@@ -232,9 +232,17 @@ module raycaster =
         // skip 64 shade_color calls each by indexing pal_dim directly
         // for the side-1 case (and pal for side-0). 256 calls at
         // frame entry are amortized over thousands of column setups.
+        // With distance fading on, `shade` varies per column and the
+        // dynamic branch does the work, so the pre-shade is dead —
+        // `fixed_shade` gates the fill AND its reader below, so the
+        // two can't disagree. (They must be gated together: floor
+        // 0.75 is reachable — Shadow Depth 25% — and would otherwise
+        // index an unfilled, all-black table for distant walls.)
+        let fixed_shade = shadow_floor >= 1.0
         let pal_dim = u32[256] {}
-        for i in 0..256 do
-            pal_dim[i] = shade_color(pal[i], 0.75)
+        if fixed_shade then
+            for i in 0..256 do
+                pal_dim[i] = shade_color(pal[i], 0.75)
         // Render-target dims pulled from vbuf. SSAA off → (screen_w,
         // view_render_h) writing into dbuf's top region; vertical-only →
         // (screen_w, 2·view_render_h); full 2×2 → (2·screen_w,
@@ -585,7 +593,7 @@ module raycaster =
                     for ty in 0..64 do
                         let pix = vs.raw[col_base + (i64) ty]
                         bd_col_lut[lut_base + (i64) ty] = pal[(i32) pix]
-                else if shade == 0.75 then
+                else if fixed_shade && shade == 0.75 then
                     for ty in 0..64 do
                         let pix = vs.raw[col_base + (i64) ty]
                         bd_col_lut[lut_base + (i64) ty] = pal_dim[(i32) pix]
@@ -1048,15 +1056,6 @@ module overlay =
                     h = (h ^ (h >> 16u32)) & 0xFFFFu32
                     if h < threshold then
                         rc.dbuf[row + (i64) x] = color
-
-    // Draw a centered string in the 3D viewport using the 3x5 bitmap
-    // font, scaled up to `scale` px per bit. Used by the intermission
-    // / game-over overlays; normal in-game UI goes through hud.render.
-    let draw_centered_text = (rc: render_ctx*, y: i32, s: const str, color: u32, scale: i32) ->
-        let slen = (i32) s.len
-        let tw = slen * (3 * scale + scale) - scale
-        let x = (rc.fb_w - tw) / 2
-        hud.draw_text(rc, x, y, s, color, scale)
 
     // Upscale fb (fb_w x fb_h) to dbuf (screen_w x screen_h) with
     // nearest-neighbor at rc->scale (the supersample factor). Each

@@ -450,6 +450,19 @@ assert_contains "intermission:new-level-resets-counters" \
 assert_contains "intermission:par-time-bonus-awarded" \
     "goto:25,47 turnl:90 space wait:40 state" \
     "score=45000"
+# Par times come straight from the original's table (minutes x 60).
+# E1M4 is 3:30 = 210s, so an instant completion is worth 210 * 500.
+assert_contains "intermission:par-time-e1m4-is-210s" \
+    "setlevel:3 counters" \
+    "par=210"
+assert_contains "intermission:par-time-bonus-uses-level-par" \
+    "setlevel:3 endepisode wait:10 state" \
+    "score=105000"
+# Boss floors have no par in the original ("??:??" on the tally screen)
+# and therefore earn no time bonus.
+assert_contains "intermission:boss-floor-has-no-par" \
+    "setlevel:8 counters" \
+    "par=0"
 # Secret-level intermission (exiting E3M10, map index 9 of episode 3) uses
 # a completely different layout: flat 15000 bonus, no par / ratio tally.
 # Matches wolf4sdl's LevelCompleted else-branch (`GivePoints(15000)`).
@@ -788,6 +801,13 @@ assert_contains "episode:setepisode-0-starts-e1m1" \
 assert_contains "episode:setepisode-2-starts-e3m1" \
     "setepisode:2 state" \
     "level=20"
+# A level jump clears the pending level-transition latches. Without that,
+# a script (or an interactive session) that had already latched
+# `next_level` bounces straight back into the intermission on the new
+# map instead of landing in playing.
+assert_contains "episode:setlevel-clears-pending-transition" \
+    "endepisode setlevel:3 wait:2 phase" \
+    "phase=playing"
 # Level 8 (boss / finale) of an episode enters the BJ victory cutscene
 # instead of the regular intermission. `advance` skips straight to the
 # episode-end screen, collapsing what the interactive main loop does via
@@ -969,6 +989,22 @@ assert_contains "save:rng-state-round-trips" \
 assert_contains "save:oldscore-rewinds-after-load" \
     "killenemy:0 wait:80 save:5 load:5 kill wait:80 state" \
     "score=0 lives=2"
+# A loaded game IS an active game: `has_active_game` gates the main menu's
+# SAVE GAME row and makes Esc / row 7 read "BACK TO GAME" instead of
+# "BACK TO DEMO". It starts false on a fresh launch and is cleared on
+# game over, so without the load path setting it the player would resume
+# a loaded game whose menu still bounced them to the title screen.
+assert_contains "save:load-marks-game-active" \
+    "save:0 kill wait:100 kill wait:100 kill wait:100 kill wait:100 load:0 phase" \
+    "phase=playing timer= 0.000 lives=3 active=1"
+# The per-episode running totals (the episode-end averages) live in the
+# save file, like the original's LevelRatios[] table. Finishing level 1
+# with 3 of 73 kills records kr=4 into the totals; a second finished level
+# halves the average, and loading the slot must restore the one-level
+# figure rather than leaving the live session's.
+assert_contains "save:episode-totals-round-trip" \
+    "killenemy:0 killenemy:1 killenemy:2 wait:60 endepisode wait:2 advance save:0 setepisode:3 endepisode wait:2 advance load:0 epstats" \
+    "epstats: levels=1 time=1 kr=8 sr=0 tr=0 recorded=0"
 
 section "config / preferences"
 # Default prefs (no config file): toggles ON, mommy_mode OFF, shadow_depth 55.
