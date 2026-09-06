@@ -670,7 +670,7 @@ module testmode =
             let m = if w.ac.music_on then 1 else 0
             let s = if w.ac.sfx_on then 1 else 0
             let d = if w.ac.digi_on then 1 else 0
-            let nd = g.mommy_mode
+            let nd = (i32) g.mommy_mode
             let sm = if g.show_map then 1 else 0
             ignore io.write("prefs music=%d{m} sfx=%d{s} digi=%d{d} sfx_gain=%d{w.ac.sfx_gain_pct} digi_gain=%d{w.ac.digi_gain_pct} music_gain=%d{w.ac.music_gain_pct} mommy_mode=%d{nd} shadow_depth=%d{g.shadow_depth} bj_speed_pct=%d{g.bj_speed_pct} enemy_speed_pct=%d{g.enemy_speed_pct} show_map=%d{sm}\n", stdout)
         else if arg == "digi_slots" then

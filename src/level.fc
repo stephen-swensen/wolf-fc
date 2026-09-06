@@ -930,7 +930,7 @@ module spawn =
 
     // Populate sprite list from level plane 1 data.
     // Tile values 23-72 are static objects. Shape = 2 + (tile - 23).
-    let sprites = (lv: level*, lv_data: maps.level*, sprite_start: i32, mommy_mode: i32) ->
+    let sprites = (lv: level*, lv_data: maps.level*, sprite_start: i32, mommy_mode: mommy_mode) ->
         lv.num_sprites = 0
         let no_gore = mommy.hides_gore(mommy_mode)
         for y in 0..map_size do
@@ -1133,7 +1133,7 @@ module spawn =
         else if tier == 1 then diff >= difficulty.medium
         else diff >= difficulty.hard
 
-    let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: difficulty, mommy_mode: i32) ->
+    let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: difficulty, mommy_mode: mommy_mode) ->
         lv.num_enemies = 0
         for y in 0..map_size do
             for x in 0..map_size do
@@ -1219,7 +1219,7 @@ module level =
     // Allocate a level from the decoded wolf3d map data. Builds tilemap,
     // spawns static sprites, and marks push-wall tiles. Caller must call
     // `level.destroy` when the level is no longer needed.
-    let build = (lv_data: maps.level*, sprite_start: i32, difficulty: difficulty, mommy_mode: i32) ->
+    let build = (lv_data: maps.level*, sprite_start: i32, difficulty: difficulty, mommy_mode: mommy_mode) ->
         let lv = alloc(level {
             tilemap = alloc(u8[map_size * map_size] {})!,
             pushwall_tiles = alloc(bool[map_size * map_size] {})!,

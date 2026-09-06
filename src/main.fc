@@ -106,9 +106,8 @@ let main = (args: str[]) ->
     let mut start_near_goldkey = false
     let mut start_near_silverkey = false
     let mut start_near_gibs = false
-    // -1 = flag absent, so the persisted config wins; otherwise one of
-    // the `mommy.*` values.
-    let mut arg_mommy_mode = -1
+    // `none` = flag absent, so the persisted config wins.
+    let mut arg_mommy_mode = none(mommy_mode)
     let mut arg_cheat = false
     let mut arg_debug = false
     // Default supersample cap. Hardcoded ceiling matches the original
@@ -117,13 +116,13 @@ let main = (args: str[]) ->
     let mut max_scale = 6
     for i in 1..(i32) args.len do
         let a = args[(i64) i]
-        if a == "--mommy-mode" then arg_mommy_mode = mommy.both
+        if a == "--mommy-mode" then arg_mommy_mode = some(mommy_mode.both)
         if text.starts_with(a, "--mommy-mode=") then
             let v = a[13..a.len]
-            if v == "off" then arg_mommy_mode = mommy.off
-            else if v == "dogs" then arg_mommy_mode = mommy.dogs
-            else if v == "gore" then arg_mommy_mode = mommy.gore
-            else if v == "both" then arg_mommy_mode = mommy.both
+            if v == "off" then arg_mommy_mode = some(mommy_mode.off)
+            else if v == "dogs" then arg_mommy_mode = some(mommy_mode.dogs)
+            else if v == "gore" then arg_mommy_mode = some(mommy_mode.gore)
+            else if v == "both" then arg_mommy_mode = some(mommy_mode.both)
         if a == "--test" then test_mode = true
         if a == "--near-boss" then start_near_boss = true
         if a == "--near-goldkey" then start_near_goldkey = true
@@ -259,6 +258,13 @@ let main = (args: str[]) ->
     // Assemble the `world` — the handle that groups game state, level data,
     // renderer, and audio. Orchestrators take `world*`; narrower functions
     // still take just the sub-contexts they need.
+    // CLI flag takes precedence over the persisted config —
+    // `--mommy-mode[=MODE]` pins the setting, absence falls back to
+    // whatever the user last picked in the Options menu.
+    let mommy_setting = match arg_mommy_mode with
+                        | some(m) -> m
+                        | none    -> cfg.mommy_mode
+
     let g = alloc(game {
         pos_x = 1.5, pos_y = 1.5,
         dir_x = 1.0, dir_y = 0.0,
@@ -325,10 +331,7 @@ let main = (args: str[]) ->
         // filters out +72-tier tiles, which would invalidate hundreds
         // of enemy-index assertions).
         difficulty = if test_mode then difficulty.hard else difficulty.medium,
-        // CLI flag takes precedence over the persisted config —
-        // `--mommy-mode[=MODE]` pins the setting, absence falls back to
-        // whatever the user last picked in the Options menu.
-        mommy_mode = if arg_mommy_mode >= 0 then arg_mommy_mode else cfg.mommy_mode,
+        mommy_mode = mommy_setting,
         max_scale = max_scale,
         shadow_depth = cfg.shadow_depth,
         bj_speed_pct = cfg.bj_speed_pct,

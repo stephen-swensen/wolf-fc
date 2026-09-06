@@ -159,10 +159,10 @@ module config =
         sfx_gain_pct: i32
         digi_gain_pct: i32
         music_gain_pct: i32
-        // Mommy Mode setting: one of `mommy.off` / `.dogs` / `.gore` /
-        // `.both`. Was a 0/1 boolean before the four-way split — a
-        // legacy `1` loads as `dogs` rather than forcing a version bump.
-        mommy_mode: i32
+        // Mommy Mode setting. Persisted as the enum's numeric value;
+        // `mommy.of_i32` handles the read back, including the legacy
+        // 0/1 boolean the pre-split builds wrote.
+        mommy_mode: mommy_mode
         // Shadow depth as 0..100 percent. 0 = no shading, 100 = full
         // black at distance, 55 = original Wolf3D feel.
         shadow_depth: i32
@@ -252,7 +252,7 @@ module config =
             sfx_gain_pct = 100,
             digi_gain_pct = 100,
             music_gain_pct = 100,
-            mommy_mode = mommy.off,
+            mommy_mode = mommy_mode.off,
             // 0% disables distance fading entirely (floor=1.0) — the
             // OG-faithful default. The original game has no distance
             // shading at all; walls/sprites render at full brightness
@@ -356,10 +356,10 @@ module config =
                         | err(_) -> void()
                     else if text.starts_with(line, "mommy_mode ") then
                         match text.parse_i32(line[11..line.len]) with
-                        // Clamp instead of rejecting: a hand-edited or
-                        // pre-split config can hold anything, and an
-                        // out-of-range value quietly means "off".
-                        | ok(v) -> p.mommy_mode = mommy.clamp(v)
+                        // `of_i32` is total: a hand-edited or pre-split
+                        // config can hold anything, and an out-of-range
+                        // value quietly means "off".
+                        | ok(v) -> p.mommy_mode = mommy.of_i32(v)
                         | err(_) -> void()
                     else if text.starts_with(line, "shadow_depth ") then
                         match text.parse_i32(line[13..line.len]) with
@@ -431,7 +431,7 @@ module config =
                 io.write("sfx_gain_pct %d{p.sfx_gain_pct}\n", f)
                 io.write("digi_gain_pct %d{p.digi_gain_pct}\n", f)
                 io.write("music_gain_pct %d{p.music_gain_pct}\n", f)
-                io.write("mommy_mode %d{p.mommy_mode}\n", f)
+                io.write("mommy_mode %d{(i32) p.mommy_mode}\n", f)
                 io.write("shadow_depth %d{p.shadow_depth}\n", f)
                 io.write("view_mode %d{p.view_mode}\n", f)
                 io.write("scale_factor %d{p.scale_factor}\n", f)
