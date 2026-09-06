@@ -76,13 +76,22 @@ number-key weapon switching, 2026-06-09).
 
 ### New — 2026-09-05 sweep
 
-- **[test-1] thin coverage for the intermission tally.** The wrong par
-  times below survived because every intermission assertion ran on E1M1,
-  whose par happened to be one of the three correct entries. The sweep
-  added par assertions on a corrected floor plus the boss floor, and
-  five more pinning which floors feed the episode averages — but the
-  ratio and 100 %-bonus arms of the tally are still unasserted on any
-  floor. Worth a handful more the next time that code moves.
+- **[test-1] the tally's remaining uncovered arms.** The wrong par times
+  below survived because every intermission assertion ran on E1M1, whose
+  par happened to be one of the three correct entries. That gap is now
+  mostly closed: par on a corrected floor and on a boss floor, which
+  floors feed the episode averages, the ratio percentage (including that
+  it floors — 10 of 11 reads 90 %), and the 100 %-category bonus are all
+  pinned, the last two via E1M1 on Can I Play Daddy, whose 11 enemies are
+  few enough to clear from a script. Both new arms were mutation-checked
+  (zeroing the bonus, and removing the averages' zero-divisor guard, each
+  fail exactly one assertion and nothing else).
+
+  What is still unasserted: the *secret* and *treasure* 100 % arms. They
+  are the same three-line shape as the kill arm that is now covered, and
+  reaching them from a script would mean triggering every push-wall or
+  collecting every treasure on a floor. Left uncovered deliberately —
+  worth revisiting only if that code grows a per-category difference.
 
 ### Applied — 2026-09-05
 

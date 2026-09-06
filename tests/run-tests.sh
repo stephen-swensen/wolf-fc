@@ -487,6 +487,40 @@ assert_contains "intermission:boss-floor-not-in-episode-averages" \
 assert_contains "intermission:ordinary-floor-recorded-in-averages" \
     "endepisode wait:2 advance epstats" \
     "epstats: levels=1"
+
+# The tally's ratio and 100%-bonus arms. E1M1 on Can I Play Daddy holds
+# exactly 11 enemies, which is few enough to clear from a script, so this
+# is the one place the "every enemy found" path is reachable in a test.
+# `wait:60` puts 1 whole second on the clock against a 90-second par, so
+# the time bonus is a fixed (90 - 1) * 500 = 44500 in both runs below and
+# the only difference is the last kill.
+KILL_ALL_E1M1="killenemy:0 killenemy:1 killenemy:2 killenemy:3 killenemy:4 killenemy:5 killenemy:6 killenemy:7 killenemy:8 killenemy:9 killenemy:10"
+KILL_ALL_BUT_ONE_E1M1="${KILL_ALL_E1M1% killenemy:10}"
+
+# 10 of 11: 1100 in kill points + 44500 time bonus, and no ratio bonus.
+assert_contains "intermission:partial-kills-earn-no-ratio-bonus" \
+    "setlevel:0 setdifficulty:0 $KILL_ALL_BUT_ONE_E1M1 wait:60 endepisode wait:2 state" \
+    "score=45600"
+# 11 of 11: 1200 in kill points + the same 44500 + 10000 for the full
+# kill ratio. The 10000 is the whole point of the pair.
+assert_contains "intermission:full-kills-earn-the-ratio-bonus" \
+    "setlevel:0 setdifficulty:0 $KILL_ALL_E1M1 wait:60 endepisode wait:2 state" \
+    "score=55700"
+# The percentage itself floors rather than rounds: 10 of 11 is 90%, not 91%.
+assert_contains "intermission:ratio-floors-the-percentage" \
+    "setlevel:0 setdifficulty:0 $KILL_ALL_BUT_ONE_E1M1 wait:60 endepisode wait:2 advance epstats" \
+    "kr=90"
+assert_contains "intermission:full-ratio-reads-100" \
+    "setlevel:0 setdifficulty:0 $KILL_ALL_E1M1 wait:60 endepisode wait:2 advance epstats" \
+    "kr=100"
+
+# Beating an episode on a floor-jump straight to its boss leaves no
+# ordinary floors recorded, so the victory screen averages over nothing.
+# It must still draw — the averages divide by the recorded count, and a
+# zero divisor would abort rather than show a zero.
+assert_contains "intermission:victory-screen-survives-zero-recorded-floors" \
+    "setlevel:8 endepisode wait:2 advance ss:$WOLF_FC_TEST_HOME/victory.png" \
+    "Saved"
 # Advancing from the secret-floor intermission routes back via the
 # elevator_back_to table rather than into map 10 of the next episode.
 assert_contains "intermission:secret-floor-advances-back" \
