@@ -221,14 +221,18 @@ struct game =
     bj_yelled: bool      // YEAHSND latch (fires on entering jump frame 1)
 
     // Per-episode running totals for the episode-end victory screen.
-    // Each completed level adds its kill / secret /
-    // treasure percent + level time to these. ep_levels_played is
-    // the divisor for averages — a divergence from the original's fixed
-    // divisor, so the level picker's "start mid-episode" play averages
-    // only the levels actually played. ep_recorded_current is a dedup latch
-    // — set when the just-finished level was already recorded, so
-    // bj_victory + intermission paths don't double-count the boss
-    // level. Reset on new game / next episode.
+    // Each completed level adds its kill / secret / treasure percent +
+    // level time to these. Only the eight ordinary floors of an episode
+    // record: bonus floors are paid a flat sum instead of a tally, and
+    // the floor an episode ends on skips the tally screen altogether,
+    // so neither has ratios to contribute — same as the original.
+    // ep_levels_played is the divisor for the averages, which therefore
+    // reaches the original's fixed count of eight on a full run through
+    // an episode; counting played floors rather than assuming eight also
+    // keeps the figures honest when the level picker starts partway in.
+    // ep_recorded_current is a dedup latch — set when the just-finished
+    // level was already recorded, so two paths into the same screen
+    // can't double-count it. Reset on new game / next episode.
     ep_kr_total: i32
     ep_sr_total: i32
     ep_tr_total: i32

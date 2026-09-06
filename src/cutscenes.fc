@@ -61,15 +61,18 @@ module bj_victory =
     // tile coordinates set one south, matching the original's BJ-
     // victory spawn quirk — the first bj_victory.tick iteration snaps
     // him to that south-tile center and reads the path arrow there
-    // to pick his heading. Applies the level-completion bonus up
-    // front so the episode-end total still reflects the map clear.
+    // to pick his heading.
+    //
+    // Winning an episode pays no level-completion bonus and adds
+    // nothing to the end-of-episode averages: in the original the floor
+    // you beat the boss on skips the tally screen altogether and cuts
+    // straight to the victory screen, so it earns neither its time /
+    // 100 % bonuses nor a share of the averages. Those cover the eight
+    // ordinary floors of the episode — bonus floors and the boss floor
+    // are both left out.
     let enter = (g: game*, ac: audio_ctx*) ->
         g.phase = game_phase.bj_victory
         g.phase_timer = 0.0
-        score.add(g, intermission.compute_level_bonus(g), ac)
-        // bj_victory bypasses intermission, so record the boss-level
-        // stats here so they show up in the episode-end averages.
-        episode.record_level_for_episode(g)
         g.bj_x = g.pos_x
         g.bj_y = g.pos_y
         g.bj_tile_x = (i32) g.pos_x
@@ -578,15 +581,16 @@ module intermission =
     let enter = (g: game*, ac: audio_ctx*) ->
         g.phase = game_phase.intermission
         g.phase_timer = 0.0
-        // Snapshot the just-finished level's ratios + time into the
-        // per-episode running totals before the screen runs (it will
-        // mutate inter_target_* but the source counters stay stable).
-        episode.record_level_for_episode(g)
         // Secret-level intermissions short-circuit the whole ticker:
         // a flat 15000-point bonus, the stage counter parked at 4
         // (animation done), and a static "SECRET FLOOR / COMPLETED!"
         // screen (see render). Matches the original's secret-level
-        // intermission branch.
+        // intermission branch. A bonus floor is paid that flat sum
+        // *instead of* a tally — the original works out no kill /
+        // secret / treasure percentages for one at all — so it also
+        // stays out of the end-of-episode averages, which is why the
+        // per-episode snapshot below sits under this branch and not
+        // above it.
         if is_secret_level(g.level_num) then
             score.add(g, secret_floor_bonus, ac)
             g.inter_stage = 4
@@ -601,6 +605,10 @@ module intermission =
             g.inter_pause_timer = 0.0
             g.inter_end_sound_delay = 0.0
             return
+        // Snapshot the just-finished level's ratios + time into the
+        // per-episode running totals before the screen runs (it will
+        // mutate inter_target_* but the source counters stay stable).
+        episode.record_level_for_episode(g)
         // Award the computed level-completion bonus to the running
         // score so the intermission total reflects it immediately
         // and carries into the next level. The classic screen
@@ -1257,11 +1265,12 @@ module endart_screen =
                     // per-row margin arrays are indexed by `rowon`, and a
                     // clamped row against an unclamped baseline would draw
                     // text on one line while wrapping it against another's
-                    // margins. The original does the same (rowon from py,
-                    // then py back from rowon); real endart markup never
-                    // jumps outside the window, and an out-of-range row
-                    // would abort on the margin lookup rather than lay out
-                    // silently wrong.
+                    // margins. The original snaps the same way, deriving
+                    // the row from the requested baseline and the drawn
+                    // baseline back from that row; real endart markup
+                    // never jumps outside the window, and an out-of-range
+                    // row would abort on the margin lookup rather than
+                    // lay out silently wrong.
                     st.rowon = (py - top_margin) / font_height
                     st.py = top_margin + st.rowon * font_height
                     st.px = px

@@ -426,7 +426,8 @@ module player =
         // shortcut, not a cinematic trigger.
         let apply_tab_e = (g: game*) ->
             if g.level_num % episode.levels_per == 8 then
-                episode.record_level_for_episode(g)
+                // Straight to the victory screen, and like a real boss
+                // kill the floor contributes nothing to the averages.
                 episode_end.enter(g)
             else if !g.next_level then
                 g.next_level = true

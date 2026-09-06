@@ -76,29 +76,13 @@ number-key weapon switching, 2026-06-09).
 
 ### New — 2026-09-05 sweep
 
-- **[inter-1] boss floors still earn a level-completion bonus and still
-  land in the episode averages** (`cutscenes.fc` `bj_victory.enter`,
-  `flow.fc` death-cam → episode-end). The original never runs
-  `LevelCompleted` on a victorious boss floor (`WL_GAME.C:1452`
-  `ex_victorious` → `Victory()` directly), and its `Victory()` averages
-  sum `LevelRatios[0..7]` over a *fixed* divisor of 8 — the boss floor
-  contributes nothing to either. We award `compute_level_bonus` and call
-  `record_level_for_episode` there. The score half of the divergence
-  mostly closed itself when the par table was fixed (boss floors have no
-  par, so the time bonus is now 0; only a 100 % kills / secrets /
-  treasures bonus can still land), but the averages half stands: the
-  boss floor is counted as a played level. This looks like a deliberate
-  pairing with our "divide by levels actually played" divergence
-  (`world.fc:225-231`) rather than an oversight — decide whether to keep
-  it and document it as a divergence, or drop the boss floor from both.
-
-- **[test-1] no coverage for the intermission tally beyond level 0.**
-  The wrong par times below survived because every intermission
-  assertion ran on E1M1, whose par happened to be right. The sweep added
-  three (`intermission:par-time-e1m4-is-210s`,
-  `…-bonus-uses-level-par`, `…boss-floor-has-no-par`), but the ratio /
-  100 %-bonus arms of `compute_level_bonus` are still unasserted on any
-  level. Worth a handful more assertions the next time that code moves.
+- **[test-1] thin coverage for the intermission tally.** The wrong par
+  times below survived because every intermission assertion ran on E1M1,
+  whose par happened to be one of the three correct entries. The sweep
+  added par assertions on a corrected floor plus the boss floor, and
+  five more pinning which floors feed the episode averages — but the
+  ratio and 100 %-bonus arms of the tally are still unasserted on any
+  floor. Worth a handful more the next time that code moves.
 
 ### Applied — 2026-09-05
 
@@ -143,6 +127,26 @@ byte-identical against the pre-change binary.
   Cross-checked the sibling reproduced tables at the same time:
   `ceil_table`, `episode.back_to`, enemy `hp_for_kind` (incl. the real
   Hitler morph tiers) and `score_for_kind` all match id exactly.
+
+- **[inter-1] / [inter-3]** the episode-end averages now cover the eight
+  ordinary floors of an episode, as the original's do. Two floors were
+  wrongly feeding them: the floor an episode ends on (which also earned a
+  level-completion bonus it should never have had — it skips the tally
+  screen entirely and cuts to the victory screen), and bonus floors
+  (which are paid a flat sum *instead of* a tally, so the original works
+  out no ratios for them at all). The boss case was a deliberate
+  divergence, retired on review — the original's exclusion is clearly
+  intentional, not an oversight (see Decisions). The bonus-floor case was
+  an ordering accident: the per-episode snapshot sat above the flat-bonus
+  early-out rather than below it. Four entry points had to agree — the BJ
+  run, the death-cam route, the debug level-skip, and the test-mode
+  advance. Side effect worth noting: with both floors excluded, our
+  "divide by floors actually played" divisor now reaches the original's
+  fixed eight on a full run, so the two only differ on a mid-episode
+  start. Regressions: `intermission:boss-floor-earns-no-completion-bonus`,
+  `…boss-floor-not-in-episode-averages`,
+  `…secret-floor-not-in-episode-averages`,
+  `…ordinary-floor-recorded-in-averages`.
 
 - **[main-4] / [main-5]** `setlevel:` / `setepisode:` / `--level` now
   share one path, `flow.jump_to_level`, which clears the
@@ -196,6 +200,30 @@ byte-identical against the pre-change binary.
   `break` on their first hit instead of running to the end of the array.
 
 ## Decisions / retirements
+
+### Boss + bonus floors stay out of the episode averages ([inter-1], decided 2026-09-05)
+
+The 2026-09-05 sweep flagged our awarding a level-completion bonus on the
+floor an episode ends on, and folding both that floor and bonus floors
+into the end-of-episode averages, as a divergence — and asked whether to
+keep it (ours is arguably the more intuitive reading: the floor you just
+fought through counts) or match the original. We matched the original.
+
+The original's exclusion is deliberate, not an oversight, and several
+independent details agree on it: the table holding the per-floor figures
+is sized for exactly the eight ordinary floors, so recording a ninth
+would run off the end of it; the write happens only on the tally path,
+which bonus floors never take; the floor an episode ends on never reaches
+that path at all, because winning cuts straight from the kill to the
+victory screen; and the averaging sums those eight entries over a fixed
+divisor of eight. A forgotten floor would look like a table with room for
+it and a wrong loop bound — not four details lining up.
+
+It also falls out of a presentation decision we already mirror: neither
+floor has a tally screen on which ratios could be shown, so there is no
+moment at which they would be computed. The averages are "the eight
+ordinary floors", and that is a coherent definition rather than an
+accident. Reproducing it costs us nothing and removes two divergences.
 
 These document deliberate "won't do" calls so they don't get
 re-proposed. Wolf-fc targets the GOODTIMES build of WL6 (the 1.4

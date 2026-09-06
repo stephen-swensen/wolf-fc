@@ -600,12 +600,12 @@ module save =
                     "counters %d{g.kills} %d{g.total_kills} %d{g.secrets} %d{g.total_secrets} %d{g.treasures} %d{g.total_treasures}\n", f)
                 io.write("time %14.6f{g.level_time}\n", f)
                 // Per-episode running totals for the episode-end
-                // averages. The original saves its LevelRatios[] table
-                // the same way (WL_MAIN.C SaveTheGame), so a game
-                // resumed mid-episode still reports averages over every
-                // level of the run — not just the ones played since the
-                // load. Its own line: saves written before this existed
-                // simply lack it and load with the totals zeroed.
+                // averages. The original carries these figures in its
+                // save files too, so a game resumed mid-episode still
+                // reports averages over every level of the run — not
+                // just the ones played since the load. Its own line:
+                // saves written before this existed simply lack it and
+                // load with the totals zeroed.
                 let ep_rec = if g.ep_recorded_current then 1 else 0
                 io.write(
                     "episode %d{g.ep_kr_total} %d{g.ep_sr_total} %d{g.ep_tr_total} %d{g.ep_time_total} %d{g.ep_levels_played} %d{ep_rec}\n", f)

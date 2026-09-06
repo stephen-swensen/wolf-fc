@@ -371,9 +371,8 @@ module testmode =
                 // Death-cam collapses straight to the episode-end screen,
                 // mirroring the natural death_cam.sub.done transition (which
                 // skips intermission for boss kills, matching the original's
-                // victorious-episode handling).
-                score.add(g, intermission.compute_level_bonus(g), w.ac)
-                episode.record_level_for_episode(g)
+                // victorious-episode handling — no tally bonus, no entry in
+                // the episode averages).
                 episode_end.enter(g)
             else if g.phase == game_phase.episode_end then
                 // Test-mode advance from episode_end → endart, matching the

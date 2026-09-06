@@ -469,6 +469,24 @@ assert_contains "intermission:boss-floor-has-no-par" \
 assert_contains "intermission:secret-floor-awards-15000" \
     "setlevel:29 endepisode wait:10 state" \
     "score=15000"
+# ...but a bonus floor is paid that flat sum instead of a tally, so it
+# contributes nothing to the end-of-episode averages.
+assert_contains "intermission:secret-floor-not-in-episode-averages" \
+    "setlevel:29 endepisode wait:10 epstats" \
+    "epstats: levels=0"
+# The floor an episode ends on skips the tally screen entirely: no
+# completion bonus, and no share of the averages either. Only the eight
+# ordinary floors count toward them.
+assert_contains "intermission:boss-floor-earns-no-completion-bonus" \
+    "setlevel:8 endepisode wait:2 state" \
+    "score=0"
+assert_contains "intermission:boss-floor-not-in-episode-averages" \
+    "setlevel:8 endepisode wait:2 advance epstats" \
+    "epstats: levels=0"
+# An ordinary floor still records one entry.
+assert_contains "intermission:ordinary-floor-recorded-in-averages" \
+    "endepisode wait:2 advance epstats" \
+    "epstats: levels=1"
 # Advancing from the secret-floor intermission routes back via the
 # elevator_back_to table rather than into map 10 of the next episode.
 assert_contains "intermission:secret-floor-advances-back" \
@@ -998,7 +1016,7 @@ assert_contains "save:load-marks-game-active" \
     "save:0 kill wait:100 kill wait:100 kill wait:100 kill wait:100 load:0 phase" \
     "phase=playing timer= 0.000 lives=3 active=1"
 # The per-episode running totals (the episode-end averages) live in the
-# save file, like the original's LevelRatios[] table. Finishing level 1
+# save file, as they do in the original. Finishing level 1
 # with 3 of 73 kills records kr=4 into the totals; a second finished level
 # halves the average, and loading the slot must restore the one-level
 # figure rather than leaving the live session's.
