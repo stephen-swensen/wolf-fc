@@ -73,14 +73,14 @@ struct render_ctx =
     // After the 3D pipeline completes, `ssaa_downsample` blits /
     // averages the result into the viewport region of dbuf.
     //
-    // ssaa_mode 0 (off): vbuf aliases dbuf, vzbuf aliases zbuf,
+    // ssaa_mode off: vbuf aliases dbuf, vzbuf aliases zbuf,
     //           vbuf_w == screen_w, vbuf_h == view_render_h. The 3D
     //           pipeline writes directly into dbuf's top rows and
     //           `ssaa_downsample` is a no-op.
-    // ssaa_mode 1 (vertical-only 2×): vbuf aliases ssaa_buf, vbuf_w ==
+    // ssaa_mode vert_2x: vbuf aliases ssaa_buf, vbuf_w ==
     //           screen_w, vbuf_h == 2*view_render_h. `ssaa_downsample`
     //           does a vertical 2:1 average into dbuf.
-    // ssaa_mode 2 (full 2×2): vbuf aliases ssaa_buf, vbuf_w ==
+    // ssaa_mode full_2x: vbuf aliases ssaa_buf, vbuf_w ==
     //           2*screen_w, vbuf_h == 2*view_render_h. `ssaa_downsample`
     //           does a 2×2 box-filter into dbuf.
     //
@@ -89,11 +89,11 @@ struct render_ctx =
     // length by ss_v/ss_h so anisotropic (vertical-only) modes keep
     // walls/sprites the right on-screen height. Slice fields + ss_h/ss_v
     // are re-derived by `video.rebind_vbuf` whenever the buffers are realloc'd.
-    ssaa_mode: i32
+    ssaa_mode: ssaa_mode
     ss_h: i32          // horizontal supersample: 1 (off/vertical) or 2 (full)
     ss_v: i32          // vertical supersample: 1 (off) or 2 (vertical/full)
-    ssaa_buf: u32[]    // vbuf_w x vbuf_h — only allocated when ssaa_mode != 0
-    ssaa_zbuf: f64[]   // vbuf_w — only allocated when ssaa_mode != 0
+    ssaa_buf: u32[]    // vbuf_w x vbuf_h — only allocated when ssaa_mode != off
+    ssaa_zbuf: f64[]   // vbuf_w — only allocated when ssaa_mode != off
     vbuf: u32[]
     vzbuf: f64[]
     vbuf_w: i32
@@ -758,7 +758,7 @@ module billboards =
             let idx = if g.bj_anim_frame < 0 then 0
                       else if g.bj_anim_frame > 3 then 3
                       else g.bj_anim_frame
-            let page_rel = if g.bj_phase == 0 then walk_pages[idx] else jump_pages[idx]
+            let page_rel = if g.bj_phase == bj_phase.running then walk_pages[idx] else jump_pages[idx]
             let dx = g.bj_x - g.pos_x
             let dy = g.bj_y - g.pos_y
             rc.billboards[n] = billboard {
@@ -914,7 +914,7 @@ module overlay =
     let screenshot_max_slots = 100
 
     // Resolve the SSAA viewport buffer down into dbuf's viewport
-    // region. No-op when ssaa_mode == 0. Full 2×2 averages each dbuf
+    // region. No-op when SSAA is off. Full 2×2 averages each dbuf
     // cell's 4 ssaa_buf neighbors; vertical-only averages the 2 rows
     // above it (same column) — same bilinear-at-integer-ratio kernel,
     // weights collapsed to 1/4 (full) or 1/2 (vertical). Runs after the
@@ -931,7 +931,7 @@ module overlay =
     // is biased above the exact mean by up to +1/255 per channel —
     // below visible threshold and the same trade x86 PAVGB makes.
     let ssaa_downsample = (rc: render_ctx*) ->
-        if rc.ssaa_mode == 0 then return
+        if rc.ssaa_mode == ssaa_mode.off then return
         let dst_w = rc.screen_w
         let dst_h = rc.view_render_h
         let dst_stride = (i64) dst_w
@@ -944,7 +944,7 @@ module overlay =
         let src = rc.ssaa_buf
         let dst = rc.dbuf
         let mask = 0x7F7F7F7Fu32
-        if rc.ssaa_mode == 1 then
+        if rc.ssaa_mode == ssaa_mode.vert_2x then
             // Vertical-only 2:1 average. ssaa_buf is dst_w wide (no
             // horizontal supersample) and 2·dst_h tall, so each dst
             // pixel averages the two ssaa rows directly above it in the
@@ -1274,8 +1274,8 @@ module overlay =
     let render_debug = (rc: render_ctx*, f: const font.info*) ->
         // Half the UI scale (floored at 1 for scale=1) so the readout stays small.
         let s = if rc.scale / 2 < 1 then 1 else rc.scale / 2
-        let ssaa = if rc.ssaa_mode == 2 then "2x"
-                   else if rc.ssaa_mode == 1 then "2xV"
+        let ssaa = if rc.ssaa_mode == ssaa_mode.full_2x then "2x"
+                   else if rc.ssaa_mode == ssaa_mode.vert_2x then "2xV"
                    else "off"
         let fps_i = (i32) (rc.dbg_fps + 0.5)
         // Denominator is the locked-cadence budget when the refresh rate is

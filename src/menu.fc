@@ -550,9 +550,7 @@ module menu =
                 // — the footer's "Anti-Alias" line below spells out the
                 // mode in full and shows the resolved buffer dimensions.
                 font.draw_text(rc, f, x_value, row_y,
-                    if g.ssaa_mode == 0 then "Off"
-                    else if g.ssaa_mode == 1 then "Vert 2x"
-                    else "Full 2x", color)
+                    config.ssaa_mode_label(g.ssaa_mode), color)
         // Footer: walk the four geometry stages of the pipeline
         // with their actual numbers, so the player can see exactly
         // how the chosen view mode + auto-picked supersample factor
@@ -576,13 +574,17 @@ module menu =
         font.draw_text(rc, f, value_x, info_y,
             "%d{rc.fb_w} x %d{rc.fb_h}", pal[pal_text])
         font.draw_text(rc, f, label_x, info_y + 9,  "Anti-Alias", pal[pal_text])
-        if rc.ssaa_mode == 0 then
+        if rc.ssaa_mode == ssaa_mode.off then
             font.draw_text(rc, f, value_x, info_y + 9, "off", pal[pal_text])
         else
             // Resolved internal viewport buffer (vbuf_w × vbuf_h) plus
             // the SSAA mode.
+            let ssaa_word = match rc.ssaa_mode with
+                            | off      -> "off"
+                            | vert_2x  -> "vert 2x"
+                            | full_2x  -> "full 2x"
             font.draw_text(rc, f, value_x, info_y + 9,
-                alloca("%d{rc.vbuf_w} x %d{rc.vbuf_h}   (%s{if rc.ssaa_mode == 1 then "vert 2x" else "full 2x"} SSAA)"), pal[pal_text])
+                alloca("%d{rc.vbuf_w} x %d{rc.vbuf_h}   (%s{ssaa_word} SSAA)"), pal[pal_text])
         font.draw_text(rc, f, label_x, info_y + 18,  "Texture", pal[pal_text])
         font.draw_text(rc, f, value_x, info_y + 18,
             "%d{rc.screen_w} x %d{rc.screen_h}   (%d{rc.scale}x supersample)", pal[pal_text])

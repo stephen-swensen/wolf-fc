@@ -297,13 +297,13 @@ let main = (args: str[]) ->
         bj_tile_x = 0, bj_tile_y = 0,
         bj_dir = dir.nodir, bj_distance = 0.0, bj_run_tiles_left = 0,
         bj_anim_frame = 0, bj_anim_timer = 0.0,
-        bj_phase = 0, bj_yelled = false,
-        dc_sub = 0, dc_timer = 0.0, dc_boss_idx = none(i32),
+        bj_phase = bj_phase.running, bj_yelled = false,
+        dc_sub = dc_sub.pre_fade, dc_timer = 0.0, dc_boss_idx = none(i32),
         dc_kill_x = 0.0, dc_kill_y = 0.0, dc_fade = 0.0,
         endart_data = alloc(u8[0] {})!,
         endart_page_offsets = alloc(i32[0] {})!,
         endart_total_pages = 0, endart_page = 0,
-        hs_source = 0,
+        hs_source = hs_source.death,
         ep_kr_total = 0, ep_sr_total = 0, ep_tr_total = 0,
         ep_time_total = 0, ep_levels_played = 0,
         ep_recorded_current = false,
@@ -316,7 +316,7 @@ let main = (args: str[]) ->
         secrets = 0, total_secrets = 0,
         treasures = 0, total_treasures = 0,
         level_time = 0.0,
-        inter_stage = 0, inter_counter = 0, inter_progress = 0.0,
+        inter_stage = inter_stage.time, inter_counter = 0, inter_progress = 0.0,
         inter_bonus_shown = 0,
         inter_target_timeleft = 0, inter_target_kr = 0,
         inter_target_sr = 0, inter_target_tr = 0,
@@ -769,7 +769,7 @@ let main = (args: str[]) ->
         if g.phase == game_phase.intermission && g.phase_timer > 0.0
            && g.key_ack && !g.key_ack_handled then
             g.key_ack_handled = true
-            if g.inter_stage < 4 then
+            if g.inter_stage != inter_stage.done then
                 intermission.finish_anim(g)
             else if g.level_num % episode.levels_per == 8 then
                 episode_end.enter(g)

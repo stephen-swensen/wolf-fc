@@ -199,7 +199,7 @@ module flow =
                 // title (see the high_scores keydown handler in input.fc).
                 // The level is intentionally NOT reloaded — the
                 // next NEW GAME / LOAD GAME will rebuild as needed.
-                high_scores_screen.enter(g, w.hs, high_scores_screen.from_death,
+                high_scores_screen.enter(g, w.hs, hs_source.death,
                     g.score, g.level_num + 1, g.level_num / episode.levels_per)
                 g.has_active_game = false
         // Death-cam cutscene has finished its replay hold; hand off
@@ -209,7 +209,7 @@ module flow =
         // screen. Like the BJ-run route it pays no completion bonus and
         // contributes nothing to the episode averages, for the same
         // reason: the floor an episode ends on never gets a tally.
-        if g.phase == game_phase.death_cam && g.dc_sub == death_cam.sub.done then
+        if g.phase == game_phase.death_cam && g.dc_sub == dc_sub.done then
             episode_end.enter(g)
         // PG-13 splash auto-advances to the title after a short hold so a
         // walked-away player doesn't come back to a stuck splash. Any keypress

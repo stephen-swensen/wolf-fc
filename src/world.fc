@@ -65,6 +65,76 @@ enum game_phase =
                     // mode; otherwise any ack key dismisses → title screen.
 
 // ============================================================
+// Cutscene / intermission state machines
+// ============================================================
+
+// BJ's victory run across the bottom of the boss map. Linear: he runs
+// a fixed number of tiles, jumps, then holds the last frame until
+// `episode_end.enter` takes over.
+enum bj_phase =
+    | running
+    | jumping
+    | holding      // final frame held briefly before the episode-end screen
+
+// Death-cam sub-phases, in the order they play. `done` is transient —
+// `flow.update_phase_transitions` sees it and enters intermission.
+enum dc_sub =
+    | pre_fade        // hold on the final death frame (post-animation)
+    | fade_out        // dissolve viewport to backdrop (dc_fade 0 -> 1)
+    | taunt           // "LET'S SEE THAT AGAIN!" card on backdrop
+    | fade_in         // camera teleported, dissolve back in (1 -> 0)
+    | pre_replay      // boss restored to stand pose, beat of silence
+    | replay_anim     // boss reset to die, animation plays
+    | replay_hold     // hold on the final dead pose so it registers
+    | fade_to_black   // smooth palette-style fade before intermission
+    | done
+
+// The intermission tally counts one figure up at a time, in this
+// order. `done` means everything is shown and the screen is waiting
+// on a keypress. Ordering comparisons are meaningful and used by the
+// renderer to decide whether a row shows its live counter or its
+// final value.
+enum inter_stage =
+    | time
+    | kill
+    | secret
+    | treasure
+    | done
+
+// Where the high-score table was entered from — drives where Esc /
+// ack routes after the player dismisses it.
+enum hs_source =
+    | death     // dying transition (out of lives)
+    | menu      // View Scores main-menu entry
+    | endart    // post-victory endart article exit
+
+// ============================================================
+// Display settings (Change View menu, persisted in the config)
+// ============================================================
+
+// Aspect-ratio choice. `auto` detects the display at startup; the
+// explicit modes pin a framebuffer width (Hor+ widescreen keeps the
+// vertical FOV and widens horizontally). `config.view_mode_to_fb_w`
+// owns the width mapping, `config.view_mode_label` the menu text.
+// The variant order is the config-file encoding and the picker's
+// cycle order.
+enum view_mode =
+    | auto
+    | original      // 320x200, the OG 4:3 framebuffer
+    | wide_16_10    // 384x200
+    | wide_16_9     // 428x200
+
+// Opt-in super-sample anti-aliasing on the 3D viewport, stacked on top
+// of the supersample scale factor. Vertical-only is the cheap mode:
+// the horizontal axis is already oversampled by the scale factor, so
+// it buys most of the edge AA at half the cost of full 2x2.
+// `video.ssaa_vbuf_w` / `_h` derive every buffer dimension from this.
+enum ssaa_mode =
+    | off
+    | vert_2x       // viewport renders 2x tall, same width
+    | full_2x       // viewport renders 2x tall AND 2x wide
+
+// ============================================================
 // Mommy Mode — opt-in content filter
 // ============================================================
 
@@ -282,7 +352,7 @@ struct game =
     bj_run_tiles_left: i32  // tiles to run before starting the jump (counts down from 6)
     bj_anim_frame: i32
     bj_anim_timer: f64
-    bj_phase: i32        // 0 = running, 1 = jumping, 2 = holding final frame
+    bj_phase: bj_phase
     bj_yelled: bool      // YEAHSND latch (fires on entering jump frame 1)
 
     // Per-episode running totals for the episode-end victory screen.
@@ -317,15 +387,11 @@ struct game =
     // High-scores entry source. Latched in `high_scores_screen.enter`
     // so the dismissal handler knows whether to route back to the
     // title (post-death / post-victory) or the main menu (View Scores
-    // entry). Values are `high_scores_screen.from_*` constants.
-    hs_source: i32
+    // entry).
+    hs_source: hs_source
 
     // Death-cam cutscene state — active only during death_cam.
-    // Sub-phases: 0 = hold on final death frame, 1 = dissolve to black,
-    // 2 = taunt "Let's see you in hell!" text screen, 3 = camera teleport +
-    // dissolve back in, 4 = replay death animation, 5 = hand off to
-    // intermission (transient; update_phase_transitions enters next state).
-    dc_sub: i32
+    dc_sub: dc_sub
     dc_timer: f64                 // seconds elapsed in current sub-phase
     dc_boss_idx: i32?             // index of the corpse in lv->enemies
     dc_kill_x: f64                // player position when the boss died
@@ -388,12 +454,12 @@ struct game =
     // intermission. Mirrors the original's count-up sequence on the
     // level-complete tally: time bonus ticks up first, then kill /
     // secret / treasure ratios.
-    //   stage: 0=time, 1=kill, 2=secret, 3=treasure, 4=done (awaiting space)
+    //   stage: which figure is currently counting up
     //   counter: current value rendered in the active stage
     //   progress: fractional accumulator that drives counter at a fixed rate
     //   bonus_shown: running "BONUS" line displayed at the top-right
     //   target_timeleft / target_kr / target_sr / target_tr: cached goals
-    inter_stage: i32
+    inter_stage: inter_stage
     inter_counter: i32
     inter_progress: f64
     inter_bonus_shown: i32
@@ -433,27 +499,22 @@ struct game =
     // movement / hitscan code.
     plane_factor: f64
 
-    // View-mode preference (Change View menu). 0=auto-detect from
-    // display, 1=Original 4:3, 2=Widescreen 16:10, 3=Widescreen 16:9.
-    // The render geometry (fb_w / plane_factor) is captured at
-    // startup from this value. Changing the value mid-session
-    // updates the config file but only takes effect on next launch.
-    view_mode: i32
+    // View-mode preference (Change View menu). The render geometry
+    // (fb_w / plane_factor) is captured at startup from this value.
+    // Changing the value mid-session updates the config file but only
+    // takes effect on next launch.
+    view_mode: view_mode
     // Supersample-factor preference (Change View menu).
     // 0=auto-pick from drawable size (capped by --max-scale), or an
     // explicit 1..12 that bypasses the cap. Read by the resize
     // handler, the initial scale pick, and `apply_view_mode` — when
     // non-zero the auto-pick path is skipped entirely.
     scale_factor: i32
-    // Opt-in super-sample anti-aliasing (Change View menu). 0=off,
-    // 1=vertical-only 2× (viewport 2× tall, same width), 2=full 2×2
-    // (2× tall and wide). The 3D viewport renders into a larger buffer
-    // and is box-downsampled into dbuf's viewport region. Independent of
-    // `scale_factor` — the supersample stacks on top of whichever scale
-    // is in effect. Default 0. Vertical-only is the cheap mode: the
-    // horizontal axis is already oversampled by the scale factor, so
-    // it buys most of the edge-AA at half the cost of full 2×2.
-    ssaa_mode: i32
+    // Opt-in super-sample anti-aliasing (Change View menu). The 3D
+    // viewport renders into a larger buffer and is box-downsampled into
+    // dbuf's viewport region. Independent of `scale_factor` — the
+    // supersample stacks on top of whichever scale is in effect.
+    ssaa_mode: ssaa_mode
 
     // Mommy Mode setting. Set from the Options menu (persisted in
     // ~/.wolf-fc/config) or from the --mommy-mode[=mode] CLI flag at

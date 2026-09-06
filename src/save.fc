@@ -166,25 +166,20 @@ module config =
         // Shadow depth as 0..100 percent. 0 = no shading, 100 = full
         // black at distance, 55 = original Wolf3D feel.
         shadow_depth: i32
-        // Display aspect choice for the rendering pipeline. 0=auto
-        // (detect display at startup), 1=Original 4:3 (320×200),
-        // 2=Widescreen 16:10 (384×200), 3=Widescreen 16:9 (428×200).
-        // Stored as int so the file is greppable; "auto" is encoded
-        // as 0 — `view_mode_to_fb_w` reads the value back.
-        view_mode: i32
+        // Display aspect choice for the rendering pipeline. Persisted
+        // as the enum's numeric value so the file stays greppable;
+        // `view_mode_of_i32` reads it back.
+        view_mode: view_mode
         // Supersample factor for the CPU upscale step. 0=auto (display-
         // driven, capped by --max-scale), 2..12=explicit. When non-auto,
         // the chosen value is used verbatim and --max-scale is ignored.
         scale_factor: i32
         // Opt-in super-sample anti-aliasing applied on top of the scale
-        // factor. 0=off, 1=vertical-only 2× (viewport renders 2× tall,
-        // same width — halves the cost of full SSAA since the horizontal
-        // axis is already oversampled by the scale factor), 2=full 2×2
-        // (2× tall AND wide). The viewport renders into a larger buffer
-        // and is box-downsampled into dbuf before HUD composite. Default
-        // off. Older configs used a boolean `ssaa` key, which is now
-        // ignored (treated as off) — no backward compatibility.
-        ssaa_mode: i32
+        // factor. The viewport renders into a larger buffer and is
+        // box-downsampled into dbuf before HUD composite. Default off.
+        // Older configs used a boolean `ssaa` key, which is now ignored
+        // (treated as off) — no backward compatibility.
+        ssaa_mode: ssaa_mode
         // Speed multipliers as percentages (20..200, default 100).
         // bj_speed_pct scales the player's walking / strafing / turning.
         // enemy_speed_pct scales every enemy's patrol + chase speed
@@ -212,29 +207,53 @@ module config =
     let gain_pct_max  = 200
     let gain_pct_step = 5
 
-    // View-mode constants. Match the integers serialised to the
-    // config file; reorder only if you bump the version.
-    let view_mode_auto       = 0
-    let view_mode_original   = 1
-    let view_mode_widescreen_16_10 = 2
-    let view_mode_widescreen_16_9  = 3
-
-    let view_mode_label = (m: i32) ->
+    // View-mode helpers. The enum's numeric values are what land in the
+    // config file; reorder the variants only if you bump the version.
+    let view_mode_label = (m: view_mode) ->
         match m with
-        | 1 -> "Original (4:3)"
-        | 2 -> "Widescreen (16:10)"
-        | 3 -> "Widescreen (16:9)"
-        | _ -> "Auto"
+        | auto        -> "Auto"
+        | original    -> "Original (4:3)"
+        | wide_16_10  -> "Widescreen (16:10)"
+        | wide_16_9   -> "Widescreen (16:9)"
 
     // Map an explicit view-mode choice to its framebuffer width. Auto
     // returns 0 — the caller is expected to fall back to display
     // detection in that case.
-    let view_mode_to_fb_w = (m: i32) ->
+    let view_mode_to_fb_w = (m: view_mode) ->
         match m with
-        | 1 -> 320
-        | 2 -> 384
-        | 3 -> 428
-        | _ -> 0
+        | auto        -> 0
+        | original    -> 320
+        | wide_16_10  -> 384
+        | wide_16_9   -> 428
+
+    // The integer door in from the config file. Total: an out-of-range
+    // or hand-edited value reads as `auto`.
+    let view_mode_of_i32 = (v: i32) ->
+        match enum_of(view_mode, v) with
+        | some(m) -> m
+        | none    -> view_mode.auto
+
+    // Change View picker: ±1 with wrap, so Left from Auto lands on the
+    // last mode and every step is reachable without restarting.
+    let view_mode_cycle = (m: view_mode, delta: i32) ->
+        view_mode_of_i32(((i32) m + delta + view_mode.count) % view_mode.count)
+
+    // Anti-Alias picker. The value column is narrow, so the labels stay
+    // terse — the Change View footer spells the mode out alongside the
+    // resolved buffer dimensions.
+    let ssaa_mode_label = (m: ssaa_mode) ->
+        match m with
+        | off     -> "Off"
+        | vert_2x -> "Vert 2x"
+        | full_2x -> "Full 2x"
+
+    let ssaa_mode_of_i32 = (v: i32) ->
+        match enum_of(ssaa_mode, v) with
+        | some(m) -> m
+        | none    -> ssaa_mode.off
+
+    let ssaa_mode_cycle = (m: ssaa_mode, delta: i32) ->
+        ssaa_mode_of_i32(((i32) m + delta + ssaa_mode.count) % ssaa_mode.count)
 
     // Scale-factor (supersample) preference. 0 means "auto-pick from
     // the renderer's drawable size" (capped by --max-scale); 1..12
@@ -263,12 +282,12 @@ module config =
             shadow_depth = 0,
             // Auto by default — detect display at startup so users on
             // any aspect get sensible widescreen out of the box.
-            view_mode = 0,
+            view_mode = view_mode.auto,
             // Auto-pick the supersample factor from the drawable size
             // (capped by --max-scale). Users can pin an explicit
             // 1..12 from the Change View menu.
             scale_factor = scale_factor_auto,
-            ssaa_mode = 0,
+            ssaa_mode = ssaa_mode.off,
             bj_speed_pct = 100,
             enemy_speed_pct = 100,
             show_map = false
@@ -372,8 +391,7 @@ module config =
                         | err(_) -> void()
                     else if text.starts_with(line, "view_mode ") then
                         match text.parse_i32(line[10..line.len]) with
-                        | ok(v) ->
-                            p.view_mode = if v < 0 || v > 3 then 0 else v
+                        | ok(v) -> p.view_mode = view_mode_of_i32(v)
                         | err(_) -> void()
                     else if text.starts_with(line, "scale_factor ") then
                         match text.parse_i32(line[13..line.len]) with
@@ -389,7 +407,7 @@ module config =
                         | err(_) -> void()
                     else if text.starts_with(line, "ssaa_mode ") then
                         match text.parse_i32(line[10..line.len]) with
-                        | ok(v) -> p.ssaa_mode = if v < 0 || v > 2 then 0 else v
+                        | ok(v) -> p.ssaa_mode = ssaa_mode_of_i32(v)
                         | err(_) -> void()
                     else if text.starts_with(line, "bj_speed_pct ") then
                         match text.parse_i32(line[13..line.len]) with
@@ -433,9 +451,9 @@ module config =
                 io.write("music_gain_pct %d{p.music_gain_pct}\n", f)
                 io.write("mommy_mode %d{(i32) p.mommy_mode}\n", f)
                 io.write("shadow_depth %d{p.shadow_depth}\n", f)
-                io.write("view_mode %d{p.view_mode}\n", f)
+                io.write("view_mode %d{(i32) p.view_mode}\n", f)
                 io.write("scale_factor %d{p.scale_factor}\n", f)
-                io.write("ssaa_mode %d{p.ssaa_mode}\n", f)
+                io.write("ssaa_mode %d{(i32) p.ssaa_mode}\n", f)
                 io.write("bj_speed_pct %d{p.bj_speed_pct}\n", f)
                 io.write("enemy_speed_pct %d{p.enemy_speed_pct}\n", f)
                 ignore io.write("show_map %d{if p.show_map then 1 else 0}\n", f)

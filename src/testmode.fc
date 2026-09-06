@@ -165,8 +165,10 @@ module testmode =
             // probe the supersampled raycaster + downsample paths headlessly.
             match text.parse_i32(arg[8..arg.len]) with
             | ok(n) ->
+                // Saturating rather than total: `setssaa:5` means "the
+                // most anti-aliasing there is", not "off".
                 let m = if n < 0 then 0 else if n > 2 then 2 else n
-                ignore video.apply_ssaa_mode(w, m)
+                ignore video.apply_ssaa_mode(w, config.ssaa_mode_of_i32(m))
             | err(_) -> bad("0, 1, or 2")
         else if text.starts_with(arg, "bench:") then
             // Render `n` full frames and report total/per-frame wall time.
@@ -254,7 +256,7 @@ module testmode =
                     overlay.composite_hud(w.rc)
                 let t8 = sys.time()
                 let nf = (f64) n
-                io.write("benchparts scale=%d{w.rc.scale} ssaa=%d{w.rc.ssaa_mode} frames=%d{n}\n", stdout)
+                io.write("benchparts scale=%d{w.rc.scale} ssaa=%d{(i32) w.rc.ssaa_mode} frames=%d{n}\n", stdout)
                 io.write("  clear_view_sentinel : %7.3f{(f64) (t1 - t0) / nf}ms\n", stdout)
                 io.write("  raycaster.walls     : %7.3f{(f64) (t2 - t1) / nf}ms\n", stdout)
                 io.write("  billboards build+ren: %7.3f{(f64) (t3 - t2) / nf}ms\n", stdout)
@@ -356,7 +358,7 @@ module testmode =
             // the interactive space-bar path, but collapses animation-skip +
             // advance into one step so scripted tests don't need two hops.
             if g.phase == game_phase.intermission then
-                if g.inter_stage < 4 then intermission.finish_anim(g)
+                if g.inter_stage != inter_stage.done then intermission.finish_anim(g)
                 if g.level_num % episode.levels_per == 8 then
                     episode_end.enter(g)
                 else
@@ -386,7 +388,7 @@ module testmode =
                 // (which routes through the high-scores check on the
                 // way back to the menu in the original).
                 let ep = g.level_num / episode.levels_per
-                high_scores_screen.enter(g, w.hs, high_scores_screen.from_endart,
+                high_scores_screen.enter(g, w.hs, hs_source.endart,
                     g.score, g.level_num + 1, ep)
             else if g.phase == game_phase.high_scores then
                 // Test-mode advance from high-scores → its source's
@@ -567,7 +569,7 @@ module testmode =
             else if p == "viewscores" then
                 // High-scores screen reached via the View Scores main-
                 // menu entry. Pure display — no insertion, no edit.
-                high_scores_screen.enter(g, w.hs, high_scores_screen.from_menu,
+                high_scores_screen.enter(g, w.hs, hs_source.menu,
                     -1, 0, 0)
             else bad("pg13/title/menu/epmenu/diffmenu/soundmenu/optionsmenu/savemenu/loadmenu/playing/endart/viewscores")
         else if arg == "endartnext" then
@@ -602,7 +604,7 @@ module testmode =
                 let sc = parse(parts[0])
                 let lv = parse(parts[1])
                 let ep = parse(parts[2])
-                high_scores_screen.enter(g, w.hs, high_scores_screen.from_death, sc, lv, ep)
+                high_scores_screen.enter(g, w.hs, hs_source.death, sc, lv, ep)
             else bad("SCORE,LEVEL,EPISODE")
             free(parts)
         else if text.starts_with(arg, "hs_name:") then

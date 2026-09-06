@@ -82,7 +82,7 @@ module bj_victory =
         g.bj_run_tiles_left = 6
         g.bj_anim_frame = 0
         g.bj_anim_timer = walk_frame_time
-        g.bj_phase = 0
+        g.bj_phase = bj_phase.running
         g.bj_yelled = false
         // Clear latched pre-transition flags and pre-handle space so
         // the exit-tile step (or a held elevator press on a synthetic
@@ -107,7 +107,7 @@ module bj_victory =
     // briefly before the episode-end screen takes over.
     let tick = (lv: level*, g: game*, ac: audio_ctx*, dt: f64) ->
         g.bj_anim_timer = g.bj_anim_timer - dt
-        if g.bj_phase == 0 then
+        if g.bj_phase == bj_phase.running then
             // Running — step in bj_dir, snapping to each tile center
             // along the way.
             let mut move = run_speed * dt
@@ -126,7 +126,7 @@ module bj_victory =
                 select_path_dir(lv, g)
                 g.bj_run_tiles_left = g.bj_run_tiles_left - 1
                 if g.bj_run_tiles_left <= 0 then
-                    g.bj_phase = 1
+                    g.bj_phase = bj_phase.jumping
                     g.bj_anim_frame = 0
                     g.bj_anim_timer = jump_frame_time
                     break
@@ -136,7 +136,7 @@ module bj_victory =
             if g.bj_anim_timer <= 0.0 then
                 g.bj_anim_frame = (g.bj_anim_frame + 1) & 3
                 g.bj_anim_timer = walk_frame_time
-        else if g.bj_phase == 1 then
+        else if g.bj_phase == bj_phase.jumping then
             // Jumping — 4 sequential frames, YEAHSND on entering
             // frame 1. Move stays on BJ's last heading (north by
             // default on a map with no arrows). Phase-advance is
@@ -152,7 +152,7 @@ module bj_victory =
                     g.bj_yelled = true
                 if next_frame >= 4 then
                     g.bj_anim_frame = 3
-                    g.bj_phase = 2
+                    g.bj_phase = bj_phase.holding
                     g.bj_anim_timer = final_hold_time
                 else
                     g.bj_anim_frame = next_frame
@@ -185,18 +185,6 @@ module bj_victory =
 module death_cam =
     import math from std::
 
-    // Sub-phase codes for g->dc_sub.
-    module sub =
-        let pre_fade      = 0   // hold on final death frame (post-animation)
-        let fade_out      = 1   // dissolve viewport to backdrop (dc_fade 0 → 1)
-        let taunt         = 2   // "LET'S SEE THAT AGAIN!" card on backdrop
-        let fade_in       = 3   // camera teleported, dissolve back in (1 → 0)
-        let pre_replay    = 4   // boss restored to stand pose, beat of silence
-        let replay_anim   = 5   // boss reset to die, animation plays
-        let replay_hold   = 6   // hold on the final dead pose so it registers
-        let fade_to_black = 7   // smooth palette-style fade before intermission
-        let done          = 8   // transient — next tick enters intermission
-
     // Timing (seconds). The pre-replay and post-replay holds keep
     // the scene from feeling clipped; the post-replay fade-to-black
     // covers the original's fade-out between the victorious episode
@@ -227,10 +215,10 @@ module death_cam =
     // sprite flash and the suppression of the normal weapon sprite,
     // which the original replaces with the "DEATH CAM" graphic during
     // this window.
-    private let is_replay_view = (s: i32) ->
-        s == sub.fade_in || s == sub.pre_replay
-            || s == sub.replay_anim || s == sub.replay_hold
-            || s == sub.fade_to_black
+    private let is_replay_view = (s: dc_sub) ->
+        match s with
+        | fade_in | pre_replay | replay_anim | replay_hold | fade_to_black -> true
+        | pre_fade | fade_out | taunt | done -> false
 
     // Begin the death-cam cutscene. Records the kill position (for
     // the camera teleport later), the corpse's enemy-array index,
@@ -247,7 +235,7 @@ module death_cam =
         enemies.ai.kill_enemy(lv, g, ac, e, sprite_start)
         g.phase = game_phase.death_cam
         g.phase_timer = 0.0
-        g.dc_sub = sub.pre_fade
+        g.dc_sub = dc_sub.pre_fade
         g.dc_timer = 0.0                   // hold starts once the anim reaches enemies.enemy_state.dead
         g.dc_fade = 0.0
         g.dc_boss_idx = some(boss_idx)
@@ -315,31 +303,31 @@ module death_cam =
     // call it directly.
     let tick = (lv: level*, g: game*, ac: audio_ctx*, dt: f64) ->
         g.dc_timer = g.dc_timer + dt
-        let s = g.dc_sub
-        if s == sub.pre_fade then
+        match g.dc_sub with
+        | pre_fade ->
             match g.dc_boss_idx with
             | some(idx) when (idx < lv.num_enemies) ->
                 let e = &lv.enemies[idx]
                 match e.state with
                 | dead ->
                     if g.dc_timer >= pre_fade_time then
-                        g.dc_sub = sub.fade_out
+                        g.dc_sub = dc_sub.fade_out
                         g.dc_timer = 0.0
                         g.dc_fade = 0.0
                 | _ ->
                     g.dc_timer = 0.0
             | _ ->
-                g.dc_sub = sub.fade_out
+                g.dc_sub = dc_sub.fade_out
                 g.dc_timer = 0.0
                 g.dc_fade = 0.0
-        else if s == sub.fade_out then
+        | fade_out ->
             g.dc_fade = g.dc_timer / fade_time
             if g.dc_fade >= 1.0 then
                 g.dc_fade = 1.0
-                g.dc_sub = sub.taunt
+                g.dc_sub = dc_sub.taunt
                 g.dc_timer = 0.0
                 g.key_ack_handled = false      // allow the taunt card to dismiss
-        else if s == sub.taunt then
+        | taunt ->
             let dismissed = (g.key_ack && !g.key_ack_handled) || g.dc_timer >= taunt_timeout
             if dismissed then
                 g.key_ack_handled = true
@@ -352,16 +340,16 @@ module death_cam =
                     e.anim_timer = enemies.walk_frame_time
                     e.dir = dir.nodir
                 | _ -> void()
-                g.dc_sub = sub.fade_in
+                g.dc_sub = dc_sub.fade_in
                 g.dc_timer = 0.0
                 g.dc_fade = 1.0
-        else if s == sub.fade_in then
+        | fade_in ->
             g.dc_fade = 1.0 - g.dc_timer / fade_time
             if g.dc_fade <= 0.0 then
                 g.dc_fade = 0.0
-                g.dc_sub = sub.pre_replay
+                g.dc_sub = dc_sub.pre_replay
                 g.dc_timer = 0.0
-        else if s == sub.pre_replay then
+        | pre_replay ->
             if g.dc_timer >= pre_replay_time then
                 match g.dc_boss_idx with
                 | some(idx) when (idx < lv.num_enemies) ->
@@ -382,9 +370,9 @@ module death_cam =
                     | some(snd) -> sfx.trigger_at(snd, ac, g, e.x, e.y)
                     | none -> void()
                 | _ -> void()
-                g.dc_sub = sub.replay_anim
+                g.dc_sub = dc_sub.replay_anim
                 g.dc_timer = 0.0
-        else if s == sub.replay_anim then
+        | replay_anim ->
             let anim_done = match g.dc_boss_idx with
                 | some(idx) when (idx < lv.num_enemies) ->
                     match lv.enemies[idx].state with
@@ -392,18 +380,21 @@ module death_cam =
                     | _ -> false
                 | _ -> true
             if anim_done || g.dc_timer >= replay_anim_max then
-                g.dc_sub = sub.replay_hold
+                g.dc_sub = dc_sub.replay_hold
                 g.dc_timer = 0.0
-        else if s == sub.replay_hold then
+        | replay_hold ->
             if g.dc_timer >= replay_hold_time then
-                g.dc_sub = sub.fade_to_black
+                g.dc_sub = dc_sub.fade_to_black
                 g.dc_timer = 0.0
                 g.dc_fade = 0.0
-        else if s == sub.fade_to_black then
+        | fade_to_black ->
             g.dc_fade = g.dc_timer / black_fade_time
             if g.dc_fade >= 1.0 then
                 g.dc_fade = 1.0
-                g.dc_sub = sub.done
+                g.dc_sub = dc_sub.done
+        // Transient — flow.update_phase_transitions enters intermission
+        // on the next tick.
+        | done -> void()
 
     // Layout for the "DEATH CAM" sprite within the vbuf-cell grid.
     // Same sizing as the player gun (square, vbuf_h on each side,
@@ -456,7 +447,7 @@ module death_cam =
         let g = w.g
         let rc = w.rc
         let s = g.dc_sub
-        if s == sub.taunt then
+        if s == dc_sub.taunt then
             overlay.dissolve_stipple(rc, backdrop_color, 1.0)
             // The taunt text measures exactly 320 px wide in the
             // LEVELEND big-font, so in OG 4:3 it sat flush at x=0;
@@ -475,7 +466,7 @@ module death_cam =
             // tint / dissolve steps operate on dbuf-resolution
             // pixels. No-op when SSAA is off.
             overlay.ssaa_downsample(rc)
-            if s == sub.fade_to_black then
+            if s == dc_sub.fade_to_black then
                 // Viewport-only fade — HUD redraws fresh in render_frame
                 // after death_cam.render returns, so HUD doesn't need to
                 // be tinted here.
@@ -593,7 +584,7 @@ module intermission =
         // above it.
         if is_secret_level(g.level_num) then
             score.add(g, secret_floor_bonus, ac)
-            g.inter_stage = 4
+            g.inter_stage = inter_stage.done
             g.inter_counter = 0
             g.inter_progress = 0.0
             g.inter_bonus_shown = secret_floor_bonus
@@ -615,9 +606,9 @@ module intermission =
         // animates the ticker counting up to this value; awarding
         // once up front keeps save/advance simpler.
         score.add(g, compute_level_bonus(g), ac)
-        // Cache the animation targets. Stage starts at 0 (time
-        // bonus counting).
-        g.inter_stage = 0
+        // Cache the animation targets. The tally starts on the time
+        // bonus.
+        g.inter_stage = inter_stage.time
         g.inter_counter = 0
         g.inter_progress = 0.0
         g.inter_bonus_shown = 0
@@ -647,7 +638,7 @@ module intermission =
     // to skip the per-counter tally loops, matching the original's
     // skip-on-keypress behaviour.
     let finish_anim = (g: game*) ->
-        g.inter_stage = 4
+        g.inter_stage = inter_stage.done
         g.inter_counter = 0
         g.inter_progress = 0.0
         g.inter_pause_timer = 0.0
@@ -668,9 +659,28 @@ module intermission =
     //        * pause_timer (longer — total hold before advancing)
     //          → when it expires we step to the next stage.
     //      The ring sound is one of the 100% / 0% / partial cues.
+    // The figure the active stage is counting toward. `done` has no
+    // counter of its own — the tally is finished by then.
+    private let stage_target = (g: const game*) ->
+        match g.inter_stage with
+        | time     -> g.inter_target_timeleft
+        | kill     -> g.inter_target_kr
+        | secret   -> g.inter_target_sr
+        | treasure -> g.inter_target_tr
+        | done     -> 0
+
+    // Step to the next figure; `done` is the absorbing state.
+    private let next_stage = (s: inter_stage) ->
+        match s with
+        | time     -> inter_stage.kill
+        | kill     -> inter_stage.secret
+        | secret   -> inter_stage.treasure
+        | treasure -> inter_stage.done
+        | done     -> inter_stage.done
+
     let tick = (g: game*, ac: audio_ctx*, dt: f64) ->
         g.inter_breathe_timer = g.inter_breathe_timer + dt
-        if g.inter_stage >= 4 then return
+        if g.inter_stage == inter_stage.done then return
         if g.phase_timer < lead_in then return
         if g.inter_pause_timer > 0.0 then
             g.inter_pause_timer = g.inter_pause_timer - dt
@@ -678,13 +688,8 @@ module intermission =
                 g.inter_end_sound_delay = g.inter_end_sound_delay - dt
                 if g.inter_end_sound_delay <= 0.0 then
                     g.inter_end_sound_delay = 0.0
-                    let target = match g.inter_stage with
-                    | 0 -> g.inter_target_timeleft
-                    | 1 -> g.inter_target_kr
-                    | 2 -> g.inter_target_sr
-                    | 3 -> g.inter_target_tr
-                    | _ -> 0
-                    if g.inter_stage == 0 then
+                    let target = stage_target(g)
+                    if g.inter_stage == inter_stage.time then
                         sfx.trigger(sfx.id.end_bonus2, ac)
                     else if target >= 100 then
                         g.inter_bonus_shown = g.inter_bonus_shown + percent_100_bonus
@@ -695,32 +700,27 @@ module intermission =
                         sfx.trigger(sfx.id.end_bonus2, ac)
             if g.inter_pause_timer <= 0.0 then
                 g.inter_pause_timer = 0.0
-                g.inter_stage = g.inter_stage + 1
+                g.inter_stage = next_stage(g.inter_stage)
                 g.inter_counter = 0
                 g.inter_progress = 0.0
             return
-        let rate = if g.inter_stage == 0 then time_rate else ratio_rate
-        let target = match g.inter_stage with
-        | 0 -> g.inter_target_timeleft
-        | 1 -> g.inter_target_kr
-        | 2 -> g.inter_target_sr
-        | 3 -> g.inter_target_tr
-        | _ -> 0
+        let rate = if g.inter_stage == inter_stage.time then time_rate else ratio_rate
+        let target = stage_target(g)
         let prev = g.inter_counter
         g.inter_progress = g.inter_progress + rate * dt
         let mut cur = (i32) g.inter_progress
         if cur > target then cur = target
         g.inter_counter = cur
-        if g.inter_stage == 0 then
+        if g.inter_stage == inter_stage.time then
             g.inter_bonus_shown = cur * par_amount_per_sec
-        let tick_granule = if g.inter_stage == 0 then 50 else 10
+        let tick_granule = if g.inter_stage == inter_stage.time then 50 else 10
         if cur > prev && (cur / tick_granule) > (prev / tick_granule) && cur < target then
             sfx.trigger(sfx.id.end_bonus1, ac)
         if cur >= target then
-            if g.inter_stage == 0 then
+            if g.inter_stage == inter_stage.time then
                 g.inter_bonus_shown = target * par_amount_per_sec
-            if g.inter_stage == 0 && target == 0 then
-                g.inter_stage = 1
+            if g.inter_stage == inter_stage.time && target == 0 then
+                g.inter_stage = inter_stage.kill
                 g.inter_counter = 0
                 g.inter_progress = 0.0
             else
@@ -861,14 +861,14 @@ module intermission =
         write_lpic_text(rc, vg, pal, ox + 9 * 8, 14 * 8, "KILL RATIO    %")
         write_lpic_text(rc, vg, pal, ox + 5 * 8, 16 * 8, "SECRET RATIO    %")
         write_lpic_text(rc, vg, pal, ox + 1 * 8, 18 * 8, "TREASURE RATIO    %")
-        let kr_shown = if g.inter_stage > 1 then g.inter_target_kr
-                       else if g.inter_stage == 1 then g.inter_counter
+        let kr_shown = if g.inter_stage > inter_stage.kill then g.inter_target_kr
+                       else if g.inter_stage == inter_stage.kill then g.inter_counter
                        else -1
-        let sr_shown = if g.inter_stage > 2 then g.inter_target_sr
-                       else if g.inter_stage == 2 then g.inter_counter
+        let sr_shown = if g.inter_stage > inter_stage.secret then g.inter_target_sr
+                       else if g.inter_stage == inter_stage.secret then g.inter_counter
                        else -1
-        let tr_shown = if g.inter_stage > 3 then g.inter_target_tr
-                       else if g.inter_stage == 3 then g.inter_counter
+        let tr_shown = if g.inter_stage > inter_stage.treasure then g.inter_target_tr
+                       else if g.inter_stage == inter_stage.treasure then g.inter_counter
                        else -1
         let ratio_right = ox + 37 * 8
         if kr_shown >= 0 then
@@ -1458,16 +1458,10 @@ module pg13_screen =
 // editing commits the current buffer (matching the original's "name
 // stays even on cancel" behavior for the high-score row editor).
 module high_scores_screen =
-    // Source the screen was entered from — drives where Esc / ack
-    // routes after the player dismisses the table.
-    let from_death  = 0     // dying transition (out of lives)
-    let from_menu   = 1     // View Scores main-menu entry
-    let from_endart = 2     // post-victory endart article exit
-
     // Latched on enter so the dismissal handler can pick the right
     // exit. Stored on `game` rather than `highscore_ctx` because it's
     // gameplay-flow state, not screen-buffer state.
-    private let set_source = (g: game*, src: i32) ->
+    private let set_source = (g: game*, src: hs_source) ->
         g.hs_source = src
 
     // Commit the typed name to the qualifying row, mark the table as
@@ -1515,7 +1509,7 @@ module high_scores_screen =
         if hs.pending_save then
             highscore.save(hs.scores)
             hs.pending_save = false
-        if g.hs_source == from_menu then
+        if g.hs_source == hs_source.menu then
             g.phase = game_phase.main_menu
             g.menu_level = menu.nav.main
             g.menu_sel = 6     // VIEW SCORES row
@@ -1529,7 +1523,7 @@ module high_scores_screen =
     // and arm the inline name editor; otherwise the screen is purely
     // informational. `completed` is the level the player finished
     // (1-indexed, matching the original).
-    let enter = (g: game*, hs: highscore_ctx*, source: i32,
+    let enter = (g: game*, hs: highscore_ctx*, source: hs_source,
                  score: i32, completed: i32, episode: i32) ->
         g.phase = game_phase.high_scores
         g.phase_timer = 0.0

@@ -187,7 +187,7 @@ module input =
                             // control panel.
                             let ep = g.level_num / episode.levels_per
                             high_scores_screen.enter(g, w.hs,
-                                high_scores_screen.from_endart,
+                                hs_source.endart,
                                 g.score, g.level_num + 1, ep)
                         else if k == sdl2.key_right || k == sdl2.key_down
                                 || k == sdl2.key_pagedown
@@ -310,11 +310,11 @@ module input =
                                 g.menu_sel = 0
                             | 6 ->
                                 // VIEW SCORES → high-scores screen.
-                                // hs_source=from_menu so the dismiss
+                                // hs_source.menu so the dismiss
                                 // routes back here instead of to the
                                 // title.
                                 high_scores_screen.enter(g, w.hs,
-                                    high_scores_screen.from_menu, -1, 0, 0)
+                                    hs_source.menu, -1, 0, 0)
                             | 7 ->
                                 // BACK TO GAME / DEMO — label + target
                                 // track has_active_game. With a running
@@ -469,8 +469,7 @@ module input =
                                 // 16:10, 16:9). Wraps so left from Auto
                                 // lands on 16:9 — every step is reachable
                                 // without restarting the loop.
-                                let n = 4
-                                let next = (g.view_mode + dir + n) % n
+                                let next = config.view_mode_cycle(g.view_mode, dir)
                                 resized = video.apply_view_mode(w, w.vg, pal, next)
                             else if g.menu_sel == menu.changeview_scale_row then
                                 // Scale Factor cycles Auto, 1x..12x. The
@@ -490,7 +489,7 @@ module input =
                                 // (the ssaa_buf is internal to the 3D
                                 // pipeline), so `resized` stays false and
                                 // the SDL texture doesn't need recreating.
-                                let next = (g.ssaa_mode + dir + 3) % 3
+                                let next = config.ssaa_mode_cycle(g.ssaa_mode, dir)
                                 ignore video.apply_ssaa_mode(w, next)
                             config.save(config.snapshot(w))
                             if resized then
