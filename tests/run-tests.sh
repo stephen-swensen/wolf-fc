@@ -244,9 +244,26 @@ section "combat:player-fires"
 assert_contains "hitscan:pistol-point-blank-kills-guard" \
     "goto:30,62 turnr:180 setammo:50 fire wait:15 fire wait:15 fire state" \
     "score=100"
+# Knife into an UNAWARE guard: the roll is 10 here, but a sneak attack
+# (target still standing / patrolling) does double damage, so 25 → 5.
+# Waking keeps the guard's east-facing heading (dir=0) and, being point
+# blank, it opens fire on its very next think.
 assert_contains "hitscan:knife-at-1-tile-damages-guard" \
     "goto:29,62 turnr:180 setweapon:0 fire wait:10 enemylist" \
-    "kind=guard state=shoot dir=2 hp=15"
+    "kind=guard state=shoot dir=0 hp=5"
+# The aim window is angular (±8.3° of the crosshair), not a fixed lateral
+# band. From (28.5,60.5) facing due east, guard [36] at (39.5,61.5) sits
+# 5.2° off-axis and a full tile off the aim line at ~10.8 tiles — well
+# inside the window (~1.6 tiles wide there). The seeded first roll beats
+# the long-range miss check, and the sneak-attack doubling turns the
+# damage roll into a one-shot kill. 10° off-axis (turnl:5) is outside
+# the window and never even reaches the roll.
+assert_contains "hitscan:angular-window-lands-long-off-axis-shot" \
+    "goto:28,60 setammo:50 fire enemylist" \
+    "[36] (39,61) kind=guard state=die"
+assert_regex "hitscan:angular-window-rejects-10deg-off-axis" \
+    "goto:28,60 turnl:5 setammo:50 fire enemylist" \
+    '\[36\] \(39,61\) kind=guard state=[a-z]+ dir=[0-9] hp=25'
 # Knife is a 1.5-tile-range melee. At 2-tile distance the hitscan misses
 # but the guard wakes to sight — verify HP is unchanged (25) rather than
 # asserting a specific post-wake AI state (those RNG-roll into shoot/chase).
@@ -276,43 +293,58 @@ assert_contains "ai:dog-bites-on-contact" \
 # Player pressed against the west wall of the (44,34) corridor — pos_x lands
 # at ~44.39, so the dog at (45,34) starts adx ≈ 1.11, just outside the
 # lunge gate at its tile center. Dog must close the gap and bite. With the
-# OG-faithful CHECKDIAG behaviour (contact-attack kinds may step onto the
+# OG-faithful walk-check behaviour (contact-attack kinds may step onto the
 # player's tile), the dog walks west directly; without it the dog detours
 # north through (45,33) and back, which still gets there in this open
 # geometry but stalls in tighter corridors where N/S detour is also walled.
 assert_contains "ai:dog-closes-against-wall" \
     "goto:44,34 back:1 wait:60 enemylist" \
     "[19] (45,34) kind=dog state=shoot"
-assert_contains "ai:guard-wakes-on-sight" \
-    "goto:28,60 turnl:90 wait:40 enemies" \
-    "chase=2"
+# Both stand guards in area 2 wake within 40 ticks of the player stepping
+# into view. The near one (2 tiles away) has usually already rolled into
+# its attack by then, so accept chase OR shoot — either proves the wake.
+assert_regex "ai:guard-wakes-on-sight:far" \
+    "goto:28,60 turnl:90 wait:40 enemylist" \
+    '\[36\] \(39,61\) kind=guard state=(chase|shoot)'
+assert_regex "ai:guard-wakes-on-sight:near" \
+    "goto:28,60 turnl:90 wait:40 enemylist" \
+    '\[37\] \(28,62\) kind=guard state=(chase|shoot)'
+# Dodge approach: an enemy that can see the player and didn't fire weaves
+# in rather than walking a straight line. Guard [36] wakes with the player
+# to its west-north-west; its first heading is the closing diagonal
+# (dir=3, northwest) — a straight chase would have picked due west.
+assert_contains "ai:sighted-enemy-opens-with-closing-diagonal" \
+    "goto:28,60 turnl:90 wait:40 enemylist" \
+    "[36] (39,61) kind=guard state=chase dir=3"
 assert_contains "ai:sustained-fire-kills-player" \
     "goto:28,60 wait:600 state" \
     "lives=2"
 # Wake guard [18] at (38,33), teleport to the far side of the door at (43,33),
 # then wait for its chase path to push through — the door should no longer be
-# closed (wolf4sdl T_Chase OpenDoor behaviour).
+# closed (the original's chase step opens any door in its way).
 assert_regex "ai:guards-open-doors-while-chasing" \
     "goto:37,33 wait:5 goto:44,33 wait:150 goto:43,33 probe" \
     'tile \(43,33\) = 137 \(DOOR:(opening|open)\)'
-# Dogs use CHECKDIAG in the original game and treat closed doors as walls.
+# Dogs cannot open doors in the original and treat closed ones as walls.
 # Wake the dog at (45,34) and place the player past the door — the dog should
 # pace near the door but never open it, so (43,33) stays closed.
 assert_contains "ai:dogs-cannot-open-doors" \
     "goto:45,34 wait:5 goto:42,33 wait:150 goto:43,33 probe" \
     "tile (43,33) = 137 (DOOR:closed)"
-# ICONARROWS path markers (plane-1 90..97) redirect patrolling enemies to the
+# Floor-arrow path markers (plane-1 90..97) redirect patrolling enemies to the
 # encoded direction. Dog [19] spawns at (45,34) walking west; arrows at (44,34)
-# and (46,34) bounce it back and forth. After 200 ticks (~5.7s) it should be
-# resting on an arrow tile, redirected by it (any non-default dir proves the
-# arrow fired). Player teleports to the far corner so the dog never enters chase.
+# and (46,34) bounce it back and forth. Dogs patrol at their own fast gait
+# (~1.6 tiles/s, hold beats included), so the round trip takes ~100 ticks;
+# at 200 the dog has just reached the (46,34) arrow and been turned west —
+# reaching x=46 at all proves the (44,34) arrow already redirected it east.
+# Player teleports to the far corner so the dog never enters chase.
 assert_regex "ai:patrol-arrow-redirects-dog" \
     "goto:29,57 wait:200 enemylist" \
     '\[19\] \(4[46],34\) kind=dog state=path dir=[0-7]'
-# madenoise propagation: just standing at the spawn never wakes a guard whose
+# Noise propagation: just standing at the spawn never wakes a guard whose
 # sight cone misses the player. Firing a pistol from the same spot is meant to
 # wake every non-AMBUSH guard in the player's currently-connected area set
-# (wolf4sdl SightPlayer noise short-circuit). The two stand guards in area 2
+# (the original's sight check short-circuits on noise). The two stand guards in area 2
 # at (28,62) and (39,61) should both flip to chase. We assert the diff so the
 # test stays meaningful even if level layout changes the absolute counts.
 assert_contains "ai:no-wake-without-noise-or-sight" \
@@ -380,7 +412,7 @@ assert_contains "death:advance-from-high-scores-returns-to-title" \
 # OG-style score rewind: dying with lives left rewinds the score to its
 # value at the start of the current level (`oldscore`). Mirrors the
 # original game's `gamestate.score = gamestate.oldscore` at the top of
-# the GameLoop restart loop. Killing one guard (+100) and then dying
+# the original's restart loop. Killing one guard (+100) and then dying
 # should leave the next life at score=0.
 assert_contains "death:score-rewinds-to-oldscore-on-restart" \
     "killenemy:0 wait:80 state kill wait:80 state" \
@@ -446,7 +478,7 @@ assert_contains "intermission:new-level-resets-counters" \
     "goto:25,47 turnl:90 space wait:40 advance counters" \
     "kills=0/82 secrets=0/4 treasures=0/62"
 # Entering intermission with time 0 awards full par-time bonus: par=90s →
-# (90 - 0) * 500 = 45000 (wolf4sdl LevelCompleted, PAR_AMOUNT = 500/sec).
+# (90 - 0) * 500 = 45000 (500 points per second under par, as in the original).
 assert_contains "intermission:par-time-bonus-awarded" \
     "goto:25,47 turnl:90 space wait:40 state" \
     "score=45000"
@@ -465,7 +497,7 @@ assert_contains "intermission:boss-floor-has-no-par" \
     "par=0"
 # Secret-level intermission (exiting E3M10, map index 9 of episode 3) uses
 # a completely different layout: flat 15000 bonus, no par / ratio tally.
-# Matches wolf4sdl's LevelCompleted else-branch (`GivePoints(15000)`).
+# Matches the original's secret-floor tally: a flat 15000.
 assert_contains "intermission:secret-floor-awards-15000" \
     "setlevel:29 endepisode wait:10 state" \
     "score=15000"
@@ -601,7 +633,7 @@ assert_contains "boss:mecha-hitler-on-e3m9" \
 # Killing the mech leaves its slot occupied by a fresh Real Hitler.
 # The mech plays 3 die-frames × 0.18s ≈ 0.54s before morphing, so wait
 # 25 ticks (~0.71s) before checking. Real Hitler's hard-tier HP is 900
-# per A_HitlerMorph.
+# per the original's morph table.
 assert_regex "boss:mecha-morphs-to-real-hitler-on-kill" \
     "setlevel:28 killenemy:2 wait:25 enemylist" \
     'kind=hitler state=chase dir=[0-9]+ hp=900'
@@ -610,7 +642,7 @@ assert_contains "boss:gretel-on-e5m9"    "setlevel:48 enemylist" "kind=gretel"
 assert_contains "boss:fat-face-on-e6m9"  "setlevel:58 enemylist" "kind=fat"
 # killenemy:N runs damage_enemy with overkill damage; verifies that a
 # boss kill no longer immediately ends the level (the original game
-# requires the player to walk onto the EXITTILE behind the gold-key
+# requires the player to walk onto the exit-tile behind the gold-key
 # door first). Boss enters es_die, world keeps ticking, phase stays
 # playing, gold key drops in the corpse tile.
 assert_contains "boss:kill-doesnt-end-level" \
@@ -619,7 +651,7 @@ assert_contains "boss:kill-doesnt-end-level" \
 assert_contains "boss:kill-completes-die-animation" \
     "setlevel:8 killenemy:0 wait:30 enemylist" \
     "kind=hans state=dead"
-# Bosses spawn with FL_AMBUSH + dir=nodir in the original. With a closed
+# Bosses spawn ambush-flagged with dir=nodir in the original. With a closed
 # door between the player and Hans, approaching quietly must leave him
 # asleep; opening the door gives him LOS and he wakes + shoots.
 assert_contains "boss:hans-stays-asleep-behind-closed-door" \
@@ -628,7 +660,7 @@ assert_contains "boss:hans-stays-asleep-behind-closed-door" \
 assert_contains "boss:hans-wakes-when-door-opens" \
     "setlevel:8 goto:34,16 space wait:35 enemylist" \
     "kind=hans state=shoot"
-# E1M9's three EXITTILE markers (plane-1 tile 99) sit at y=7 behind the
+# E1M9's three exit-tile markers (plane-1 tile 99) sit at y=7 behind the
 # gold-key door; stepping onto one fires the BJ-victory cutscene
 # directly without the elevator-wait freeze.
 assert_contains "exittile:e1m9-has-three-exit-tiles" \
@@ -637,7 +669,7 @@ assert_contains "exittile:e1m9-has-three-exit-tiles" \
 assert_contains "exittile:walking-onto-it-fires-bj-victory" \
     "setlevel:8 goto:34,8 fwd:50 phase" \
     "phase=bj_victory"
-# Boss kill before the EXITTILE walk: boss is fully `dead` (final pose)
+# Boss kill before the exit-tile walk: boss is fully `dead` (final pose)
 # by the time the cutscene starts, even when the kill happens just
 # before stepping onto the tile — update_dying_enemies pumps the die
 # frames during the cutscene so the corpse doesn't freeze on frame 1.
@@ -645,10 +677,10 @@ assert_contains "exittile:bj-cutscene-corpse-finishes-dying" \
     "setlevel:8 killenemy:0 goto:34,8 fwd:50 wait:60 enemylist" \
     "kind=hans state=dead"
 # The four death-cam bosses (Schabbs / Gift / Fat / real Hitler) end the
-# episode via A_StartDeathCam in the original: hold on final death frame,
+# episode via the original's death-cam sequence: hold on final death frame,
 # fizzle to black, taunt card, teleport camera, fizzle in, replay death
 # animation, drop into the intermission tally. Hans and Gretel are the
-# two exceptions — they still use the gold-key + EXITTILE flow.
+# two exceptions — they still use the gold-key + exit-tile flow.
 assert_contains "deathcam:schabbs-enters-death-cam-on-kill" \
     "setlevel:18 killenemy:0 phase" \
     "phase=death_cam"
@@ -662,20 +694,20 @@ assert_contains "deathcam:hitler-enters-death-cam-on-kill" \
     "setlevel:28 killenemy:2 wait:25 killenemy:2 phase" \
     "phase=death_cam"
 # Hans and Gretel do NOT enter gp_death_cam — their death flow still
-# routes through the gold-key drop + EXITTILE walk → gp_bj_victory.
+# routes through the gold-key drop + exit-tile walk → gp_bj_victory.
 assert_contains "deathcam:hans-does-not-enter-death-cam" \
     "setlevel:8 killenemy:0 wait:30 phase" \
     "phase=playing"
 # After the full cutscene (pre_fade + fade_out + taunt + fade_in +
 # pre_replay + replay_anim + replay_hold ≈ 12s) we hand off straight
-# to the episode-end Victory screen — the OG GameLoop's `ex_victorious`
-# case skips `LevelCompleted()` for boss kills, so death-cam → episode_end
+# to the episode-end Victory screen — the original skips the level tally
+# entirely for boss kills, so death-cam → episode_end
 # without an intermission stop.
 assert_contains "deathcam:auto-advances-to-episode-end" \
     "setlevel:18 killenemy:0 wait:500 phase" \
     "phase=episode_end"
 # The death scream fires a second time when the replay animation starts
-# (matches the original: re-entering the die-cascade hits A_DeathScream
+# (matches the original: re-entering the die-cascade plays the death scream
 # again). At wait:330 we're just past the pre_replay beat so Schabbs's
 # death cry should be audible — sound 24 is MEINGOTTSND ("Mein Gott!").
 assert_contains "deathcam:death-scream-replays-on-replay-anim" \
@@ -688,7 +720,7 @@ assert_contains "deathcam:advance-skips-to-episode-end" \
     "setlevel:18 killenemy:0 advance phase" \
     "phase=episode_end"
 # Hans still drops a gold key — walking onto his tile after the kill
-# picks it up. Preserves the gold-key + EXITTILE flow on E1M9.
+# picks it up. Preserves the gold-key + exit-tile flow on E1M9.
 assert_contains "deathcam:hans-still-drops-gold-key" \
     "setlevel:8 killenemy:0 goto:34,14 state" \
     "gold=1"
@@ -715,29 +747,34 @@ assert_regex "proj:fake-hitler-flame-in-flight" \
     "setlevel:28 goto:25,57 wait:20 projectiles" \
     "proj\[[0-9]+\] fire"
 # Standing one tile north of Schabbs gives a clean LOS with no flanking
-# mutants in fire range. Schabbs's first shoot state is a 30-tic windup
-# (no throw), then a 10-tic throw frame whose action fires at the end
-# of that frame; at wait:30 the needle is mid-flight, by wait:32 it has
-# connected and health has dropped by at least 20 (needle rolls 20-51).
+# mutants in fire range. The needle bosses roll a flat, range-independent
+# chance to attack each tick (no point-blank certainty — that's a hitscan
+# rule), so with the seeded RNG Schabbs commits on tick 27; his first
+# shoot pose is a 30-tic windup (no throw), then a 10-tic throw pose
+# whose action fires as it ends — tick 47. One tile out, the needle
+# connects on the very next tick, so 47 is the one tick it's in flight;
+# by 48 health has dropped by at least 20 (needle rolls 20-51). The
+# health regexes are anchored on the trailing space so `health=100`
+# can't satisfy them via its first two digits.
 assert_contains "proj:schabbs-needle-in-flight" \
-    "setlevel:18 goto:31,17 wait:30 projectiles" \
+    "setlevel:18 goto:31,17 wait:47 projectiles" \
     "needle"
 assert_regex "proj:schabbs-needle-damages-player" \
-    "setlevel:18 goto:31,17 wait:32 state" \
-    "health=([0-7][0-9]|80)"
+    "setlevel:18 goto:31,17 wait:48 state" \
+    "health=([0-7][0-9]|80) "
 # Giftmacher on E4M9 at (27,18) fires rockets at the player one tile south;
 # one rocket hit alone drops the player by 30-61 HP. Rocket damage is
 # distinctive enough that we check the value clearly fell below 70.
 assert_regex "proj:giftmacher-rocket-damages-player" \
     "setlevel:38 goto:27,19 wait:30 state" \
-    "health=([0-6][0-9]|70)"
+    "health=([0-6][0-9]|70) "
 # Fat Face on E6M9 also spawns rockets from the same projectile-throw
 # path; mostly a coverage check that setlevel:58 reaches the right map.
 assert_contains "proj:fat-face-spawns-rockets" \
     "setlevel:58 enemylist" \
     "kind=fat state=stand"
 # "Can I Play Daddy" (baby) quarters incoming damage in the original's
-# TakeDamage. Same Giftmacher rocket hit that drops the player below 70
+# player-damage routine. Same Giftmacher rocket hit that drops the player below 70
 # HP on hard leaves them at 88 HP on baby — proof of the >>2 scaling
 # under the seeded PCG stream.
 assert_contains "proj:baby-difficulty-quarters-rocket-damage" \
@@ -882,7 +919,7 @@ assert_contains "episode:episode-end-advance-enters-endart" \
     "phase=endart"
 # Advancing past the article enters the high-scores screen (matches
 # the OG's Victory() → CheckHighScore call). One more advance returns
-# to the main menu — the OG GameLoop returns from ex_victorious back
+# to the main menu — the original returns from a won episode back
 # to the control panel, with no auto-advance to the next episode.
 assert_contains "episode:endart-advance-enters-high-scores" \
     "setlevel:8 endepisode wait:2 advance advance advance phase" \

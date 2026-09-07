@@ -93,6 +93,57 @@ number-key weapon switching, 2026-06-09).
   collecting every treasure on a floor. Left uncovered deliberately —
   worth revisiting only if that code grows a per-category difference.
 
+### Applied — 2026-09-06 combat-fidelity pass
+
+A focused audit of enemy AI and the hit rolls in both directions found
+the formulas themselves (enemy hit chance and damage bands, player damage
+bands and long-range miss roll, reaction delays, HP tables, shoot-frame
+timings) already exact, and the gaps in everything around them. All
+applied in one batch (`combat.fc`, with save-format trailing fields for
+the two new enemy flags), suite re-pinned at 241/241:
+
+- **Sneak-attack double damage.** A stand / path actor (incl. one mid
+  reaction-delay) takes 2× from any hit. Knife stealth kills and
+  one-shot pistol kills on unaware guards now behave as observed.
+- **Angular aim window.** The player's target must be within a tenth of
+  the view width of center (±8.3°, against a depth pulled ¼ tile toward
+  the camera, floored at 0.75): ~4× stricter than the old fixed ½-tile
+  band at point blank, ~3× more lenient at ten tiles. Nearest in-window
+  target only; a wall in front of it soaks the shot. Knife reach is 1.5
+  of that depth.
+- **Fire decisions.** Hitscan kinds roll `16·tics / dist` from the tile
+  they're heading for, with certainty (300) once that tile is the
+  player's or adjacent with < ¼ tile left. Needle/rocket bosses roll a
+  flat `8·tics`, fake Hitler `2·tics`. The old `dt·1400/dist` was 25 %
+  hot even before the hold beats below.
+- **Dodge movement.** Enemies with line of sight that didn't fire weave:
+  closing diagonal first, then the shorter-axis cardinal, shuffled, then
+  retreat, reversal last (free on the first pick after sighting). Dogs
+  and fake Hitler weave always. Diagonal steps need all three tiles
+  free with doors solid, and advance both axes per unit budget (√2
+  faster, as observed).
+- **Walk-cycle hold beats.** Chase 10·3·8·10·3·8 tics, patrol
+  20·5·15·20·5·15, no movement or fire roll during a hold; ghosts
+  10/10 with none. Effective chase speed 6/7 of nominal, patrol 7/8.
+  Reaction countdown for patrollers only runs while stepping.
+- **Dog patrol speed** was the generic 512-unit amble; dogs patrol at
+  1500 (1.6 tiles/s), chase at 3000.
+- **Smaller:** close-range sight (< 1.5 tiles both axes) is automatic
+  with no line trace; dog lunge and bite drop their LOS gates; pain pose
+  alternates on HP parity; SS drop a 4-round clip once you own the MG;
+  dying actors stop blocking at once; the straight-chase detour scan is
+  north → northwest → west only (reverse 50/50), never east/south;
+  headings and half-taken steps survive pain/shoot/wake/morph.
+- **Test hygiene found on the way:** the two projectile-damage regexes
+  were unanchored, so `health=100` satisfied `health=([0-7][0-9]|80)`
+  through its first two digits. Anchored on the trailing space.
+
+Deliberately NOT changed: the running gate stays "shift + a move key"
+(the original's threshold makes plain walking count as running below
+~35 fps — a frame-rate artifact, not a rule); pacman-ghost contact
+damage keeps its bite-and-back-off model rather than per-frame drain;
+the mech's corpse doesn't linger beside the real Hitler.
+
 ### Applied — 2026-09-05
 
 Every item below was applied with the 214-test suite green; the ones

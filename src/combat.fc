@@ -123,8 +123,10 @@ module enemies =
         ambush: bool          // tile 106 (AMBUSH) — don't wake on sound, only LOS
         notified: bool        // has entered active pursuit at least once (suppresses re-alert sound)
         reaction_timer: f64   // seconds left between first detection and actual wake; 0 when not yet detected (mirrors the original's sight-delay)
-        last_visible: bool    // refreshed by ai.update_enemies each tick (post-move, like the original's refresh-time FL_VISABLE) when the enemy is on screen; read on the following tick by fire_at_player to pick the steeper hitchance falloff
+        last_visible: bool    // refreshed by ai.update_enemies each tick (post-move, like the original's end-of-frame "was drawn" flag) when the enemy is on screen; read on the following tick by fire_at_player to pick the steeper hitchance falloff
         touch_cooldown: f64   // ghost-only: refractory window after a bite. The original steps the ghost physically back out of the player's contact bbox after a hit; our advance_move is grid-based, so we emulate the gap with a short timer.
+        first_attack: bool    // set on wake; the first dodge-mode direction pick after sighting may reverse heading outright. Cleared by that pick.
+        walk_pause: bool      // in one of the walk cycle's hold beats (after poses 1 and 3): the actor neither moves nor considers firing until it ends
         // Mommy Mode fade-on-death state. Set at the moment kill_enemy
         // (or death_cam pre_replay) transitions the enemy into `die`:
         // mommy_fade_page caches the live sprite page the enemy was
@@ -142,19 +144,36 @@ module enemies =
     // Movement speeds (tiles/sec), matched to the original. The
     // original stores actor speed as 16.16 fixed-point units per
     // tic, so `tiles_per_sec = N * 70 / 65536`.
-    //   patrol      : SPDPATROL=512                → 0.5469
+    //   patrol (base rate 512)                     → 0.5469
+    //   dog patrol (1500)                          → 1.6022
     //   guard×3, mutant×3, all bosses×3 (1536)     → 1.6406
     //   officer×5, real-hitler×5    (2560)         → 2.7344
     //   ss×4                         (2048)        → 2.1875
-    //   dog (SPDDOG=1500)×2          (3000)        → 3.2043
-    //   ghost (SPDPATROL×2 = 1024)                 → 1.0938
+    //   dog×2                        (3000)        → 3.2043
+    //   ghost (base×2 = 1024)                      → 1.0938
     private let patrol_speed         = 0.5469
+    private let dog_patrol_speed     = 1.6022
     private let guard_chase_speed    = 1.6406   // also mutants + bosses (Hans, Schabbs, Gretel, Giftmacher, Fat, Fake/Mecha Hitler)
     private let officer_chase_speed  = 2.7344   // also real Hitler
     private let ss_chase_speed       = 2.1875
     private let dog_chase_speed      = 3.2043
     private let ghost_chase_speed    = 1.0938
-    let walk_frame_time     = 0.12  // seconds per W1/W2/W3/W4 cycle frame
+    // Walk cycle (seconds, from 70 Hz tics). Four poses, but the cycle
+    // isn't uniform: poses 1 and 3 are followed by a short *hold* beat
+    // during which the actor stands still and doesn't consider firing.
+    // Chase: 10 · 3(hold) · 8 · 10 · 3(hold) · 8 = 42 tics, 36 moving.
+    // Patrol: 20 · 5(hold) · 15 · 20 · 5(hold) · 15 = 80 tics, 70 moving.
+    // That hold is why the nominal speeds above overstate the observed
+    // closing speed by 1/7 (chase) and 1/8 (patrol); modeling it keeps
+    // the speeds honest AND reproduces the original's stutter-step gait.
+    // Ghosts run a plain 2-pose 10/10 cycle with no holds.
+    let walk_frame_time       = 10.0 / 70.0   // pose 1 / 3 hold-in-place duration on chase; also the reset value on every chase entry
+    private let chase_hold_time      =  3.0 / 70.0
+    private let chase_pose_b_time    =  8.0 / 70.0   // poses 2 / 4
+    private let patrol_pose_a_time   = 20.0 / 70.0
+    private let patrol_hold_time     =  5.0 / 70.0
+    private let patrol_pose_b_time   = 15.0 / 70.0
+    private let ghost_pose_time      = 10.0 / 70.0
     private let pain_time           = 0.143 // pain flinch duration (10 tics @ 70Hz)
     let die_frame_time      = 15.0 / 70.0  // 15 tics per frame during death animation
     // Mommy Mode: how long an enemy takes to fade from fully visible to
@@ -168,8 +187,8 @@ module enemies =
     // patrol + chase speed (in advance_move + the dog lunge gate)
     // AND every facet of firing: the per-frame shoot-decision chance,
     // and the shoot-anim frame duration (so each shot's wind-up plays
-    // faster). Reaction time / sight delay / walk anim cadence stay
-    // unscaled. Empirically the combined movement + firing scaling
+    // faster). Reaction time / sight delay / walk cycle cadence (incl.
+    // its hold beats) stay unscaled. Empirically the combined movement + firing scaling
     // gives roughly linear damage-vs-speed (averaging ~2.5× at 200%
     // across active scenarios) — the closest the slider gets to a
     // pure difficulty knob without an AI rework.
@@ -241,7 +260,7 @@ module enemies =
         // burned through most of the player's ammo.
         | hitler       -> diff_pick(500, 700, 800, 900)
         // HP is unreachable — ghosts skip the player hitscan entirely
-        // (matches the original's missing FL_SHOOTABLE flag). The value
+        // (in the original they carry no shootable flag). The value
         // is just a placeholder so the kind has an entry.
         | blinky | pinky | clyde | inky -> 1000
 
@@ -262,6 +281,14 @@ module enemies =
         | mecha_hitler -> 5000
         | hitler       -> 5000
         | blinky | pinky | clyde | inky -> 0
+
+    // Movement speed while patrolling (tiles/sec). Everyone ambles at
+    // the base patrol rate except dogs, which patrol at their own
+    // much faster gait (1500 units/tic) — chasing merely doubles it.
+    private let patrol_speed_for_kind = (k: enemy_kind) ->
+        match k with
+        | dog -> dog_patrol_speed
+        | _   -> patrol_speed
 
     // Movement speed while chasing (tiles/sec). Matches the original's
     // chase-speed scaling: each kind multiplies its patrol speed by a
@@ -315,12 +342,13 @@ module enemies =
     // player's tile and the player is offset far enough from tile center
     // that the attack gate hasn't yet passed, blocking the player's tile
     // strands the actor — it would oscillate against the wall instead
-    // of closing. In the original this is implicit: CHECKDIAG only
-    // refuses an actor at the destination tile if that actor is
-    // FL_SHOOTABLE, and the player object is FL_NEVERMARK with no
-    // FL_SHOOTABLE flag. Ranged kinds keep the standard "player tile
-    // blocks" rule so a fleeing guard doesn't end up clipped inside
-    // the camera.
+    // of closing. In the original this is implicit: the walk check
+    // only refuses a destination tile occupied by a *shootable* actor,
+    // and the player is never marked on the occupancy grid at all —
+    // actors are kept out of the player by a world-space back-off
+    // instead. Ranged kinds keep the standard "player tile blocks"
+    // rule so a fleeing guard doesn't end up clipped inside the
+    // camera.
     private let kind_walks_onto_player = (k: enemy_kind) ->
         match k with
         | dog | blinky | pinky | clyde | inky -> true
@@ -349,15 +377,17 @@ module enemies =
         | blinky | pinky | clyde | inky -> 0  // ghosts never enter shoot state
 
     // Pickup item to drop on death (pickups.item_kind.decoration =
-    // nothing). SS drop a machine gun; guards, officers, and mutants
-    // drop a clip. Dogs drop nothing.
-    let drop_for_kind = (k: enemy_kind) ->
+    // nothing). SS drop a machine gun until the player owns one, then
+    // the same half clip everyone else drops; guards, officers, and
+    // mutants drop a clip. Dogs drop nothing.
+    let drop_for_kind = (k: enemy_kind, best_weapon: weapon) ->
         match k with
         // Enemy corpses drop the half-size clip — 4 ammo
         // not 8. Map-placed clips still give the full 8.
         | guard   -> pickups.item_kind.clip_small
         | officer -> pickups.item_kind.clip_small
-        | ss      -> pickups.item_kind.machine_gun
+        | ss      -> if best_weapon < weapon.machine_gun then pickups.item_kind.machine_gun
+                     else pickups.item_kind.clip_small
         | dog     -> pickups.item_kind.decoration
         | mutant  -> pickups.item_kind.clip_small
         // Hans and Gretel drop gold keys so the player can unlock the
@@ -371,15 +401,14 @@ module enemies =
         | hitler_fake | mecha_hitler | hitler -> pickups.item_kind.decoration
         | blinky | pinky | clyde | inky -> pickups.item_kind.decoration
 
-    // VSWAP sprite page index of the dropped pickup's shape
-    // (shape = 2 + tile - 23).
-    private let drop_shape_for_kind = (k: enemy_kind) ->
-        match k with
-        | guard   -> 2 + (49 - 23)   // clip shape
-        | officer -> 2 + (49 - 23)
-        | mutant  -> 2 + (49 - 23)
-        | ss      -> 2 + (50 - 23)   // MG shape
-        | hans | gretel -> 2 + (43 - 23)   // gold key
+    // VSWAP sprite page index of a dropped pickup's shape
+    // (shape = 2 + tile - 23). Only the three item kinds a corpse can
+    // yield have an entry.
+    private let drop_shape_for_item = (it: pickups.item_kind) ->
+        match it with
+        | clip_small  -> 2 + (49 - 23)   // clip shape
+        | machine_gun -> 2 + (50 - 23)   // MG shape
+        | gold_key    -> 2 + (43 - 23)   // gold key
         | _ -> 0
 
     // Per-kind sprite tables — one per enemy_kind variant, keyed by
@@ -767,19 +796,21 @@ module enemies =
             clear
 
         // Is the player visible to the enemy right now? Mirrors the
-        // original's sight check: inside ~1.5 tiles on BOTH axes sight
-        // is automatic regardless of facing (close-range fallback);
-        // otherwise apply the axis-aligned facing check (cardinals
-        // only — diagonals and nodir get no facing filter, matching
-        // the original), then a tilemap LOS ray. No distance cap: a
-        // clear LOS through open space wakes at any range.
+        // original's sight check: inside 1.5 tiles on BOTH axes the
+        // player is sensed outright — no facing test and no line
+        // trace, so a guard just around a corner still notices you
+        // (the caller has already required the areas to be connected
+        // through open doors). Otherwise apply the axis-aligned
+        // facing check (cardinals only — diagonals and nodir get no
+        // facing filter, matching the original), then a tilemap LOS
+        // ray. No distance cap: a clear LOS through open space wakes
+        // at any range.
         let sees_player = (lv: const level*, g: game*, e: enemy*) ->
             let dx = g.pos_x - e.x
             let dy = g.pos_y - e.y
             let adx = math.abs(dx)
             let ady = math.abs(dy)
-            if adx < 1.5 && ady < 1.5 then
-                check_line_clear(lv, e.x, e.y, g.pos_x, g.pos_y)
+            if adx < 1.5 && ady < 1.5 then true
             else
                 let facing_ok =
                     if e.dir == dir.east  then dx >= 0.0
@@ -794,11 +825,15 @@ module enemies =
         // to move INTO it. Walls block; the player's tile blocks for
         // ranged kinds (so enemies don't walk into the camera) but is
         // open to dogs and ghosts so their contact attacks can close —
-        // see kind_walks_onto_player. Other live enemies block. Doors
-        // of any state are routable — advance_move handles the
-        // wait-for-open pause and triggers the door to open, matching
-        // the original's chase logic. `self_idx` identifies the caller
-        // so it doesn't block itself.
+        // see kind_walks_onto_player. Other live enemies block; a
+        // corpse or an actor mid death-fall does not. Doors of any
+        // state are routable for a cardinal step — advance_move
+        // handles the wait-for-open pause and triggers the door to
+        // open, matching the original's chase logic — but a
+        // `diagonal` step treats any door that isn't fully open as
+        // solid, for every kind (the original never cuts a corner
+        // through a doorway). `self_idx` identifies the caller so it
+        // doesn't block itself.
         //
         // A path / chase enemy committed to a direction also reserves
         // its NEXT tile here, mirroring the original's actor-occupancy
@@ -809,7 +844,7 @@ module enemies =
         // at its source tile), both commit to the same target tile,
         // and advance_move slides them through each other into the
         // same square.
-        private let tile_passable = (lv: level*, g: game*, self_idx: i32, tx: i32, ty: i32) ->
+        private let tile_passable = (lv: level*, g: game*, self_idx: i32, tx: i32, ty: i32, diagonal: bool) ->
             if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
             else
                 let t = (i32) lv.tilemap[(i64) tx * 64 + (i64) ty]
@@ -817,8 +852,9 @@ module enemies =
                 if t >= 1 && t <= 63 then false
                 // Door tiles block kinds that can't open doors unless
                 // fully open (matches the original: actor-occupancy
-                // is cleared only when the door is fully open).
-                else if t >= 128 && !kind_opens_doors(e.kind)
+                // is cleared only when the door is fully open). The
+                // same rule applies to everyone on a diagonal step.
+                else if t >= 128 && (diagonal || !kind_opens_doors(e.kind))
                         && lv.doors[t - 128].state != doors.door_state.open then false
                 else if (i32) g.pos_x == tx && (i32) g.pos_y == ty
                         && !kind_walks_onto_player(e.kind) then false
@@ -828,7 +864,7 @@ module enemies =
                         if j == self_idx then continue
                         let oe = &lv.enemies[j]
                         match oe.state with
-                        | dead -> void()     // corpses don't block
+                        | dead | die -> void()     // corpses and the dying don't block
                         | _ ->
                             if oe.tile_x == tx && oe.tile_y == ty then blocked = true
                             else
@@ -848,27 +884,47 @@ module enemies =
         // Try to take a step in `d` from this enemy's current tile.
         // For diagonal moves we also insist both orthogonal neighbors
         // are open so enemies don't clip the corner of a wall (matches
-        // the original's corner-cutting check).
+        // the original's corner-cutting check), and the whole trio is
+        // checked with door-is-solid semantics.
         private let try_enemy_walk = (lv: level*, g: game*, self_idx: i32, d: dir) ->
             if d == dir.nodir then false
             else
                 let e = &lv.enemies[self_idx]
                 let ntx = e.tile_x + dir.dx[d]
                 let nty = e.tile_y + dir.dy[d]
-                if !tile_passable(lv, g, self_idx, ntx, nty) then false
-                else if dir.dx[d] != 0 && dir.dy[d] != 0 then
-                    // Diagonal: require both cardinal neighbors passable too.
-                    tile_passable(lv, g, self_idx, e.tile_x + dir.dx[d], e.tile_y)
-                        && tile_passable(lv, g, self_idx, e.tile_x, e.tile_y + dir.dy[d])
+                let diagonal = dir.dx[d] != 0 && dir.dy[d] != 0
+                if !tile_passable(lv, g, self_idx, ntx, nty, diagonal) then false
+                else if diagonal then
+                    tile_passable(lv, g, self_idx, e.tile_x + dir.dx[d], e.tile_y, true)
+                        && tile_passable(lv, g, self_idx, e.tile_x, e.tile_y + dir.dy[d], true)
                 else true
 
-        // Chase direction selector — matches the original's chase-dir
-        // pick, minus the dodge variant and the turn markers. Picks
-        // up to two preferred directions toward the player (the larger
-        // axis tried first), tries the current heading, then scans all
-        // four cardinals in a random starting order, and finally
-        // allows a turnaround. Leaves e->dir at dir.nodir when fully
-        // blocked in.
+        // Compose the diagonal heading that points along both `a` and
+        // `b` (one east/west, one north/south, either order). Any other
+        // pairing has no diagonal and yields nodir.
+        private let diagonal_of = (a: dir, b: dir) ->
+            let combine = (ew: dir, ns: dir) ->
+                if ew == dir.east then
+                    (if ns == dir.north then dir.northeast else if ns == dir.south then dir.southeast else dir.nodir)
+                else if ew == dir.west then
+                    (if ns == dir.north then dir.northwest else if ns == dir.south then dir.southwest else dir.nodir)
+                else dir.nodir
+            if a == dir.east || a == dir.west then combine(a, b)
+            else combine(b, a)
+
+        // Chase direction selector — the straight-line pursuit pick.
+        // Up to two preferred directions toward the player (the larger
+        // axis tried first, never the turnaround), then the current
+        // heading, then a fixed detour scan, and only as a last resort
+        // a turnaround. Leaves e->dir at dir.nodir when fully blocked
+        // in.
+        //
+        // The detour scan is deliberately lopsided: it walks north →
+        // northwest → west (or the reverse, 50/50) and never considers
+        // east or south at all. That's the observed behavior of the
+        // original — blocked enemies drift north/west and will take a
+        // northwest diagonal, but never sidestep the other way — and
+        // reproducing it keeps their pathing recognizably "Wolf3D".
         private let select_chase_dir = (lv: level*, g: game*, self_idx: i32) ->
             let e = &lv.enemies[self_idx]
             let dxi = (i32) g.pos_x - e.tile_x
@@ -896,10 +952,10 @@ module enemies =
             if old_dir != dir.nodir && old_dir != turnaround then
                 e.dir = old_dir
                 if try_enemy_walk(lv, g, self_idx, old_dir) then return
-            let cardinals = dir[4] { dir.east, dir.north, dir.west, dir.south }
-            let start = rnd_byte(g) % 4
-            for k in 0..4 do
-                let d = cardinals[(start + k) % 4]
+            let scan = dir[3] { dir.north, dir.northwest, dir.west }
+            let reversed = rnd_byte(g) <= 128
+            for k in 0..3 do
+                let d = scan[if reversed then 2 - k else k]
                 if d == turnaround then continue
                 e.dir = d
                 if try_enemy_walk(lv, g, self_idx, d) then return
@@ -907,6 +963,74 @@ module enemies =
                 e.dir = turnaround
                 if try_enemy_walk(lv, g, self_idx, turnaround) then return
             e.dir = dir.nodir
+
+        // Dodge direction selector — used while the enemy can see the
+        // player but chose not to fire this tick, and by dogs and the
+        // fake Hitler always. Instead of heading straight in it
+        // prefers the diagonal that closes on the player, then the
+        // two closing cardinals with the SHORTER axis first (so the
+        // approach sidesteps across the line of fire), the pair
+        // shuffled 50/50, then the two retreating cardinals, and
+        // reverses heading only as a last resort. The very first pick
+        // after sighting may reverse freely — that's how a guard shot
+        // from behind spins to face you.
+        private let swap_dodge_slots = (cand: dir[]) ->
+            let t1 = cand[1]
+            cand[1] = cand[2]
+            cand[2] = t1
+            let t3 = cand[3]
+            cand[3] = cand[4]
+            cand[4] = t3
+
+        private let select_dodge_dir = (lv: level*, g: game*, self_idx: i32) ->
+            let e = &lv.enemies[self_idx]
+            let free_turn = e.first_attack
+            if free_turn then e.first_attack = false
+            let turnaround = if free_turn || e.dir == dir.nodir then dir.nodir
+                             else dir.opposite[e.dir]
+            let dxi = (i32) g.pos_x - e.tile_x
+            let dyi = (i32) g.pos_y - e.tile_y
+            let adx = if dxi < 0 then -dxi else dxi
+            let ady = if dyi < 0 then -dyi else dyi
+            // Slots: 1 = closing x, 2 = closing y, 3 = retreating x,
+            // 4 = retreating y; slot 0 is the closing diagonal.
+            let cand = dir[5] { dir.nodir, dir.nodir, dir.nodir, dir.nodir, dir.nodir }
+            if dxi > 0 then
+                cand[1] = dir.east
+                cand[3] = dir.west
+            else
+                cand[1] = dir.west
+                cand[3] = dir.east
+            if dyi > 0 then
+                cand[2] = dir.south
+                cand[4] = dir.north
+            else
+                cand[2] = dir.north
+                cand[4] = dir.south
+            if adx > ady then swap_dodge_slots(cand)
+            if rnd_byte(g) < 128 then swap_dodge_slots(cand)
+            cand[0] = diagonal_of(cand[1], cand[2])
+            for k in 0..5 do
+                let d = cand[k]
+                if d == dir.nodir || d == turnaround then continue
+                e.dir = d
+                if try_enemy_walk(lv, g, self_idx, d) then return
+            if turnaround != dir.nodir then
+                e.dir = turnaround
+                if try_enemy_walk(lv, g, self_idx, turnaround) then return
+            e.dir = dir.nodir
+
+        // How an actor picks its next tile when it needs a heading.
+        enum move_mode =
+            | patrol     // follow the current heading / floor arrows
+            | chase      // straight pursuit
+            | dodge      // zig-zag pursuit (has line of sight, didn't fire)
+
+        private let select_dir = (lv: level*, g: game*, self_idx: i32, mode: move_mode) ->
+            match mode with
+            | patrol -> select_path_dir(lv, g, self_idx)
+            | chase  -> select_chase_dir(lv, g, self_idx)
+            | dodge  -> select_dodge_dir(lv, g, self_idx)
 
         // Patrol: keep walking in the current heading. If the current
         // tile carries a path-arrow marker (plane-1 90..97, pre-
@@ -922,15 +1046,52 @@ module enemies =
             if e.dir == dir.nodir || !try_enemy_walk(lv, g, self_idx, e.dir) then
                 e.dir = dir.nodir
 
+        // True iff the actor is parked exactly on its tile center —
+        // i.e. it has no step in progress. Positions only ever leave
+        // the center along a committed heading and are snapped back
+        // on arrival / door-wait, so exact comparison is right.
+        private let at_tile_center = (e: const enemy*) ->
+            e.x == (f64) e.tile_x + 0.5 && e.y == (f64) e.tile_y + 0.5
+
+        // The tile this actor is heading for: the next tile along its
+        // heading while a step is in progress, otherwise the one it
+        // stands on. The fire decisions measure distance from here,
+        // matching the original, whose actors "occupy" their
+        // destination tile from the moment they commit to it.
+        let dest_tile = (e: const enemy*) ->
+            if e.dir != dir.nodir && !at_tile_center(e) then
+                { e.tile_x + dir.dx[e.dir], e.tile_y + dir.dy[e.dir] }
+            else
+                { e.tile_x, e.tile_y }
+
+        // Tiles left to travel along the current heading (per axis —
+        // see advance_move). Zero when no step is in progress, i.e.
+        // parked on a center: for the fire decisions "just arrived"
+        // and "about to arrive" both count as there. The mover
+        // computes its own remaining distance, since for it a heading
+        // picked from a parked position has a whole tile to go.
+        let step_remaining = (e: const enemy*) ->
+            if e.dir == dir.nodir || at_tile_center(e) then 0.0
+            else if dir.dx[e.dir] != 0 then math.abs((f64) (e.tile_x + dir.dx[e.dir]) + 0.5 - e.x)
+            else math.abs((f64) (e.tile_y + dir.dy[e.dir]) + 0.5 - e.y)
+
         // Advance this enemy along its current direction by
-        // `speed * dt` tiles. When crossing a tile center, consumes
-        // the leftover step by picking a new direction (chase or
-        // patrol) and continuing — otherwise enemies would slow down
-        // noticeably at every grid crossing. If the next tile is a
+        // `speed * dt` tiles. The budget is spent PER AXIS: a cardinal
+        // step covers it along one axis, a diagonal step advances both
+        // axes by the same amount and so covers √2 the ground — the
+        // original's actors are faster on the diagonal, and dodging
+        // enemies visibly are. When crossing a tile center, consumes
+        // the leftover step by picking a new direction and continuing
+        // — otherwise enemies would slow down noticeably at every grid
+        // crossing. A new heading is also picked whenever the actor
+        // is parked on a tile center at the top of a tick: that is
+        // what turns a freshly woken standing guard's facing into a
+        // real chase heading, and what lets an actor that was waiting
+        // on a door reconsider once alerted. If the next tile is a
         // closed or animating door, kicks it to opening (with sound)
         // and pauses at the current tile center until it's fully open
         // — matches the original's chase-step door-open logic.
-        let advance_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: i32, speed: f64, dt: f64, is_chase: bool) ->
+        let advance_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: i32, speed: f64, dt: f64, mode: move_mode) ->
             // Enemy Speed slider — scales every patrol + chase speed.
             // Applied here (the single chokepoint for all enemy
             // movement) so callers stay unaware. 100 = OG-faithful.
@@ -938,9 +1099,8 @@ module enemies =
             loop
                 if step <= 1e-6 then break
                 let e = &lv.enemies[self_idx]
-                if e.dir == dir.nodir then
-                    if is_chase then select_chase_dir(lv, g, self_idx)
-                    else select_path_dir(lv, g, self_idx)
+                if e.dir == dir.nodir || at_tile_center(e) then
+                    select_dir(lv, g, self_idx, mode)
                     if e.dir == dir.nodir then break
                 let ntx = e.tile_x + dir.dx[e.dir]
                 let nty = e.tile_y + dir.dy[e.dir]
@@ -961,31 +1121,53 @@ module enemies =
                             e.y = (f64) e.tile_y + 0.5
                             e.dir = dir.nodir
                             break
-                let target_x = (f64) ntx + 0.5
-                let target_y = (f64) nty + 0.5
-                let dx = target_x - e.x
-                let dy = target_y - e.y
-                let dist = math.sqrt(dx * dx + dy * dy)
-                if dist > step then
-                    e.x = e.x + dx / dist * step
-                    e.y = e.y + dy / dist * step
+                // Per-axis distance to the next center — a full tile
+                // when the heading was just picked from a parked
+                // position (NOT step_remaining, which reads 0 there).
+                let remaining = if dir.dx[e.dir] != 0 then math.abs((f64) ntx + 0.5 - e.x)
+                                else math.abs((f64) nty + 0.5 - e.y)
+                if step < remaining then
+                    e.x = e.x + (f64) dir.dx[e.dir] * step
+                    e.y = e.y + (f64) dir.dy[e.dir] * step
                     step = 0.0
                 else
-                    e.x = target_x
-                    e.y = target_y
-                    e.tile_x = e.tile_x + dir.dx[e.dir]
-                    e.tile_y = e.tile_y + dir.dy[e.dir]
-                    step = step - dist
-                    if is_chase then select_chase_dir(lv, g, self_idx)
-                    else select_path_dir(lv, g, self_idx)
+                    e.x = (f64) ntx + 0.5
+                    e.y = (f64) nty + 0.5
+                    e.tile_x = ntx
+                    e.tile_y = nty
+                    step = step - remaining
+                    // Parked on the new center: the loop head picks the
+                    // next heading if any budget is left.
 
-        // Advance a looping walk animation (4 frames with the same
-        // duration each). Takes a pointer so callers don't have to
-        // know the backing array.
-        private let advance_walk_anim = (e: enemy*) ->
-            if e.anim_timer <= 0.0 then
-                e.anim_frame = (e.anim_frame + 1) % 4
-                e.anim_timer = walk_frame_time
+        // Advance the walk cycle: four poses plus the hold beats after
+        // poses 1 and 3 (none for ghosts). Leftover time carries into
+        // the next slot so the duty cycle stays exact at any tick
+        // rate; `anim_frame` is always the pose (0..3) and
+        // `walk_pause` says whether we're in a hold. Callers gate
+        // movement and fire decisions on `!walk_pause`.
+        private let step_walk_cycle = (e: enemy*, patrol: bool) ->
+            loop
+                if e.anim_timer > 0.0 then break
+                if kind_is_ghost(e.kind) then
+                    e.anim_frame = (e.anim_frame + 1) % 4
+                    e.anim_timer = e.anim_timer + ghost_pose_time
+                else if e.walk_pause then
+                    e.walk_pause = false
+                    e.anim_frame = (e.anim_frame + 1) % 4
+                    e.anim_timer = e.anim_timer + (if patrol then patrol_pose_b_time else chase_pose_b_time)
+                else if e.anim_frame == 0 || e.anim_frame == 2 then
+                    e.walk_pause = true
+                    e.anim_timer = e.anim_timer + (if patrol then patrol_hold_time else chase_hold_time)
+                else
+                    e.anim_frame = (e.anim_frame + 1) % 4
+                    e.anim_timer = e.anim_timer + (if patrol then patrol_pose_a_time else walk_frame_time)
+
+        // (Re)start the walk cycle from pose 1 with a full hold-free
+        // beat ahead — every entry into chase does this.
+        private let restart_walk_cycle = (e: enemy*) ->
+            e.anim_frame = 0
+            e.anim_timer = walk_frame_time
+            e.walk_pause = false
 
         // Player damage path — one place so every damage source routes
         // through the same SFX + death-transition handling. dmg ≤0 is
@@ -1116,9 +1298,8 @@ module enemies =
             e.kind           = enemy_kind.hitler
             e.hp             = hp_for_kind(enemy_kind.hitler, g.difficulty)
             e.state          = enemy_state.chase
-            e.anim_frame     = 0
-            e.anim_timer     = walk_frame_time
-            e.dir            = dir.nodir
+            restart_walk_cycle(e)
+            // Heading carries over from the mech, as in the original.
             e.notified       = true
             e.reaction_timer = 0.0
 
@@ -1139,11 +1320,11 @@ module enemies =
             match death_scream_for_kind(e.kind, g) with
             | some(snd) -> sfx.trigger_at(snd, ac, g, e.x, e.y)
             | none -> void()
-            let drop = drop_for_kind(e.kind)
+            let drop = drop_for_kind(e.kind, g.best_weapon)
             match drop with
             | decoration -> void()
             | _ ->
-                let shape = drop_shape_for_kind(e.kind)
+                let shape = drop_shape_for_item(drop)
                 add_dropped_item(lv, e.x, e.y, sprite_start + shape, drop)
 
         // Apply damage to an enemy. Always alerts them (matches the
@@ -1152,13 +1333,24 @@ module enemies =
         // award score. Score goes here so
         // unscripted hitscans can't bypass it.
         //
+        // Sneak-attack rule: an actor that hasn't entered combat yet —
+        // still standing or patrolling, including one counting down
+        // its reaction delay — takes DOUBLE damage. That's the
+        // original's reward for stealth: a pistol round drops an
+        // unaware guard at range, and a knife in the back is a real
+        // weapon. The first hit wakes the actor, so it only applies
+        // once per enemy.
+        //
         // `idx` is the enemy's position in lv->enemies — needed so the
         // death-cam cutscene can reference the corpse after
         // damage_enemy returns.
-        let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, idx: i32, dmg: i32, sprite_start: i32) ->
+        let damage_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, idx: i32, dmg_in: i32, sprite_start: i32) ->
             match e.state with
             | die | dead -> return
             | _ -> void()
+            let dmg = match e.state with
+            | stand | path -> dmg_in * 2
+            | _            -> dmg_in
             // Damaging an enemy also raises noise (the original sets
             // its made-noise flag up front in the damage routine).
             // This is what makes a knife hit wake nearby guards even
@@ -1199,13 +1391,16 @@ module enemies =
                 // is a no-op for bosses and dogs — they keep their
                 // current state (chase / shoot) and continue fighting
                 // through sustained damage. That's why unloading the
-                // chain gun into Hans doesn't stun-lock him.
+                // chain gun into Hans doesn't stun-lock him. The two
+                // pain poses alternate on the parity of the remaining
+                // HP, and the heading (plus any step in progress)
+                // survives the flinch — the actor resumes where it
+                // left off.
                 match e.kind with
                 | guard | officer | ss | mutant ->
                     e.state = enemy_state.pain
-                    e.anim_frame = 0
+                    e.anim_frame = if (e.hp & 1) != 0 then 0 else 1
                     e.anim_timer = pain_time
-                    e.dir = dir.nodir
                 | _ -> void()
 
         // Per-kind reaction delay (seconds) between first detection
@@ -1255,9 +1450,15 @@ module enemies =
         // soundscape doesn't get spammy.
         private let wake_enemy = (g: game*, e: enemy*, ac: audio_ctx*) ->
             e.state = enemy_state.chase
-            e.anim_frame = 0
-            e.anim_timer = walk_frame_time
-            e.dir = dir.nodir
+            restart_walk_cycle(e)
+            // The heading is kept: a standing guard's facing becomes
+            // its "previous" direction, so its first straight-chase
+            // pick treats a full reversal as the last resort (the
+            // original's guards, alerted by noise from behind, first
+            // step forward or sideways). The dodge selector's
+            // first-attack exemption is what lets one that actually
+            // SEES you spin around at once.
+            e.first_attack = true
             if !e.notified then
                 e.notified = true
                 // First-sighting vocal (matches the original): one
@@ -1307,8 +1508,12 @@ module enemies =
             | _                       -> sfx.id.nazi_fire
             sfx.trigger_at(snd, ac, g, e.x, e.y)
             if !check_line_clear(lv, e.x, e.y, g.pos_x, g.pos_y) then return
-            let dxi = (i32) g.pos_x - e.tile_x
-            let dyi = (i32) g.pos_y - e.tile_y
+            // Range is measured from the tile the actor is heading for
+            // (it froze mid-step to shoot), like every other distance
+            // the AI takes.
+            let { dtx, dty } = dest_tile(e)
+            let dxi = (i32) g.pos_x - dtx
+            let dyi = (i32) g.pos_y - dty
             let adx = if dxi < 0 then -dxi else dxi
             let ady = if dyi < 0 then -dyi else dyi
             let dist_tiles = if adx > ady then adx else ady
@@ -1329,6 +1534,43 @@ module enemies =
                           else if dist_adj < 4 then roll / 8
                           else roll / 16
                 damage_player(g, ac, dmg, damage_source.bullet, e.x, e.y)
+
+        // Begin the attack cycle: first shoot pose, its hold time
+        // scaled by the Enemy Speed slider.
+        private let enter_shoot = (e: enemy*, g: game*) ->
+            let sp = sprites_for_kind(e.kind)
+            e.state = enemy_state.shoot
+            e.anim_frame = 0
+            e.anim_timer = sp.shoot_times[0] / enemy_speed_factor(g)
+
+        // Chance (out of 256) that an actor with a clear line to the
+        // player opens fire this tick. Scaled by elapsed time so the
+        // rate is tick-rate independent — the original rolls once per
+        // think against `elapsed tics × K` — and by the Enemy Speed
+        // slider so faster enemies really do fire more often.
+        //   Hitscan kinds : 16 · tics / dist, where dist is the tile
+        //                   Chebyshev distance from the tile the actor
+        //                   is heading for (see dest_tile). Point blank
+        //                   it's a certainty: 300 once that tile IS the
+        //                   player's, or is adjacent with under a
+        //                   quarter tile left to walk. An enemy that
+        //                   reaches you attacks on arrival, every time.
+        //   Needle / rocket bosses : 8 · tics, range-independent.
+        //   Fake Hitler   : 2 · tics, range-independent.
+        private let fire_chance = (e: const enemy*, g: game*, dt: f64) ->
+            let tics = dt * 70.0 * enemy_speed_factor(g)
+            match e.kind with
+            | schabbs | giftmacher | fat -> (i32) (tics * 8.0)
+            | hitler_fake                -> (i32) (tics * 2.0)
+            | _ ->
+                let { dtx, dty } = dest_tile(e)
+                let dxi = (i32) g.pos_x - dtx
+                let dyi = (i32) g.pos_y - dty
+                let adx = if dxi < 0 then -dxi else dxi
+                let ady = if dyi < 0 then -dyi else dyi
+                let dist = if adx > ady then adx else ady
+                if dist == 0 || (dist == 1 && step_remaining(e) < 0.25) then 300
+                else (i32) (tics * 16.0) / dist
 
         // Per-frame AI step for one enemy. Dispatches on state;
         // advances animation and moves continuously. Called from
@@ -1366,9 +1608,7 @@ module enemies =
             | pain ->
                 if e.anim_timer <= 0.0 then
                     e.state = enemy_state.chase
-                    e.anim_frame = 0
-                    e.anim_timer = walk_frame_time
-                    e.dir = dir.nodir
+                    restart_walk_cycle(e)
             | stand ->
                 // Two-phase wake (matches the original): on first
                 // detection we seed a per-kind reaction timer and keep
@@ -1385,41 +1625,62 @@ module enemies =
                 else if should_wake(lv, g, e) then
                     e.reaction_timer = reaction_delay_for_kind(e.kind, g)
             | path ->
+                // Walk-cycle bookkeeping first. A hold beat freezes the
+                // actor entirely — no step, and no looking for the
+                // player either, so a patroller's reaction countdown
+                // only runs while it's actually walking.
+                step_walk_cycle(e, true)
+                if e.walk_pause then return
                 if e.reaction_timer > 0.0 then
                     e.reaction_timer = e.reaction_timer - dt
                     if e.reaction_timer <= 0.0 then
                         e.reaction_timer = 0.0
                         wake_enemy(g, e, ac)
                     else
-                        advance_move(lv, g, ac, self_idx, patrol_speed, dt, false)
-                        advance_walk_anim(e)
+                        advance_move(lv, g, ac, self_idx, patrol_speed_for_kind(e.kind), dt, move_mode.patrol)
                 else if should_wake(lv, g, e) then
                     e.reaction_timer = reaction_delay_for_kind(e.kind, g)
                 else
-                    advance_move(lv, g, ac, self_idx, patrol_speed, dt, false)
-                    advance_walk_anim(e)
+                    advance_move(lv, g, ac, self_idx, patrol_speed_for_kind(e.kind), dt, move_mode.patrol)
             | chase ->
+                // Walk-cycle bookkeeping first, then the think. During a
+                // hold beat the actor stands still and doesn't consider
+                // attacking — that stutter is the original's gait, not
+                // a hitch (see the walk-cycle constants).
+                let prev_walk_frame = e.anim_frame
+                step_walk_cycle(e, false)
+                // Mech stomps: fire the mech-step cue on entering walk
+                // poses 0 and 2, matching the original's step-hook
+                // pattern on the mech's chase frames. Only on pose
+                // transitions, so we don't retrigger within a hold.
+                match e.kind with
+                | mecha_hitler ->
+                    if e.anim_frame != prev_walk_frame
+                        && (e.anim_frame == 0 || e.anim_frame == 2) then
+                        sfx.trigger_at(sfx.id.mech_step, ac, g, e.x, e.y)
+                | _ -> void()
+                if e.walk_pause then return
                 match e.kind with
                 | dog ->
                     // Dog lunge gate (matches the original): |dx|-move ≤ 1
-                    // && |dy|-move ≤ 1 in tiles. `move` is the dog's
-                    // distance-to-travel this frame, so the effective range
-                    // is 1 + step on each axis. Step here mirrors the
-                    // per-frame distance advance_move would compute, so
-                    // the Enemy Speed slider scales the lunge range too —
-                    // otherwise a sped-up dog would walk further per tick
-                    // than its lunge gate believes.
+                    // && |dy|-move ≤ 1 in tiles, and NO line-of-sight
+                    // requirement — a dog that close bites around the
+                    // corner. `move` is the dog's distance-to-travel
+                    // this frame, so the effective range is 1 + step on
+                    // each axis. Step here mirrors the per-frame distance
+                    // advance_move would compute, so the Enemy Speed
+                    // slider scales the lunge range too — otherwise a
+                    // sped-up dog would walk further per tick than its
+                    // lunge gate believes.
                     let step = dog_chase_speed * dt * enemy_speed_factor(g)
                     let adx = math.abs(g.pos_x - e.x)
                     let ady = math.abs(g.pos_y - e.y)
-                    if adx <= 1.0 + step && ady <= 1.0 + step && check_line_clear(lv, e.x, e.y, g.pos_x, g.pos_y) then
-                        let sp = sprites_for_kind(e.kind)
-                        e.state = enemy_state.shoot
-                        e.anim_frame = 0
-                        e.anim_timer = sp.shoot_times[0] / enemy_speed_factor(g)
+                    if adx <= 1.0 + step && ady <= 1.0 + step then
+                        enter_shoot(e, g)
                     else
-                        advance_move(lv, g, ac, self_idx, dog_chase_speed, dt, true)
-                        advance_walk_anim(e)
+                        // Dogs always weave in rather than charging
+                        // straight.
+                        advance_move(lv, g, ac, self_idx, dog_chase_speed, dt, move_mode.dodge)
                 | blinky | pinky | clyde | inky ->
                     // Pacman ghosts — chase silently and damage on
                     // contact; no shoot animation, no projectile.
@@ -1439,44 +1700,23 @@ module enemies =
                         // HP per approach, not a steady drain.
                         damage_player(g, ac, rnd_byte(g) >> 4, damage_source.ghost, e.x, e.y)
                         e.touch_cooldown = 0.25
-                    advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e.kind), dt, true)
-                    advance_walk_anim(e)
+                    advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e.kind), dt, move_mode.chase)
                 | _ ->
-                    // Shoot roll: the original uses (tics<<4)/dist
-                    // against a 256-range rnd. We approximate with a
-                    // dt-scaled chance so 35Hz and 70Hz tick rates
-                    // behave equivalently. chance ≈ dt*40 / max(dist, 1).
-                    // The Enemy Speed slider scales this rate
-                    // proportionally so faster enemies actually fire
-                    // faster.
+                    // With a clear line to the player, roll to open
+                    // fire (see fire_chance). An actor that could have
+                    // fired but didn't switches to the dodging
+                    // approach for this tick's movement; without a line
+                    // it pursues straight. The fake Hitler weaves
+                    // regardless.
+                    let mut dodge = false
                     if check_line_clear(lv, e.x, e.y, g.pos_x, g.pos_y) then
-                        let dxi = (i32) g.pos_x - e.tile_x
-                        let dyi = (i32) g.pos_y - e.tile_y
-                        let adx = if dxi < 0 then -dxi else dxi
-                        let ady = if dyi < 0 then -dyi else dyi
-                        let dist_tiles = if adx > ady then adx else ady
-                        let d = if dist_tiles < 1 then 1 else dist_tiles
-                        let chance = (i32) (dt * 1400.0 * enemy_speed_factor(g)) / d
-                        if rnd_byte(g) < chance then
-                            let sp = sprites_for_kind(e.kind)
-                            e.state = enemy_state.shoot
-                            e.anim_frame = 0
-                            e.anim_timer = sp.shoot_times[0] / enemy_speed_factor(g)
+                        if rnd_byte(g) < fire_chance(e, g, dt) then
+                            enter_shoot(e, g)
                             return
-                    advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e.kind), dt, true)
-                    let prev_walk_frame = e.anim_frame
-                    advance_walk_anim(e)
-                    // Mech stomps: fire the mech-step cue on walk
-                    // frames 0 and 2, matching the original's
-                    // step-hook pattern on the mech's chase frames.
-                    // Only on frame transitions, so we don't retrigger
-                    // within a single frame's hold time.
-                    match e.kind with
-                    | mecha_hitler ->
-                        if e.anim_frame != prev_walk_frame
-                            && (e.anim_frame == 0 || e.anim_frame == 2) then
-                            sfx.trigger_at(sfx.id.mech_step, ac, g, e.x, e.y)
-                    | _ -> void()
+                        dodge = true
+                    let mode = if dodge || e.kind == enemy_kind.hitler_fake then move_mode.dodge
+                               else move_mode.chase
+                    advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e.kind), dt, mode)
             | shoot ->
                 let sp = sprites_for_kind(e.kind)
                 if e.anim_timer <= 0.0 then
@@ -1506,10 +1746,11 @@ module enemies =
                         | _   -> fire_at_player(lv, g, ac, e)
                     e.anim_frame = e.anim_frame + 1
                     if e.anim_frame >= sp.num_shoot_frames then
+                        // Back to chase with heading and any half-taken
+                        // step intact — the attack was an interruption,
+                        // not a reset.
                         e.state = enemy_state.chase
-                        e.anim_frame = 0
-                        e.anim_timer = walk_frame_time
-                        e.dir = dir.nodir
+                        restart_walk_cycle(e)
                         return
                     e.anim_timer = sp.shoot_times[e.anim_frame] / enemy_speed_factor(g)
 
@@ -1518,8 +1759,8 @@ module enemies =
             for i in 0..w.lv.num_enemies do
                 update_enemy(w.lv, w.g, w.ac, i, dt, sprite_start)
             // Refresh on-screen visibility for next tick's fire_at_player
-            // falloff. Mirrors the original's FL_VISABLE: set during the
-            // frame's refresh — after every actor has moved — and read by
+            // falloff. Mirrors the original's "was drawn" flag: set during
+            // the frame's refresh — after every actor has moved — and read by
             // the shoot logic on the following tic. This previously lived
             // in billboards.build (render-only), so --test mode, which
             // never renders, left every enemy permanently not-visible and
@@ -1792,7 +2033,8 @@ module projectiles =
         // centered on the tile-corner opposite the player at (1.9, 1.9)
         // still lands a bite.
         if math.abs(dx) > 2.0 || math.abs(dy) > 2.0 then return
-        if !enemies.ai.check_line_clear(lv, e.x, e.y, g.pos_x, g.pos_y) then return
+        // No line-of-sight gate: inside that box the bite lands around
+        // a corner too, as in the original.
         if enemies.rnd_byte(g) < 180 then
             // Matches the original's bite roll: random byte >> 4
             // → 0-15 (can graze for 0).
@@ -1809,11 +2051,35 @@ module projectiles =
 module hitscan =
     import math from std::
 
-    // Return the index of the enemy the player's current fire would
-    // hit, or -1.
+    // Aim window. A target is "under the crosshair" when its projected
+    // screen position lies within a tenth of the view width of center.
+    // That's an angular test, so a distant target gets a wider lateral
+    // tolerance than a near one — at ten tiles you can be well over a
+    // tile off and still connect (the distance miss roll below is what
+    // makes long shots chancy, not aim), while at one tile you need the
+    // central half of the sprite. In world terms: |lateral| < tan · depth
+    // with tan = 32/218.75 ≈ 0.146 (a 320-wide view, but the ratio is
+    // resolution-free), and `depth` is the sprite's projection depth,
+    // which the renderer pulls a quarter tile toward the camera so shapes
+    // don't sink into walls. The depth used for the window is floored
+    // at 0.75 — the nearest depth a legally-placed actor reaches — so an
+    // actor that has walked into the player doesn't become unhittable.
+    private let aim_half_tan      = 0.1463
+    private let sprite_depth_pull = 0.25
+    private let aim_min_depth     = 0.75
+
+    // Sprite depth along the view axis, as the weapons see it.
+    private let target_depth = (g: game*, e: const enemies.enemy*) ->
+        (e.x - g.pos_x) * g.dir_x + (e.y - g.pos_y) * g.dir_y - sprite_depth_pull
+
+    // Return the index of the enemy under the crosshair, or -1: the
+    // nearest shootable enemy inside the aim window. The wall check is
+    // the caller's, done once on that enemy — a nearer target that
+    // turns out to be behind a wall soaks the shot; it doesn't fall
+    // through to the next one.
     private let find_hit_enemy = (lv: level*, g: game*) ->
         let mut best_idx = -1
-        let mut best_dist = 1e6
+        let mut best_depth = 1e6
         for i in 0..lv.num_enemies do
             let e = &lv.enemies[i]
             match e.state with
@@ -1822,32 +2088,28 @@ module hitscan =
             // Pacman ghosts have no shootable flag in the original — bullets
             // and knife pass through them entirely.
             if enemies.kind_is_ghost(e.kind) then continue
+            let depth = target_depth(g, e)
+            if depth <= 0.1 - sprite_depth_pull || depth >= best_depth then continue
             let rx = e.x - g.pos_x
             let ry = e.y - g.pos_y
-            let proj = rx * g.dir_x + ry * g.dir_y
-            if proj <= 0.1 || proj >= best_dist then continue
             let perp = rx * g.dir_y - ry * g.dir_x
-            let pabs = math.abs(perp)
-            // Half-tile wide "enemy hitbox". Most enemies are ~0.7
-            // wide in Wolf3D; 0.5 is a forgiving compromise for our
-            // raycaster where sprites render at the full tile scale.
-            if pabs >= 0.5 then continue
-            if !enemies.ai.check_line_clear(lv, g.pos_x, g.pos_y, e.x, e.y) then continue
+            let win_depth = if depth < aim_min_depth then aim_min_depth else depth
+            if math.abs(perp) >= aim_half_tan * win_depth then continue
             best_idx = i
-            best_dist = proj
+            best_depth = depth
         best_idx
 
     // Per-weapon damage. Matches the original game's knife/gun
     // damage rolls, using our PCG `rnd_byte` (0-255) in place of the
-    // original's random source. `euclid_dist` is the raw distance
-    // from player to enemy (used only for the knife range gate —
-    // knife reach is ~1.5 tiles). `tile_dist` is the Chebyshev
-    // (max-axis) distance in tile units, which is what the gun
-    // damage bands key off.
-    private let weapon_damage_roll = (g: game*, wp: weapon, euclid_dist: f64, tile_dist: i32) ->
+    // original's random source. `depth` is the target's sprite depth
+    // (see target_depth; used only for the knife reach gate — the
+    // knife connects up to 1.5 tiles of it). `tile_dist` is the
+    // Chebyshev (max-axis) distance in tile units, which is what the
+    // gun damage bands key off.
+    private let weapon_damage_roll = (g: game*, wp: weapon, depth: f64, tile_dist: i32) ->
         if wp == weapon.knife then
             // Knife — flat roll within melee reach, zero beyond.
-            if euclid_dist > 1.5 then 0
+            if depth > 1.5 then 0
             else enemies.rnd_byte(g) >> 4   // 0-15
         else
             // Firearms — three damage bands by tile Chebyshev distance,
@@ -1881,16 +2143,17 @@ module hitscan =
         let idx = find_hit_enemy(lv, g)
         if idx < 0 then return
         let e = &lv.enemies[idx]
-        let rx = e.x - g.pos_x
-        let ry = e.y - g.pos_y
-        let dist = math.sqrt(rx * rx + ry * ry)
+        if !enemies.ai.check_line_clear(lv, g.pos_x, g.pos_y, e.x, e.y) then return
+        let depth = target_depth(g, e)
         // Tile Chebyshev for the gun damage bands — integer tile coords
-        // for both endpoints, max of |dx|, |dy|.
+        // for both endpoints, max of |dx|, |dy|. The enemy's tile is
+        // the one it's heading for, as everywhere else in the AI.
         let pxi = (i32) g.pos_x
         let pyi = (i32) g.pos_y
-        let adx = if (e.tile_x - pxi) < 0 then pxi - e.tile_x else e.tile_x - pxi
-        let ady = if (e.tile_y - pyi) < 0 then pyi - e.tile_y else e.tile_y - pyi
+        let { etx, ety } = enemies.ai.dest_tile(e)
+        let adx = if (etx - pxi) < 0 then pxi - etx else etx - pxi
+        let ady = if (ety - pyi) < 0 then pyi - ety else ety - pyi
         let tile_dist = if adx > ady then adx else ady
-        let dmg = weapon_damage_roll(g, g.weapon, dist, tile_dist)
+        let dmg = weapon_damage_roll(g, g.weapon, depth, tile_dist)
         if dmg <= 0 then return
         enemies.ai.damage_enemy(lv, g, ac, e, idx, dmg, sprite_start)

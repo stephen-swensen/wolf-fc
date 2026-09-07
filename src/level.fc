@@ -1119,6 +1119,8 @@ module spawn =
             reaction_timer = 0.0,
             last_visible = false,
             touch_cooldown = 0.0,
+            first_attack = false,
+            walk_pause = false,
             mommy_fade_t = 0.0,
             mommy_fade_page = -1
         }
