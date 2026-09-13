@@ -188,7 +188,7 @@ module input =
                             let ep = g.level_num / episode.levels_per
                             high_scores_screen.enter(g, w.hs,
                                 hs_source.endart,
-                                g.score, g.level_num + 1, ep)
+                                g.score, g.level_num % episode.levels_per + 1, ep)
                         else if k == sdl2.key_right || k == sdl2.key_down
                                 || k == sdl2.key_pagedown
                                 || k == sdl2.key_return
@@ -756,10 +756,11 @@ module input =
                                 else none(weapon)
                             match want_weapon with
                             | some(wp) when g.phase == game_phase.playing
-                               && g.fire_timer <= 0.0
+                               && !g.attacking
                                && g.ammo > 0
                                && wp <= g.best_weapon ->
                                 g.weapon = wp
+                                g.chosen_weapon = wp
                             | _ -> void()
                             // Cheat-chord held-flags. M/L/I/B/A/T have no other
                             // in-game action (M used to toggle music but that

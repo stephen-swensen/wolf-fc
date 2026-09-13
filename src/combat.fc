@@ -121,10 +121,12 @@ module enemies =
         anim_frame: i32       // index into the state's frame list (walk 0-3, shoot 0-2, die 0-3)
         anim_timer: f64       // seconds until next anim transition
         ambush: bool          // tile 106 (AMBUSH) — don't wake on sound, only LOS
-        notified: bool        // has entered active pursuit at least once (suppresses re-alert sound)
+        notified: bool        // alert vocal already played — the original plays it exactly once per actor, on the first-sighting transition, whether that came from sight/noise or from a hit the actor survived
         reaction_timer: f64   // seconds left between first detection and actual wake; 0 when not yet detected (mirrors the original's sight-delay)
         last_visible: bool    // refreshed by ai.update_enemies each tick (post-move, like the original's end-of-frame "was drawn" flag) when the enemy is on screen; read on the following tick by fire_at_player to pick the steeper hitchance falloff
-        touch_cooldown: f64   // ghost-only: refractory window after a bite. The original steps the ghost physically back out of the player's contact bbox after a hit; our advance_move is grid-based, so we emulate the gap with a short timer.
+        active: bool          // sticky "has ever been drawn" (the original's per-actor active flag). Patrollers spawn with it set; everyone else earns it the first time they're on screen. Until then an actor whose area isn't player-connected doesn't think at all — see update_enemies.
+        waiting_door: i32     // door index this actor is parked in front of, waiting for it to open (-1 = none). It keeps its heading meanwhile, as in the original.
+        scream_timer: f64     // die state: seconds until the death vocal plays (the original fires it when the first die frame expires); < 0 = played / none pending
         first_attack: bool    // set on wake; the first dodge-mode direction pick after sighting may reverse heading outright. Cleared by that pick.
         walk_pause: bool      // in one of the walk cycle's hold beats (after poses 1 and 3): the actor neither moves nor considers firing until it ends
         // Mommy Mode fade-on-death state. Set at the moment kill_enemy
@@ -150,14 +152,14 @@ module enemies =
     //   officer×5, real-hitler×5    (2560)         → 2.7344
     //   ss×4                         (2048)        → 2.1875
     //   dog×2                        (3000)        → 3.2043
-    //   ghost (base×2 = 1024)                      → 1.0938
+    //   ghost (dog speed, 1500)                    → 1.6022
     private let patrol_speed         = 0.5469
     private let dog_patrol_speed     = 1.6022
     private let guard_chase_speed    = 1.6406   // also mutants + bosses (Hans, Schabbs, Gretel, Giftmacher, Fat, Fake/Mecha Hitler)
     private let officer_chase_speed  = 2.7344   // also real Hitler
     private let ss_chase_speed       = 2.1875
     private let dog_chase_speed      = 3.2043
-    private let ghost_chase_speed    = 1.0938
+    private let ghost_chase_speed    = 1.6022   // spawned with the dog's speed and never scaled up (no first-sighting)
     // Walk cycle (seconds, from 70 Hz tics). Four poses, but the cycle
     // isn't uniform: poses 1 and 3 are followed by a short *hold* beat
     // during which the actor stands still and doesn't consider firing.
@@ -167,15 +169,30 @@ module enemies =
     // closing speed by 1/7 (chase) and 1/8 (patrol); modeling it keeps
     // the speeds honest AND reproduces the original's stutter-step gait.
     // Ghosts run a plain 2-pose 10/10 cycle with no holds.
-    let walk_frame_time       = 10.0 / 70.0   // pose 1 / 3 hold-in-place duration on chase; also the reset value on every chase entry
+    // Mecha Hitler's holds are 6 tics; Real Hitler runs a tight
+    // 6 · 4 · 2 · 6 · 4 · 2 cycle — his ×5 speed on a 24-tic cycle is
+    // the twitchy sprint the original has.
+    let walk_frame_time       = 10.0 / 70.0   // pose 1 / 3 duration on chase (most kinds); also the reset value on every chase entry
     private let chase_hold_time      =  3.0 / 70.0
     private let chase_pose_b_time    =  8.0 / 70.0   // poses 2 / 4
+    private let chase_pose_a_for_kind = (k: enemy_kind) ->
+        match k with
+        | hitler -> 6.0 / 70.0
+        | _      -> walk_frame_time
+    private let chase_hold_for_kind = (k: enemy_kind) ->
+        match k with
+        | mecha_hitler -> 6.0 / 70.0
+        | hitler       -> 4.0 / 70.0
+        | _            -> chase_hold_time
+    private let chase_pose_b_for_kind = (k: enemy_kind) ->
+        match k with
+        | hitler -> 2.0 / 70.0
+        | _      -> chase_pose_b_time
     private let patrol_pose_a_time   = 20.0 / 70.0
     private let patrol_hold_time     =  5.0 / 70.0
     private let patrol_pose_b_time   = 15.0 / 70.0
     private let ghost_pose_time      = 10.0 / 70.0
     private let pain_time           = 0.143 // pain flinch duration (10 tics @ 70Hz)
-    let die_frame_time      = 15.0 / 70.0  // 15 tics per frame during death animation
     // Mommy Mode: how long an enemy takes to fade from fully visible to
     // fully gone, in place of the original 3-or-4-frame die animation.
     // Picked to sit between the kinds' natural die durations
@@ -206,8 +223,11 @@ module enemies =
         walk_base: i32
         pain1: i32
         pain2: i32
-        die_frames: i32[4]
+        die_frames: i32[8]
         num_die_frames: i32
+        die_frame_time: f64     // seconds per die frame (the original: 15 tics for most, 11 officer, 7 mutant, 10 bosses)
+        die_hold_time: f64      // death-cam bosses stand on their first walk pose this long before collapsing (the original's 1+140 / 10+140 tic hold, sized to the death vocal)
+        scream_delay: f64       // seconds after the kill when the death vocal plays (end of the original's first die state)
         dead_frame: i32
         // 9 slots: SS and Fake Hitler have 9-frame shoot cycles in the
         // original. Shorter cycles leave the trailing entries unused —
@@ -335,25 +355,6 @@ module enemies =
         | dog | hitler_fake | blinky | pinky | clyde | inky -> false
         | _ -> true
 
-    // True iff the kind may walk onto the player's tile during chase.
-    // Contact-attack kinds (lunge bite, touch damage) need this: their
-    // attack gate is world-coord and only fires when the actor is very
-    // close. If a corridor's walls don't leave a detour around the
-    // player's tile and the player is offset far enough from tile center
-    // that the attack gate hasn't yet passed, blocking the player's tile
-    // strands the actor — it would oscillate against the wall instead
-    // of closing. In the original this is implicit: the walk check
-    // only refuses a destination tile occupied by a *shootable* actor,
-    // and the player is never marked on the occupancy grid at all —
-    // actors are kept out of the player by a world-space back-off
-    // instead. Ranged kinds keep the standard "player tile blocks"
-    // rule so a fleeing guard doesn't end up clipped inside the
-    // camera.
-    private let kind_walks_onto_player = (k: enemy_kind) ->
-        match k with
-        | dog | blinky | pinky | clyde | inky -> true
-        | _ -> false
-
     // Bitmask: bit N set = fire (or bite) on entering shoot-frame N.
     // Each kind's frame table now matches the original's full state
     // sequence, so masks line up bit-for-bit with which frames carry
@@ -418,7 +419,8 @@ module enemies =
     private let sprites_guard = sprite_table {
         stand_base = 50, walk_base = 58,
         pain1 = 90, pain2 = 94,
-        die_frames = i32[4] { 91, 92, 93, 0 }, num_die_frames = 3,
+        die_frames = i32[8] { 91, 92, 93, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frame_time = 15.0 / 70.0, die_hold_time = 0.0, scream_delay = 15.0 / 70.0,
         dead_frame = 95,
         shoot_frames = i32[9] { 96, 97, 98, 0, 0, 0, 0, 0, 0 },
         shoot_times  = f64[9] { 20.0/70.0, 20.0/70.0, 20.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
@@ -429,7 +431,8 @@ module enemies =
     private let sprites_dog = sprite_table {
         stand_base = 99, walk_base = 99,
         pain1 = 99, pain2 = 99,  // dogs don't show pain
-        die_frames = i32[4] { 131, 132, 133, 0 }, num_die_frames = 3,
+        die_frames = i32[8] { 131, 132, 133, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 15.0 / 70.0,
         dead_frame = 134,
         shoot_frames = i32[9] { 135, 136, 137, 135, 99, 0, 0, 0, 0 },
         shoot_times  = f64[9] { 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0 },
@@ -441,7 +444,8 @@ module enemies =
     private let sprites_ss = sprite_table {
         stand_base = 138, walk_base = 146,
         pain1 = 178, pain2 = 182,
-        die_frames = i32[4] { 179, 180, 181, 0 }, num_die_frames = 3,
+        die_frames = i32[8] { 179, 180, 181, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 15.0 / 70.0,
         dead_frame = 183,
         shoot_frames = i32[9] { 184, 185, 186, 185, 186, 185, 186, 185, 186 },
         shoot_times  = f64[9] { 20.0/70.0, 20.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0 },
@@ -453,7 +457,8 @@ module enemies =
     private let sprites_mut = sprite_table {
         stand_base = 187, walk_base = 195,
         pain1 = 227, pain2 = 231,
-        die_frames = i32[4] { 228, 229, 230, 232 }, num_die_frames = 4,
+        die_frames = i32[8] { 228, 229, 230, 232, 0, 0, 0, 0 }, num_die_frames = 4,
+        die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 0.0 / 70.0,
         dead_frame = 233,
         shoot_frames = i32[9] { 234, 235, 236, 237, 0, 0, 0, 0, 0 },
         shoot_times  = f64[9] { 6.0/70.0, 20.0/70.0, 10.0/70.0, 20.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
@@ -464,7 +469,8 @@ module enemies =
     private let sprites_ofc = sprite_table {
         stand_base = 238, walk_base = 246,
         pain1 = 278, pain2 = 282,
-        die_frames = i32[4] { 279, 280, 281, 283 }, num_die_frames = 4,
+        die_frames = i32[8] { 279, 280, 281, 283, 0, 0, 0, 0 }, num_die_frames = 4,
+        die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 0.0 / 70.0,
         dead_frame = 284,
         shoot_frames = i32[9] { 285, 286, 287, 0, 0, 0, 0, 0, 0 },
         shoot_times  = f64[9] { 6.0/70.0, 20.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
@@ -476,7 +482,8 @@ module enemies =
     private let sprites_hans = sprite_table {
         stand_base = 296, walk_base = 296,
         pain1 = 300, pain2 = 300,
-        die_frames = i32[4] { 304, 305, 306, 0 }, num_die_frames = 3,
+        die_frames = i32[8] { 304, 305, 306, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 15.0 / 70.0,
         dead_frame = 303,
         shoot_frames = i32[9] { 300, 301, 302, 301, 302, 301, 302, 300, 0 },
         shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0 },
@@ -486,7 +493,8 @@ module enemies =
     private let sprites_schabbs = sprite_table {
         stand_base = 307, walk_base = 307,
         pain1 = 311, pain2 = 311,
-        die_frames = i32[4] { 313, 314, 315, 0 }, num_die_frames = 3,
+        die_frames = i32[8] { 313, 314, 315, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frame_time = 10.0 / 70.0, die_hold_time = 150.0 / 70.0, scream_delay = 10.0 / 70.0,
         dead_frame = 316,
         shoot_frames = i32[9] { 311, 312, 0, 0, 0, 0, 0, 0, 0 },
         shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
@@ -499,7 +507,8 @@ module enemies =
     private let sprites_hitler_fake = sprite_table {
         stand_base = 321, walk_base = 321,
         pain1 = 325, pain2 = 325,
-        die_frames = i32[4] { 328, 329, 330, 331 }, num_die_frames = 4,
+        die_frames = i32[8] { 328, 329, 330, 331, 332, 0, 0, 0 }, num_die_frames = 5,
+        die_frame_time = 10.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 10.0 / 70.0,
         dead_frame = 333,
         shoot_frames = i32[9] { 325, 325, 325, 325, 325, 325, 325, 325, 325 },
         shoot_times  = f64[9] { 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0 },
@@ -512,18 +521,20 @@ module enemies =
     private let sprites_mecha_hitler = sprite_table {
         stand_base = 334, walk_base = 334,
         pain1 = 338, pain2 = 338,
-        die_frames = i32[4] { 342, 343, 344, 0 }, num_die_frames = 3,
+        die_frames = i32[8] { 342, 343, 344, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frame_time = 10.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 10.0 / 70.0,
         dead_frame = 341,
         shoot_frames = i32[9] { 338, 339, 340, 339, 340, 339, 0, 0, 0 },
         shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 6
     }
-    // Real Hitler — same shoot cadence as Mecha (30/10×5). Has 7 die
-    // frames in the original; we truncate to the 4 the struct holds.
+    // Real Hitler — same shoot cadence as Mecha (30/10×5); seven die
+    // frames after the long upright hold.
     private let sprites_hitler = sprite_table {
         stand_base = 345, walk_base = 345,
         pain1 = 349, pain2 = 349,
-        die_frames = i32[4] { 353, 354, 355, 356 }, num_die_frames = 4,
+        die_frames = i32[8] { 353, 354, 355, 356, 357, 358, 359, 0 }, num_die_frames = 7,
+        die_frame_time = 10.0 / 70.0, die_hold_time = 141.0 / 70.0, scream_delay = 1.0 / 70.0,
         dead_frame = 352,
         shoot_frames = i32[9] { 349, 350, 351, 350, 351, 350, 0, 0, 0 },
         shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
@@ -533,7 +544,8 @@ module enemies =
     private let sprites_giftmacher = sprite_table {
         stand_base = 360, walk_base = 360,
         pain1 = 364, pain2 = 364,
-        die_frames = i32[4] { 366, 367, 368, 0 }, num_die_frames = 3,
+        die_frames = i32[8] { 366, 367, 368, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frame_time = 10.0 / 70.0, die_hold_time = 141.0 / 70.0, scream_delay = 1.0 / 70.0,
         dead_frame = 369,
         shoot_frames = i32[9] { 364, 365, 0, 0, 0, 0, 0, 0, 0 },
         shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
@@ -544,7 +556,8 @@ module enemies =
     private let sprites_gretel = sprite_table {
         stand_base = 385, walk_base = 385,
         pain1 = 389, pain2 = 389,
-        die_frames = i32[4] { 393, 394, 395, 0 }, num_die_frames = 3,
+        die_frames = i32[8] { 393, 394, 395, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 15.0 / 70.0,
         dead_frame = 392,
         shoot_frames = i32[9] { 389, 390, 391, 390, 391, 390, 391, 389, 0 },
         shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0 },
@@ -558,7 +571,8 @@ module enemies =
     private let sprites_fat = sprite_table {
         stand_base = 396, walk_base = 396,
         pain1 = 400, pain2 = 400,
-        die_frames = i32[4] { 404, 405, 406, 0 }, num_die_frames = 3,
+        die_frames = i32[8] { 404, 405, 406, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frame_time = 10.0 / 70.0, die_hold_time = 141.0 / 70.0, scream_delay = 1.0 / 70.0,
         dead_frame = 407,
         shoot_frames = i32[9] { 400, 401, 402, 403, 402, 403, 0, 0, 0 },
         shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
@@ -570,7 +584,8 @@ module enemies =
     private let sprites_blinky = sprite_table {
         stand_base = 288, walk_base = 288,
         pain1 = 288, pain2 = 289,
-        die_frames = i32[4] { 288, 289, 0, 0 }, num_die_frames = 2,
+        die_frames = i32[8] { 288, 289, 0, 0, 0, 0, 0, 0 }, num_die_frames = 2,
+        die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 0.0 / 70.0,
         dead_frame = 289,
         shoot_frames = i32[9] { 288, 0, 0, 0, 0, 0, 0, 0, 0 },
         shoot_times  = f64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
@@ -579,7 +594,8 @@ module enemies =
     private let sprites_pinky = sprite_table {
         stand_base = 290, walk_base = 290,
         pain1 = 290, pain2 = 291,
-        die_frames = i32[4] { 290, 291, 0, 0 }, num_die_frames = 2,
+        die_frames = i32[8] { 290, 291, 0, 0, 0, 0, 0, 0 }, num_die_frames = 2,
+        die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 0.0 / 70.0,
         dead_frame = 291,
         shoot_frames = i32[9] { 290, 0, 0, 0, 0, 0, 0, 0, 0 },
         shoot_times  = f64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
@@ -588,7 +604,8 @@ module enemies =
     private let sprites_clyde = sprite_table {
         stand_base = 292, walk_base = 292,
         pain1 = 292, pain2 = 293,
-        die_frames = i32[4] { 292, 293, 0, 0 }, num_die_frames = 2,
+        die_frames = i32[8] { 292, 293, 0, 0, 0, 0, 0, 0 }, num_die_frames = 2,
+        die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 0.0 / 70.0,
         dead_frame = 293,
         shoot_frames = i32[9] { 292, 0, 0, 0, 0, 0, 0, 0, 0 },
         shoot_times  = f64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
@@ -597,7 +614,8 @@ module enemies =
     private let sprites_inky = sprite_table {
         stand_base = 294, walk_base = 294,
         pain1 = 294, pain2 = 295,
-        die_frames = i32[4] { 294, 295, 0, 0 }, num_die_frames = 2,
+        die_frames = i32[8] { 294, 295, 0, 0, 0, 0, 0, 0 }, num_die_frames = 2,
+        die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 0.0 / 70.0,
         dead_frame = 295,
         shoot_frames = i32[9] { 294, 0, 0, 0, 0, 0, 0, 0, 0 },
         shoot_times  = f64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
@@ -682,6 +700,10 @@ module enemies =
         | die ->
             if mommy_mode_fade && e.mommy_fade_page >= 0 then
                 e.mommy_fade_page
+            else if e.anim_frame < 0 then
+                // The upright hold before a death-cam boss collapses:
+                // the first walk pose, as in the original.
+                sp.walk_base
             else
                 let f = if e.anim_frame < sp.num_die_frames then e.anim_frame else sp.num_die_frames - 1
                 sp.die_frames[f]
@@ -822,10 +844,9 @@ module enemies =
                 else check_line_clear(lv, e.x, e.y, g.pos_x, g.pos_y)
 
         // True iff the tile at (tx, ty) is passable for an enemy trying
-        // to move INTO it. Walls block; the player's tile blocks for
-        // ranged kinds (so enemies don't walk into the camera) but is
-        // open to dogs and ghosts so their contact attacks can close —
-        // see kind_walks_onto_player. Other live enemies block; a
+        // to move INTO it. Walls block. The player's tile does not —
+        // the original keeps actors off the player with the one-tile
+        // stand-off in advance_move instead. Other live enemies block; a
         // corpse or an actor mid death-fall does not. Doors of any
         // state are routable for a cardinal step — advance_move
         // handles the wait-for-open pause and triggers the door to
@@ -856,8 +877,6 @@ module enemies =
                 // same rule applies to everyone on a diagonal step.
                 else if t >= 128 && (diagonal || !kind_opens_doors(e.kind))
                         && lv.doors[t - 128].state != doors.door_state.open then false
-                else if (i32) g.pos_x == tx && (i32) g.pos_y == ty
-                        && !kind_walks_onto_player(e.kind) then false
                 else
                     let mut blocked = false
                     for j in 0..lv.num_enemies do
@@ -1025,12 +1044,44 @@ module enemies =
             | patrol     // follow the current heading / floor arrows
             | chase      // straight pursuit
             | dodge      // zig-zag pursuit (has line of sight, didn't fire)
+            | run        // kiting away from the player (projectile bosses inside four tiles)
 
         private let select_dir = (lv: level*, g: game*, self_idx: i32, mode: move_mode) ->
             match mode with
             | patrol -> select_path_dir(lv, g, self_idx)
             | chase  -> select_chase_dir(lv, g, self_idx)
             | dodge  -> select_dodge_dir(lv, g, self_idx)
+            | run    -> select_run_dir(lv, g, self_idx)
+
+        // Run-away selector — the projectile bosses (Schabbs,
+        // Giftmacher, Fat Face) use it whenever they re-pick a heading
+        // within four tiles of the player, so they kite instead of
+        // closing. The two cardinals pointing away from the player,
+        // longer axis first, then a cardinal scan in a random order;
+        // no turnaround preference at all.
+        private let select_run_dir = (lv: level*, g: game*, self_idx: i32) ->
+            let e = &lv.enemies[self_idx]
+            let dxi = (i32) g.pos_x - e.tile_x
+            let dyi = (i32) g.pos_y - e.tile_y
+            let adx = if dxi < 0 then -dxi else dxi
+            let ady = if dyi < 0 then -dyi else dyi
+            let mut d1 = if dxi < 0 then dir.east else dir.west
+            let mut d2 = if dyi < 0 then dir.south else dir.north
+            if ady > adx then
+                let t = d1
+                d1 = d2
+                d2 = t
+            e.dir = d1
+            if try_enemy_walk(lv, g, self_idx, d1) then return
+            e.dir = d2
+            if try_enemy_walk(lv, g, self_idx, d2) then return
+            let scan = dir[4] { dir.north, dir.northwest, dir.west, dir.southwest }
+            let forward = rnd_byte(g) > 128
+            for k in 0..4 do
+                let d = scan[if forward then k else 3 - k]
+                e.dir = d
+                if try_enemy_walk(lv, g, self_idx, d) then return
+            e.dir = dir.nodir
 
         // Patrol: keep walking in the current heading. If the current
         // tile carries a path-arrow marker (plane-1 90..97, pre-
@@ -1091,7 +1142,18 @@ module enemies =
         // closed or animating door, kicks it to opening (with sound)
         // and pauses at the current tile center until it's fully open
         // — matches the original's chase-step door-open logic.
-        let advance_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: i32, speed: f64, dt: f64, mode: move_mode) ->
+        // Would an actor at (nx, ny) be inside the one-tile box around
+        // the player? Only counts while its room is connected to the
+        // player's, as in the original.
+        private let inside_player_box = (lv: level*, g: game*, e: enemy*, nx: f64, ny: f64) ->
+            let area = (i32) lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
+            if area >= areas.num_areas || !lv.area_by_player[area] then false
+            else
+                let dx = nx - g.pos_x
+                let dy = ny - g.pos_y
+                dx >= -1.0 && dx <= 1.0 && dy >= -1.0 && dy <= 1.0
+
+        let advance_move = (lv: level*, g: game*, ac: audio_ctx*, self_idx: i32, speed: f64, dt: f64, mode: move_mode, park_mode: move_mode) ->
             // Enemy Speed slider — scales every patrol + chase speed.
             // Applied here (the single chokepoint for all enemy
             // movement) so callers stay unaware. 100 = OG-faithful.
@@ -1099,8 +1161,21 @@ module enemies =
             loop
                 if step <= 1e-6 then break
                 let e = &lv.enemies[self_idx]
-                if e.dir == dir.nodir || at_tile_center(e) then
-                    select_dir(lv, g, self_idx, mode)
+                if e.waiting_door >= 0 then
+                    // Parked in front of a door with the heading kept:
+                    // keep asking for it every tick (an open door gets
+                    // its hold timer reset, a closing one reverses) and
+                    // walk on only once it stands fully open.
+                    let dn = e.waiting_door
+                    doors.actor_open(lv, dn, g, ac)
+                    if lv.doors[dn].state != doors.door_state.open then break
+                    e.waiting_door = -1
+                else if e.dir == dir.nodir || at_tile_center(e) then
+                    // A blocked-in actor's fresh pick uses the caller's
+                    // park mode; a heading re-picked on reaching a tile
+                    // centre uses the move mode (they differ only for
+                    // the kiting bosses).
+                    select_dir(lv, g, self_idx, if e.dir == dir.nodir then park_mode else mode)
                     if e.dir == dir.nodir then break
                 let ntx = e.tile_x + dir.dx[e.dir]
                 let nty = e.tile_y + dir.dy[e.dir]
@@ -1108,10 +1183,10 @@ module enemies =
                     let nt = (i32) lv.tilemap[(i64) ntx * 64 + (i64) nty]
                     if nt >= 128 && lv.doors[nt - 128].state != doors.door_state.open then
                         if kind_opens_doors(e.kind) then
-                            if lv.doors[nt - 128].state == doors.door_state.closed then
-                                doors.start_opening(lv, nt - 128, g, ac)
+                            doors.actor_open(lv, nt - 128, g, ac)
                             e.x = (f64) e.tile_x + 0.5
                             e.y = (f64) e.tile_y + 0.5
+                            e.waiting_door = nt - 128
                             break
                         else
                             // Door is a solid wall to this kind — abort
@@ -1127,8 +1202,19 @@ module enemies =
                 let remaining = if dir.dx[e.dir] != 0 then math.abs((f64) ntx + 0.5 - e.x)
                                 else math.abs((f64) nty + 0.5 - e.y)
                 if step < remaining then
-                    e.x = e.x + (f64) dir.dx[e.dir] * step
-                    e.y = e.y + (f64) dir.dy[e.dir] * step
+                    // The stand-off: a step that would land inside the
+                    // one-tile box around the player (per axis, and
+                    // only while the rooms are connected) is backed
+                    // out — the actor marks time against you, and a
+                    // ghost drains two points per tic while it does.
+                    let nx = e.x + (f64) dir.dx[e.dir] * step
+                    let ny = e.y + (f64) dir.dy[e.dir] * step
+                    if inside_player_box(lv, g, e, nx, ny) then
+                        if kind_is_ghost(e.kind) then
+                            damage_player(g, ac, (i32) (dt * 70.0) * 2, damage_source.ghost, e.x, e.y)
+                    else
+                        e.x = nx
+                        e.y = ny
                     step = 0.0
                 else
                     e.x = (f64) ntx + 0.5
@@ -1154,19 +1240,19 @@ module enemies =
                 else if e.walk_pause then
                     e.walk_pause = false
                     e.anim_frame = (e.anim_frame + 1) % 4
-                    e.anim_timer = e.anim_timer + (if patrol then patrol_pose_b_time else chase_pose_b_time)
+                    e.anim_timer = e.anim_timer + (if patrol then patrol_pose_b_time else chase_pose_b_for_kind(e.kind))
                 else if e.anim_frame == 0 || e.anim_frame == 2 then
                     e.walk_pause = true
-                    e.anim_timer = e.anim_timer + (if patrol then patrol_hold_time else chase_hold_time)
+                    e.anim_timer = e.anim_timer + (if patrol then patrol_hold_time else chase_hold_for_kind(e.kind))
                 else
                     e.anim_frame = (e.anim_frame + 1) % 4
-                    e.anim_timer = e.anim_timer + (if patrol then patrol_pose_a_time else walk_frame_time)
+                    e.anim_timer = e.anim_timer + (if patrol then patrol_pose_a_time else chase_pose_a_for_kind(e.kind))
 
         // (Re)start the walk cycle from pose 1 with a full hold-free
         // beat ahead — every entry into chase does this.
         private let restart_walk_cycle = (e: enemy*) ->
             e.anim_frame = 0
-            e.anim_timer = walk_frame_time
+            e.anim_timer = chase_pose_a_for_kind(e.kind)
             e.walk_pause = false
 
         // Player damage path — one place so every damage source routes
@@ -1190,15 +1276,20 @@ module enemies =
             match g.phase with
             | playing -> void()
             | _       -> return
-            // IDDQD god mode: silently swallow damage. Intentionally
-            // no damage flash or pain sound so the cheat reads as
-            // "nothing even touched you" rather than a hit absorbed.
-            if g.god_mode then return
             // "Can I Play Daddy" difficulty quarters incoming damage
             // (matches the original's >>2 shift on baby difficulty).
-            // After the shift a 1-3 point hit rounds to 0, same as
-            // the original where health -= 0 is a silent no-op.
             let dmg = if g.difficulty == difficulty.baby then dmg_in >> 2 else dmg_in
+            // God mode (the original's, and our IDDQD) keeps the
+            // health but still takes the flash and the face grimace:
+            // the hit registers, it just doesn't hurt.
+            if g.god_mode then
+                g.damage_flash_timer = player.damage_flash_time
+                g.face_count = 256.0
+                return
+            // After the baby shift a 1-3 point hit rounds to 0, same as
+            // the original where health -= 0 is a silent no-op — no
+            // flash either, since the original scales the flash by the
+            // shifted points.
             if dmg <= 0 then return
             // Last-attacker latch for the dying-face renderer: only
             // the Schabbs needle swaps BJ's dead face for the mutant-BJ
@@ -1224,10 +1315,10 @@ module enemies =
                 g.killer_x = kx
                 g.killer_y = ky
                 g.killer_active = true
-                // Death scream on lethal damage; regular pain otherwise.
                 sfx.trigger(sfx.id.player_death, ac)
-            else
-                sfx.trigger(sfx.id.pain, ac)
+            // No grunt on a survived hit: the original's damage routine
+            // is silent (its take-damage sample is never triggered),
+            // only the death cry plays.
 
         // Drop a pickup sprite at (x, y). Reuses empty sprite slots
         // from earlier pickups before growing the list — prevents the
@@ -1254,16 +1345,21 @@ module enemies =
         private let guard_death_sounds = sfx.id[8] {
             sfx.id.death_1, sfx.id.death_2, sfx.id.death_3, sfx.id.death_4,
             sfx.id.death_5, sfx.id.death_7, sfx.id.death_8, sfx.id.death_9
-            // death_1..9 without #6 — the original reserves #6
-            // for a map-9 easter-egg roll (1/256), not part of the
-            // regular pool; not currently emulated here.
+            // death_1..9 without #6 — the original reserves #6 for
+            // the tenth floor's easter egg (see death_scream_for_kind).
         }
 
         // Per-kind death vocal (matches the original's per-kind death
-        // scream lookup). Mutants are silent; ghosts (pacman) are
-        // silent. Returns none for those cases so callers can skip the
-        // sfx.trigger_at call.
+        // scream lookup). Ghosts (pacman) are silent. On a tenth floor
+        // (the secret levels) any grunt or dog has a 1-in-256 chance
+        // of the reserved sixth scream instead — the original's easter
+        // egg, rolled before the guard's regular pick.
         let death_scream_for_kind = (k: enemy_kind, g: game*) ->
+            let grunt = match k with
+                | guard | officer | ss | mutant | dog -> true
+                | _ -> false
+            if grunt && g.level_num % episode.levels_per == 9 && rnd_byte(g) == 0 then
+                return some(sfx.id.death_6)
             match k with
             | dog          -> some(sfx.id.dog_death)
             | ss           -> some(sfx.id.leben)        // "Mein Leben!"
@@ -1302,6 +1398,64 @@ module enemies =
             // Heading carries over from the mech, as in the original.
             e.notified       = true
             e.reaction_timer = 0.0
+            // The original spawns Real Hitler as a brand-new actor, so
+            // his drawn flag starts clear even though the mech's was set.
+            e.active         = false
+            e.waiting_door   = -1
+            e.scream_timer   = -1.0
+
+        // The death vocal: boss lines play flat at full volume (the
+        // original fires them unlocated), everyone else's is positioned.
+        private let play_death_scream = (g: game*, ac: audio_ctx*, e: enemy*) ->
+            match death_scream_for_kind(e.kind, g) with
+            | some(snd) ->
+                if kind_is_boss(e.kind) then sfx.trigger(snd, ac)
+                else sfx.trigger_at(snd, ac, g, e.x, e.y)
+            | none -> void()
+
+        // One tick of the die sequence's timers: the pending death
+        // vocal, then the frame step when the current slice expires
+        // (anim_timer has already been decremented by the caller).
+        // Real Hitler's first collapse frame ends with the slurp cue,
+        // as in the original.
+        private let advance_die = (g: game*, ac: audio_ctx*, e: enemy*, dt: f64) ->
+            if e.scream_timer >= 0.0 then
+                e.scream_timer = e.scream_timer - dt
+                if e.scream_timer <= 0.0 then
+                    e.scream_timer = -1.0
+                    play_death_scream(g, ac, e)
+            if e.anim_timer <= 0.0 then
+                let sp = sprites_for_kind(e.kind)
+                if e.anim_frame < 0 then
+                    e.anim_frame = 0
+                    e.anim_timer = e.anim_timer + sp.die_frame_time
+                else
+                    e.anim_frame = e.anim_frame + 1
+                    if e.kind == enemy_kind.hitler && e.anim_frame == 1 then
+                        sfx.trigger(sfx.id.slurpie, ac)
+                    if e.anim_frame >= sp.num_die_frames then
+                        // Mecha's "death" is really the armor cracking
+                        // open to reveal Real Hitler — flip the actor
+                        // in place rather than leaving a corpse.
+                        match e.kind with
+                        | mecha_hitler -> morph_mecha_to_hitler(g, e)
+                        | _            -> e.state = enemy_state.dead
+                    else
+                        e.anim_timer = e.anim_timer + sp.die_frame_time
+
+        // Seed the die sequence (state, first slice, vocal timer). Used
+        // by the kill and by the death cam's replay.
+        let begin_die_sequence = (e: enemy*) ->
+            let sp = sprites_for_kind(e.kind)
+            e.state = enemy_state.die
+            e.dir = dir.nodir
+            if sp.die_hold_time > 0.0 then
+                e.anim_frame = -1
+                e.anim_timer = sp.die_hold_time
+            else
+                e.anim_frame = 0
+                e.anim_timer = sp.die_frame_time
+            e.scream_timer = sp.scream_delay
 
         let kill_enemy = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*, sprite_start: i32) ->
             // Mommy Mode's gore arm: snapshot whichever live sprite the enemy was
@@ -1314,12 +1468,17 @@ module enemies =
                 e.mommy_fade_page = sprite_page(e, g.pos_x, g.pos_y)
                 e.mommy_fade_t = 0.0
             e.state = enemy_state.die
-            e.anim_frame = 0
-            e.anim_timer = die_frame_time
             e.dir = dir.nodir
-            match death_scream_for_kind(e.kind, g) with
-            | some(snd) -> sfx.trigger_at(snd, ac, g, e.x, e.y)
-            | none -> void()
+            // The die sequence: an optional upright hold on the first
+            // walk pose (death-cam bosses), then the die frames, then
+            // the corpse pose. The vocal is timed to the end of the
+            // original's first die state; Schabbs and Real Hitler also
+            // scream the instant they drop (the original fires theirs
+            // twice).
+            begin_die_sequence(e)
+            match e.kind with
+            | schabbs | hitler -> play_death_scream(g, ac, e)
+            | _ -> void()
             let drop = drop_for_kind(e.kind, g.best_weapon)
             match drop with
             | decoration -> void()
@@ -1358,7 +1517,10 @@ module enemies =
             // shout is.
             g.made_noise = true
             e.hp = e.hp - dmg
-            e.notified = true
+            // The original can only land a hit on a drawn actor, and a
+            // drawn actor is active; make that implication explicit so
+            // scripted hits (killenemy / hurtenemy) behave the same.
+            e.active = true
             if e.hp <= 0 then
                 score.add(g, score_for_kind(e.kind), ac)
                 g.kills = g.kills + 1
@@ -1444,10 +1606,14 @@ module enemies =
                 seen
             else g.made_noise || sees_player(lv, g, e)
 
-        // Wake up a sleeping (stand/path) enemy. Plays the per-kind
-        // alert vocal the first time only; subsequent wake-ups from
-        // repeated hits / line-of-sight loss/regain stay silent so the
-        // soundscape doesn't get spammy.
+        // Wake up a sleeping (stand/path) enemy — the original's
+        // first-sighting transition, reached either when the
+        // reaction-delay countdown runs out or from a hit the actor
+        // survives. Plays the per-kind alert vocal once per actor
+        // (`notified`): a sneak-attack victim that lives shouts
+        // "Halt!" just like one that spotted you, while a real Hitler
+        // morphed out of the mech inherits the mech's alerted state
+        // and stays quiet.
         private let wake_enemy = (g: game*, e: enemy*, ac: audio_ctx*) ->
             e.state = enemy_state.chase
             restart_walk_cycle(e)
@@ -1480,8 +1646,13 @@ module enemies =
                 | mecha_hitler -> some(sfx.id.die)
                 | hitler       -> some(sfx.id.die)
                 | blinky | pinky | clyde | inky -> none(sfx.id)    // silent
+                // Boss lines play flat at full volume (the original
+                // fires them as plain, unlocated sounds); the
+                // rank-and-file shouts are positioned at the actor.
                 match snd with
-                | some(sn) -> sfx.trigger_at(sn, ac, g, e.x, e.y)
+                | some(sn) ->
+                    if kind_is_boss(e.kind) then sfx.trigger(sn, ac)
+                    else sfx.trigger_at(sn, ac, g, e.x, e.y)
                 | none -> void()
 
         // Enemy firing an attack at the player, called from the shoot
@@ -1506,8 +1677,13 @@ module enemies =
             | hitler_fake             -> sfx.id.flamethrower
             | giftmacher | fat        -> sfx.id.missile_fire
             | _                       -> sfx.id.nazi_fire
-            sfx.trigger_at(snd, ac, g, e.x, e.y)
+            // An actor whose room isn't connected to the player's, or
+            // whose line is blocked, doesn't shoot at all — no report
+            // either (the original bails before its sound switch).
+            let area = (i32) lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
+            if area >= areas.num_areas || !lv.area_by_player[area] then return
             if !check_line_clear(lv, e.x, e.y, g.pos_x, g.pos_y) then return
+            sfx.trigger_at(snd, ac, g, e.x, e.y)
             // Range is measured from the tile the actor is heading for
             // (it froze mid-step to shoot), like every other distance
             // the AI takes.
@@ -1593,18 +1769,8 @@ module enemies =
                         match e.kind with
                         | mecha_hitler -> morph_mecha_to_hitler(g, e)
                         | _            -> e.state = enemy_state.dead
-                else if e.anim_timer <= 0.0 then
-                    let sp = sprites_for_kind(e.kind)
-                    e.anim_frame = e.anim_frame + 1
-                    if e.anim_frame >= sp.num_die_frames then
-                        // Mecha's "death" is really the armor cracking
-                        // open to reveal Real Hitler — flip the actor
-                        // in place rather than leaving a corpse.
-                        match e.kind with
-                        | mecha_hitler -> morph_mecha_to_hitler(g, e)
-                        | _            -> e.state = enemy_state.dead
-                    else
-                        e.anim_timer = die_frame_time
+                else
+                    advance_die(g, ac, e, dt)
             | pain ->
                 if e.anim_timer <= 0.0 then
                     e.state = enemy_state.chase
@@ -1631,33 +1797,43 @@ module enemies =
                 // only runs while it's actually walking.
                 step_walk_cycle(e, true)
                 if e.walk_pause then return
-                if e.reaction_timer > 0.0 then
-                    e.reaction_timer = e.reaction_timer - dt
-                    if e.reaction_timer <= 0.0 then
-                        e.reaction_timer = 0.0
-                        wake_enemy(g, e, ac)
+                // Only the tick that actually wakes the actor skips
+                // the patrol step. The detection tick (reaction timer
+                // just seeded) and every countdown tick still walk —
+                // the original's path think only bails once the
+                // sighting completes.
+                let woke =
+                    if e.reaction_timer > 0.0 then
+                        e.reaction_timer = e.reaction_timer - dt
+                        if e.reaction_timer <= 0.0 then
+                            e.reaction_timer = 0.0
+                            wake_enemy(g, e, ac)
+                            true
+                        else false
                     else
-                        advance_move(lv, g, ac, self_idx, patrol_speed_for_kind(e.kind), dt, move_mode.patrol)
-                else if should_wake(lv, g, e) then
-                    e.reaction_timer = reaction_delay_for_kind(e.kind, g)
-                else
-                    advance_move(lv, g, ac, self_idx, patrol_speed_for_kind(e.kind), dt, move_mode.patrol)
+                        if should_wake(lv, g, e) then
+                            e.reaction_timer = reaction_delay_for_kind(e.kind, g)
+                        false
+                if !woke then
+                    advance_move(lv, g, ac, self_idx, patrol_speed_for_kind(e.kind), dt, move_mode.patrol, move_mode.patrol)
             | chase ->
                 // Walk-cycle bookkeeping first, then the think. During a
                 // hold beat the actor stands still and doesn't consider
                 // attacking — that stutter is the original's gait, not
                 // a hitch (see the walk-cycle constants).
-                let prev_walk_frame = e.anim_frame
+                let prev_pause = e.walk_pause
                 step_walk_cycle(e, false)
-                // Mech stomps: fire the mech-step cue on entering walk
-                // poses 0 and 2, matching the original's step-hook
-                // pattern on the mech's chase frames. Only on pose
-                // transitions, so we don't retrigger within a hold.
+                // Mech stomps: the cue is the original's end-of-frame
+                // hook on the mech's first and third walk poses, so it
+                // fires as those poses give way to their hold beats —
+                // and only while the mech's room is connected to the
+                // player's.
                 match e.kind with
                 | mecha_hitler ->
-                    if e.anim_frame != prev_walk_frame
-                        && (e.anim_frame == 0 || e.anim_frame == 2) then
-                        sfx.trigger_at(sfx.id.mech_step, ac, g, e.x, e.y)
+                    if !prev_pause && e.walk_pause then
+                        let area = (i32) lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
+                        if area < areas.num_areas && lv.area_by_player[area] then
+                            sfx.trigger_at(sfx.id.mech_step, ac, g, e.x, e.y)
                 | _ -> void()
                 if e.walk_pause then return
                 match e.kind with
@@ -1680,27 +1856,15 @@ module enemies =
                     else
                         // Dogs always weave in rather than charging
                         // straight.
-                        advance_move(lv, g, ac, self_idx, dog_chase_speed, dt, move_mode.dodge)
+                        advance_move(lv, g, ac, self_idx, dog_chase_speed, dt, move_mode.dodge, move_mode.dodge)
                 | blinky | pinky | clyde | inky ->
-                    // Pacman ghosts — chase silently and damage on
-                    // contact; no shoot animation, no projectile.
-                    // Contact uses the same close-range bbox the
-                    // original applies to ghosts: |dx| ≤ 0.25 AND
-                    // |dy| ≤ 0.25. touch_cooldown stands in for the
-                    // original's literal back-off step so a ghost
-                    // can't stand inside BJ dealing damage every frame.
-                    if e.touch_cooldown > 0.0 then
-                        e.touch_cooldown = e.touch_cooldown - dt
-                        if e.touch_cooldown < 0.0 then e.touch_cooldown = 0.0
-                    let adx = math.abs(g.pos_x - e.x)
-                    let ady = math.abs(g.pos_y - e.y)
-                    if adx <= 0.25 && ady <= 0.25 && e.touch_cooldown <= 0.0 then
-                        // Bite roll 0-15 (rnd_byte >> 4) matches the
-                        // per-bite feel of the original: a handful of
-                        // HP per approach, not a steady drain.
-                        damage_player(g, ac, rnd_byte(g) >> 4, damage_source.ghost, e.x, e.y)
-                        e.touch_cooldown = 0.25
-                    advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e.kind), dt, move_mode.chase)
+                    // Pacman ghosts — chase silently; no shoot
+                    // animation, no projectile. The damage is the
+                    // original's stand-off rule in advance_move: a
+                    // ghost whose step would land inside the one-tile
+                    // box around the player is held back and drains
+                    // two points per tic instead.
+                    advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e.kind), dt, move_mode.chase, move_mode.chase)
                 | _ ->
                     // With a clear line to the player, roll to open
                     // fire (see fire_chance). An actor that could have
@@ -1714,9 +1878,23 @@ module enemies =
                             enter_shoot(e, g)
                             return
                         dodge = true
-                    let mode = if dodge || e.kind == enemy_kind.hitler_fake then move_mode.dodge
-                               else move_mode.chase
-                    advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e.kind), dt, mode)
+                    let park_mode = if dodge || e.kind == enemy_kind.hitler_fake then move_mode.dodge
+                                    else move_mode.chase
+                    // The projectile bosses kite: inside four tiles
+                    // (Chebyshev, from the tile they're heading for)
+                    // every heading re-picked at a tile centre runs
+                    // away — only a blocked-in actor's fresh pick
+                    // still uses the dodge / chase rule.
+                    let mode = match e.kind with
+                        | schabbs | giftmacher | fat ->
+                            let { dtx, dty } = dest_tile(e)
+                            let dxi = (i32) g.pos_x - dtx
+                            let dyi = (i32) g.pos_y - dty
+                            let adx = if dxi < 0 then -dxi else dxi
+                            let ady = if dyi < 0 then -dyi else dyi
+                            if (if adx > ady then adx else ady) < 4 then move_mode.run else park_mode
+                        | _ -> park_mode
+                    advance_move(lv, g, ac, self_idx, chase_speed_for_kind(e.kind), dt, mode, park_mode)
             | shoot ->
                 let sp = sprites_for_kind(e.kind)
                 if e.anim_timer <= 0.0 then
@@ -1754,28 +1932,81 @@ module enemies =
                         return
                     e.anim_timer = sp.shoot_times[e.anim_frame] / enemy_speed_factor(g)
 
+        // Sprite projection cutoffs (tiles): the shape is nudged a
+        // quarter tile toward the camera before projecting so its edges
+        // don't poke into an adjacent wall, and anything nearer than the
+        // player radius after that isn't projected at all.
+        private let actor_shape_fudge = 0.25
+        private let min_draw_depth = 0.34375
+
+        // Was the actor's tile, or a neighbouring floor tile, touched by
+        // this tick's view rays? The original's nine-tile test: a
+        // neighbour only counts if it's open floor (walls and doors
+        // don't let a sprite show through).
+        private let tile_spotted = (lv: level*, tx: i32, ty: i32) ->
+            let in_map = (x: i32, y: i32) ->
+                x >= 0 && x < map_size && y >= 0 && y < map_size
+            let spotted = (x: i32, y: i32) ->
+                in_map(x, y) && lv.vis_tiles[(i64) x * 64 + (i64) y]
+            let open_floor = (x: i32, y: i32) ->
+                in_map(x, y) && lv.tilemap[(i64) x * 64 + (i64) y] == 0u8
+            if spotted(tx, ty) then true
+            else
+                let mut hit = false
+                for oy in -1..2 do
+                    for ox in -1..2 do
+                        if (ox != 0 || oy != 0) && !hit then
+                            let nx = tx + ox
+                            let ny = ty + oy
+                            if spotted(nx, ny) && open_floor(nx, ny) then hit = true
+                hit
+
         let update_enemies = (w: world*, dt: f64) ->
             let sprite_start = w.ac.vs.sprite_start
-            for i in 0..w.lv.num_enemies do
-                update_enemy(w.lv, w.g, w.ac, i, dt, sprite_start)
-            // Refresh on-screen visibility for next tick's fire_at_player
-            // falloff. Mirrors the original's "was drawn" flag: set during
-            // the frame's refresh — after every actor has moved — and read by
-            // the shoot logic on the following tic. This previously lived
-            // in billboards.build (render-only), so --test mode, which
-            // never renders, left every enemy permanently not-visible and
-            // the steeper sight falloff unreachable. tx/ty in [-1, 1] = on
-            // screen, 1.2 margin for partial-edge overlap; FOV-normalized
-            // so the threshold is invariant across view modes.
+            let lv = w.lv
+            for i in 0..lv.num_enemies do
+                // The original's per-actor think gate: an actor that has
+                // never been drawn and whose area isn't reachable from
+                // the player through open doors is skipped outright —
+                // no sight check, no reaction countdown, no chase step,
+                // no animation. That's why a guard woken by a gunshot
+                // through a doorway freezes in place if the door shuts
+                // before he's ever been on screen, and only resumes when
+                // a door reconnects the rooms. Patrollers spawn active,
+                // so this only ever bites standing spawns (and bosses).
+                let e = &lv.enemies[i]
+                if !e.active then
+                    let area = (i32) lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
+                    if area >= areas.num_areas || !lv.area_by_player[area] then continue
+                update_enemy(lv, w.g, w.ac, i, dt, sprite_start)
+            // Refresh the two "drawn" flags for the next tick. Mirrors
+            // the original's end-of-frame sprite pass, which runs after
+            // every actor has moved and whose results the shoot logic
+            // reads on the following tic: the wall rays mark every tile
+            // they touch (tilemap.mark_visible_tiles rebuilds that grid
+            // here, since --test mode never renders), and an actor is
+            // considered when its own tile or any of the eight
+            // neighbouring floor tiles (not walls, not doors) was
+            // touched. That alone makes it `active` for good. It is
+            // actually on screen (`last_visible`, the steeper hitchance
+            // falloff) only if it's also far enough in front of the
+            // camera for the sprite to be projected: depth minus the
+            // quarter-tile shape fudge must reach the minimum draw
+            // distance — and one too close to project keeps last
+            // frame's flag rather than clearing it (the original's
+            // sprite pass skips it before either branch).
             let g = w.g
+            tilemap.mark_visible_tiles(lv, g, w.rc.fb_w)
             let inv_det = 1.0 / (g.plane_x * g.dir_y - g.dir_x * g.plane_y)
-            for i in 0..w.lv.num_enemies do
-                let e = &w.lv.enemies[i]
+            for i in 0..lv.num_enemies do
+                let e = &lv.enemies[i]
+                let touched = tile_spotted(lv, e.tile_x, e.tile_y)
+                if touched then e.active = true
                 let dx = e.x - g.pos_x
                 let dy = e.y - g.pos_y
-                let tx = inv_det * (g.dir_y * dx - g.dir_x * dy)
-                let ty = inv_det * (g.plane_x * dy - g.plane_y * dx)
-                e.last_visible = ty > 0.1 && math.abs(tx) <= ty * 1.2
+                let depth = inv_det * (g.plane_x * dy - g.plane_y * dx)
+                if !touched then e.last_visible = false
+                else if depth - actor_shape_fudge >= min_draw_depth then e.last_visible = true
 
         // Animation-only pump for actors in die. Used during phases
         // that freeze the rest of gameplay (bj_victory, the
@@ -1783,21 +2014,13 @@ module enemies =
         // of a fight still plays its full die-frame cascade and lands
         // on the dead-pose sprite instead of staying stuck on its
         // first die frame.
-        let update_dying_enemies = (lv: level*, g: game*, dt: f64) ->
+        let update_dying_enemies = (lv: level*, g: game*, ac: audio_ctx*, dt: f64) ->
             for i in 0..lv.num_enemies do
                 let e = &lv.enemies[i]
                 match e.state with
                 | die ->
                     e.anim_timer = e.anim_timer - dt
-                    if e.anim_timer <= 0.0 then
-                        let sp = sprites_for_kind(e.kind)
-                        e.anim_frame = e.anim_frame + 1
-                        if e.anim_frame >= sp.num_die_frames then
-                            match e.kind with
-                            | mecha_hitler -> morph_mecha_to_hitler(g, e)
-                            | _            -> e.state = enemy_state.dead
-                        else
-                            e.anim_timer = die_frame_time
+                    advance_die(g, ac, e, dt)
                 | _ -> void()
 
 
@@ -1815,6 +2038,7 @@ module projectiles =
         | rocket    // Giftmacher / Fat missile: 8 rotating angles, explodes
         | fire      // Fake Hitler flamethrower: 2-frame animation, dissipates
         | boom      // Short-lived explosion sprite spawned on rocket wall hit
+        | smoke     // Inert puff the rocket leaves behind every 3 tics (4 frames)
 
     struct projectile =
         kind: projectile_kind
@@ -1822,8 +2046,9 @@ module projectiles =
         y: f64
         angle: f64            // radians, direction of travel
         alive: bool           // false = slot is free
-        anim_frame: i32       // cycling 0..3 for needle, 0..1 for fire, 0..2 for boom
+        anim_frame: i32       // cycling 0..3 for needle, 0..1 for fire, 0..2 for boom, 0..3 for smoke
         anim_timer: f64       // seconds until next frame
+        smoke_timer: f64      // rocket only: seconds until the next puff
 
     let max_projectiles = 32   // generous cap — the original shares actor slots; few projectiles actually fly at once
 
@@ -1835,8 +2060,14 @@ module projectiles =
     let fire_speed   = 4.92   // 0x1200 * 70 / 0x10000
     let hit_radius   = 0.75   // per-axis player hit box (tile units)
     let wall_radius  = 0.125  // wall collision half-extent (tile units)
-    let anim_time    = 0.10   // seconds per needle/fire animation frame
-    let boom_time    = 0.12   // seconds per explosion frame
+    // Frame times from the original's projectile states: needle and
+    // flame 6 tics, explosion 6 tics, smoke 3 tics (the first puff
+    // frame shows for 6), a puff every 3 tics of rocket flight.
+    let anim_time    = 6.0 / 70.0
+    let boom_time    = 6.0 / 70.0
+    let smoke_time   = 3.0 / 70.0
+    let smoke_first  = 6.0 / 70.0
+    let smoke_period = 3.0 / 70.0
 
     // Sprite-page offsets into VSWAP (relative to `sprite_start`).
     // Derived from the original's sprite layout: needle at 317, fire
@@ -1844,6 +2075,7 @@ module projectiles =
     let hypo_base   = 317
     let fire_base   = 326
     private let rocket_base = 370
+    private let smoke_base  = 378
     let boom_base   = 382
 
     // Angle wrap helper. Keeps `a` in [0, 2π).
@@ -1871,6 +2103,7 @@ module projectiles =
             let idx = (i32) (a * 8.0 / tau) & 7
             sprite_start + rocket_base + idx
         | fire -> sprite_start + fire_base + (p.anim_frame & 1)
+        | smoke -> sprite_start + smoke_base + (if p.anim_frame > 3 then 3 else p.anim_frame)
         | boom ->
             let f = if p.anim_frame > 2 then 2 else p.anim_frame
             sprite_start + boom_base + f
@@ -1888,6 +2121,22 @@ module projectiles =
     // the player's current position. Angle is stored in standard-trig
     // y-up convention so the rotating-rocket sprite picker can share
     // the same convention as enemies.angle_sprite.
+    // An inert smoke puff at (x, y): four 3-tic frames (the first held
+    // for 6), no movement, no damage.
+    private let spawn_smoke = (lv: level*, x: f64, y: f64) ->
+        let slot = alloc_slot(lv)
+        if slot < 0 then return
+        lv.projectiles[slot] = projectile {
+            kind = projectile_kind.smoke,
+            x = x,
+            y = y,
+            angle = 0.0,
+            alive = true,
+            anim_frame = 0,
+            anim_timer = smoke_first,
+            smoke_timer = 0.0
+        }
+
     let spawn = (lv: level*, ac: audio_ctx*, g: game*, e: enemies.enemy*, k: projectile_kind) ->
         let slot = alloc_slot(lv)
         if slot < 0 then return
@@ -1901,13 +2150,14 @@ module projectiles =
             angle = wrap_angle(ang),
             alive = true,
             anim_frame = 0,
-            anim_timer = anim_time
+            anim_timer = anim_time,
+            smoke_timer = smoke_period
         }
         let snd = match k with
         | needle -> some(sfx.id.schabbs_throw)
         | rocket -> some(sfx.id.missile_fire)
         | fire   -> some(sfx.id.flamethrower)
-        | boom   -> none(sfx.id)
+        | boom | smoke -> none(sfx.id)
         match snd with
         | some(sn) -> sfx.trigger_at(sn, ac, g, e.x, e.y)
         | none -> void()
@@ -1931,8 +2181,12 @@ module projectiles =
                     if t >= 1 && t <= 63 then hit = true
                     if t >= 128 then
                         let door_idx = t - 128
+                        // A door is solid to a projectile unless it
+                        // stands fully open (the original's door tile
+                        // is only cleared at full open, and re-solid
+                        // the instant it starts closing).
                         if door_idx >= 0 && door_idx < lv.num_doors
-                            && lv.door_pos[door_idx] < 0.95 then hit = true
+                            && lv.doors[door_idx].state != doors.door_state.open then hit = true
         hit
 
     // Damage per projectile kind — matches the original's per-class
@@ -1943,7 +2197,7 @@ module projectiles =
         | needle -> (roll >> 3) + 20    // 20-51
         | rocket -> (roll >> 3) + 30    // 30-61
         | fire   -> roll >> 3           // 0-31
-        | boom   -> 0
+        | boom | smoke -> 0
 
     // Per-frame update for one projectile slot. Advances animation,
     // steps the position, checks wall/player collision, mutates into
@@ -1952,23 +2206,41 @@ module projectiles =
     let update = (lv: level*, g: game*, ac: audio_ctx*, p: projectile*, dt: f64) ->
         if !p.alive then return
         let frame_time = match p.kind with
-        | boom -> boom_time
-        | _    -> anim_time
+        | boom  -> boom_time
+        | smoke -> smoke_time
+        | _     -> anim_time
         p.anim_timer = p.anim_timer - dt
+        let mut frame_rolled = false
         if p.anim_timer <= 0.0 then
             p.anim_frame = p.anim_frame + 1
-            p.anim_timer = frame_time
+            p.anim_timer = p.anim_timer + frame_time
+            frame_rolled = true
         match p.kind with
         | boom ->
             // Short 3-frame explosion, then free the slot.
             if p.anim_frame >= 3 then p.alive = false
+        | smoke ->
+            if p.anim_frame >= 4 then p.alive = false
         | _ ->
+            // The flame is the odd one out: its move hook is the
+            // end-of-frame action, not the per-frame think, so it
+            // only advances when a 6-tic frame rolls over — by one
+            // frame's worth of travel — and only tests for a hit
+            // then. That's the slow, dodgeable puff the original has.
+            if p.kind == projectile_kind.fire && !frame_rolled then return
             let speed = match p.kind with
             | needle -> needle_speed
             | rocket -> rocket_speed
             | fire   -> fire_speed
-            | boom   -> 0.0
+            | boom | smoke -> 0.0
             let step = speed * dt
+            if p.kind == projectile_kind.rocket then
+                // Smoke trail: a puff at the rocket's position every
+                // 3 tics of flight.
+                p.smoke_timer = p.smoke_timer - dt
+                if p.smoke_timer <= 0.0 then
+                    p.smoke_timer = p.smoke_timer + smoke_period
+                    spawn_smoke(lv, p.x, p.y)
             // Y-up angle → y-down world motion: flip the sin term.
             let nx = p.x + math.cos(p.angle) * step
             let ny = p.y - math.sin(p.angle) * step
@@ -1993,7 +2265,7 @@ module projectiles =
                     | needle -> enemies.damage_source.needle
                     | rocket -> enemies.damage_source.rocket
                     | fire   -> enemies.damage_source.flame
-                    | boom   -> enemies.damage_source.rocket   // unreachable — boom doesn't damage the player
+                    | boom | smoke -> enemies.damage_source.rocket   // unreachable — neither damages the player
                     enemies.ai.damage_player(g, ac, damage_of(p.kind, g), src, p.x, p.y)
                     p.alive = false
 
@@ -2061,12 +2333,12 @@ module hitscan =
     // with tan = 32/218.75 ≈ 0.146 (a 320-wide view, but the ratio is
     // resolution-free), and `depth` is the sprite's projection depth,
     // which the renderer pulls a quarter tile toward the camera so shapes
-    // don't sink into walls. The depth used for the window is floored
-    // at 0.75 — the nearest depth a legally-placed actor reaches — so an
-    // actor that has walked into the player doesn't become unhittable.
+    // don't sink into walls. A shape pulled nearer than the minimum draw
+    // depth isn't projected at all, and so can't be hit — unreachable in
+    // play, since actors hold a one-tile stand-off from the player.
     private let aim_half_tan      = 0.1463
     private let sprite_depth_pull = 0.25
-    private let aim_min_depth     = 0.75
+    private let aim_min_depth     = 0.34375
 
     // Sprite depth along the view axis, as the weapons see it.
     private let target_depth = (g: game*, e: const enemies.enemy*) ->
@@ -2093,7 +2365,8 @@ module hitscan =
             let rx = e.x - g.pos_x
             let ry = e.y - g.pos_y
             let perp = rx * g.dir_y - ry * g.dir_x
-            let win_depth = if depth < aim_min_depth then aim_min_depth else depth
+            if depth < aim_min_depth then continue
+            let win_depth = depth
             if math.abs(perp) >= aim_half_tan * win_depth then continue
             best_idx = i
             best_depth = depth

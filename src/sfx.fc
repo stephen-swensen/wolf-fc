@@ -461,6 +461,16 @@ module sfx =
     let adlib_busy = (ac: audio_ctx*) ->
         atomic_load_acquire(&ac.adlib_busy_flag)
 
+    // Is any effect — AdLib chunk or digi slot — still playing? The
+    // original's wall-bump cue is gated on this rather than a timer.
+    let any_busy = (ac: audio_ctx*) ->
+        if adlib_busy(ac) then true
+        else
+            let mut busy = false
+            for i in 0..4 do
+                if atomic_load_acquire(&ac.digi.slots[i].playing) then busy = true
+            busy
+
     // Play a sound by sfx.id.*. The Sound submenu has two independent
     // toggles relevant here: DIGITIZED SOUND (gates the digi PCM path)
     // and SOUND EFFECTS (gates the AdLib SFX fallback). When DIGITIZED
@@ -543,13 +553,19 @@ module sfx =
     // distant enemies don't eat mix slots.
     let trigger_at = (sound_id: id, ac: audio_ctx*, g: game*,
                        x: f64, y: f64) ->
+        trigger_at_gain(sound_id, ac, g, x, y, 1.0)
+
+    // Positioned trigger with an extra gain multiplier on top of the
+    // distance attenuation (door cues use it for their -3 dB trim).
+    let trigger_at_gain = (sound_id: id, ac: audio_ctx*, g: game*,
+                            x: f64, y: f64, base_gain: f64) ->
         let dx = x - g.pos_x
         let dy = y - g.pos_y
         let dist_sq = dx * dx + dy * dy
         let dist = math.sqrt(dist_sq)
         let max_dist = 16.0
         let gain = if dist >= max_dist then 0.0
-                   else (max_dist - dist) / max_dist
+                   else base_gain * (max_dist - dist) / max_dist
         if gain <= 0.0 then return
         // Very-close sounds (<1 tile) stay centered so stepping past an
         // enemy doesn't produce a hard stereo flip.

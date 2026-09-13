@@ -284,13 +284,12 @@ let main = (args: str[]) ->
         iddqd_progress = 0, god_mode = false,
         idkfa_progress = 0, idkfa_mode = false,
         key_tab_held = false, noclip = false,
-        wall_hit_cooldown = 0.0,
-        health = 100, ammo = 8, score = 0, oldscore = 0, lives = 3,
+        health = 100, ammo = 8, score = 0, oldscore = 0, next_extra = 40000, lives = 3,
         level_num = 0,
         has_gold_key = false, has_silver_key = false,
         next_level = false, next_level_delay = 0.0,
-        weapon = weapon.pistol, best_weapon = weapon.pistol, went_secret = false,
-        fire_timer = 0.0, weapon_frame = 0,
+        weapon = weapon.pistol, best_weapon = weapon.pistol, chosen_weapon = weapon.pistol, went_secret = false,
+        weapon_frame = 0,
         face_frame = 0, face_count = 0.0,
         area_number = -1, made_noise = false, player_running = false, want_near_boss = false,
         bj_x = 0.0, bj_y = 0.0,
@@ -304,8 +303,6 @@ let main = (args: str[]) ->
         endart_page_offsets = alloc(i32[0] {})!,
         endart_total_pages = 0, endart_page = 0,
         hs_source = hs_source.death,
-        ep_kr_total = 0, ep_sr_total = 0, ep_tr_total = 0,
-        ep_time_total = 0, ep_levels_played = 0,
         ep_recorded_current = false,
         phase = game_phase.pg13, phase_timer = 0.0,
         damage_flash_timer = 0.0,
@@ -358,7 +355,7 @@ let main = (args: str[]) ->
     // sfx.trigger / digi.fill work over this same ctx either way).
     let w = alloc(world {
         g = g,
-        lv = level.build(lv_data, vs.sprite_start, g.difficulty, g.mommy_mode),
+        lv = level.build(lv_data, vs.sprite_start, g),
         lv_data = lv_data,
         rc = video.build_render_ctx(vg, pal, fb_w, game_h, 2, cfg.ssaa_mode),
         ac = alloc(audio_ctx {
@@ -699,7 +696,7 @@ let main = (args: str[]) ->
         let now = sdl2.get_ticks()
         let mut dt = (f64) (now - last_ticks) / 1000.0
         last_ticks = now
-        if dt > 0.1 then dt = 0.1    // clamp large spikes
+        if dt > 10.0 / 70.0 then dt = 10.0 / 70.0    // clamp large spikes (the original's ten-tic cap)
         // Frame-pacing: under vsync the real time between displayed frames is
         // an exact multiple of the refresh interval — the ms wobble in `now`
         // (coarse GetTicks + scheduler wake jitter) is just noise around it.

@@ -443,7 +443,12 @@ module raycaster =
                         side = 1
                     if map_x < 0 || map_x >= map_size || map_y < 0 || map_y >= map_size then
                         hit = true
-                    else if pw_active && map_x == lv.pushwall.tile_x && map_y == lv.pushwall.tile_y then
+                    else if pw_active && ((map_x == lv.pushwall.tile_x && map_y == lv.pushwall.tile_y)
+                                          || (map_x == lv.pushwall.tile_x + lv.pushwall.dir_x
+                                              && map_y == lv.pushwall.tile_y + lv.pushwall.dir_y)) then
+                        // Both the cell the wall is leaving and the one
+                        // it's entering are solid in the tilemap; the
+                        // sliding slab itself is the box test above.
                         void()
                     else
                         let tile = (i32) lv.tilemap[(i64) map_x * 64 + (i64) map_y]

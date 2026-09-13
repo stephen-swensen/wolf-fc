@@ -145,11 +145,13 @@ Classic Wolfenstein 3D controls:
 | Alt + Left/Right | Strafe left / right |
 | Left Shift | Run (2x speed) |
 | Left Ctrl | Fire weapon |
-| Space | Use / open doors / activate elevator / push wall |
+| Space | Use: open or close doors / activate elevator (from its east or west face, as in the original) / push wall |
 | 1 – 4 | Select weapon (knife / pistol / machine gun / chain gun) |
 | S | Save screenshot to `~/.wolf-fc/screenshots/ss_NNN.png` |
 | F11 or Alt + Enter | Toggle fullscreen |
 | Escape | Open the menu (pauses gameplay). QUIT lives on the menu; Esc backs out of submenus |
+
+Two original-game rules worth knowing because they read as bugs if you don't expect them: items are collected the way the original's sprite pass does it — from the tile just ahead of you as you walk up, never one you're standing on or have beside you — and actors keep a one-tile stand-off from you (you can't close to within a tile of them either), so melee kills happen at arm's length.
 
 ### Secret cheat codes
 
@@ -167,7 +169,7 @@ There are also two Doom-style sequence cheats (type the letters in order, no nee
 | I D D Q D | Toggle god mode (silently absorbs all damage; refills health on activation). Status bar grows a yellow outline while active. |
 | I D K F A | Toggle "all keys, full arsenal": grants both keys, chain gun, 99 ammo on activation, and latches non-depleting ammo + locked score until toggled off |
 
-And the original game's TAB-held cheats (hold TAB, press another key). The original gated these behind a `-debugmode` command-line flag; we leave them always available:
+And the original game's TAB-held cheats (hold TAB, press another key). The original gated these behind its `goobers` command-line parameter (the `-debugmode` switch is Spear of Destiny's); we leave them always available:
 
 | Combo | Effect |
 |-------|--------|
@@ -206,15 +208,15 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `back:N` | Hold backward for N ticks |
 | `turnl:N` / `turnr:N` | Turn left / right by N degrees (instant) |
 | `run` | Toggle the shift/run modifier |
-| `space` | Press space once (open door, elevator, push wall) |
+| `space` | Press space once (open or close a door, elevator, push wall) |
 | `wait:N` | Advance N ticks with no input (for door/push-wall animation) |
 | `ss:FILE` | Render current frame and save as PNG to `FILE` (with game-state metadata in a `tEXt` chunk) |
 | `state` | Print position, direction, health, ammo, score, lives, level, keys |
-| `goto:X,Y` | Teleport player to tile center `(X+0.5, Y+0.5)` and run a pickup check |
+| `goto:X,Y` | Teleport player to tile center `(X+0.5, Y+0.5)`. Items are collected the original way — from the tile ahead of you, facing it — so to pick one up teleport next to it, face it, and `wait:1` |
 | `sethp:N` | Set health to N (debug) |
 | `setammo:N` | Set ammo count to N (debug) |
 | `setweapon:N` | Select weapon slot 0-3 (knife/pistol/MG/chain) |
-| `fire` | Press fire once (1 tick); hitscans enemies, decrements ammo, plays weapon SFX |
+| `fire` | Press fire for one tick, starting an attack cycle; the shot itself (hitscan, ammo, weapon SFX) lands 12 tics later — on the 6th tick counting the press — so follow it with `wait:5` before inspecting the target |
 | `givekeys` | Grant gold and silver keys (debug) |
 | `mli` | Fire the M+L+I cheat effect (refill + chaingun + score reset) |
 | `bat` | Fire the B+A+T flavor-message cheat |
@@ -225,9 +227,11 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `facetile` | Print the tile the player is facing and the `next_level` flag (debug) |
 | `probe` | Movement diagnostic: dump the player's bbox tiles, any wall/door blocking each, and every live enemy within 2 tiles (distance + tile). First stop for "player can't move here" reports. |
 | `enemies` | Print totals per enemy kind and per state |
-| `enemylist` | Print each enemy: index, tile, kind, state, direction, hp, area number, `vis` (1 = on screen this tick, the sight-falloff flag) |
+| `enemylist` | Print each enemy: index, tile, kind, state, direction, hp, area number, `vis` (1 = on screen this tick, the sight-falloff flag), `act` (1 = has ever been on screen; a 0 actor in a room not connected to the player's by open doors doesn't think at all) |
 | `projectiles` | Dump every live enemy projectile: index, kind (needle/rocket/fire/boom), position, travel angle, animation frame |
 | `killenemy:N` | Overkill enemy at index N via `damage_enemy` (drops, score, kill counter all fire as if shot) |
+| `hold_fire:N` | Hold the fire key for N ticks (one press; the machine gun / chain gun keep cycling while held, pistol / knife fire once). A shot lands 12 tics (6 ticks) after the press. |
+| `hurtenemy:N,DMG` | Apply DMG damage to enemy N through the same path as a bullet: sneak-attack doubling, noise flag, wake-up + alert vocal, pain flinch. Not a tick. |
 | `kill` | Instant-kill the player; transitions straight to the dying phase. Leaves `killer_active` false, so the death-cam swing is a no-op. |
 | `killby:X,Y` | Like `kill`, but latches `(X, Y)` as the killer's world position so the dying-phase camera swing has a target to rotate toward. |
 | `arrows` | Print every plane-1 ICONARROWS path-marker tile (`x,y` and dir 0..7) |

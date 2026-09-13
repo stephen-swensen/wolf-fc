@@ -151,56 +151,65 @@ assert_contains "spawn:starting-ammo-8"       "state"   "ammo=8"
 assert_contains "spawn:starting-weapon-1"     "state"   "weapon=1 best=1"
 
 section "pickups"
-assert_contains "pickup:food-heals-10"        "sethp:50 goto:29,51 state" "health=60"
-assert_contains "pickup:food-ignored-at-full" "goto:29,51 state"          "health=100"
+assert_contains "pickup:food-heals-10"        "sethp:50 goto:28,51 wait:1 state" "health=60"
+assert_contains "pickup:food-ignored-at-full" "goto:28,51 wait:1 state"   "health=100"
 # Dropped clips (bo_clip2) give half the ammo of a map-placed clip: +4, not +8.
 # Kill the guard at (28,62) with three point-blank pistol shots (ammo drops
-# from 50 to 47), then step onto the drop tile. Final ammo should be 51
-# (47 + 4). A map-placed clip would leave it at 55.
+# from 50 to 47), then walk up to the drop (items are taken from the tile
+# in front of you, the original way). Final ammo should be 51 (47 + 4). A
+# map-placed clip would leave it at 55.
 assert_contains "pickup:dropped-clip-gives-4-ammo" \
-    "goto:30,62 turnr:180 setammo:50 fire wait:15 fire wait:15 fire wait:15 goto:28,62 state" \
+    "goto:30,62 turnr:180 setammo:50 fire wait:15 fire wait:15 fire wait:15 goto:29,62 wait:1 state" \
     "ammo=51"
 # bo_fullheal (the "one up" sprite at (14,55) on E1M1) grants full heal +
 # 25 ammo + one life + a treasure pickup. With starting ammo=8 the pickup
 # caps to 33, lives 3 -> 4.
 assert_contains "pickup:extra-life-grants-ammo-and-life" \
-    "goto:14,55 state" \
+    "goto:13,55 wait:1 state" \
     "health=100 ammo=33 score=0 lives=4"
 assert_contains "pickup:extra-life-counts-as-treasure" \
-    "goto:14,55 counters" \
+    "goto:13,55 wait:1 counters" \
     "treasures=1/23"
 # bo_gibs (tiles 57 & 61) heals +1 HP only when the player is at or below
 # 10 HP. E1M2 has a single gibs at (60,39). At full HP the pickup is
 # refused (sprite stays on the floor). At HP=10 it's accepted and heals
 # to 11. At HP=5 it heals to 6.
 assert_contains "pickup:gibs-refused-above-threshold" \
-    "setlevel:1 goto:60,39 state" \
+    "setlevel:1 goto:59,39 turnr:90 wait:1 state" \
     "health=100"
 assert_contains "pickup:gibs-accepted-at-threshold" \
-    "setlevel:1 sethp:10 goto:60,39 state" \
+    "setlevel:1 sethp:10 goto:59,39 turnr:90 wait:1 state" \
     "health=11"
 assert_contains "pickup:gibs-accepted-below-threshold" \
-    "setlevel:1 sethp:5 goto:60,39 state" \
+    "setlevel:1 sethp:5 goto:59,39 turnr:90 wait:1 state" \
     "health=6"
 # Cross pickup at (7,14) on E1M1 awards 100 score. Coverage for the
 # treasure branch of pickups.check (the other three treasures
 # exercise the same path).
 assert_contains "pickup:cross-awards-100-score" \
-    "goto:7,14 state" \
+    "goto:6,14 wait:1 state" \
     "score=100"
+# The pickup rule itself: standing on an item takes nothing, and neither
+# does having it beside you; it has to be ahead.
+assert_contains "pickup:standing-on-item-takes-nothing" \
+    "goto:7,14 turnl:90 wait:1 pickups" \
+    "(7,14) kind=cross"
+assert_contains "pickup:item-beside-you-is-left" \
+    "goto:6,14 turnl:90 wait:1 pickups" \
+    "(7,14) kind=cross"
 
 section "static-sprites"
 # Wolf3D blocking decorations (barrels, wells, tables, etc.) stop the player.
-# A blocking sprite sits at tile (37,22) on E1M1. Blocking uses a half-tile
-# AABB centered on the sprite (reach = player_radius 0.35 + sprite_half 0.25
-# = 0.6), so the clamp point from the east is px ≤ 37.5 - 0.6 = 36.9.
-# Discrete-tick movement lands at 36.8204 (last sub-step before 36.9).
+# A blocking sprite sits at tile (37,22) on E1M1.
+# The decoration owns its whole tile (the original's rule), so the player's
+# 0.34375 bbox can't cross x = 36.656 — and the first 0.16-tile step from the
+# tile centre already would, so the player doesn't budge.
 assert_contains "static:blocks-player" \
     "goto:36,22 fwd:60 state" \
-    "pos=( 36.8204,  22.5000)"
+    "pos=( 36.5000,  22.5000)"
 
 section "doors"
-assert_contains "door:elevator-switch"        "goto:25,47 turnl:90 space wait:40 facetile phase" "phase=intermission"
+assert_contains "door:elevator-switch"        "goto:25,47 space wait:40 facetile phase" "phase=intermission"
 assert_contains "door:walk-all-the-way-through" \
     "fwd:15 space wait:40 fwd:20 state" "pos=( 34.7872,  57.5000)"
 # Door straddle used to trap the player: walk through a door but stop with
@@ -212,6 +221,35 @@ assert_contains "door:walk-all-the-way-through" \
 assert_not_contains "door:straddle-does-not-lock" \
     "sethp:1000 goto:34,40 turnl:90 fwd:15 space wait:40 fwd:16 wait:200 fwd:10 state" \
     "pos=( 34.5000,  37.8000)"
+
+# The use key on a door follows the original's operate rule: an open or
+# opening door starts closing, a closing one reverses back to opening, and
+# a close is refused (silently) while anything is in the doorway — here the
+# player straddling the tile edge (x=42.98, radius 0.34 reaches into 43).
+# The auto-close timer is held off by the same rule.
+assert_contains "doors:use-closes-open-door" \
+    "goto:42,33 space wait:35 space facetile" \
+    "tile=137 next_level=0 door=closing"
+assert_contains "doors:use-closes-opening-door" \
+    "goto:42,33 space wait:2 space facetile" \
+    "tile=137 next_level=0 door=closing"
+assert_contains "doors:use-reopens-closing-door" \
+    "goto:42,33 space wait:35 space wait:5 space facetile" \
+    "tile=137 next_level=0 door=opening"
+assert_contains "doors:close-refused-with-player-in-doorway" \
+    "goto:42,33 space wait:35 fwd:3 space facetile" \
+    "tile=137 next_level=0 door=open"
+assert_contains "doors:auto-close-waits-for-player-to-clear" \
+    "goto:42,33 space wait:35 fwd:3 wait:190 facetile" \
+    "tile=137 next_level=0 door=open"
+# A live actor in the doorway holds it open too: the patrolling guard woken
+# by a shot at (41,33) chases the player through the door at (43,33), opens
+# it, and then holds station in the doorway (the one-tile stand-off keeps
+# it from stepping onto the player at (44,33)) — so the door never gets to
+# auto-close. God mode so the player survives the point-blank fire.
+assert_contains "doors:auto-close-waits-for-actor-to-clear" \
+    "iddqd goto:41,33 wait:3 setammo:50 fire wait:60 goto:44,33 wait:320 goto:43,33 probe" \
+    "tile (43,33) = 137 (DOOR:open)"
 
 section "push-walls"
 # The use-key quantizes the heading to a single cardinal direction
@@ -250,7 +288,7 @@ assert_contains "hitscan:pistol-point-blank-kills-guard" \
 # blank, it opens fire on its very next think.
 assert_contains "hitscan:knife-at-1-tile-damages-guard" \
     "goto:29,62 turnr:180 setweapon:0 fire wait:10 enemylist" \
-    "kind=guard state=shoot dir=0 hp=5"
+    "[37] (28,62) kind=guard state=chase dir=0 hp=7"
 # The aim window is angular (±8.3° of the crosshair), not a fixed lateral
 # band. From (28.5,60.5) facing due east, guard [36] at (39.5,61.5) sits
 # 5.2° off-axis and a full tile off the aim line at ~10.8 tiles — well
@@ -259,7 +297,7 @@ assert_contains "hitscan:knife-at-1-tile-damages-guard" \
 # damage roll into a one-shot kill. 10° off-axis (turnl:5) is outside
 # the window and never even reaches the roll.
 assert_contains "hitscan:angular-window-lands-long-off-axis-shot" \
-    "goto:28,60 setammo:50 fire enemylist" \
+    "goto:28,60 setammo:50 fire wait:5 enemylist" \
     "[36] (39,61) kind=guard state=die"
 assert_regex "hitscan:angular-window-rejects-10deg-off-axis" \
     "goto:28,60 turnl:5 setammo:50 fire enemylist" \
@@ -289,7 +327,7 @@ assert_regex "ai:sight-flag-clear-when-player-faces-away" \
 section "combat:enemies-attack"
 assert_contains "ai:dog-bites-on-contact" \
     "goto:45,34 turnr:90 wait:120 state" \
-    "health=85"
+    "health=82"
 # Player pressed against the west wall of the (44,34) corridor — pos_x lands
 # at ~44.39, so the dog at (45,34) starts adx ≈ 1.11, just outside the
 # lunge gate at its tile center. Dog must close the gap and bite. With the
@@ -305,7 +343,7 @@ assert_contains "ai:dog-closes-against-wall" \
 # its attack by then, so accept chase OR shoot — either proves the wake.
 assert_regex "ai:guard-wakes-on-sight:far" \
     "goto:28,60 turnl:90 wait:40 enemylist" \
-    '\[36\] \(39,61\) kind=guard state=(chase|shoot)'
+    '\[36\] \([0-9]+,[0-9]+\) kind=guard state=(chase|shoot)'
 assert_regex "ai:guard-wakes-on-sight:near" \
     "goto:28,60 turnl:90 wait:40 enemylist" \
     '\[37\] \(28,62\) kind=guard state=(chase|shoot)'
@@ -314,16 +352,21 @@ assert_regex "ai:guard-wakes-on-sight:near" \
 # to its west-north-west; its first heading is the closing diagonal
 # (dir=3, northwest) — a straight chase would have picked due west.
 assert_contains "ai:sighted-enemy-opens-with-closing-diagonal" \
-    "goto:28,60 turnl:90 wait:40 enemylist" \
+    "goto:28,60 turnl:90 wait:20 enemylist" \
     "[36] (39,61) kind=guard state=chase dir=3"
 assert_contains "ai:sustained-fire-kills-player" \
     "goto:28,60 wait:600 state" \
     "lives=2"
-# Wake guard [18] at (38,33), teleport to the far side of the door at (43,33),
-# then wait for its chase path to push through — the door should no longer be
-# closed (the original's chase step opens any door in its way).
+# Wake the patrolling guard [18] (heading west at (38,33)) with a shot from
+# (41,33) — timed to land outside its walk-cycle hold beats, which don't
+# listen — so it turns east toward the noise; then teleport to the far side
+# of the door at (43,33) and wait for its chase path to push through: the
+# door should no longer be closed (the original's chase step opens any door
+# in its way). Woken with the player behind a shut door instead, the guard
+# would keep walking west: with no line to the player the chase selector
+# treats a full reversal as the last resort.
 assert_regex "ai:guards-open-doors-while-chasing" \
-    "goto:37,33 wait:5 goto:44,33 wait:150 goto:43,33 probe" \
+    "goto:41,33 wait:3 setammo:50 fire wait:60 goto:44,33 wait:200 goto:43,33 probe" \
     'tile \(43,33\) = 137 \(DOOR:(opening|open)\)'
 # Dogs cannot open doors in the original and treat closed ones as walls.
 # Wake the dog at (45,34) and place the player past the door — the dog should
@@ -353,6 +396,49 @@ assert_contains "ai:no-wake-without-noise-or-sight" \
 assert_contains "ai:firing-wakes-guards-in-connected-area" \
     "setammo:50 fire wait:40 enemies" \
     "chase=2"
+# A hit on a sleeping actor that survives it is the original's other route
+# into first-sighting: the guard takes the sneak-attack double damage
+# (1 → 2, so 25 → 23), flinches, and shouts its alert vocal (digi 0 is the
+# guard's "Halt!") exactly as if it had spotted the player.
+assert_contains "ai:survived-sneak-hit-doubles-damage" \
+    "hurtenemy:37,1 enemylist" \
+    "[37] (28,62) kind=guard state=pain dir=0 hp=23"
+assert_contains "ai:survived-sneak-hit-plays-alert-vocal" \
+    "hurtenemy:37,1 digi_slots" \
+    "slot 0: playing=1 sound=0"
+# The original's per-actor think gate: an actor that has never been drawn
+# (`act=0`) stops thinking entirely while its room is cut off from the
+# player's by closed doors. Patrollers spawn active; standing spawns earn
+# the flag on their first frame on screen.
+assert_regex "ai:patrol-spawns-active" \
+    "enemylist" \
+    '\[19\] \(45,34\) kind=dog state=path .* act=1'
+assert_regex "ai:standing-spawn-not-active" \
+    "enemylist" \
+    '\[30\] \(48,45\) kind=guard state=stand .* act=0'
+# Player in area 1 at (42,33) opens the door at (43,33) into area 4, turns
+# his back on it and fires. Guard [30] at (48,45) in area 4 hears the shot
+# and closes in — never on screen, so still act=0 — until the door auto-
+# closes (open 32 ticks after the press, held 150, shut 32 later — about
+# tick 220), at which point it freezes mid-chase and stays put until the
+# door is opened again.
+# The dog patrolling area 4 is killed first (before the door opens, so the
+# kill's noise reaches nobody) — otherwise it ends up in the doorway and,
+# as in the original, a body in the doorway holds the door open. God mode
+# keeps the player alive under the fire from the room's other guards.
+NOISE_THROUGH_DOOR="iddqd goto:42,33 killenemy:19 space wait:5 turnl:180 setammo:50 fire"
+assert_contains "ai:never-drawn-guard-chases-while-door-open" \
+    "$NOISE_THROUGH_DOOR wait:240 enemylist" \
+    "[30] (47,39) kind=guard state=chase dir=2 hp=25 area=4 vis=0 act=0"
+assert_contains "ai:door-shuts-behind-the-noise" \
+    "$NOISE_THROUGH_DOOR wait:240 goto:43,33 probe" \
+    "tile (43,33) = 137 (DOOR:closed)"
+assert_contains "ai:never-drawn-guard-freezes-once-disconnected" \
+    "$NOISE_THROUGH_DOOR wait:400 enemylist" \
+    "[30] (47,39) kind=guard state=chase dir=2 hp=25 area=4 vis=0 act=0"
+assert_contains "ai:reconnecting-resumes-frozen-guard" \
+    "$NOISE_THROUGH_DOOR wait:400 turnl:180 space wait:90 enemylist" \
+    "[30] (47,35) kind=guard state=chase"
 
 section "weapons:auto-restore"
 # Running out of ammo drops the player to the knife; grabbing the clip that
@@ -360,7 +446,7 @@ section "weapons:auto-restore"
 # by default). Kill guard at (28,62), zero out ammo + drop to knife, then
 # step onto the drop tile and check the weapon slot bounces back to 1.
 assert_contains "weapon:ammo-pickup-restores-from-knife" \
-    "goto:30,62 turnr:180 setammo:50 fire wait:15 fire wait:15 fire setammo:0 setweapon:0 goto:28,62 state" \
+    "goto:30,62 turnr:180 setammo:50 fire wait:15 fire wait:15 fire wait:15 setammo:0 setweapon:0 goto:29,62 wait:1 state" \
     "weapon=1"
 # MG pickup also upgrades the player's best-weapon ceiling. We don't have
 # SS on E1M1 to drop one naturally, so exercise the pickup path using the
@@ -460,27 +546,27 @@ section "intermission / level progression"
 # only after the ~1s pre-intermission freeze (elevator_wait_time) during
 # which gameplay pauses so LEVELDONESND can play out in-world.
 assert_contains "intermission:elevator-enters-intermission" \
-    "goto:25,47 turnl:90 space wait:40 phase" \
+    "goto:25,47 space wait:40 phase" \
     "phase=intermission"
 # Level time accumulates in gp_playing and freezes during intermission.
 # (wait:70 here straddles both the pre-delay freeze and the intermission
 # itself; neither advances level_time, so the total stays at the fwd:70
 # accumulation of 70/35 ticks plus the one `space` tick = ~2.03s.)
 assert_regex "intermission:time-freezes-during-intermission" \
-    "fwd:70 goto:25,47 turnl:90 space wait:70 counters" \
+    "fwd:70 goto:25,47 space wait:70 counters" \
     'time=[ ]*2\.0[0-9]+'
 # `advance` on intermission loads the next level (level_num increments).
 assert_contains "intermission:advance-loads-next-level" \
-    "goto:25,47 turnl:90 space wait:40 advance state" \
+    "goto:25,47 space wait:40 advance state" \
     "level=1"
 # New level has its own enemy/secret/treasure totals.
 assert_contains "intermission:new-level-resets-counters" \
-    "goto:25,47 turnl:90 space wait:40 advance counters" \
+    "goto:25,47 space wait:40 advance counters" \
     "kills=0/82 secrets=0/4 treasures=0/62"
 # Entering intermission with time 0 awards full par-time bonus: par=90s →
 # (90 - 0) * 500 = 45000 (500 points per second under par, as in the original).
 assert_contains "intermission:par-time-bonus-awarded" \
-    "goto:25,47 turnl:90 space wait:40 state" \
+    "goto:25,47 space wait:40 state" \
     "score=45000"
 # Par times come straight from the original's table (minutes x 60).
 # E1M4 is 3:30 = 210s, so an instant completion is worth 210 * 500.
@@ -541,10 +627,10 @@ assert_contains "intermission:full-kills-earn-the-ratio-bonus" \
 # The percentage itself floors rather than rounds: 10 of 11 is 90%, not 91%.
 assert_contains "intermission:ratio-floors-the-percentage" \
     "setlevel:0 setdifficulty:0 $KILL_ALL_BUT_ONE_E1M1 wait:60 endepisode wait:2 advance epstats" \
-    "kr=90"
+    "epslot 0: kr=90"
 assert_contains "intermission:full-ratio-reads-100" \
     "setlevel:0 setdifficulty:0 $KILL_ALL_E1M1 wait:60 endepisode wait:2 advance epstats" \
-    "kr=100"
+    "epslot 0: kr=100"
 
 # Beating an episode on a floor-jump straight to its boss leaves no
 # ordinary floors recorded, so the victory screen averages over nothing.
@@ -566,7 +652,7 @@ assert_contains "counters:kill-increments" \
     "kills=1/37"
 # Treasure pickup counts.
 assert_contains "counters:treasure-cross-pickup" \
-    "goto:7,14 counters" \
+    "goto:6,14 wait:1 counters" \
     "treasures=1/23"
 
 section "difficulty"
@@ -612,7 +698,7 @@ assert_contains "boss:hans-spawns-on-e1m9" \
     "boss=1 ghost=0"
 assert_contains "boss:hans-hp-1200" \
     "setlevel:8 enemylist" \
-    "kind=hans state=stand dir=8 hp=1200"
+    "kind=hans state=stand dir=6 hp=1200"
 # E3M10 (level 29) is the Pacman-homage secret — all four ghosts spawn.
 assert_contains "ghost:four-ghosts-on-pacman-level" \
     "setlevel:29 enemies" \
@@ -629,7 +715,7 @@ assert_contains "boss:schabbs-on-e2m9"   "setlevel:18 enemylist" "kind=schabbs"
 # appears via the death-transform inside enemies.ai.
 assert_contains "boss:mecha-hitler-on-e3m9" \
     "setlevel:28 enemylist" \
-    "kind=mecha_hitler state=stand dir=8 hp=1200"
+    "kind=mecha_hitler state=stand dir=6 hp=1200"
 # Killing the mech leaves its slot occupied by a fresh Real Hitler.
 # The mech plays 3 die-frames × 0.18s ≈ 0.54s before morphing, so wait
 # 25 ticks (~0.71s) before checking. Real Hitler's hard-tier HP is 900
@@ -639,6 +725,10 @@ assert_regex "boss:mecha-morphs-to-real-hitler-on-kill" \
     'kind=hitler state=chase dir=[0-9]+ hp=900'
 assert_contains "boss:giftmacher-on-e4m9" "setlevel:38 enemylist" "kind=gift"
 assert_contains "boss:gretel-on-e5m9"    "setlevel:48 enemylist" "kind=gretel"
+# Bosses spawn with the original's fixed facing: Hans / Schabbs / Fat /
+# Mecha face south (dir=6), Gretel / Giftmacher / Fake Hitler face north
+# (dir=2). The facing is the sight half-plane, so it gates their wake-up.
+assert_contains "boss:gretel-faces-north" "setlevel:48 enemylist" "kind=gretel state=stand dir=2"
 assert_contains "boss:fat-face-on-e6m9"  "setlevel:58 enemylist" "kind=fat"
 # killenemy:N runs damage_enemy with overkill damage; verifies that a
 # boss kill no longer immediately ends the level (the original game
@@ -651,9 +741,10 @@ assert_contains "boss:kill-doesnt-end-level" \
 assert_contains "boss:kill-completes-die-animation" \
     "setlevel:8 killenemy:0 wait:30 enemylist" \
     "kind=hans state=dead"
-# Bosses spawn ambush-flagged with dir=nodir in the original. With a closed
-# door between the player and Hans, approaching quietly must leave him
-# asleep; opening the door gives him LOS and he wakes + shoots.
+# Bosses spawn ambush-flagged with a fixed facing in the original (Hans faces
+# south, toward this door). With a closed door between the player and Hans,
+# approaching quietly must leave him asleep; opening the door gives him LOS
+# and he wakes + shoots.
 assert_contains "boss:hans-stays-asleep-behind-closed-door" \
     "setlevel:8 goto:34,16 wait:200 enemylist" \
     "kind=hans state=stand"
@@ -704,7 +795,7 @@ assert_contains "deathcam:hans-does-not-enter-death-cam" \
 # entirely for boss kills, so death-cam → episode_end
 # without an intermission stop.
 assert_contains "deathcam:auto-advances-to-episode-end" \
-    "setlevel:18 killenemy:0 wait:500 phase" \
+    "setlevel:18 killenemy:0 wait:620 phase" \
     "phase=episode_end"
 # The death scream fires a second time when the replay animation starts
 # (matches the original: re-entering the die-cascade plays the death scream
@@ -722,7 +813,7 @@ assert_contains "deathcam:advance-skips-to-episode-end" \
 # Hans still drops a gold key — walking onto his tile after the kill
 # picks it up. Preserves the gold-key + exit-tile flow on E1M9.
 assert_contains "deathcam:hans-still-drops-gold-key" \
-    "setlevel:8 killenemy:0 goto:34,14 state" \
+    "setlevel:8 killenemy:0 goto:33,14 turnr:90 wait:1 state" \
     "gold=1"
 # render_sprite must compute the SPR_DEATHCAM destination rect in
 # dbuf-cell units (screen_w grid), not fb-cell units. A previous
@@ -744,7 +835,7 @@ section "enemy projectiles"
 # have reached the player — verifies that the boss actually spawns visible
 # dodgeable projectiles instead of hitscanning.
 assert_regex "proj:fake-hitler-flame-in-flight" \
-    "setlevel:28 goto:25,57 wait:20 projectiles" \
+    "setlevel:28 goto:25,57 wait:290 projectiles" \
     "proj\[[0-9]+\] fire"
 # Standing one tile north of Schabbs gives a clean LOS with no flanking
 # mutants in fire range. The needle bosses roll a flat, range-independent
@@ -757,7 +848,7 @@ assert_regex "proj:fake-hitler-flame-in-flight" \
 # health regexes are anchored on the trailing space so `health=100`
 # can't satisfy them via its first two digits.
 assert_contains "proj:schabbs-needle-in-flight" \
-    "setlevel:18 goto:31,17 wait:47 projectiles" \
+    "setlevel:18 goto:32,21 wait:38 projectiles" \
     "needle"
 assert_regex "proj:schabbs-needle-damages-player" \
     "setlevel:18 goto:31,17 wait:48 state" \
@@ -766,7 +857,7 @@ assert_regex "proj:schabbs-needle-damages-player" \
 # one rocket hit alone drops the player by 30-61 HP. Rocket damage is
 # distinctive enough that we check the value clearly fell below 70.
 assert_regex "proj:giftmacher-rocket-damages-player" \
-    "setlevel:38 goto:27,19 wait:30 state" \
+    "setlevel:38 goto:27,19 wait:60 state" \
     "health=([0-6][0-9]|70) "
 # Fat Face on E6M9 also spawns rockets from the same projectile-throw
 # path; mostly a coverage check that setlevel:58 reaches the right map.
@@ -778,8 +869,8 @@ assert_contains "proj:fat-face-spawns-rockets" \
 # HP on hard leaves them at 88 HP on baby — proof of the >>2 scaling
 # under the seeded PCG stream.
 assert_contains "proj:baby-difficulty-quarters-rocket-damage" \
-    "--difficulty=0 setlevel:38 goto:27,19 wait:30 state" \
-    "health=88"
+    "--difficulty=0 setlevel:38 goto:27,19 wait:60 state" \
+    "health=87"
 
 section "cli flags"
 # --level=N drops the player straight onto level N in playing phase — the
@@ -831,7 +922,7 @@ assert_contains "cheat:mli-gives-both-keys" \
     "mli state" \
     "gold=1 silver=1"
 assert_contains "cheat:mli-zeros-score" \
-    "goto:7,14 mli state" \
+    "goto:6,14 wait:1 mli state" \
     "score=0"
 # BAT chord is flavor-only: gameplay state unchanged.
 # IDDQD god-mode toggle: flips an in-game flag; while on, damage_player
@@ -879,7 +970,7 @@ assert_contains "cheat:idkfa-ammo-non-depleting" \
 # Score lock: cross pickup would normally add 100. With IDKFA on, the
 # cross is consumed but the score stays at 0.
 assert_contains "cheat:idkfa-locks-score-on-pickup" \
-    "idkfa goto:7,14 state" \
+    "idkfa goto:6,14 wait:1 state" \
     "score=0"
 
 section "episode structure"
@@ -985,12 +1076,13 @@ section "audio mixer"
 # single mix slot rather than fan out across all four (which used to
 # stack DONOTHINGSND-style spam, overwhelm the SDL queue, and disconnect
 # the music stream on PulseAudio). 5 pistol shots — all sound=5 — should
-# only occupy one slot.
+# only occupy one slot. The chain gun held for 14 ticks fires three
+# rounds 6 tics apart — all sound=6.
 assert_contains "audio:digi-dedup-rapid-fire" \
-    "setammo:50 fire fire fire fire fire digi_slots" \
-    "slot 0: playing=1 sound=5"
+    "setweapon:3 setammo:50 hold_fire:14 digi_slots" \
+    "slot 0: playing=1 sound=6"
 assert_contains "audio:digi-dedup-no-stacking" \
-    "setammo:50 fire fire fire fire fire digi_slots" \
+    "setweapon:3 setammo:50 hold_fire:14 digi_slots" \
     "slot 2: playing=0 sound=-1"
 
 section "music routing"
@@ -1038,9 +1130,42 @@ assert_contains "save:listsaves-empty" \
 assert_contains "save:position-round-trips" \
     "fwd:30 save:4 load:4 state" \
     "pos=( 31.5828,  57.5000)"
+# The ever-drawn flag is field 19 of the enemy line. Save mid-chase with the
+# door still open, load, and let the door shut: a guard reloaded as active
+# would keep coming; the faithful one freezes at the same tile as above.
+assert_contains "save:active-flag-round-trips" \
+    "iddqd goto:42,33 killenemy:19 space wait:5 turnl:180 setammo:50 fire wait:100 save:4 load:4 wait:300 enemylist" \
+    "[30] (47,39) kind=guard state=chase dir=2 hp=25 area=4 vis=0 act=0"
 assert_contains "save:ammo-round-trips" \
     "fwd:30 turnl:30 fire fwd:5 save:4 load:4 state" \
     "ammo=7"
+# The attack cycle: a pistol shot lands 12 tics after the press, one per
+# press no matter how long the key is held; the machine gun repeats every
+# 12 tics while held and the chain gun every 6.
+assert_contains "weapon:shot-lands-on-sixth-tick" \
+    "setammo:50 fire wait:5 state" \
+    "ammo=49"
+assert_contains "weapon:no-shot-before-sixth-tick" \
+    "setammo:50 fire wait:4 state" \
+    "ammo=50"
+assert_contains "weapon:pistol-held-fires-once" \
+    "setammo:50 hold_fire:30 state" \
+    "ammo=49"
+assert_contains "weapon:press-mid-cycle-is-dropped" \
+    "setammo:50 fire fire fire fire fire wait:10 state" \
+    "ammo=49"
+assert_contains "weapon:machine-gun-repeats-while-held" \
+    "setweapon:2 setammo:50 hold_fire:14 state" \
+    "ammo=48"
+assert_contains "weapon:machine-gun-single-tap" \
+    "setweapon:2 setammo:50 fire wait:13 state" \
+    "ammo=49"
+assert_contains "weapon:chain-gun-repeats-while-held" \
+    "setweapon:3 setammo:50 hold_fire:14 state" \
+    "ammo=47"
+assert_contains "weapon:cycle-end-returns-to-chosen-weapon" \
+    "setweapon:3 setammo:50 fire wait:20 state" \
+    "weapon=3"
 # level_num round-trips through save/load even across game mode resets.
 assert_contains "save:level-round-trips" \
     "setlevel:5 fwd:3 save:4 load:4 state" \
@@ -1093,7 +1218,12 @@ assert_contains "save:load-marks-game-active" \
 # figure rather than leaving the live session's.
 assert_contains "save:episode-totals-round-trip" \
     "killenemy:0 killenemy:1 killenemy:2 wait:60 endepisode wait:2 advance save:0 setepisode:3 endepisode wait:2 advance load:0 epstats" \
-    "epstats: levels=1 time=1 kr=8 sr=0 tr=0 recorded=0"
+    "epslot 0: kr=8 sr=0 tr=0 time=1"
+# The victory screen averages over a fixed eight floors, whatever was
+# played (the original's fixed-size table): one floor at 100% reads 12.
+assert_contains "intermission:averages-divide-by-eight" \
+    "setlevel:0 setdifficulty:0 $KILL_ALL_E1M1 wait:60 endepisode wait:2 advance epstats" \
+    "epstats: levels=1 time=1 kr=12"
 
 section "config / preferences"
 # Default prefs (no config file): toggles ON, mommy_mode Off (0), shadow_depth 55.

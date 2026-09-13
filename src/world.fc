@@ -273,7 +273,6 @@ struct game =
     // Wall-scrape sound cooldown (seconds). Prevents the wall-bump cue from firing
     // every frame while the player grinds along a wall. Counts down in
     // player.update; a new bump is only announced when it hits 0.
-    wall_hit_cooldown: f64
 
     // Game
     health: i32
@@ -290,6 +289,7 @@ struct game =
     // on the lethal life), matching the original's handling of the
     // final lethal life.
     oldscore: i32
+    next_extra: i32     // score at which the next 40k extra life is granted; climbs monotonically, reset on new game
     lives: i32
     level_num: i32
     has_gold_key: bool
@@ -300,15 +300,21 @@ struct game =
     // ("elevator ding") time to play in the world before the tally screen pops.
     next_level_delay: f64
     weapon: weapon       // currently equipped weapon
-    best_weapon: weapon  // highest-tier firearm owned (pistol..chain). When
-                         // ammo runs out we drop to knife; picking ammo up
-                         // again restores this weapon (matches the original).
+    best_weapon: weapon  // highest-tier firearm owned (pistol..chain)
+    chosen_weapon: weapon // the weapon the player last selected (1-4) or was
+                          // handed as a new best. When ammo runs out we drop
+                          // to the knife; ammo coming back restores THIS,
+                          // not the best one (matches the original's chosen-
+                          // weapon latch).
     // Latched when the player uses the alt-elevator switch (plane-0 raw tile
     // 107 underfoot at the moment of activation). advance_next_level reads it
     // to route to the secret level (ep*10+9) instead of the normal next map.
     // Cleared after the routing decision is applied.
     went_secret: bool
-    fire_timer: f64      // cooldown timer (>0 means firing animation)
+    attacking: bool      // an attack cycle is running (the original's attack player state)
+    attack_frame: i32    // index into the weapon's attack table
+    attack_count: f64    // seconds left on the current attack-table entry
+    key_fire_handled: bool  // edge latch: the fire key press has already started a cycle
     weapon_frame: i32    // animation frame (0=idle, 1-3=firing)
     // BJ-face HUD animation (matches the original). face_frame picks the
     // A/B/C variant (0..2) of the current health-driven expression row;
@@ -355,24 +361,21 @@ struct game =
     bj_phase: bj_phase
     bj_yelled: bool      // YEAHSND latch (fires on entering jump frame 1)
 
-    // Per-episode running totals for the episode-end victory screen.
-    // Each completed level adds its kill / secret / treasure percent +
-    // level time to these. Only the eight ordinary floors of an episode
-    // record: bonus floors are paid a flat sum instead of a tally, and
-    // the floor an episode ends on skips the tally screen altogether,
-    // so neither has ratios to contribute — same as the original.
-    // ep_levels_played is the divisor for the averages, which therefore
-    // reaches the original's fixed count of eight on a full run through
-    // an episode; counting played floors rather than assuming eight also
-    // keeps the figures honest when the level picker starts partway in.
+    // Per-episode ratio slots for the victory screen's averages. Each
+    // finished floor overwrites its own slot (so replaying a floor
+    // after a death doesn't double-count it), and the screen averages
+    // the first eight slots over a fixed eight — the original's
+    // fixed-size table and its divisor. The boss floor never records
+    // (it skips the tally) and the secret floor's slot is outside the
+    // eight that are summed.
     // ep_recorded_current is a dedup latch — set when the just-finished
     // level was already recorded, so two paths into the same screen
     // can't double-count it. Reset on new game / next episode.
-    ep_kr_total: i32
-    ep_sr_total: i32
-    ep_tr_total: i32
-    ep_time_total: i32
-    ep_levels_played: i32
+    ep_kr: i32[10]          // per-floor kill / secret / treasure ratios and time, indexed by floor within the episode
+    ep_sr: i32[10]
+    ep_tr: i32[10]
+    ep_time: i32[10]
+    ep_played: bool[10]     // slot holds a finished floor's figures
     ep_recorded_current: bool
 
     // Per-episode ending text — active only during the endart phase.
@@ -703,21 +706,41 @@ module episode =
         let kr = if g.total_kills > 0 then 100 * g.kills / g.total_kills else 0
         let sr = if g.total_secrets > 0 then 100 * g.secrets / g.total_secrets else 0
         let tr = if g.total_treasures > 0 then 100 * g.treasures / g.total_treasures else 0
-        g.ep_kr_total = g.ep_kr_total + kr
-        g.ep_sr_total = g.ep_sr_total + sr
-        g.ep_tr_total = g.ep_tr_total + tr
-        g.ep_time_total = g.ep_time_total + (i32) g.level_time
-        g.ep_levels_played = g.ep_levels_played + 1
+        let slot = g.level_num % levels_per
+        g.ep_kr[slot] = kr
+        g.ep_sr[slot] = sr
+        g.ep_tr[slot] = tr
+        g.ep_time[slot] = (i32) g.level_time
+        g.ep_played[slot] = true
         g.ep_recorded_current = true
 
     // Wipe the running totals at the start of a new episode / game.
     let reset_episode_totals = (g: game*) ->
-        g.ep_kr_total = 0
-        g.ep_sr_total = 0
-        g.ep_tr_total = 0
-        g.ep_time_total = 0
-        g.ep_levels_played = 0
+        for i in 0..10 do
+            g.ep_kr[i] = 0
+            g.ep_sr[i] = 0
+            g.ep_tr[i] = 0
+            g.ep_time[i] = 0
+            g.ep_played[i] = false
         g.ep_recorded_current = false
+
+    // Number of floors the victory screen averages over — a fixed
+    // eight, whatever was actually played.
+    let averaged_floors = 8
+
+    // The victory screen's figures: total time and the three average
+    // ratios over the eight ordinary floors.
+    let episode_summary = (g: game*) ->
+        let mut sec = 0
+        let mut kr = 0
+        let mut sr = 0
+        let mut tr = 0
+        for i in 0..averaged_floors do
+            sec = sec + g.ep_time[i]
+            kr = kr + g.ep_kr[i]
+            sr = sr + g.ep_sr[i]
+            tr = tr + g.ep_tr[i]
+        { sec, kr / averaged_floors, sr / averaged_floors, tr / averaged_floors }
 
 // Score / extra-life rules. `add` is the single chokepoint for score
 // gains so the IDKFA lock and the 40k extra-life milestone cover
@@ -748,9 +771,13 @@ module score =
     // scoring.
     let add = (g: game*, amount: i32, ac: audio_ctx*) ->
         if g.idkfa_mode then return
-        let before_milestones = g.score / extra_life_score
         g.score = g.score + amount
         if g.score > score_max || g.score < 0 then g.score = score_max
-        let after_milestones = g.score / extra_life_score
-        for _ in before_milestones..after_milestones do
+        // The next-life threshold only ever climbs (reset on a new
+        // game), so a death rewind or the MLI score wipe can't farm
+        // lives by re-crossing 40k — the original's counter, not a
+        // division of the current score.
+        loop
+            if g.score < g.next_extra || g.next_extra > score_max then break
+            g.next_extra = g.next_extra + extra_life_score
             grant_extra_life(g, ac)

@@ -61,6 +61,11 @@ struct level =
     tile_areas: u8[]
     area_connect: u8[]
     area_by_player: bool[]
+    // Tiles touched by this tick's view rays — the original's per-frame
+    // "spotted" grid. Rebuilt every playing tick by
+    // tilemap.mark_visible_tiles; read by enemies.ai.update_enemies to
+    // decide which actors count as drawn (active / on-screen flags).
+    vis_tiles: bool[]
     // Per-level totals used by the kill / secret / treasure counters.
     // Computed once at build time; `game.total_*` mirrors them. Kept on
     // level so they survive player death (restart reuses these).
@@ -98,9 +103,9 @@ module doors =
     // pattern-match on this to decide whether the press was "handled"
     // (in which case we skip the generic "do nothing" fall-through).
     enum door_action =
-        | no_door        // tile isn't a door, or is already opening/open
-        | door_opened    // closed door started opening
-        | door_locked    // closed door needs a key the player doesn't have
+        | no_door        // tile isn't a door
+        | door_operated  // door is now opening / closing (or the close was refused because something is in the doorway — still counts as "used")
+        | door_locked    // door needs a key the player doesn't have
 
     // Six lock variants encoded in plane-0 door tiles (90..101). Render
     // and key-required logic both pattern-match on this.
@@ -135,8 +140,10 @@ module doors =
         area1: i32
         area2: i32
 
-    private let speed = 2.0         // 0→1 in 0.5 seconds
-    let stay_time = 4.0     // seconds before auto-close
+    // The original slides a door edge-to-edge in 64 tics (0.914 s) and
+    // holds it open for 300 tics (4.29 s) before trying to close.
+    private let speed = 70.0 / 64.0     // full travel per second
+    let stay_time = 300.0 / 70.0        // seconds before auto-close
     let max_doors = 64
 
     // Per-sound attenuation for door open/close SFX. The original's
@@ -155,25 +162,108 @@ module doors =
             if t < 128 then false
             else lv.doors[t - 128].state == door_state.open
 
-    // Try to open a door at the given tile position. Returns what
-    // happened — the caller owns the locked-door cue so it can
-    // edge-trigger on initial key-press rather than spamming while
-    // space is held (see player.update's space handler).
-    let try_open = (lv: level*, x: i32, y: i32, g: game*, ac: audio_ctx*) ->
+    // The original's actor / player radius, used by the doorway checks.
+    private let min_dist = 0.34375
+
+    // Can this door start closing right now? Mirrors the original's
+    // close rule: refused while anything solid is in the doorway — the
+    // player's centre tile is the door, or the player straddles the
+    // tile edge along the door's axis (within their radius, same row /
+    // column only), or a live actor is heading into the door tile or
+    // straddles it from either flank. Corpses and actors mid death-fall
+    // don't count.
+    let close_blocked = (lv: level*, di: i32, g: game*, player_radius: f64) ->
+        let d = &lv.doors[di]
+        let tx = d.tile_x
+        let ty = d.tile_y
+        let ptx = (i32) g.pos_x
+        let pty = (i32) g.pos_y
+        if ptx == tx && pty == ty then return true
+        if d.vertical then
+            if pty == ty && ((i32) (g.pos_x + player_radius) == tx
+                             || (i32) (g.pos_x - player_radius) == tx) then return true
+        else
+            if ptx == tx && ((i32) (g.pos_y + player_radius) == ty
+                             || (i32) (g.pos_y - player_radius) == ty) then return true
+        let mut blocked = false
+        for i in 0..lv.num_enemies do
+            let e = &lv.enemies[i]
+            let solid = match e.state with
+                | die | dead -> false
+                | _ -> true
+            if !solid then continue
+            if e.tile_x == tx && e.tile_y == ty then
+                blocked = true
+                break
+            if d.vertical then
+                if e.tile_y == ty && e.tile_x == tx - 1 && (i32) (e.x + min_dist) == tx then
+                    blocked = true
+                    break
+                if e.tile_y == ty && e.tile_x == tx + 1 && (i32) (e.x - min_dist) == tx then
+                    blocked = true
+                    break
+            else
+                if e.tile_x == tx && e.tile_y == ty - 1 && (i32) (e.y + min_dist) == ty then
+                    blocked = true
+                    break
+                if e.tile_x == tx && e.tile_y == ty + 1 && (i32) (e.y - min_dist) == ty then
+                    blocked = true
+                    break
+        blocked
+
+    // Start a door closing: the close cue if the door's area is
+    // player-reachable, then the slide. Callers check close_blocked
+    // first. Shared by the auto-close timer and the player's use key.
+    private let start_closing = (lv: level*, di: i32, g: game*, ac: audio_ctx*) ->
+        let d = &lv.doors[di]
+        d.state = door_state.closing
+        // Matches original-game behavior: the door-close SFX only
+        // plays when the door's area is player-reachable.
+        if d.area1 >= 0 && d.area1 < areas.num_areas && lv.area_by_player[d.area1] then
+            // See start_opening re: door_gain.
+            sfx.trigger_at_gain(sfx.id.close_door, ac, g, (f64) d.tile_x + 0.5, (f64) d.tile_y + 0.5, door_gain)
+
+    // An actor asking for a door (every think while it waits in front
+    // of one): a closed door starts opening, a closing one reverses
+    // without touching the area counters, an open one has its hold
+    // timer reset so it can't shut on the queue, an opening one is
+    // left alone. Locks don't apply to actors.
+    let actor_open = (lv: level*, di: i32, g: game*, ac: audio_ctx*) ->
+        match lv.doors[di].state with
+        | closed  -> start_opening(lv, di, g, ac)
+        | closing -> lv.doors[di].state = door_state.opening
+        | open    -> lv.doors[di].open_timer = 0.0
+        | opening -> void()
+
+    // The player's use key on a door tile — the original's operate
+    // rule: a locked door the player lacks the key for refuses in
+    // every state; otherwise a closed or closing door starts (or
+    // resumes) opening, and an open or opening door starts closing
+    // unless something is in the doorway, in which case nothing
+    // happens. Resuming from `closing` doesn't touch the area-connect
+    // counters: they were never decremented (that happens only when a
+    // door lands fully shut). Returns what happened — the caller owns
+    // the locked-door cue so it can edge-trigger on initial key-press
+    // rather than spamming while space is held (see player.update's
+    // space handler).
+    let operate = (lv: level*, x: i32, y: i32, g: game*, ac: audio_ctx*, player_radius: f64) ->
         if x < 0 || x >= map_size || y < 0 || y >= map_size then door_action.no_door
         else
             let t = (i32) lv.tilemap[(i64) x * 64 + (i64) y]
             if t < 128 then door_action.no_door
             else
                 let dn = t - 128
-                if lv.doors[dn].state != door_state.closed then door_action.no_door
-                else
-                    match lv.doors[dn].lock_type with
-                    | gold_key when (!g.has_gold_key)     -> door_action.door_locked
-                    | silver_key when (!g.has_silver_key) -> door_action.door_locked
-                    | _ ->
-                        start_opening(lv, dn, g, ac)
-                        door_action.door_opened
+                match lv.doors[dn].lock_type with
+                | gold_key when (!g.has_gold_key)     -> door_action.door_locked
+                | silver_key when (!g.has_silver_key) -> door_action.door_locked
+                | _ ->
+                    match lv.doors[dn].state with
+                    | closed  -> start_opening(lv, dn, g, ac)
+                    | closing -> lv.doors[dn].state = door_state.opening
+                    | open | opening ->
+                        if !close_blocked(lv, dn, g, player_radius) then
+                            start_closing(lv, dn, g, ac)
+                    door_action.door_operated
 
     // Transition a door from closed → opening: bumps area_connect for
     // the two areas this door joins (so areas.connect can flood through
@@ -200,12 +290,14 @@ module doors =
         // through open doors. Otherwise distant enemies opening doors
         // spam the SFX channel.
         if d.area1 >= 0 && d.area1 < areas.num_areas && lv.area_by_player[d.area1] then
-            // Doors play at -3 dB vs the rest of the digi sounds. Wolf3D's
-            // door samples were recorded with hot peaks (relative to other
-            // digi cues), and at our standard digi gain they overpowered
-            // pickups, weapon fires, and music to the point of being
-            // distracting. Divergence from OG — flagged here.
-            sfx.trigger_gain(sfx.id.open_door, ac, door_gain)
+            // Positioned at the door like the original's located door
+            // cues. Doors play at -3 dB vs the rest of the digi sounds:
+            // Wolf3D's door samples were recorded with hot peaks
+            // (relative to other digi cues), and at our standard digi
+            // gain they overpowered pickups, weapon fires, and music to
+            // the point of being distracting. Divergence from OG —
+            // flagged here.
+            sfx.trigger_at_gain(sfx.id.open_door, ac, g, (f64) d.tile_x + 0.5, (f64) d.tile_y + 0.5, door_gain)
 
     // `player_radius` passed in rather than imported to avoid a
     // circular module reference (player.blocked_by_map uses
@@ -220,46 +312,36 @@ module doors =
                     lv.doors[i].state = door_state.open
                     lv.doors[i].open_timer = 0.0
             | open ->
+                // Auto-close after the hold time, but only once the
+                // doorway is clear (the original retries every frame
+                // while the player or an actor is in the way, so a
+                // guard pacing in a doorway holds it open indefinitely).
                 lv.doors[i].open_timer = lv.doors[i].open_timer + dt
-                if lv.doors[i].open_timer >= stay_time then
-                    // Don't close if the player's BBOX (not just
-                    // center tile) overlaps the door tile. Without
-                    // this, a player who walks through a door and
-                    // stops with their center just past the boundary
-                    // but their trailing 0.35-tile radius still inside
-                    // the door tile gets crushed: the door closes to
-                    // the wall state and the bbox check in
-                    // player_blocked_by_map rejects every subsequent
-                    // move. The original avoids this because its
-                    // tile-based collision is coarser than our
-                    // per-axis bbox test.
-                    let px = g.pos_x
-                    let py = g.pos_y
-                    let dx = lv.doors[i].tile_x
-                    let dy = lv.doors[i].tile_y
-                    let bbox_x_in = (i32) (px - player_radius) <= dx && (i32) (px + player_radius) >= dx
-                    let bbox_y_in = (i32) (py - player_radius) <= dy && (i32) (py + player_radius) >= dy
-                    if !(bbox_x_in && bbox_y_in) then
-                        lv.doors[i].state = door_state.closing
-                        // Matches original-game behavior: the
-                        // door-close SFX only plays when the door's
-                        // area is player-reachable.
-                        let a1 = lv.doors[i].area1
-                        if a1 >= 0 && a1 < areas.num_areas && lv.area_by_player[a1] then
-                            // See open_door above re: door_gain.
-                            sfx.trigger_gain(sfx.id.close_door, ac, door_gain)
+                if lv.doors[i].open_timer >= stay_time
+                   && !close_blocked(lv, i, g, player_radius) then
+                    start_closing(lv, i, g, ac)
             | closing ->
-                // Abort the close and reopen if the player has walked
-                // back into our tile during the close (original
-                // behaviour). Without this, a player rushing through a
-                // half-closed door gets pinched off.
+                // Something got inside the doorway mid-close — the
+                // player's centre tile is the door, or a live actor
+                // claimed it as a destination — so the door reverses
+                // and reopens (original behaviour). The player can't
+                // normally get there since a closing door is solid to
+                // them, but an actor stepping in can.
                 let px = g.pos_x
                 let py = g.pos_y
                 let dx = lv.doors[i].tile_x
                 let dy = lv.doors[i].tile_y
-                let bbox_x_in = (i32) (px - player_radius) <= dx && (i32) (px + player_radius) >= dx
-                let bbox_y_in = (i32) (py - player_radius) <= dy && (i32) (py + player_radius) >= dy
-                if bbox_x_in && bbox_y_in then
+                let mut inside = (i32) px == dx && (i32) py == dy
+                if !inside then
+                    for k in 0..lv.num_enemies do
+                        let e = &lv.enemies[k]
+                        let solid = match e.state with
+                            | die | dead -> false
+                            | _ -> true
+                        if solid && e.tile_x == dx && e.tile_y == dy then
+                            inside = true
+                            break
+                if inside then
                     lv.doors[i].state = door_state.opening
                 else
                     lv.door_pos[i] = lv.door_pos[i] - speed * dt
@@ -297,66 +379,102 @@ module pushwall =
         progress: f64    // 0.0 to 2.0 (pushes 2 tiles)
         orig_tile: u8    // original wall texture tile
 
-    let speed = 1.0  // tiles per second
+    // The original advances a secret wall one tile every 128 tics
+    // (1.83 s), two tiles in all.
+    let speed = 70.0 / 128.0  // tiles per second
 
+    enum push_result =
+        | not_pushable   // not a secret wall (or one is already sliding)
+        | pushed         // the slide started; caller credits the secret
+        | blocked        // secret wall, but the cell it would slide into is occupied
+
+    // Is anything solid in this cell — wall, door, blocking static, or
+    // a live actor heading there? The original refuses the push (and
+    // stops a slide early) on any of them.
+    private let cell_occupied = (lv: level*, x: i32, y: i32) ->
+        if x < 0 || x >= map_size || y < 0 || y >= map_size then true
+        else if lv.tilemap[(i64) x * 64 + (i64) y] != 0u8 then true
+        else
+            let mut hit = false
+            for i in 0..lv.num_sprites do
+                let s = &lv.sprites[i]
+                if s.alive && s.blocks && (i32) s.x == x && (i32) s.y == y then
+                    hit = true
+                    break
+            if !hit then
+                for i in 0..lv.num_enemies do
+                    let e = &lv.enemies[i]
+                    let solid = match e.state with
+                        | die | dead -> false
+                        | _ -> true
+                    if solid && e.tile_x == x && e.tile_y == y then
+                        hit = true
+                        break
+            hit
+
+    // Start a secret wall sliding away from (x, y) along (dx, dy).
+    // Mirrors the original's push: only the first cell is checked up
+    // front — it must be empty of walls, doors, blocking statics and
+    // live actors — and it's stamped solid immediately so nothing can
+    // step into the wall's path. The second cell is checked when the
+    // wall crosses into the first; if it's occupied the slide ends
+    // after one tile (still a secret).
     let try_push = (lv: level*, x: i32, y: i32, dx: i32, dy: i32) ->
-        if x < 0 || x >= map_size || y < 0 || y >= map_size then false
-        else if lv.pushwall.active then false  // only one at a time
+        if x < 0 || x >= map_size || y < 0 || y >= map_size then push_result.not_pushable
+        else if lv.pushwall.active then push_result.not_pushable  // only one at a time
         else
             let idx = (i64) x * 64 + (i64) y
             let t = (i32) lv.tilemap[idx]
-            if t < 1 || t > 63 then false
+            if t < 1 || t > 63 then push_result.not_pushable
+            else if !lv.pushwall_tiles[idx] then push_result.not_pushable
+            else if cell_occupied(lv, x + dx, y + dy) then push_result.blocked
             else
-                let is_pw = lv.pushwall_tiles[idx]
-                if !is_pw then false
-                else
-                    // Check that the 2 tiles in push direction are empty
-                    let t1x = x + dx
-                    let t1y = y + dy
-                    let t2x = x + dx * 2
-                    let t2y = y + dy * 2
-                    if t1x < 0 || t1x >= map_size || t1y < 0 || t1y >= map_size then false
-                    else if t2x < 0 || t2x >= map_size || t2y < 0 || t2y >= map_size then false
-                    else
-                        let t1 = (i32) lv.tilemap[(i64) t1x * 64 + (i64) t1y]
-                        let t2 = (i32) lv.tilemap[(i64) t2x * 64 + (i64) t2y]
-                        if t1 != 0 || t2 != 0 then false
-                        else
-                            lv.pushwall.active = true
-                            lv.pushwall.tile_x = x
-                            lv.pushwall.tile_y = y
-                            lv.pushwall.dir_x = dx
-                            lv.pushwall.dir_y = dy
-                            lv.pushwall.progress = 0.0
-                            lv.pushwall.orig_tile = (u8) t
-                            true
+                lv.tilemap[(i64) (x + dx) * 64 + (i64) (y + dy)] = (u8) t
+                lv.pushwall_tiles[idx] = false
+                lv.pushwall.active = true
+                lv.pushwall.tile_x = x
+                lv.pushwall.tile_y = y
+                lv.pushwall.dir_x = dx
+                lv.pushwall.dir_y = dy
+                lv.pushwall.progress = 0.0
+                lv.pushwall.orig_tile = (u8) t
+                push_result.pushed
 
     // Advance an active push-wall by one simulation step. `progress`
     // runs 0.0 → 2.0 over the full slide (two tiles at `speed`).
-    // `tile_x/tile_y` tracks the integer cell the wall is currently
-    // "mostly in" and is authoritative for tilemap collision. Each
-    // time `progress` crosses an integer threshold, we clear the old
-    // tile, advance tile_x/tile_y by the push direction, and stamp
-    // the wall's original texture into the new cell. The sub-tile
-    // fraction (progress - floor(progress)) is what the raycaster
-    // uses to render the wall smoothly sliding between cells.
-    let update = (lv: level*, dt: f64) ->
+    // `tile_x/tile_y` is the cell the wall is sliding out of; that cell
+    // and the one it's sliding into are both solid in the tilemap (the
+    // original keeps both marked), and the raycaster draws the wall at
+    // the sub-tile offset between them. Each time `progress` crosses a
+    // whole tile the vacated cell is cleared and handed the player's
+    // area number (so it joins the room that opened it, as in the
+    // original), the wall advances, and the cell beyond is claimed —
+    // unless something occupies it, in which case the slide ends
+    // there.
+    let update = (lv: level*, g: game*, dt: f64) ->
         if !lv.pushwall.active then return
         let prev = lv.pushwall.progress
         let cap = 2.0
         let cur = math.min(prev + speed * dt, cap)
         lv.pushwall.progress = cur
-        let prev_floor = (i32) math.floor(prev)
-        let cur_floor = (i32) math.floor(cur)
-        if cur_floor > prev_floor then
-            let steps = cur_floor - prev_floor
-            for i in 0..steps do
-                lv.tilemap[(i64) lv.pushwall.tile_x * 64 + (i64) lv.pushwall.tile_y] = 0u8
-                lv.pushwall.tile_x = lv.pushwall.tile_x + lv.pushwall.dir_x
-                lv.pushwall.tile_y = lv.pushwall.tile_y + lv.pushwall.dir_y
-                lv.tilemap[(i64) lv.pushwall.tile_x * 64 + (i64) lv.pushwall.tile_y] = lv.pushwall.orig_tile
-        if cur >= cap then
-            lv.pushwall.active = false
+        if (i32) math.floor(cur) > (i32) math.floor(prev) then
+            let pw = &lv.pushwall
+            let vacated = (i64) pw.tile_x * 64 + (i64) pw.tile_y
+            lv.tilemap[vacated] = 0u8
+            lv.tile_areas[vacated] = if g.area_number >= 0 then (u8) g.area_number
+                                     else (u8) areas.no_area
+            pw.tile_x = pw.tile_x + pw.dir_x
+            pw.tile_y = pw.tile_y + pw.dir_y
+            if cur >= cap then
+                pw.active = false
+            else
+                let bx = pw.tile_x + pw.dir_x
+                let by = pw.tile_y + pw.dir_y
+                if cell_occupied(lv, bx, by) then
+                    pw.active = false
+                    pw.progress = cap
+                else
+                    lv.tilemap[(i64) bx * 64 + (i64) by] = pw.orig_tile
 
 
 // ============================================================
@@ -408,14 +526,54 @@ module pickups =
         | 61 -> item_kind.gibs        // gibs 2 (static-sprite index 38)
         | _ -> item_kind.decoration
 
+    // Ammo coming in: if the player was dry (knife out), re-arm the
+    // weapon they had chosen — not necessarily the best one — unless
+    // an attack is in progress (the attack's last frame does the swap
+    // then). Matches the original's give-ammo routine.
+    let give_ammo = (g: game*, amount: i32) ->
+        if g.ammo == 0 && !g.attacking then g.weapon = g.chosen_weapon
+        g.ammo = g.ammo + amount
+        if g.ammo > 99 then g.ammo = 99
+
+    // A picked-up (or cheated) firearm: six rounds through give_ammo,
+    // and the gun becomes the held + chosen weapon only if it beats the
+    // best one owned — a player holding the pistol by choice while
+    // owning the chain gun keeps the pistol when they walk over a
+    // machine gun (original rule).
+    let give_weapon = (g: game*, wp: weapon) ->
+        give_ammo(g, 6)
+        if g.best_weapon < wp then
+            g.best_weapon = wp
+            g.weapon = wp
+            g.chosen_weapon = wp
+
+    // The original collects a bonus from its sprite pass, not from the
+    // player's tile: the item's tile must be one this frame's wall rays
+    // touched (so no grabbing through a wall corner), and its centre
+    // must project to just ahead of the player — between roughly half
+    // a tile and a tile and an eighth deep after the eighth-tile shape
+    // fudge, and within half a tile of the view axis. So you take an
+    // item from the adjacent tile as you walk up to it, you never take
+    // one you're standing on, and one behind or beside you waits until
+    // you face it.
+    private let pickup_depth_pull = 0.125
+    private let pickup_min_depth  = 0.34375
+    private let pickup_max_depth  = 1.0
+    private let pickup_half_width = 0.5
+
     let check = (lv: level*, g: game*, ac: audio_ctx*) ->
-        let px = (i32) g.pos_x
-        let py = (i32) g.pos_y
         for i in 0..lv.num_sprites do
             if !lv.sprites[i].alive then continue
             let sx = (i32) lv.sprites[i].x
             let sy = (i32) lv.sprites[i].y
-            if px != sx || py != sy then continue
+            if sx < 0 || sx >= map_size || sy < 0 || sy >= map_size then continue
+            if !lv.vis_tiles[(i64) sx * 64 + (i64) sy] then continue
+            let dx = lv.sprites[i].x - g.pos_x
+            let dy = lv.sprites[i].y - g.pos_y
+            let depth = dx * g.dir_x + dy * g.dir_y - pickup_depth_pull
+            let lateral = dx * g.dir_y - dy * g.dir_x
+            if depth < pickup_min_depth || depth >= pickup_max_depth then continue
+            if lateral >= pickup_half_width || lateral <= 0.0 - pickup_half_width then continue
             let it = lv.sprites[i].item_type
             // Health/ammo items return false at full health/ammo so
             // the sprite stays on the floor for later instead of being
@@ -444,42 +602,28 @@ module pickups =
                 if g.health > 100 then g.health = 100
                 true
             | extra_life ->
-                // Full heal, +25 ammo, +1 life, and counts against
+                // Full heal, +25 ammo (re-arming the chosen gun if
+                // the player was dry), +1 life, and counts against
                 // the intermission treasure tally.
                 g.health = 100
-                g.ammo = g.ammo + 25
-                if g.ammo > 99 then g.ammo = 99
+                give_ammo(g, 25)
                 g.treasures = g.treasures + 1
                 score.grant_extra_life(g, ac)
                 true
             | clip | clip_small when (g.ammo >= 99) -> false
             | clip ->
-                // If player was out of ammo (dropped to knife),
-                // restore their best firearm when the clip comes in.
-                if g.ammo == 0 && g.weapon == weapon.knife then g.weapon = g.best_weapon
-                g.ammo = g.ammo + 8
-                if g.ammo > 99 then g.ammo = 99
+                give_ammo(g, 8)
                 true
             | clip_small ->
                 // Enemy drops — half the ammo of a map-placed clip
                 // (matches the original's small-clip pickup).
-                if g.ammo == 0 && g.weapon == weapon.knife then g.weapon = g.best_weapon
-                g.ammo = g.ammo + 4
-                if g.ammo > 99 then g.ammo = 99
+                give_ammo(g, 4)
                 true
             | machine_gun ->
-                if g.ammo == 0 && g.weapon == weapon.knife then g.weapon = weapon.machine_gun
-                g.ammo = g.ammo + 6
-                if g.ammo > 99 then g.ammo = 99
-                if g.weapon < weapon.machine_gun then g.weapon = weapon.machine_gun
-                if g.best_weapon < weapon.machine_gun then g.best_weapon = weapon.machine_gun
+                give_weapon(g, weapon.machine_gun)
                 true
             | chain_gun ->
-                if g.ammo == 0 && g.weapon == weapon.knife then g.weapon = weapon.chain_gun
-                g.ammo = g.ammo + 6
-                if g.ammo > 99 then g.ammo = 99
-                if g.weapon < weapon.chain_gun then g.weapon = weapon.chain_gun
-                if g.best_weapon < weapon.chain_gun then g.best_weapon = weapon.chain_gun
+                give_weapon(g, weapon.chain_gun)
                 true
             | gold_key ->
                 g.has_gold_key = true
@@ -540,6 +684,83 @@ module pickups =
 // ============================================================
 
 module tilemap =
+    import math from std::
+
+    // Which tiles this tick's view rays touch — the original's per-frame
+    // "spotted" grid, which its renderer rebuilds during the wall pass.
+    // We rebuild it in the tick instead (test mode never renders), with
+    // the raycaster's camera and door rules: one ray per framebuffer
+    // column, every tile a ray steps into is marked, a wall stops the
+    // ray, and a door stops it unless the ray crosses the door's midline
+    // inside the tile at a point the slab has already slid clear of.
+    // A ray reaching a door tile from the door's edge-on axis stops
+    // there, as in the raycaster; a door tile is never itself marked
+    // (it isn't floor) but rays continue through an open one. The
+    // wall a ray stops at isn't marked either. The sliding push-wall counts as solid
+    // at its current tile (the raycaster does an exact box test; the
+    // difference is a sliver during the slide). Actors then count as
+    // drawn when their tile or a floor neighbour is marked — see
+    // enemies.ai.update_enemies.
+    let mark_visible_tiles = (lv: level*, g: game*, num_rays: i32) ->
+        for i in 0..map_size * map_size do lv.vis_tiles[i] = false
+        let pw_active = lv.pushwall.active
+        for col in 0..num_rays do
+            let cam_x = 2.0 * (f64) col / (f64) num_rays - 1.0
+            let ray_dx = g.dir_x + g.plane_x * cam_x
+            let ray_dy = g.dir_y + g.plane_y * cam_x
+            let mut map_x = (i32) g.pos_x
+            let mut map_y = (i32) g.pos_y
+            let delta_x = if ray_dx == 0.0 then 1e6 else math.abs(1.0 / ray_dx)
+            let delta_y = if ray_dy == 0.0 then 1e6 else math.abs(1.0 / ray_dy)
+            let mut step_x = 0
+            let mut step_y = 0
+            let mut side_x = 0.0
+            let mut side_y = 0.0
+            if ray_dx < 0.0 then
+                step_x = -1
+                side_x = (g.pos_x - (f64) map_x) * delta_x
+            else
+                step_x = 1
+                side_x = ((f64) map_x + 1.0 - g.pos_x) * delta_x
+            if ray_dy < 0.0 then
+                step_y = -1
+                side_y = (g.pos_y - (f64) map_y) * delta_y
+            else
+                step_y = 1
+                side_y = ((f64) map_y + 1.0 - g.pos_y) * delta_y
+            loop
+                let side = if side_x < side_y then 0 else 1
+                if side == 0 then
+                    side_x = side_x + delta_x
+                    map_x = map_x + step_x
+                else
+                    side_y = side_y + delta_y
+                    map_y = map_y + step_y
+                if map_x < 0 || map_x >= map_size || map_y < 0 || map_y >= map_size then break
+                let idx = (i64) map_x * 64 + (i64) map_y
+                // Only a tile the ray passes through is marked: the
+                // wall (or shut door) that stops it is not.
+                if pw_active && map_x == lv.pushwall.tile_x && map_y == lv.pushwall.tile_y then break
+                let tile = (i32) lv.tilemap[idx]
+                if tile >= 1 && tile <= 63 then break
+                if tile >= 128 then
+                    let dn = tile - 128
+                    let is_vert = lv.doors[dn].vertical
+                    let matches = if is_vert then side == 0 else side == 1
+                    if !matches then break
+                    let perp_mid = if side == 0 then side_x - delta_x * 0.5
+                                   else side_y - delta_y * 0.5
+                    if perp_mid > 0.001 then
+                        let wm = if side == 0 then g.pos_y + perp_mid * ray_dy
+                                 else g.pos_x + perp_mid * ray_dx
+                        let wm_tile = (i32) math.floor(wm)
+                        let in_tile = if side == 0 then wm_tile == map_y else wm_tile == map_x
+                        if in_tile && wm - math.floor(wm) >= lv.door_pos[dn] then break
+                    // A door tile itself is never marked (it isn't
+                    // floor), but rays run on through an open one.
+                    continue
+                lv.vis_tiles[idx] = true
+
     struct sprite_obj =
         x: f64
         y: f64
@@ -663,6 +884,7 @@ module areas =
     // excluded from connectivity checks.
     let num_areas = 37
     private let area_tile = 107
+    private let ambush_marker = 106
     let no_area   = 255
 
     // Read the raw plane-0 area number at (x,y). Returns the index
@@ -698,6 +920,23 @@ module areas =
                     // door-spawn rule); horizontal from y-1.
                     let inherit = if raw % 2 == 0 then raw_at(lv_data, x - 1, y)
                                   else raw_at(lv_data, x, y - 1)
+                    lv.tile_areas[idx] = if inherit >= 0 then (u8) inherit
+                                           else (u8) no_area
+                else if raw == ambush_marker then
+                    // Ambush marker (plane-0 106): floor for every
+                    // purpose, so it borrows an area from a cardinal
+                    // neighbour whether or not an actor spawns on it
+                    // (the original rewrites every marker in a cleanup
+                    // pass, west neighbour winning over south over
+                    // north over east). Leaving it area-less would make
+                    // a door event while the player stands there clear
+                    // the whole reachability set.
+                    let e = raw_at(lv_data, x + 1, y)
+                    let n = raw_at(lv_data, x, y - 1)
+                    let s = raw_at(lv_data, x, y + 1)
+                    let w = raw_at(lv_data, x - 1, y)
+                    let inherit = if w >= 0 then w else if s >= 0 then s
+                                  else if n >= 0 then n else e
                     lv.tile_areas[idx] = if inherit >= 0 then (u8) inherit
                                            else (u8) no_area
                 else
@@ -768,12 +1007,19 @@ module spawn =
         tier: i32         // difficulty gate: 0=base (always), 1=medium+, 2=hard+
 
     // Ambush marker: a plane-0 tile (raw value 106) that promotes the
-    // enemy standing on it to ambush mode and borrows an area number.
-    // Ambush enemies wait in dead silence until they actually see the
-    // player — noise won't wake them. The original also rewrites the
-    // ambush tile to one of the four neighbor area tiles so
-    // connectivity / sound checks have a real area to use.
+    // enemy standing on it to ambush mode. Ambush enemies wait in dead
+    // silence until they actually see the player — noise won't wake
+    // them. (areas.build gives every marker a borrowed area number.)
     private let ambush_tile = 106
+
+    // Boss facing at spawn (matches the original's per-boss spawn
+    // routines). The heading matters for wake-up: it is the forward
+    // half-plane enemies.ai.sees_player tests before tracing a line.
+    private let boss_facing = (k: enemies.enemy_kind) ->
+        match k with
+        | hans | schabbs | fat | mecha_hitler -> dir.south
+        | gretel | giftmacher | hitler_fake   -> dir.north
+        | _ -> dir.nodir
 
     // Find player start position and facing from level plane 1.
     // Tile values 19-22 = player facing N/E/S/W.
@@ -1073,7 +1319,8 @@ module spawn =
     // Allocate one enemy entry from plane-1 data. dir4 0..3 is
     // east/north/west/south; multiplied by 2 to land on the cardinal
     // dirs of the 8-dir direction encoding.
-    private let one_enemy = (lv: level*, tx: i32, ty: i32, info: enemy_spawn_info, difficulty: difficulty) ->
+    private let one_enemy = (lv: level*, tx: i32, ty: i32, info: enemy_spawn_info, g: game*) ->
+        let difficulty = g.difficulty
         if lv.num_enemies >= enemies.max_enemies then return
         let dir8 = match enum_of(dir, info.dir4 * 2) with   // 0,2,4,6 = E/N/W/S
                    | some(d8) -> d8
@@ -1086,21 +1333,34 @@ module spawn =
             else if info.patrol then enemies.enemy_state.path
             else enemies.enemy_state.stand
         let hp = if info.dead then 0 else enemies.hp_for_kind(info.kind, difficulty)
+        // Actors created in a timed state start at a random point in
+        // that first frame (the original rolls one byte per spawn, in
+        // map order): a patroller somewhere in its 20-tic first stride,
+        // a ghost in its 10-tic first pose. Standing spawns and corpses
+        // have no timer to randomise. This is what keeps a pair of
+        // patrollers from marching in lockstep.
+        let start_phase =
+            if info.dead then enemies.walk_frame_time
+            else if is_ghost then (f64) (enemies.rnd_byte(g) % 10) / 70.0
+            else if info.patrol then (f64) (enemies.rnd_byte(g) % 20) / 70.0
+            else enemies.walk_frame_time
         let anim_frame = if info.dead then
             enemies.sprites_for_kind(info.kind).num_die_frames - 1
         else 0
-        // Bosses spawn with dir=nodir and the ambush flag set
-        // (matches the original's boss spawn routines). Without the
-        // ambush flag they'd be auto-woken by any noise in the
-        // connected area set the moment their door opens; without
-        // nodir their forward-cone check in enemies.ai.sees_player
-        // can leave them blind to the player standing in the doorway.
-        // Ghosts spawn with dir=nodir so advance_move picks a chase
-        // direction on the first step rather than blindly stepping
-        // into whatever cardinal `dir4` happened to encode.
+        // Bosses spawn ambush-flagged with a fixed cardinal facing
+        // (matches the original's per-boss spawn routines — see
+        // boss_facing). The ambush flag means only line-of-sight
+        // wakes them, never noise in the connected area set; the
+        // facing is the forward half-plane enemies.ai.sees_player
+        // applies, so a boss can stay blind to a player who enters
+        // from behind until they close to within 1.5 tiles or step
+        // into that half-plane. That's the original's behavior, not a
+        // bug. Ghosts spawn with dir=nodir so advance_move picks a
+        // chase direction on the first step rather than blindly
+        // stepping into whatever cardinal `dir4` happened to encode.
         let is_boss = enemies.kind_is_boss(info.kind)
         let spawn_dir = if info.dead then dir.nodir
-            else if is_boss then dir.nodir
+            else if is_boss then boss_facing(info.kind)
             else if is_ghost then dir.nodir
             else dir8
         lv.enemies[lv.num_enemies] = enemies.enemy {
@@ -1113,12 +1373,14 @@ module spawn =
             dir = spawn_dir,
             hp = hp,
             anim_frame = anim_frame,
-            anim_timer = enemies.walk_frame_time,
+            anim_timer = start_phase,
             ambush = is_boss && !info.dead,
             notified = false,
             reaction_timer = 0.0,
             last_visible = false,
-            touch_cooldown = 0.0,
+            active = info.patrol && !info.dead,   // the original's patrol spawns start active; standing spawns, bosses and ghosts earn it on first draw
+            waiting_door = -1,
+            scream_timer = -1.0,
             first_attack = false,
             walk_pause = false,
             mommy_fade_t = 0.0,
@@ -1135,7 +1397,9 @@ module spawn =
         else if tier == 1 then diff >= difficulty.medium
         else diff >= difficulty.hard
 
-    let spawn_enemies = (lv: level*, lv_data: maps.level*, difficulty: difficulty, mommy_mode: mommy_mode) ->
+    let spawn_enemies = (lv: level*, lv_data: maps.level*, g: game*) ->
+        let difficulty = g.difficulty
+        let mommy_mode = g.mommy_mode
         lv.num_enemies = 0
         for y in 0..map_size do
             for x in 0..map_size do
@@ -1150,29 +1414,15 @@ module spawn =
                     if mommy.hides_dogs(mommy_mode) && is_dog then continue
                     if info.dead || tier_allowed(info.tier, difficulty) then
                         let before = lv.num_enemies
-                        one_enemy(lv, x, y, info, difficulty)
+                        one_enemy(lv, x, y, info, g)
                         if lv.num_enemies > before then
                             // Promote the just-spawned enemy to
-                            // ambush if its tile is the ambush
-                            // marker, and patch tile_areas to the
-                            // first cardinal neighbor with a real
-                            // area (matches the east/north/south/west
-                            // scan in the original's spawn routine).
+                            // ambush if its tile is the ambush marker.
+                            // (The marker's area number was already
+                            // borrowed from a neighbour in areas.build.)
                             let raw = (i32) lv_data.walls[(i64) y * 64 + (i64) x]
                             if raw == ambush_tile then
                                 lv.enemies[before].ambush = true
-                                let inherit =
-                                    let e = areas.raw_at(lv_data, x + 1, y)
-                                    if e >= 0 then e
-                                    else
-                                        let n = areas.raw_at(lv_data, x, y - 1)
-                                        if n >= 0 then n
-                                        else
-                                            let s = areas.raw_at(lv_data, x, y + 1)
-                                            if s >= 0 then s
-                                            else areas.raw_at(lv_data, x - 1, y)
-                                if inherit >= 0 then
-                                    lv.tile_areas[(i64) x * 64 + (i64) y] = (u8) inherit
 
     // Mark push-wall tiles from plane-1 data during tilemap build.
     // Tile value 98 in plane 1 marks the wall at that position as
@@ -1221,7 +1471,9 @@ module level =
     // Allocate a level from the decoded wolf3d map data. Builds tilemap,
     // spawns static sprites, and marks push-wall tiles. Caller must call
     // `level.destroy` when the level is no longer needed.
-    let build = (lv_data: maps.level*, sprite_start: i32, difficulty: difficulty, mommy_mode: mommy_mode) ->
+    let build = (lv_data: maps.level*, sprite_start: i32, g: game*) ->
+        let difficulty = g.difficulty
+        let mommy_mode = g.mommy_mode
         let lv = alloc(level {
             tilemap = alloc(u8[map_size * map_size] {})!,
             pushwall_tiles = alloc(bool[map_size * map_size] {})!,
@@ -1237,6 +1489,7 @@ module level =
             num_enemies = 0,
             projectiles = alloc(projectiles.projectile[projectiles.max_projectiles] {})!,
             tile_areas = alloc(u8[map_size * map_size] {})!,
+            vis_tiles = alloc(bool[map_size * map_size] {})!,
             area_connect = alloc(u8[areas.num_areas * areas.num_areas] {})!,
             area_by_player = alloc(bool[areas.num_areas] {})!,
             total_enemies = 0,
@@ -1249,14 +1502,16 @@ module level =
         spawn.mark_exit_tiles(lv, lv_data)
         spawn.mark_path_arrows(lv, lv_data)
         areas.build(lv, lv_data)
-        spawn.spawn_enemies(lv, lv_data, difficulty, mommy_mode)
+        spawn.spawn_enemies(lv, lv_data, g)
         // Tally totals for the intermission screen (enemies that are not
         // pre-dead corpses; push-wall marker tiles; treasure pickups).
+        // The Pac-Man ghosts never count toward the kill total (they
+        // can't be killed), matching the original's ghost spawn.
         let mut enemies_live = 0
         for i in 0..lv.num_enemies do
             match lv.enemies[i].state with
             | dead -> void()
-            | _ -> enemies_live = enemies_live + 1
+            | _ -> if !enemies.kind_is_ghost(lv.enemies[i].kind) then enemies_live = enemies_live + 1
         lv.total_enemies = enemies_live
         let mut pw = 0
         for t in lv.pushwall_tiles do
@@ -1286,6 +1541,7 @@ module level =
         free(lv.enemies)
         free(lv.projectiles)
         free(lv.tile_areas)
+        free(lv.vis_tiles)
         free(lv.area_connect)
         free(lv.area_by_player)
         free(lv)
@@ -1315,4 +1571,4 @@ module level =
         let p_gamemaps = data_path.wl6(w.g.data_dir, "GAMEMAPS.WL6")
         defer free(p_gamemaps)
         w.lv_data = maps.load(p_maphead, p_gamemaps, w.g.level_num)
-        w.lv = build(w.lv_data, vs.sprite_start, w.g.difficulty, w.g.mommy_mode)
+        w.lv = build(w.lv_data, vs.sprite_start, w.g)

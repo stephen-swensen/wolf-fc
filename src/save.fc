@@ -615,7 +615,7 @@ module save =
                     let lvl = g.level_num % episode.levels_per + 1
                     io.write("label E%d{ep}M%d{lvl}\n", f)
                 io.write(
-                    "game %d{g.level_num} %d{(i32) g.difficulty} %d{g.lives} %d{g.score} %d{g.health} %d{g.ammo} %d{(i32) g.weapon} %d{(i32) g.best_weapon} %d{if g.has_gold_key then 1 else 0} %d{if g.has_silver_key then 1 else 0} %d{if g.went_secret then 1 else 0}\n", f)
+                    "game %d{g.level_num} %d{(i32) g.difficulty} %d{g.lives} %d{g.score} %d{g.health} %d{g.ammo} %d{(i32) g.weapon} %d{(i32) g.best_weapon} %d{if g.has_gold_key then 1 else 0} %d{if g.has_silver_key then 1 else 0} %d{if g.went_secret then 1 else 0} %d{(i32) g.chosen_weapon} %d{g.next_extra}\n", f)
                 // OG-style start-of-level score, used by death-rewind.
                 // Written on its own line so older saves (lacking it)
                 // load with `oldscore = score` defaulted in `from_slot`.
@@ -631,8 +631,11 @@ module save =
                 // saves written before this existed simply lack it and
                 // load with the totals zeroed.
                 let ep_rec = if g.ep_recorded_current then 1 else 0
-                io.write(
-                    "episode %d{g.ep_kr_total} %d{g.ep_sr_total} %d{g.ep_tr_total} %d{g.ep_time_total} %d{g.ep_levels_played} %d{ep_rec}\n", f)
+                io.write("epratios %d{ep_rec}", f)
+                for i in 0..10 do
+                    let pl = if g.ep_played[i] then 1 else 0
+                    io.write(" %d{g.ep_kr[i]} %d{g.ep_sr[i]} %d{g.ep_tr[i]} %d{g.ep_time[i]} %d{pl}", f)
+                io.write("\n", f)
                 io.write("pos %14.6f{g.pos_x} %14.6f{g.pos_y}\n", f)
                 io.write("dir %14.6f{g.dir_x} %14.6f{g.dir_y}\n", f)
                 io.write("plane %14.6f{g.plane_x} %14.6f{g.plane_y}\n", f)
@@ -684,8 +687,16 @@ module save =
                     // files still load with both false.
                     let fat = if e.first_attack then 1 else 0
                     let wpz = if e.walk_pause then 1 else 0
+                    // Field 19 (ever-drawn / active) is optional too;
+                    // files without it load every actor as active, i.e.
+                    // the pre-flag behavior (no think gate). Field 16
+                    // used to be the ghost touch cooldown, retired with
+                    // the one-tile stand-off; written as 0 and ignored.
+                    // Fields 20-21 (door being waited on, pending
+                    // death-vocal timer) are optional as well.
+                    let act = if e.active then 1 else 0
                     io.write(
-                        "enemy %d{i} %14.6f{e.x} %14.6f{e.y} %d{e.tile_x} %d{e.tile_y} %d{ki} %d{si} %d{(i32) e.dir} %d{e.hp} %d{e.anim_frame} %14.6f{e.anim_timer} %14.6f{legacy_slot} %d{amb} %d{nfd} %14.6f{e.reaction_timer} %14.6f{e.touch_cooldown} %d{fat} %d{wpz}\n", f)
+                        "enemy %d{i} %14.6f{e.x} %14.6f{e.y} %d{e.tile_x} %d{e.tile_y} %d{ki} %d{si} %d{(i32) e.dir} %d{e.hp} %d{e.anim_frame} %14.6f{e.anim_timer} %14.6f{legacy_slot} %d{amb} %d{nfd} %14.6f{e.reaction_timer} %14.6f{legacy_slot} %d{fat} %d{wpz} %d{act} %d{e.waiting_door} %14.6f{e.scream_timer}\n", f)
                 // PRNG state. Bits round-trip through signed i64
                 // (same width as u64 under 2's complement); load
                 // reinterprets via (u64). Older saves lack this
@@ -771,6 +782,19 @@ module save =
                                 g.has_gold_key   = unwrap_int(toks[9]) != 0
                                 g.has_silver_key = unwrap_int(toks[10]) != 0
                                 g.went_secret  = unwrap_int(toks[11]) != 0
+                                // Optional (added after WLFC 2 shipped):
+                                // the chosen-weapon latch; older files
+                                // fall back to the best weapon owned.
+                                g.chosen_weapon = if toks.len >= 13 then
+                                    match enum_of(weapon, unwrap_int(toks[12])) with
+                                    | some(wp) -> wp
+                                    | none -> g.best_weapon
+                                else g.best_weapon
+                                // Optional: the climbing extra-life
+                                // threshold; older files derive it
+                                // from the score.
+                                g.next_extra = if toks.len >= 14 then unwrap_int(toks[13])
+                                               else (g.score / 40000 + 1) * 40000
                                 // Default oldscore to score for back-
                                 // compat: older saves lack the
                                 // `oldscore` line, and we want a
@@ -800,16 +824,21 @@ module save =
                                 g.total_secrets   = unwrap_int(toks[4])
                                 g.treasures       = unwrap_int(toks[5])
                                 g.total_treasures = unwrap_int(toks[6])
-                        else if text.starts_with(line, "episode ") then
+                        else if text.starts_with(line, "epratios ") then
+                            // Per-floor ratio slots (replaces the older
+                            // `episode` running-totals line, which is
+                            // ignored: a save from before this carries
+                            // no per-floor figures to restore).
                             let toks = split_ws(line)
                             defer free_split(toks)
-                            if toks.len >= 7 then
-                                g.ep_kr_total         = unwrap_int(toks[1])
-                                g.ep_sr_total         = unwrap_int(toks[2])
-                                g.ep_tr_total         = unwrap_int(toks[3])
-                                g.ep_time_total       = unwrap_int(toks[4])
-                                g.ep_levels_played    = unwrap_int(toks[5])
-                                g.ep_recorded_current = unwrap_int(toks[6]) != 0
+                            if toks.len >= 52 then
+                                g.ep_recorded_current = unwrap_int(toks[1]) != 0
+                                for i in 0..10 do
+                                    g.ep_kr[i]     = unwrap_int(toks[2 + i * 5])
+                                    g.ep_sr[i]     = unwrap_int(toks[3 + i * 5])
+                                    g.ep_tr[i]     = unwrap_int(toks[4 + i * 5])
+                                    g.ep_time[i]   = unwrap_int(toks[5 + i * 5])
+                                    g.ep_played[i] = unwrap_int(toks[6 + i * 5]) != 0
                         else if text.starts_with(line, "time ") then
                             let toks = split_ws(line)
                             defer free_split(toks)
@@ -919,10 +948,13 @@ module save =
                                     e.ambush         = unwrap_int(toks[13]) != 0
                                     e.notified       = unwrap_int(toks[14]) != 0
                                     e.reaction_timer = unwrap_float(toks[15])
-                                    e.touch_cooldown = unwrap_float(toks[16])
+                                    // toks[16]: retired ghost touch cooldown.
                                     // Optional trailing fields (see to_slot).
                                     e.first_attack   = toks.len >= 19 && unwrap_int(toks[17]) != 0
                                     e.walk_pause     = toks.len >= 19 && unwrap_int(toks[18]) != 0
+                                    e.active         = toks.len < 20 || unwrap_int(toks[19]) != 0
+                                    e.waiting_door   = if toks.len >= 22 then unwrap_int(toks[20]) else -1
+                                    e.scream_timer   = if toks.len >= 22 then unwrap_float(toks[21]) else -1.0
                     // Recompute area_by_player from the restored door
                     // states so enemy AI sees the correct
                     // connectivity. areas.connect walks the door list

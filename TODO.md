@@ -21,6 +21,44 @@ one-off fix, and patch.
 
 ## Open findings
 
+### Applied — 2026-09-10 (OG fidelity pass, id source only)
+
+Five subsystem audits against `../wolf3d/WOLFSRC` (enemy movement, boss
+AI + projectiles, player mechanics, doors/push-walls/spawn, game flow),
+then everything applied and re-pinned — 271 tests green. Highlights:
+wake-up contract (boss facings, survived-hit vocal, patrol detection
+tick, the never-drawn think gate with a ray-touched "drawn" grid), door
+operate/close/hold rules + timings, push-wall timing/stamping/blocking/
+area hand-off, ambush-marker areas on every difficulty, attack-cycle
+table (12-tic shot, held-key loops, chosen-weapon latch), view-relative
+pickups, one-tile actor stand-off + player actor box + whole-tile
+statics + clip-move slide order + per-thrust cap + the frame-rate-
+dependent "running" gate, kiting bosses (run-away selector), per-kind
+death timing incl. the upright boss hold and delayed vocals, Hitler's
+seven die frames, Fake Hitler's five, mech/Hitler walk cadences,
+flame-projectile cadence, rocket smoke, projectile door solidity,
+no pain grunt, god-mode flash, monotonic extra-life counter,
+per-floor episode ratio slots averaged over eight, in-episode high-score
+level, no Get Psyched on death restart, weapon hidden while dying,
+elevator east/west facing + thrown-switch texture, MLI clock penalty,
+ten-tic frame cap, per-frame order.
+
+Deliberately NOT applied (present for a decision):
+
+- ~~**[og-spawn-phase]**~~ applied 2026-09-12: patrollers and ghosts
+  start at a random point in their first frame (one enemy-RNG draw per
+  timed spawn, in map order); twelve goldens re-pinned.
+- **[og-rocket-rotate]** the rocket's 8-way sprite is chosen from the
+  viewer angle relative to its heading (the standard actor rotate); ours
+  quantises the travel angle alone. Render-only.
+- **[og-flash-scale]** the damage flash length scales with the points
+  taken; ours is a fixed 0.25 s.
+- **[og-tab-e-boss]** TAB+E on a boss floor in the original warps to the
+  secret floor (its "completed" branch fails the `mapon < 8` test).
+- Ours-by-design, unchanged: IDDQD/IDKFA, TAB+N no-clip (SOD-only in the
+  original), the 999999 score cap, the player's "moving away is always
+  allowed" relaxation of the actor box (only reachable after a teleport).
+
 The 2026-05-31 multi-agent audit's 76 confirmed findings are now all
 either applied or retired; see Decisions below for the ones we
 deliberately won't do. The last sweep (2026-09-05) applied every

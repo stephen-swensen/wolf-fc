@@ -29,25 +29,24 @@ module player =
     // shift is held — same 2× factor as move_speed.
     private let turn_speed  = 2.138
 
-    // Static-decoration half-width (tiles). Blocking sprites
-    // (barrels, lamps, tables, etc.) block the player as an AABB
-    // centered on the tile — you can approach a barrel until your
-    // bbox edge is ~(radius + sprite_block_half) from its center.
-    // 0.28125 puts the per-axis reject at radius + 0.28125 = 0.625,
-    // chosen to match enemy_block_r2 below. The original blocks the
-    // full 1×1 tile, which feels too intrusive at our scale.
-    private let sprite_block_half = 0.28125
+    // Actor spacing (tiles): the player can't move to within a tile,
+    // per axis, of a live shootable actor — the original's box, the
+    // mirror image of the stand-off actors keep from the player.
+    // Blocking decorations occupy their whole tile, like a wall.
+    private let actor_box = 1.0
 
-    // Enemy exclusion radius squared (tiles²). 0.390625 = 0.625²,
-    // so the player can't approach within 0.625 tiles of a live
-    // enemy center. Tuned down from the original's 1.0-tile actor
-    // spacing because that distance reads as "stuck on nothing" at
-    // our scale. Chosen to match the sprite per-axis reject so the
-    // two obstacle types feel the same. The block is directional
-    // (see move_blocked_by_enemy): only moves that decrease the
-    // distance are rejected, so an enemy that ends up pressed
-    // against the player can always be backed away from.
-    private let enemy_block_r2 = 0.390625
+    // Largest single thrust the original allows per frame (two
+    // player radii, less one unit), so a long frame can't tunnel.
+    private let max_thrust = 0.6875 - 1.0 / 65536.0
+
+    // Thrust in the original's speed units per tic: walking 5250,
+    // backing 3500, strafing 5250 (doubled with the run key). An
+    // actor's "player is running" hitchance gate fires when the
+    // frame's total reaches 6000 — which, with two or more tics per
+    // frame, plain walking does.
+    private let thrust_walk   = 5250.0
+    private let thrust_back   = 3500.0
+    private let thrust_running = 6000.0
 
     // Seconds to hold gameplay frozen after the player pulls the
     // elevator switch before the intermission screen appears. Stands
@@ -87,6 +86,7 @@ module player =
         g.ammo = 99
         g.weapon = weapon.chain_gun
         g.best_weapon = weapon.chain_gun
+        g.chosen_weapon = weapon.chain_gun
         g.has_gold_key = true
         g.has_silver_key = true
 
@@ -99,7 +99,11 @@ module player =
         g.ammo = 8
         g.weapon = weapon.pistol
         g.best_weapon = weapon.pistol
-        g.fire_timer = 0.0
+        g.chosen_weapon = weapon.pistol
+        g.attacking = false
+        g.attack_frame = 0
+        g.attack_count = 0.0
+        g.key_fire_handled = false
         g.weapon_frame = 0
         g.face_frame = 0
         g.face_count = 0.0
@@ -112,7 +116,6 @@ module player =
         g.last_hit_needle = false
         g.killer_active = false
         g.respawn_fade_timer = 0.0
-        g.wall_hit_cooldown = 0.0
         // IDKFA latch persists across deaths — re-grant the full kit so
         // the player doesn't have to re-cheat after a respawn.
         if g.idkfa_mode then give_full_kit(g)
@@ -122,14 +125,15 @@ module player =
     // the per-life reset.
     let reset_for_new_game = (g: game*) ->
         g.score = 0
+        g.next_extra = score.extra_life_score
         g.lives = 3
         reset_for_life(g)
 
     // Clear held gameplay-input flags. Called on ack-screen exits
     // (intermission / episode-end advance) so the "any key" press
     // that dismissed the screen doesn't also count as a held
-    // movement / fire key on the next map. Also resets the weapon
-    // cooldown so a fire_timer left mid-cycle by the last shot
+    // movement / fire key on the next map. Also cancels any attack
+    // cycle left running by the last shot
     // before the elevator switch (or exit-tile step) doesn't survive
     // the next_level_delay → intermission → next-level freeze and
     // leak a phantom gatling burst into the new map's first frames.
@@ -141,7 +145,10 @@ module player =
         g.key_fire = false
         g.key_space = false
         g.key_space_handled = false
-        g.fire_timer = 0.0
+        g.attacking = false
+        g.attack_frame = 0
+        g.attack_count = 0.0
+        g.key_fire_handled = false
         g.weapon_frame = 0
 
     // True if the player's bbox at (px, py) overlaps a wall, closed
@@ -155,36 +162,30 @@ module player =
         let xr = (i32) (px + radius)
         let yl = (i32) (py - radius)
         let yh = (i32) (py + radius)
-        // Walls + doors: per-tile check on each bbox corner.
+        // Walls, doors that aren't fully open, and blocking
+        // decorations (whole tile): per-tile check on each bbox corner.
         let tile_blocks = (tx: i32, ty: i32) ->
-            tilemap.tile_solid(lv, tx, ty) || (tilemap.tile_is_door(lv, tx, ty) && !doors.passable(lv, tx, ty))
-        if tile_blocks(xl, yl) || tile_blocks(xr, yl)
-           || tile_blocks(xl, yh) || tile_blocks(xr, yh) then true
-        else
-            // Blocking sprites: AABB overlap against a half-tile box
-            // centered on the sprite. reach = radius +
-            // sprite_block_half.
-            let reach = radius + sprite_block_half
-            let mut hit = false
-            for i in 0..lv.num_sprites do
-                let s = &lv.sprites[i]
-                if s.alive && s.blocks then
-                    let dx = px - s.x
-                    let dy = py - s.y
-                    let adx = math.abs(dx)
-                    let ady = math.abs(dy)
-                    if adx < reach && ady < reach then
+            if tilemap.tile_solid(lv, tx, ty) then true
+            else if tilemap.tile_is_door(lv, tx, ty) && !doors.passable(lv, tx, ty) then true
+            else
+                let mut hit = false
+                for i in 0..lv.num_sprites do
+                    let s = &lv.sprites[i]
+                    if s.alive && s.blocks && (i32) s.x == tx && (i32) s.y == ty then
                         hit = true
                         break
-            hit
+                hit
+        tile_blocks(xl, yl) || tile_blocks(xr, yl) || tile_blocks(xl, yh) || tile_blocks(xr, yh)
 
-    // Would moving from (cur_x, cur_y) to (nx, ny) collide with a
-    // live enemy? Asymmetric: blocks only moves that put the player
-    // INSIDE the exclusion zone of some live enemy AND DECREASE the
-    // distance to that enemy. Moves that increase (or leave
-    // unchanged) the distance are always allowed, so if an enemy
-    // walks onto the player the player can always slide away. Skips
-    // dead and actively-dying enemies (they don't physically block).
+    // Would moving from (cur_x, cur_y) to (nx, ny) put the player
+    // inside the one-tile box (per axis) around a live shootable
+    // actor? Corpses, the dying, and the ghosts (which have no
+    // shootable flag in the original, so they never block) are
+    // skipped. One relaxation over the original's plain box test: a
+    // move that doesn't bring the player closer is always allowed,
+    // so a player already inside the box — only possible after a
+    // teleport, since actors keep their own stand-off — can always
+    // back out instead of being pinned.
     private let move_blocked_by_enemy = (lv: level*, cur_x: f64, cur_y: f64,
                                  nx: f64, ny: f64) ->
         let mut hit = false
@@ -193,27 +194,29 @@ module player =
             match e.state with
             | dead | die -> void()
             | _ ->
+                if enemies.kind_is_ghost(e.kind) then continue
                 let new_dx = e.x - nx
                 let new_dy = e.y - ny
-                let new_d2 = new_dx * new_dx + new_dy * new_dy
-                if new_d2 < enemy_block_r2 then
+                if math.abs(new_dx) <= actor_box && math.abs(new_dy) <= actor_box then
                     let cur_dx = e.x - cur_x
                     let cur_dy = e.y - cur_y
+                    let new_d2 = new_dx * new_dx + new_dy * new_dy
                     let cur_d2 = cur_dx * cur_dx + cur_dy * cur_dy
                     if new_d2 < cur_d2 then
                         hit = true
                         break
         hit
 
-    // Try to move the player by (dx, dy). Attempts per-axis (so the
-    // player can slide along a wall when blocked on one axis) and
-    // reports "fully blocked" so the caller can trigger a wall-bump
-    // sound. Collision is checked against the map (walls + closed
-    // doors) AND live enemies — enemy blocking is "directional":
-    // moves that put the player further from an enemy are always
-    // allowed, which is what prevents the mutual-deadlock when an
-    // enemy walks onto the player from their side.
-    private let try_move = (lv: level*, g: game*, dx: f64, dy: f64) ->
+    private let position_ok = (lv: level*, cur_x: f64, cur_y: f64, nx: f64, ny: f64) ->
+        !blocked_by_map(lv, nx, ny) && !move_blocked_by_enemy(lv, cur_x, cur_y, nx, ny)
+
+    // Try to move the player by (dx, dy): the original's clip-move.
+    // The full move first; if that's blocked, the wall-bump cue (only
+    // when nothing else is playing), then the x-only move from the
+    // start point, then the y-only one — never both when the diagonal
+    // failed. Collision is against the map (walls, doors that aren't
+    // fully open, blocking decorations) and live actors.
+    private let try_move = (lv: level*, g: game*, ac: audio_ctx*, dx: f64, dy: f64) ->
         let cur_x = g.pos_x
         let cur_y = g.pos_y
         let nx = cur_x + dx
@@ -221,19 +224,15 @@ module player =
         if g.noclip then
             g.pos_x = nx
             g.pos_y = ny
-            false
+        else if position_ok(lv, cur_x, cur_y, nx, ny) then
+            g.pos_x = nx
+            g.pos_y = ny
         else
-            let mut blocked_x = true
-            let mut blocked_y = true
-            if !blocked_by_map(lv, nx, cur_y)
-               && !move_blocked_by_enemy(lv, cur_x, cur_y, nx, cur_y) then
+            if !sfx.any_busy(ac) then sfx.trigger(sfx.id.hit_wall, ac)
+            if position_ok(lv, cur_x, cur_y, nx, cur_y) then
                 g.pos_x = nx
-                blocked_x = false
-            if !blocked_by_map(lv, g.pos_x, ny)
-               && !move_blocked_by_enemy(lv, g.pos_x, cur_y, g.pos_x, ny) then
+            else if position_ok(lv, cur_x, cur_y, cur_x, ny) then
                 g.pos_y = ny
-                blocked_y = false
-            blocked_x && blocked_y
 
     let rotate_camera = (g: game*, angle: f64) ->
         let c = math.cos(angle)
@@ -298,6 +297,9 @@ module player =
         let apply_mli = (g: game*) ->
             give_full_kit(g)
             g.score = 0
+            // The original also adds ten minutes to the level clock,
+            // so the par-time bonus is gone along with the score.
+            g.level_time = g.level_time + 600.0
             hud.show_message(g, "You now have 100% Health,\n99 Ammo and both Keys!\n\nNote that you have basically\neliminated your chances of\ngetting a high score!")
             g.msg_timer = msg_time
 
@@ -395,13 +397,14 @@ module player =
         let apply_tab_i = (g: game*, ac: audio_ctx*) ->
             g.health = g.health + 99
             if g.health > 100 then g.health = 100
+            // The upgrade goes through the same give-weapon path as a
+            // pickup (6 rounds, re-arm if dry, new best + chosen), then
+            // the flat +50.
+            match enum_of(weapon, (i32) g.best_weapon + 1) with
+            | some(wp) -> pickups.give_weapon(g, wp)
+            | none -> void()
             g.ammo = g.ammo + 50
             if g.ammo > 99 then g.ammo = 99
-            match enum_of(weapon, (i32) g.best_weapon + 1) with
-            | some(wp) ->
-                g.best_weapon = wp
-                g.weapon = wp
-            | none -> void()
             score.add(g, 100000, ac)
             hud.show_message(g, "Free items!")
             g.msg_timer = msg_time
@@ -472,38 +475,38 @@ module player =
         let spd = move_speed * dt * bj_mult * (if g.key_shift then run_mult else 1.0)
         let rot = turn_speed * dt * bj_mult * (if g.key_shift then run_mult else 1.0)
 
-        // Player-running check (matches the original's enemy-fire
-        // dodge gate): picks the base-160 "player can dodge"
-        // hitchance. True this frame iff shift is held AND the player
-        // is actually attempting a move (fwd/back, or alt+left/right
-        // strafe). Turning in place doesn't count — neither does
-        // holding shift without a direction.
-        g.player_running = g.key_shift && (
-            g.key_up || g.key_down ||
-            (g.key_alt && (g.key_left || g.key_right)))
+        // Opposed keys cancel, as the original's control axes do.
+        let fwd    = g.key_up && !g.key_down
+        let back   = g.key_down && !g.key_up
+        let strafe_l = g.key_alt && g.key_left && !g.key_right
+        let strafe_r = g.key_alt && g.key_right && !g.key_left
+        let run_scale = if g.key_shift then run_mult else 1.0
+        let tics = dt * 70.0
 
-        // Track whether any attempted move was fully blocked — if so
-        // and the AdLib SFX chip is idle, play the wall-bump sound
-        // (matches the original's wall-bump cue, gated on the SFX
-        // chip not already playing something).
-        let back_spd   = spd * back_mult
-        let strafe_spd = spd * strafe_mult
-        let mut wall_hit = false
-        if g.key_up && try_move(lv, g, g.dir_x * spd, g.dir_y * spd) then wall_hit = true
-        if g.key_down && try_move(lv, g, 0.0 - g.dir_x * back_spd, 0.0 - g.dir_y * back_spd) then wall_hit = true
+        // "Player is running" (the enemy-fire hitchance gate): the
+        // original sums this frame's thrust in its speed units and
+        // compares with a fixed threshold — a frame-rate-dependent
+        // rule we reproduce as written, so at 35 Hz (and below ~60)
+        // any move counts, and only the run key does at 70.
+        let thrust = ((if fwd then thrust_walk else 0.0)
+                      + (if back then thrust_back else 0.0)
+                      + (if strafe_l || strafe_r then thrust_walk else 0.0))
+                     * run_scale * tics * bj_mult
+        g.player_running = thrust >= thrust_running
+
+        let cap = (d: f64) -> if d > max_thrust then max_thrust else d
+        let back_spd   = cap(spd * back_mult)
+        let strafe_spd = cap(spd * strafe_mult)
+        let fwd_spd    = cap(spd)
+        if fwd then try_move(lv, g, ac, g.dir_x * fwd_spd, g.dir_y * fwd_spd)
+        if back then try_move(lv, g, ac, 0.0 - g.dir_x * back_spd, 0.0 - g.dir_y * back_spd)
 
         if g.key_alt then
-            if g.key_left && try_move(lv, g, 0.0 - g.plane_x * strafe_spd, 0.0 - g.plane_y * strafe_spd) then wall_hit = true
-            if g.key_right && try_move(lv, g, g.plane_x * strafe_spd, g.plane_y * strafe_spd) then wall_hit = true
+            if strafe_l then try_move(lv, g, ac, 0.0 - g.plane_x * strafe_spd, 0.0 - g.plane_y * strafe_spd)
+            if strafe_r then try_move(lv, g, ac, g.plane_x * strafe_spd, g.plane_y * strafe_spd)
         else
             if g.key_left then rotate_camera(g, rot)
             if g.key_right then rotate_camera(g, 0.0 - rot)
-
-        if g.wall_hit_cooldown > 0.0 then
-            g.wall_hit_cooldown = g.wall_hit_cooldown - dt
-        if wall_hit && g.wall_hit_cooldown <= 0.0 then
-            sfx.trigger(sfx.id.hit_wall, ac)
-            g.wall_hit_cooldown = 0.4   // ~400 ms before we'll re-announce
 
         // Use-action dispatch — mirrors the original's use-key handler.
         //   • Push-wall runs every frame while space is held;
@@ -545,10 +548,18 @@ module player =
             let mut did_anything = false
             // Push-wall first so sliding a held space along a wall
             // activates secret tiles even when an edge event isn't fresh.
-            if pushwall.try_push(lv, fx, fy, push_dx, push_dy) then
+            match pushwall.try_push(lv, fx, fy, push_dx, push_dy) with
+            | pushed ->
                 sfx.trigger(sfx.id.push_wall, ac)
                 g.secrets = g.secrets + 1
                 did_anything = true
+            | blocked ->
+                // A secret wall with something in its path: the
+                // original answers with the locked-door "no way" cue
+                // and no secret credit.
+                if edge then sfx.trigger(sfx.id.no_way, ac)
+                did_anything = true
+            | not_pushable -> void()
             // Elevator + door fire once per press. Tile 21 is the
             // elevator switch; standing on the alt-elevator tile
             // (area 0) at switch-flip routes to the secret level
@@ -558,7 +569,11 @@ module player =
             // the level-done cue.
             if edge && fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
                 let face_tile = (i32) lv.tilemap[(i64) fx * 64 + (i64) fy]
-                if face_tile == 21 && !g.next_level then
+                // The elevator switch only answers a press from its
+                // east or west face (the original's use test), and
+                // the wall flips to the thrown-switch texture.
+                if face_tile == 21 && face_horiz && !g.next_level then
+                    lv.tilemap[(i64) fx * 64 + (i64) fy] = 22u8
                     let stand_area = (i32) lv.tile_areas[
                         (i64) ((i32) g.pos_x) * 64 + (i64) ((i32) g.pos_y)]
                     if stand_area == 0 then g.went_secret = true
@@ -572,10 +587,10 @@ module player =
                     sfx.trigger_gain(sfx.id.level_done, ac, 1.8)
                     did_anything = true
                 else
-                    match doors.try_open(lv, fx, fy, g, ac) with
-                    | no_door      -> void()
-                    | door_opened  -> did_anything = true
-                    | door_locked  ->
+                    match doors.operate(lv, fx, fy, g, ac, radius) with
+                    | no_door       -> void()
+                    | door_operated -> did_anything = true
+                    | door_locked   ->
                         sfx.trigger(sfx.id.no_way, ac)
                         did_anything = true
             if !did_anything && (edge || !sfx.adlib_busy(ac)) then
@@ -611,7 +626,21 @@ module player =
     // MG: frames 2↔3 loop while held = 12 tics ≈ 0.171s/shot.
     // Chaingun: fires on both frame 2 and 3 of the 2-frame loop =
     // 6 tics ≈ 0.086s/shot.
-    let fire_rate = f64[weapon.count] { 0.343, 0.343, 0.171, 0.086 }
+    // The original's attack cycle: every weapon walks a four-entry
+    // table, 6 tics per entry, showing sprite frame (entry + 1) and
+    // performing the entry's action when its 6 tics run out. Actions:
+    // 0 nothing, 1 gun shot, 2 knife swing, 3 machine-gun loop (back
+    // two entries while the key is held and ammo remains), 4 chain-gun
+    // loop (same, and the shot fires either way), -1 end of cycle. So
+    // a shot lands 12 tics after the press (during the flash frame),
+    // the pistol and knife are one attack per press, the machine gun
+    // fires every 12 tics while held and the chain gun every 6.
+    private let atk_entry_time = 6.0 / 70.0
+    private let atk_action = i32[16] {
+        0, 2, 0, -1,      // knife
+        0, 1, 0, -1,      // pistol
+        0, 1, 3, -1,      // machine gun
+        0, 1, 4, -1 }     // chain gun
 
     // Per-weapon firing sound.
     private let weapon_fire_snd = sfx.id[weapon.count] {
@@ -623,40 +652,67 @@ module player =
     // knife ready at 416, pistol at 421, MG at 426, chain at 431.
     private let weapon_sprite_base = i32[weapon.count] { 416, 421, 426, 431 }
 
-    // Per-frame weapon-animation pump.
+    // One gun shot: the weapon's report, the hitscan, and a round
+    // spent (the original's gun attack + the ammo decrement that
+    // follows it; IDKFA's unlimited ammo is ours).
+    private let gun_shot = (w: world*) ->
+        let g = w.g
+        sfx.trigger(weapon_fire_snd[g.weapon], w.ac)
+        hitscan.fire_player(w)
+        if !g.idkfa_mode && g.ammo > 0 then g.ammo = g.ammo - 1
+
+    // Per-frame weapon pump — the original's fire command + attack
+    // think. A fresh press starts a cycle only when none is running; a
+    // press arriving mid-cycle is dropped, and the loop entries read
+    // the held state of the key instead.
     let update_weapon = (w: world*, dt: f64) ->
         let g = w.g
-        let ac = w.ac
-        if g.fire_timer > 0.0 then
-            g.fire_timer = g.fire_timer - dt
-            // Advance animation frames across the fire_rate window
-            // (4 phases).
-            if g.fire_timer <= 0.0 then
+        if !g.key_fire then g.key_fire_handled = false
+        if !g.attacking && g.key_fire && !g.key_fire_handled then
+            g.key_fire_handled = true
+            g.attacking = true
+            g.attack_frame = 0
+            g.attack_count = atk_entry_time
+            g.weapon_frame = 1
+        if !g.attacking then return
+        g.attack_count = g.attack_count - dt
+        loop
+            // Tolerance so an entry that should expire exactly on a
+            // tick boundary (6 tics = three 2-tic test ticks) doesn't
+            // slip a tick on float round-off.
+            if g.attack_count > 1e-9 then break
+            let action = atk_action[(i64) g.weapon * 4 + (i64) g.attack_frame]
+            let mut ended = false
+            match action with
+            | -1 ->
+                // End of cycle: dry → knife out; otherwise the held
+                // weapon snaps back to the chosen one (a clip picked up
+                // mid-cycle re-arms here rather than immediately).
+                g.attacking = false
+                if g.ammo == 0 then g.weapon = weapon.knife
+                else if g.weapon != g.chosen_weapon then g.weapon = g.chosen_weapon
+                g.attack_frame = 0
                 g.weapon_frame = 0
-                g.fire_timer = 0.0
-                // The original auto-switches to the knife at the end
-                // of an attack if ammo ran out.
-                if g.weapon > weapon.knife && g.ammo == 0 then g.weapon = weapon.knife
-            else
-                let total = fire_rate[g.weapon]
-                let progress = 1.0 - g.fire_timer / total
-                g.weapon_frame = if progress < 0.25 then 1
-                    else if progress < 0.5 then 2
-                    else if progress < 0.75 then 3
-                    else 4
-        if g.key_fire && g.fire_timer <= 0.0 then
-            if g.weapon == weapon.knife then
-                // Knife — no ammo needed
-                g.fire_timer = fire_rate[weapon.knife]
-                g.weapon_frame = 1
-                sfx.trigger(weapon_fire_snd[weapon.knife], ac)
+                ended = true
+            | 4 ->
+                if g.ammo > 0 then
+                    if g.key_fire then g.attack_frame = g.attack_frame - 2
+                    gun_shot(w)
+            | 1 ->
+                // Out of ammo here can only happen mid-burst on the
+                // chain gun: skip straight to the end entry.
+                if g.ammo == 0 then g.attack_frame = g.attack_frame + 1
+                else gun_shot(w)
+            | 2 ->
+                sfx.trigger(weapon_fire_snd[weapon.knife], w.ac)
                 hitscan.fire_player(w)
-            else if g.ammo > 0 then
-                if !g.idkfa_mode then g.ammo = g.ammo - 1
-                g.fire_timer = fire_rate[g.weapon]
-                g.weapon_frame = 1
-                sfx.trigger(weapon_fire_snd[g.weapon], ac)
-                hitscan.fire_player(w)
+            | 3 ->
+                if g.ammo > 0 && g.key_fire then g.attack_frame = g.attack_frame - 2
+            | _ -> void()
+            if ended then break
+            g.attack_count = g.attack_count + atk_entry_time
+            g.attack_frame = g.attack_frame + 1
+            g.weapon_frame = g.attack_frame + 1
 
     // Draw a t_compshape sprite as a HUD overlay, stretched to
     // (dst_w, dst_h) at screen position (dst_x, dst_y). Transparent

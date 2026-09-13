@@ -94,8 +94,8 @@ module flow =
         g.phase_timer = 0.0
         // Seed the respawn uncover: the new scene renders under a full red
         // stipple that thins out rapidly, rather than a hard cut to gameplay.
+        // No "Get Psyched!" here: the original skips it on a death restart.
         g.respawn_fade_timer = player.respawn_fade_time
-        pics.trigger_get_psyched(g)
 
     // Debug / scripted jump straight into level `n`, keeping the running
     // session (score, lives, health, weapons, cheat latches) intact.
@@ -200,7 +200,7 @@ module flow =
                 // The level is intentionally NOT reloaded — the
                 // next NEW GAME / LOAD GAME will rebuild as needed.
                 high_scores_screen.enter(g, w.hs, hs_source.death,
-                    g.score, g.level_num + 1, g.level_num / episode.levels_per)
+                    g.score, g.level_num % episode.levels_per + 1, g.level_num / episode.levels_per)
                 g.has_active_game = false
         // Death-cam cutscene has finished its replay hold; hand off
         // straight to the episode-end Victory screen — the original
@@ -268,7 +268,7 @@ module flow =
                 // Even with the rest of gameplay frozen, dying actors keep
                 // animating so anything mid-die when the elevator switch fired
                 // finishes its death cascade before the tally screen.
-                enemies.ai.update_dying_enemies(w.lv, w.g, dt)
+                enemies.ai.update_dying_enemies(w.lv, w.g, w.ac, dt)
             else
                 // The original resets its "made noise" flag at the top of each
                 // frame; we follow suit so noise from one tick only wakes
@@ -277,9 +277,12 @@ module flow =
                 // it on a knife hit.
                 g.made_noise = false
                 g.level_time = g.level_time + dt
-                player.update(w.lv, g, dt, w.ac)
+                // Frame order as in the original's play loop: doors,
+                // push-walls, then the player (use / fire / move),
+                // then every other actor.
                 doors.update(w.lv, g, dt, w.ac, player.radius)
-                pushwall.update(w.lv, dt)
+                pushwall.update(w.lv, g, dt)
+                player.update(w.lv, g, dt, w.ac)
                 player.update_weapon(w, dt)
                 enemies.ai.update_enemies(w, dt)
                 projectiles.update_all(w.lv, g, w.ac, dt)
@@ -303,13 +306,13 @@ module flow =
                 // Boss corpse + any other dying actors keep animating during
                 // the BJ run so the player sees the death animation finish
                 // (not just the first die frame freeze-framed under BJ).
-                enemies.ai.update_dying_enemies(w.lv, w.g, dt)
+                enemies.ai.update_dying_enemies(w.lv, w.g, w.ac, dt)
             else if g.phase == game_phase.death_cam then
                 // Pump the dying boss's animation frames before the phase
                 // logic inspects e->state — death_cam.sub.pre_fade and
                 // death_cam.sub.replay_hold both advance on the die → dead
                 // transition, so the tick order matters.
-                enemies.ai.update_dying_enemies(w.lv, w.g, dt)
+                enemies.ai.update_dying_enemies(w.lv, w.g, w.ac, dt)
                 death_cam.tick(w.lv, g, w.ac, dt)
         // Phase transitions (death collapse → restart / game-over). Main loop
         // layers music switching on top of this; test mode doesn't need music
@@ -397,7 +400,9 @@ module flow =
         raycaster.render_walls(w.lv, w.rc, w.g, vs, pal)
         billboards.build(w.lv, w.rc, w.g, vs.sprite_start)
         billboards.render(w.rc, w.g, vs, pal)
-        player.render_weapon(w.rc, vs, pal, w.g)
+        // The weapon overlay goes away the moment the player dies (the
+        // original blanks its weapon slot on death).
+        if w.g.phase != game_phase.dying then player.render_weapon(w.rc, vs, pal, w.g)
         // Resolve SSAA buffer into dbuf's viewport region before any
         // viewport tints / dissolves run — those operate on dbuf so we
         // want the downsample to land first. No-op when SSAA is off.

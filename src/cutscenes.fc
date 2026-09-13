@@ -189,7 +189,9 @@ module death_cam =
     // the scene from feeling clipped; the post-replay fade-to-black
     // covers the original's fade-out between the victorious episode
     // and the victory/intermission screen.
-    let pre_fade_time     = 1.43
+    // The corpse pose holds 20 tics before the original's death-cam
+    // hook fires, then 100 vblanks of the scene before the fade.
+    let pre_fade_time     = 20.0 / 70.0 + 1.43
     let fade_time         = 1.00
     let taunt_timeout     = 4.30
     let pre_replay_time   = 0.80     // standing pose before the re-death
@@ -362,13 +364,11 @@ module death_cam =
                     if mommy.hides_gore(g.mommy_mode) then
                         e.mommy_fade_page = enemies.sprite_page(e, g.pos_x, g.pos_y)
                         e.mommy_fade_t = 0.0
-                    e.state = enemies.enemy_state.die
-                    e.anim_frame = 0
-                    e.anim_timer = enemies.die_frame_time
-                    e.dir = dir.nodir
-                    match enemies.ai.death_scream_for_kind(e.kind, g) with
-                    | some(snd) -> sfx.trigger_at(snd, ac, g, e.x, e.y)
-                    | none -> void()
+                    // The replay re-enters the die sequence from the
+                    // top — upright hold, vocal on cue, collapse —
+                    // exactly as the original's death-cam state chains
+                    // back into the first die state.
+                    enemies.ai.begin_die_sequence(e)
                 | _ -> void()
                 g.dc_sub = dc_sub.replay_anim
                 g.dc_timer = 0.0
@@ -951,7 +951,8 @@ module episode_end =
         intermission.write_lpic_text(rc, vg, pal, ox +  6 * 8, 18 * 8, "treasure    %")
         // Total time MM:SS digits, drawn explicitly per-digit so the
         // leading zero is forced (e.g. "05:30", not "5:30").
-        let mut total_sec = g.ep_time_total
+        let { total_time, avg_kr, avg_sr, avg_tr } = episode.episode_summary(g)
+        let mut total_sec = total_time
         if total_sec < 0 then total_sec = 0
         let mut min = total_sec / 60
         let mut sec = total_sec % 60
@@ -967,10 +968,9 @@ module episode_end =
         pics.draw(rc, vg, pal, pics.id.l_num0 + sec % 10, time_x + 56, time_y)
         // Average kill / secret / treasure percentages. Right-edge
         // column at pixel x = 240 (matches the original).
-        let div = if g.ep_levels_played > 0 then g.ep_levels_played else 1
-        let kr = g.ep_kr_total / div
-        let sr = g.ep_sr_total / div
-        let tr = g.ep_tr_total / div
+        let kr = avg_kr
+        let sr = avg_sr
+        let tr = avg_tr
         let ratio_right_x = ox + 30 * 8     // 240
         intermission.write_lpic_number(rc, vg, pal, ratio_right_x, 14 * 8, kr, true)
         intermission.write_lpic_number(rc, vg, pal, ratio_right_x, 16 * 8, sr, true)

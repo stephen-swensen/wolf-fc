@@ -78,7 +78,12 @@ module testmode =
             match text.parse_i32(arg[10..arg.len]) with
             | ok(n) ->
                 match enum_of(weapon, n) with
-                | some(wp) -> g.weapon = wp
+                | some(wp) ->
+                    // A scripted select is the player's choice, so
+                    // it's also the weapon ammo re-arms (knife
+                    // excepted: the original never "chooses" it).
+                    g.weapon = wp
+                    if wp > weapon.knife then g.chosen_weapon = wp
                 | none -> bad("integer weapon index (0-3)")
             | err(_) -> bad("integer weapon index (0-3)")
         else if text.starts_with(arg, "setammo:") then
@@ -89,6 +94,15 @@ module testmode =
             g.key_fire = true
             flow.tick(w, dt)
             g.key_fire = false
+        else if text.starts_with(arg, "hold_fire:") then
+            // Hold the fire key down for N ticks — the machine gun and
+            // chain gun only keep firing while the key stays held.
+            match text.parse_i32(arg[10..arg.len]) with
+            | ok(n) ->
+                g.key_fire = true
+                for _ in 0..n do flow.tick(w, dt)
+                g.key_fire = false
+            | err(_) -> bad("integer tick count")
         else if arg == "facetile" then
             // Mirror the use-key's cardinal quantization (dominant axis
             // wins) so this reports the actual door/elevator/push-wall
@@ -102,7 +116,16 @@ module testmode =
                 (i32) w.lv.tilemap[(i64) fx * 64 + (i64) fy]
             else -1
             let nl = if g.next_level then 1 else 0
-            ignore io.write("facing=(%d{fx},%d{fy}) tile=%d{ft} next_level=%d{nl}\n", stdout)
+            // A door tile also reports its state, so use-key tests can
+            // pin open / closing / reopening without stepping into it.
+            let ds = if ft >= 128 then
+                match w.lv.doors[ft - 128].state with
+                | closed  -> " door=closed"
+                | opening -> " door=opening"
+                | open    -> " door=open"
+                | closing -> " door=closing"
+            else ""
+            ignore io.write(alloca("facing=(%d{fx},%d{fy}) tile=%d{ft} next_level=%d{nl}%s{ds}\n"), stdout)
         else if arg == "givekeys" then
             g.has_gold_key = true
             g.has_silver_key = true
@@ -346,12 +369,21 @@ module testmode =
             // Dump total enemy/pushwall/treasure counts as counted by level.build.
             ignore io.write("level_stats: enemies=%d{w.lv.total_enemies} pushwalls=%d{w.lv.total_pushwalls} treasures=%d{w.lv.total_treasures}\n", stdout)
         else if arg == "epstats" then
-            // Dump the per-episode running totals and the averages the
-            // episode-end victory screen derives from them (same divisor
-            // rule: levels actually played, floored at 1).
-            let div = if g.ep_levels_played > 0 then g.ep_levels_played else 1
+            // Dump the per-episode figures the victory screen shows:
+            // total time and the averages over the eight ordinary
+            // floors (a fixed divisor), plus how many slots hold data.
+            let { sec, kr, sr, tr } = episode.episode_summary(g)
+            let mut filled = 0
+            for i in 0..episode.averaged_floors do
+                if g.ep_played[i] then filled = filled + 1
             let rec = if g.ep_recorded_current then 1 else 0
-            ignore io.write("epstats: levels=%d{g.ep_levels_played} time=%d{g.ep_time_total} kr=%d{g.ep_kr_total / div} sr=%d{g.ep_sr_total / div} tr=%d{g.ep_tr_total / div} recorded=%d{rec}\n", stdout)
+            ignore io.write("epstats: levels=%d{filled} time=%d{sec} kr=%d{kr} sr=%d{sr} tr=%d{tr} recorded=%d{rec}\n", stdout)
+            // And the raw per-floor slots (kill/secret/treasure/time)
+            // that were recorded, so a test can pin one floor's figures
+            // without dividing by the fixed eight.
+            for i in 0..10 do
+                if g.ep_played[i] then
+                    ignore io.write("epslot %d{i}: kr=%d{g.ep_kr[i]} sr=%d{g.ep_sr[i]} tr=%d{g.ep_tr[i]} time=%d{g.ep_time[i]}\n", stdout)
         else if arg == "advance" then
             // Simulates the "press space" that dismisses an intermission /
             // game-over / episode-end / victory screen. Test-mode equivalent of
@@ -413,7 +445,7 @@ module testmode =
                 // only affects which plane-1 enemy tiles spawn, we can clear
                 // lv->num_enemies and re-scan without rebuilding the tilemap.
                 w.lv.num_enemies = 0
-                spawn.spawn_enemies(w.lv, w.lv_data, g.difficulty, g.mommy_mode)
+                spawn.spawn_enemies(w.lv, w.lv_data, g)
                 // Recount total_enemies so the counters tally correctly.
                 let mut alive = 0
                 for i in 0..w.lv.num_enemies do
@@ -521,6 +553,29 @@ module testmode =
                     let e = &w.lv.enemies[n]
                     enemies.ai.damage_enemy(w.lv, g, w.ac, e, n, e.hp + 1, w.ac.vs.sprite_start)
             | err(_) -> bad("integer enemy index")
+        else if text.starts_with(arg, "hurtenemy:") then
+            // Non-lethal (or lethal — caller's choice) damage to enemy N:
+            // "hurtenemy:N,DMG". Same damage_enemy path as a real bullet,
+            // so the sneak-attack doubling, noise flag, wake + alert vocal,
+            // and pain flinch all fire. Not a tick.
+            let body = arg[10..arg.len]
+            let mut comma = -1i64
+            for i in 0..body.len do
+                if body[i] == 0x2C then    // ','
+                    comma = i
+                    break
+            if comma <= 0 || comma >= body.len - 1 then bad("N,DMG")
+            else
+                match text.parse_i32(body[0..comma]) with
+                | ok(n) ->
+                    match text.parse_i32(body[comma+1..body.len]) with
+                    | ok(dmg) ->
+                        if n < 0 || n >= w.lv.num_enemies then bad("enemy index out of range")
+                        else
+                            let e = &w.lv.enemies[n]
+                            enemies.ai.damage_enemy(w.lv, g, w.ac, e, n, dmg, w.ac.vs.sprite_start)
+                    | err(_) -> bad("N,DMG")
+                | err(_) -> bad("N,DMG")
         else if text.starts_with(arg, "setphase:") then
             // Force a phase transition for test-mode screenshot coverage.
             let p = arg[9..arg.len]
@@ -792,7 +847,7 @@ module testmode =
                 | die   -> "die"
                 | dead  -> "dead"
                 let area = (i32) w.lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
-                io.write(alloca("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{(i32) e.dir} hp=%d{e.hp} area=%d{area} vis=%d{(i32) e.last_visible}\n"), stdout)
+                io.write(alloca("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{(i32) e.dir} hp=%d{e.hp} area=%d{area} vis=%d{(i32) e.last_visible} act=%d{(i32) e.active}\n"), stdout)
         else if arg == "pickups" then
             // Per-level pickup inventory: dumps every live sprite whose
             // item_type is something the player could actually grab
@@ -900,6 +955,7 @@ module testmode =
                 | needle -> "needle"
                 | rocket -> "rocket"
                 | fire   -> "fire"
+                | smoke  -> "smoke"
                 | boom   -> "boom"
                 io.write(alloca("  proj[%d{i}] %s{ks} pos(%6.3f{p.x},%6.3f{p.y}) ang=%5.3f{p.angle} frame=%d{p.anim_frame}\n"), stdout)
             ignore io.write("projectiles: alive=%d{alive}\n", stdout)
