@@ -56,6 +56,20 @@ module enemies =
     let rnd_byte = (g: game*) ->
         (i32) (random.pcg_random.next_u32(&g.rng_enemy) & 0xFFu32)
 
+    // One roll of the enemy RNG against a chance out of 256 that may
+    // carry a fraction. Costs the same single draw as rnd_byte, and
+    // for a whole-number chance decides exactly as `rnd_byte < chance`
+    // would (same low byte); the fraction is settled by the draw's
+    // upper bits, so the pass probability is chance/256 exactly.
+    let rnd_chance = (g: game*, chance: f64) ->
+        let r = random.pcg_random.next_u32(&g.rng_enemy)
+        let byte = (i32) (r & 0xFFu32)
+        let whole = math.floor(chance)
+        let frac = chance - whole
+        if (f64) byte < whole then true
+        else if (f64) byte > whole then false
+        else (f64) (r >> 8u32) / 16777216.0 < frac
+
     enum enemy_kind =
         | guard
         | officer
@@ -127,6 +141,7 @@ module enemies =
         active: bool          // sticky "has ever been drawn" (the original's per-actor active flag). Patrollers spawn with it set; everyone else earns it the first time they're on screen. Until then an actor whose area isn't player-connected doesn't think at all — see update_enemies.
         waiting_door: i32     // door index this actor is parked in front of, waiting for it to open (-1 = none). It keeps its heading meanwhile, as in the original.
         scream_timer: f64     // die state: seconds until the death vocal plays (the original fires it when the first die frame expires); < 0 = played / none pending
+        ghost_drain: f64      // ghosts: fractional damage banked while held in the player's stand-off box (two points per tic, applied in whole points)
         first_attack: bool    // set on wake; the first dodge-mode direction pick after sighting may reverse heading outright. Cleared by that pick.
         walk_pause: bool      // in one of the walk cycle's hold beats (after poses 1 and 3): the actor neither moves nor considers firing until it ends
         // Mommy Mode fade-on-death state. Set at the moment kill_enemy
@@ -1211,7 +1226,15 @@ module enemies =
                     let ny = e.y + (f64) dir.dy[e.dir] * step
                     if inside_player_box(lv, g, e, nx, ny) then
                         if kind_is_ghost(e.kind) then
-                            damage_player(g, ac, (i32) (dt * 70.0) * 2, damage_source.ghost, e.x, e.y)
+                            // Two points per tic. The original deals
+                            // `2 × this frame's tics` each frame, an
+                            // integer; banking the fraction keeps the
+                            // rate at 140/s on every display.
+                            e.ghost_drain = e.ghost_drain + dt * 70.0 * 2.0
+                            let whole = (i32) math.floor(e.ghost_drain)
+                            if whole > 0 then
+                                e.ghost_drain = e.ghost_drain - (f64) whole
+                                damage_player(g, ac, whole, damage_source.ghost, e.x, e.y)
                     else
                         e.x = nx
                         e.y = ny
@@ -1720,24 +1743,28 @@ module enemies =
             e.anim_timer = sp.shoot_times[0] / enemy_speed_factor(g)
 
         // Chance (out of 256) that an actor with a clear line to the
-        // player opens fire this tick. Scaled by elapsed time so the
-        // rate is tick-rate independent — the original rolls once per
-        // think against `elapsed tics × K` — and by the Enemy Speed
-        // slider so faster enemies really do fire more often.
-        //   Hitscan kinds : 16 · tics / dist, where dist is the tile
+        // player opens fire this tick. The original rolls once per
+        // think against `this frame's tics × K` in integer arithmetic,
+        // so the per-second rate wobbles with the frame rate; we take
+        // the per-tic chance the reference one-tic frame gives (integer
+        // division and all) and scale it by the real elapsed tics as a
+        // fraction, so the rate is the same on every display — and by
+        // the Enemy Speed slider so faster enemies really do fire more
+        // often. Roll it with rnd_chance.
+        //   Hitscan kinds : 16 / dist per tic, where dist is the tile
         //                   Chebyshev distance from the tile the actor
         //                   is heading for (see dest_tile). Point blank
         //                   it's a certainty: 300 once that tile IS the
         //                   player's, or is adjacent with under a
         //                   quarter tile left to walk. An enemy that
         //                   reaches you attacks on arrival, every time.
-        //   Needle / rocket bosses : 8 · tics, range-independent.
-        //   Fake Hitler   : 2 · tics, range-independent.
+        //   Needle / rocket bosses : 8 per tic, range-independent.
+        //   Fake Hitler   : 2 per tic, range-independent.
         private let fire_chance = (e: const enemy*, g: game*, dt: f64) ->
             let tics = dt * 70.0 * enemy_speed_factor(g)
-            match e.kind with
-            | schabbs | giftmacher | fat -> (i32) (tics * 8.0)
-            | hitler_fake                -> (i32) (tics * 2.0)
+            let per_tic = match e.kind with
+            | schabbs | giftmacher | fat -> 8.0 * og_frame_tics
+            | hitler_fake                -> 2.0 * og_frame_tics
             | _ ->
                 let { dtx, dty } = dest_tile(e)
                 let dxi = (i32) g.pos_x - dtx
@@ -1745,8 +1772,9 @@ module enemies =
                 let adx = if dxi < 0 then -dxi else dxi
                 let ady = if dyi < 0 then -dyi else dyi
                 let dist = if adx > ady then adx else ady
-                if dist == 0 || (dist == 1 && step_remaining(e) < 0.25) then 300
-                else (i32) (tics * 16.0) / dist
+                if dist == 0 || (dist == 1 && step_remaining(e) < 0.25) then 300.0
+                else (f64) ((i32) (16.0 * og_frame_tics) / dist)
+            if per_tic >= 256.0 then per_tic else per_tic * tics / og_frame_tics
 
         // Per-frame AI step for one enemy. Dispatches on state;
         // advances animation and moves continuously. Called from
@@ -1874,7 +1902,7 @@ module enemies =
                     // regardless.
                     let mut dodge = false
                     if check_line_clear(lv, e.x, e.y, g.pos_x, g.pos_y) then
-                        if rnd_byte(g) < fire_chance(e, g, dt) then
+                        if rnd_chance(g, fire_chance(e, g, dt)) then
                             enter_shoot(e, g)
                             return
                         dodge = true
@@ -2065,6 +2093,10 @@ module projectiles =
     // frame shows for 6), a puff every 3 tics of rocket flight.
     let anim_time    = 6.0 / 70.0
     let boom_time    = 6.0 / 70.0
+    // A fresh flame is dealt a one-tic first frame, so its first
+    // step (and first hit test) comes almost at once; the six-tic
+    // cadence starts after that.
+    let fire_first   = 1.0 / 70.0
     let smoke_time   = 3.0 / 70.0
     let smoke_first  = 6.0 / 70.0
     let smoke_period = 3.0 / 70.0
@@ -2157,7 +2189,7 @@ module projectiles =
             angle = wrap_angle(ang),
             alive = true,
             anim_frame = 0,
-            anim_timer = anim_time,
+            anim_timer = if k == projectile_kind.fire then fire_first else anim_time,
             smoke_timer = smoke_period
         }
         let snd = match k with
@@ -2233,14 +2265,21 @@ module projectiles =
             // end-of-frame action, not the per-frame think, so it
             // only advances when a 6-tic frame rolls over — by one
             // frame's worth of travel — and only tests for a hit
-            // then. That's the slow, dodgeable puff the original has.
+            // then. That's the slow, dodgeable puff the original has,
+            // and it makes the flame's pace frame-rate dependent on
+            // DOS: a fast machine (one tic per frame) has it at 0.82
+            // tiles/s, a slow 386 nearer 3. We step it by the
+            // reference frame (`og_frame_dt`, one tic) whatever the
+            // real frame length, so it's the fast machine's pace on
+            // every display.
             if p.kind == projectile_kind.fire && !frame_rolled then return
             let speed = match p.kind with
             | needle -> needle_speed
             | rocket -> rocket_speed
             | fire   -> fire_speed
             | boom | smoke -> 0.0
-            let step = speed * dt
+            let step_dt = if p.kind == projectile_kind.fire then og_frame_dt else dt
+            let step = speed * step_dt
             if p.kind == projectile_kind.rocket then
                 // Smoke trail: a puff at the rocket's position every
                 // 3 tics of flight.

@@ -1381,6 +1381,7 @@ module spawn =
             active = info.patrol && !info.dead,   // the original's patrol spawns start active; standing spawns, bosses and ghosts earn it on first draw
             waiting_door = -1,
             scream_timer = -1.0,
+            ghost_drain = 0.0,
             first_attack = false,
             walk_pause = false,
             mommy_fade_t = 0.0,

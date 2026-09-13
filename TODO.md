@@ -21,6 +21,36 @@ one-off fix, and patch.
 
 ## Open findings
 
+### Applied — 2026-09-12 (E3M9 follow-up)
+
+Report: Fake Hitlers "don't wake until touched or shot" and "their
+fireballs move very slowly". Checked against the id source:
+
+- Wake-up is the OG rule, not a regression. Fakes spawn facing north
+  as ambush actors, and the cardinal facing test is a half-plane, so a
+  player south of one is behind him until he reaches the boss's row,
+  closes to 1.5 tiles on both axes, or lands a shot. Three of E3M9's
+  five are approached from the south. Pinned by three new sight tests;
+  a `mapdump` test command prints the plan so approach sides are easy
+  to read.
+- The flame's pace is frame-rate dependent in the OG (one frame's
+  travel per 6-tic frame): 0.82 tiles/s at 70 Hz, ~3 on a 386. Our
+  pass used the real frame length, so the flame ran at a different
+  pace on a 60 Hz and a 70 Hz display and fell below the OG's one-tic
+  floor at high refresh. Pre-pass behavior (continuous 4.92 tiles/s)
+  was the OG's slowest-machine value, not "the" OG speed.
+- Decision (user): every rule the id code writes against the frame
+  length is evaluated at the reference frame — one tic at 70 Hz, the
+  ideal period machine — so it is the same on any modern display.
+  `og_frame_tics` / `og_frame_dt` in main.fc. Applied to the flame
+  step, the "player is running" gate (only the run key or
+  strafe-and-walk now counts, on every display), the enemy fire roll
+  (per-tic chance with the OG's integer division, scaled by real
+  elapsed tics and rolled fractionally with `rnd_chance` — the fake's
+  2-per-tic roll used to truncate to zero above 70 Hz, so he never
+  fired on a 144 Hz display), and the ghost drain (fraction banked).
+  One golden churned (the flame pace pin).
+
 ### Applied — 2026-09-10 (OG fidelity pass, id source only)
 
 Five subsystem audits against `../wolf3d/WOLFSRC` (enemy movement, boss

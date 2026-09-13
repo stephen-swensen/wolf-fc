@@ -42,8 +42,8 @@ module player =
     // Thrust in the original's speed units per tic: walking 5250,
     // backing 3500, strafing 5250 (doubled with the run key). An
     // actor's "player is running" hitchance gate fires when the
-    // frame's total reaches 6000 — which, with two or more tics per
-    // frame, plain walking does.
+    // frame's total reaches 6000 — at the reference one-tic frame,
+    // only with the run key or a strafe-and-walk combination.
     private let thrust_walk   = 5250.0
     private let thrust_back   = 3500.0
     private let thrust_running = 6000.0
@@ -482,12 +482,14 @@ module player =
         // "Player is running" (the enemy-fire hitchance gate): the
         // original sums this frame's thrust in its speed units and
         // compares with a fixed threshold — a frame-rate-dependent
-        // rule we reproduce as written, so at 35 Hz (and below ~60)
-        // any move counts, and only the run key does at 70.
+        // rule, evaluated here at the reference frame (`og_frame_tics`,
+        // one tic) so it reads the same on every display: a plain walk
+        // or back-step is not running, the run key or a strafe-and-walk
+        // combination is.
         let thrust = ((if fwd then thrust_walk else 0.0)
                       + (if back then thrust_back else 0.0)
                       + (if strafe_l || strafe_r then thrust_walk else 0.0))
-                     * run_scale * tics * bj_mult
+                     * run_scale * og_frame_tics * bj_mult
         g.player_running = thrust >= thrust_running
 
         let cap = (d: f64) -> if d > max_thrust then max_thrust else d

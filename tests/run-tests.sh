@@ -324,6 +324,24 @@ assert_regex "ai:sight-flag-clear-when-player-faces-away" \
     "goto:29,62 wait:1 enemylist" \
     '\[37\] \(28,62\) kind=guard .* vis=0'
 
+# Fake Hitlers spawn facing north and wake on sight only (every boss is
+# an ambush actor), and the facing test for a cardinal heading is a
+# half-plane: a player anywhere south of a north-facing actor is behind
+# him. Three of E3M9's five are reached from the south, so they stand
+# there until the player reaches their row (or within 1.5 tiles on both
+# axes, which needs no facing test) or a shot lands. Fake [8] at (26,41):
+# from the room's south row he is blind; on his own row he sees; a tile
+# south of him he senses anyway.
+assert_regex "ai:fake-hitler-blind-to-the-south" \
+    "setlevel:28 goto:30,42 turnl:180 wait:40 enemylist" \
+    '\[8\] \(26,41\) kind=hitler_fake state=stand'
+assert_regex "ai:fake-hitler-sees-along-his-row" \
+    "setlevel:28 goto:30,41 turnl:180 wait:5 enemylist" \
+    '\[8\] \(26,41\) kind=hitler_fake state=chase'
+assert_regex "ai:fake-hitler-senses-point-blank-from-behind" \
+    "setlevel:28 goto:26,42 wait:5 enemylist" \
+    '\[8\] \(26,41\) kind=hitler_fake state=chase'
+
 section "combat:enemies-attack"
 assert_contains "ai:dog-bites-on-contact" \
     "goto:45,34 turnr:90 wait:120 state" \
@@ -466,6 +484,12 @@ section "map-probe (diagnostic command)"
 # syntax could silently break the diagnostic.
 assert_contains "probe:prints-bbox"  "goto:29,57 probe" "bbox_tiles:"
 assert_contains "probe:detects-wall" "goto:29,57 probe" "open"
+# 'mapdump' prints the plan one row per line: walls, doors, the player
+# and the enemies overlaid. E3M9's spawn row — the player, the first
+# door, and the Fake Hitler waiting in the room beyond it.
+assert_contains "mapdump:e3m9-spawn-row" \
+    "setlevel:28 mapdump" \
+    "#############@........D.........F........#...........###########"
 
 section "death flow"
 # Total enemy count on E1M1 (hard difficulty, the default) — 37 live + 1 corpse.
@@ -830,13 +854,29 @@ assert_contains "deathcam:sprite-layout-uses-dbuf-coords" \
     "dcsprite dx=160 dy=0 dw=320 dh=320"
 
 section "enemy projectiles"
-# Fake Hitler on E3M9 unloads a flame salvo down the corridor west of him.
-# At wait:20 the first couple of flames are still mid-flight, before any
-# have reached the player — verifies that the boss actually spawns visible
-# dodgeable projectiles instead of hitscanning.
+# Fake Hitler on E3M9 walks up the corridor to the player and opens up
+# from the one-tile stand-off on tick 287. The first flame is still
+# mid-flight the tick after, before it has reached the player — verifies
+# that the boss actually spawns visible dodgeable projectiles instead of
+# hitscanning.
 assert_regex "proj:fake-hitler-flame-in-flight" \
-    "setlevel:28 goto:25,57 wait:290 projectiles" \
+    "setlevel:28 goto:25,57 wait:288 projectiles" \
     "proj\[[0-9]+\] fire"
+# The flame's pace: it steps only when its 6-tic frame rolls, by one
+# reference frame's worth of travel (one tic: 0x1200 units = 0.0703
+# tile), whatever the real frame length — the rule is frame-rate
+# dependent in the original and we pin it at its ideal-machine pace. A
+# fresh flame gets a one-tic first frame, so by the tick after launch
+# it has rolled exactly once and sits 0.0703 west of the muzzle at
+# 26.5; it then holds there until the 6-tic frame is up (checked at
+# wait:289, two ticks after launch: same position), steps again at 290
+# and 293, and lands on the player at 296.
+assert_contains "proj:flame-steps-once-per-frame" \
+    "setlevel:28 goto:25,57 wait:289 projectiles" \
+    "proj[0] fire pos(26.430,57.500)"
+assert_contains "proj:flame-second-step-a-frame-later" \
+    "setlevel:28 goto:25,57 wait:293 projectiles" \
+    "proj[0] fire pos(26.289,57.500)"
 # Standing one tile north of Schabbs gives a clean LOS with no flanking
 # mutants in fire range. The needle bosses roll a flat, range-independent
 # chance to attack each tick (no point-blank certainty — that's a hitscan

@@ -825,6 +825,28 @@ module testmode =
                     let v = (i32) w.lv.path_arrows[(i64) x * 64 + (i64) y]
                     if v != (i32) dir.nodir then
                         io.write("arrow (%d{x},%d{y}) dir=%d{v}\n", stdout)
+        else if arg == "mapdump" then
+            // ASCII plan of the current map, one row per line (y down):
+            // `#` wall, `D` door, `.` open floor, `@` the player, `F`
+            // Fake Hitler, `B` any other boss, `e` other live enemy,
+            // `x` corpse. First stop for working out from which side a
+            // scripted approach reaches an actor.
+            for y in 0..map_size do
+                for x in 0..map_size do
+                    let t = (i32) w.lv.tilemap[(i64) x * 64 + (i64) y]
+                    let mut c = if t == 0 then "." else if t >= 128 then "D" else "#"
+                    for i in 0..w.lv.num_enemies do
+                        let e = w.lv.enemies[i]
+                        if e.tile_x == x && e.tile_y == y then
+                            c = match e.state with
+                            | dead -> "x"
+                            | _ -> match e.kind with
+                                | hitler_fake -> "F"
+                                | hans | schabbs | gretel | giftmacher | fat | mecha_hitler | hitler -> "B"
+                                | _ -> "e"
+                    if (i32) w.g.pos_x == x && (i32) w.g.pos_y == y then c = "@"
+                    io.write("%.1s{c}", stdout)
+                io.write("\n", stdout)
         else if arg == "enemylist" then
             // Per-enemy dump: grid position, kind, state, dir. Handy to locate
             // a specific enemy for a scripted screenshot or attack test.

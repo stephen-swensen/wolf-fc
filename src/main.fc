@@ -35,6 +35,21 @@ let map_size = 64
 // widescreen: same vertical FOV, more horizontal).
 let fov_factor = 0.7269
 
+// The reference frame. A few id rules are written against the length of
+// the current frame instead of elapsed time — a per-frame damage tick, a
+// per-frame chance roll with integer truncation, a "how far did you move
+// this frame" threshold, a projectile that steps once per animation frame
+// by one frame's travel — so on DOS they drift with the frame rate. The
+// original loop spins until at least one 70 Hz tic has passed and waits
+// for retrace, so on hardware fast enough every frame is exactly one tic:
+// that is the pace all its timings are written in and the one id tuned
+// for. We evaluate every such rule at that frame, one tic, whatever the
+// real frame length, so the game plays the same on a 60 Hz and a 144 Hz
+// display, and plays like the original on its ideal machine. Elapsed-time
+// rules (movement, timers, countdowns) still use the real dt.
+let og_frame_tics = 1.0
+let og_frame_dt = 1.0 / 70.0      // og_frame_tics at the 70 Hz tic rate, in seconds
+
 // Audio-callback sizing. `audio_buffer_frames` is the device buffer SDL
 // asks the callback to fill per call — it sets the playback latency floor
 // (e.g. how long after a shot the death cry is heard) at

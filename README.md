@@ -236,6 +236,7 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `kill` | Instant-kill the player; transitions straight to the dying phase. Leaves `killer_active` false, so the death-cam swing is a no-op. |
 | `killby:X,Y` | Like `kill`, but latches `(X, Y)` as the killer's world position so the dying-phase camera swing has a target to rotate toward. |
 | `arrows` | Print every plane-1 ICONARROWS path-marker tile (`x,y` and dir 0..7) |
+| `mapdump` | ASCII plan of the current map, one row per line: `#` wall, `D` door, `.` floor, `@` player, `F` Fake Hitler, `B` any other boss, `e` other live enemy, `x` corpse. Handy for seeing which side a scripted approach reaches an actor from (a north-facing boss is blind to anyone south of him). |
 | `exittiles` | Print every plane-1 EXITTILE marker (`x,y`) on the current map — boss-map exits that fire the BJ-victory cutscene when stepped on |
 | `pickups` | Print every live pickup sprite on the current map (`[idx] (tx,ty) kind=<name>`), filtering out static decorations. Enemy drops show up after the corpse lands. |
 | `statics` | Print the static-sprite census for the current map: total live decorations, how many of them block, and how many are gore sprites (`gore=0` is what Mommy Mode's gore arm guarantees) |
