@@ -48,13 +48,13 @@ Deliberately NOT applied (present for a decision):
 - ~~**[og-spawn-phase]**~~ applied 2026-09-12: patrollers and ghosts
   start at a random point in their first frame (one enemy-RNG draw per
   timed spawn, in map order); twelve goldens re-pinned.
-- **[og-rocket-rotate]** the rocket's 8-way sprite is chosen from the
-  viewer angle relative to its heading (the standard actor rotate); ours
-  quantises the travel angle alone. Render-only.
-- **[og-flash-scale]** the damage flash length scales with the points
-  taken; ours is a fixed 0.25 s.
-- **[og-tab-e-boss]** TAB+E on a boss floor in the original warps to the
-  secret floor (its "completed" branch fails the `mapon < 8` test).
+- ~~**[og-rocket-rotate]**~~ applied 2026-09-12: the rocket's eight
+  views come from its heading relative to the line back to the viewer.
+- ~~**[og-flash-scale]**~~ applied 2026-09-12: damage feeds a tic
+  counter; the red tint steps with count/10+1 (of six eighths) and
+  drains one per tic.
+- ~~**[og-tab-e-boss]**~~ applied 2026-09-12: TAB+E on a boss floor
+  takes the bonus-floor tally (flat 15000) and lands on the secret floor.
 - Ours-by-design, unchanged: IDDQD/IDKFA, TAB+N no-clip (SOD-only in the
   original), the 999999 score cap, the player's "moving away is always
   allowed" relaxation of the actor box (only reachable after a teleport).

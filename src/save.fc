@@ -1017,7 +1017,7 @@ module save =
                     g.key_space_handled = false
                     g.key_ack = false
                     g.key_ack_handled = false
-                    g.damage_flash_timer = 0.0
+                    g.damage_count = 0.0
                     g.msg_timer = 0.0
                     true
 

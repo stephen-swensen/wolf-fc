@@ -547,8 +547,13 @@ module intermission =
     // its episode. Secret intermissions show a different layout and
     // award a flat bonus instead of ticking through kill / secret /
     // treasure ratios.
+    // A bonus floor gets the flat 15000 and no tally. That's the secret
+    // floor — and, because the original's tally only runs for the first
+    // eight floors, the boss floor too if it's ever completed through
+    // the elevator path (only the TAB+E cheat can do that; a boss kill
+    // goes through the death cam / victory screen instead).
     private let is_secret_level = (level_num: i32) ->
-        level_num % episode.levels_per == 9
+        level_num % episode.levels_per >= 8
 
     private let compute_time_left = (g: game*) ->
         let par = if g.level_num < 60 then par_times[g.level_num] else 0

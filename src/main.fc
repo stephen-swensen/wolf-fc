@@ -305,7 +305,7 @@ let main = (args: str[]) ->
         hs_source = hs_source.death,
         ep_recorded_current = false,
         phase = game_phase.pg13, phase_timer = 0.0,
-        damage_flash_timer = 0.0,
+        damage_count = 0.0,
         killer_x = 0.0, killer_y = 0.0, killer_active = false,
         respawn_fade_timer = 0.0,
         get_psyched_timer = 0.0, got_gatling_timer = 0.0,

@@ -1283,7 +1283,7 @@ module enemies =
             // health but still takes the flash and the face grimace:
             // the hit registers, it just doesn't hurt.
             if g.god_mode then
-                g.damage_flash_timer = player.damage_flash_time
+                g.damage_count = g.damage_count + (f64) dmg
                 g.face_count = 256.0
                 return
             // After the baby shift a 1-3 point hit rounds to 0, same as
@@ -1300,7 +1300,7 @@ module enemies =
             | needle -> true
             | _      -> false
             g.health = g.health - dmg
-            g.damage_flash_timer = player.damage_flash_time
+            g.damage_count = g.damage_count + (f64) dmg
             // Force the next face roll to fire on the next
             // hud.update_face tick so the new health row is visible
             // immediately (the original forces a face refresh in its
@@ -2091,16 +2091,23 @@ module projectiles =
             r = r - tau
         r
 
-    // VSWAP page for a projectile in its current state. Rockets rotate
-    // through 8 angles keyed off travel direction; needle/fire/boom
-    // use sequential animation frames from their respective base pages.
-    let sprite_page = (sprite_start: i32, p: projectile*) ->
+    // VSWAP page for a projectile in its current state. The rocket is
+    // a rotating sprite like an actor: its eight views are picked from
+    // its heading relative to the line back to the viewer, so one
+    // flying at you shows its nose and one crossing your view its
+    // side (same rule as the enemies' eight-way sprites — the
+    // original approximates that line from the sprite's screen
+    // column, we use the exact vector). Needle/fire/boom/smoke use
+    // sequential frames from their base pages.
+    let sprite_page = (sprite_start: i32, p: projectile*, px: f64, py: f64) ->
         match p.kind with
         | needle -> sprite_start + hypo_base + (p.anim_frame & 3)
         | rocket ->
-            // 8 rotation frames spanning [0, 2π). Quantize angle → frame index.
-            let a = wrap_angle(p.angle)
-            let idx = (i32) (a * 8.0 / tau) & 7
+            let to_viewer = math.atan2(p.y - py, px - p.x)   // y-up, like p.angle
+            let rel = wrap_angle(to_viewer - p.angle + math.pi / 8.0)
+            let mut idx = (i32) (rel * 8.0 / tau)
+            if idx < 0 then idx = 0
+            if idx > 7 then idx = 7
             sprite_start + rocket_base + idx
         | fire -> sprite_start + fire_base + (p.anim_frame & 1)
         | smoke -> sprite_start + smoke_base + (if p.anim_frame > 3 then 3 else p.anim_frame)

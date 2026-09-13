@@ -407,7 +407,7 @@ struct game =
     // when phase != playing; rendering paints the appropriate overlay.
     phase: game_phase
     phase_timer: f64       // seconds spent in current phase (for transitions)
-    damage_flash_timer: f64  // red tint on damage; decays each tick
+    damage_count: f64        // the original's damage counter in tics: points taken accumulate here, the red tint's depth is count/10+1 (of six steps) and it drains one per tic
     // Latch set whenever the player's most recent damage came from a
     // Schabbs needle projectile. Cleared by any other damage source
     // and on respawn / new game. Read by hud.render to pick

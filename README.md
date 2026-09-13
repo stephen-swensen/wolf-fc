@@ -176,7 +176,7 @@ And the original game's TAB-held cheats (hold TAB, press another key). The origi
 | TAB + G | Toggle god mode (same flag as IDDQD, plain "God mode" banner) |
 | TAB + I | Free items: heal to 100, +50 ammo (cap 99), bump weapon one tier, +100 000 score |
 | TAB + N | Toggle no-clip (walk through walls, doors, enemies, static decorations) |
-| TAB + E | End level (skip straight to the intermission screen) |
+| TAB + E | End level (skip straight to the intermission screen; on a boss floor this pays the flat bonus and drops you on the secret floor, as the original's cheat does) |
 | TAB + H | Hurt self for 16 damage |
 | TAB + D | Toggle the debug overlay (FPS / work-vs-budget / drops + jitter / resolution). Works in any phase. See `--debug` above. |
 
@@ -211,9 +211,10 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `space` | Press space once (open or close a door, elevator, push wall) |
 | `wait:N` | Advance N ticks with no input (for door/push-wall animation) |
 | `ss:FILE` | Render current frame and save as PNG to `FILE` (with game-state metadata in a `tEXt` chunk) |
-| `state` | Print position, direction, health, ammo, score, lives, level, keys |
+| `state` | Print position, direction, health, ammo, score, lives, level, keys, and `flash` (the damage-flash counter in tics) |
 | `goto:X,Y` | Teleport player to tile center `(X+0.5, Y+0.5)`. Items are collected the original way — from the tile ahead of you, facing it — so to pick one up teleport next to it, face it, and `wait:1` |
 | `sethp:N` | Set health to N (debug) |
+| `hurt:N` | Take N points of damage through the real damage path (difficulty quartering, god mode, the flash counter, death). Not a tick. |
 | `setammo:N` | Set ammo count to N (debug) |
 | `setweapon:N` | Select weapon slot 0-3 (knife/pistol/MG/chain) |
 | `fire` | Press fire for one tick, starting an attack cycle; the shot itself (hitscan, ammo, weapon SFX) lands 12 tics later — on the 6th tick counting the press — so follow it with `wait:5` before inspecting the target |
@@ -228,7 +229,7 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `probe` | Movement diagnostic: dump the player's bbox tiles, any wall/door blocking each, and every live enemy within 2 tiles (distance + tile). First stop for "player can't move here" reports. |
 | `enemies` | Print totals per enemy kind and per state |
 | `enemylist` | Print each enemy: index, tile, kind, state, direction, hp, area number, `vis` (1 = on screen this tick, the sight-falloff flag), `act` (1 = has ever been on screen; a 0 actor in a room not connected to the player's by open doors doesn't think at all) |
-| `projectiles` | Dump every live enemy projectile: index, kind (needle/rocket/fire/boom), position, travel angle, animation frame |
+| `projectiles` | Dump every live enemy projectile: index, kind (needle/rocket/fire/boom/smoke), position, travel angle, animation frame, and `rot` — the rocket's eight-way view as seen from the player (0 = nose-on, relative to the view it would show from directly behind) |
 | `killenemy:N` | Overkill enemy at index N via `damage_enemy` (drops, score, kill counter all fire as if shot) |
 | `hold_fire:N` | Hold the fire key for N ticks (one press; the machine gun / chain gun keep cycling while held, pistol / knife fire once). A shot lands 12 tics (6 ticks) after the press. |
 | `hurtenemy:N,DMG` | Apply DMG damage to enemy N through the same path as a bullet: sneak-attack doubling, noise flag, wake-up + alert vocal, pain flinch. Not a tick. |
@@ -246,7 +247,8 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `hs_name:STR` | Type a name into the high-scores edit buffer (only meaningful while the screen is in edit mode). Followed by `advance` to commit. |
 | `hs_state` | Dump every row of the high-scores table + the current edit state. |
 | `music` | Print the AUDIOT chunk that should be playing for the current phase (no audio device required) |
-| `endepisode` | Set `next_level` on current level (quick path to intermission/episode-end screens) |
+| `endepisode` | Start the BJ victory run from where the player stands, as a real boss exit does (quick path to the episode-end screens) |
+| `tabe` | The TAB+E cheat: end the level by the elevator path on any floor, boss floors included (bonus-floor tally, then the secret floor) |
 | `advance` | Simulate the ack-key press on intermission / episode-end / victory / game-over (intermission accepts any key in interactive mode) |
 | `save:N` | Write the running world to save slot N (0..9) under `~/.wolf-fc/saves/` |
 | `load:N` | Read save slot N back into the world (level reloaded, state overlaid) |

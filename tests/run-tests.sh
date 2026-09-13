@@ -574,7 +574,7 @@ assert_contains "intermission:par-time-e1m4-is-210s" \
     "setlevel:3 counters" \
     "par=210"
 assert_contains "intermission:par-time-bonus-uses-level-par" \
-    "setlevel:3 endepisode wait:10 state" \
+    "setlevel:3 tabe wait:10 state" \
     "score=105000"
 # Boss floors have no par in the original ("??:??" on the tally screen)
 # and therefore earn no time bonus.
@@ -585,12 +585,12 @@ assert_contains "intermission:boss-floor-has-no-par" \
 # a completely different layout: flat 15000 bonus, no par / ratio tally.
 # Matches the original's secret-floor tally: a flat 15000.
 assert_contains "intermission:secret-floor-awards-15000" \
-    "setlevel:29 endepisode wait:10 state" \
+    "setlevel:29 tabe wait:10 state" \
     "score=15000"
 # ...but a bonus floor is paid that flat sum instead of a tally, so it
 # contributes nothing to the end-of-episode averages.
 assert_contains "intermission:secret-floor-not-in-episode-averages" \
-    "setlevel:29 endepisode wait:10 epstats" \
+    "setlevel:29 tabe wait:10 epstats" \
     "epstats: levels=0"
 # The floor an episode ends on skips the tally screen entirely: no
 # completion bonus, and no share of the averages either. Only the eight
@@ -603,7 +603,7 @@ assert_contains "intermission:boss-floor-not-in-episode-averages" \
     "epstats: levels=0"
 # An ordinary floor still records one entry.
 assert_contains "intermission:ordinary-floor-recorded-in-averages" \
-    "endepisode wait:2 advance epstats" \
+    "tabe wait:2 advance epstats" \
     "epstats: levels=1"
 
 # The tally's ratio and 100%-bonus arms. E1M1 on Can I Play Daddy holds
@@ -617,19 +617,19 @@ KILL_ALL_BUT_ONE_E1M1="${KILL_ALL_E1M1% killenemy:10}"
 
 # 10 of 11: 1100 in kill points + 44500 time bonus, and no ratio bonus.
 assert_contains "intermission:partial-kills-earn-no-ratio-bonus" \
-    "setlevel:0 setdifficulty:0 $KILL_ALL_BUT_ONE_E1M1 wait:60 endepisode wait:2 state" \
+    "setlevel:0 setdifficulty:0 $KILL_ALL_BUT_ONE_E1M1 wait:60 tabe wait:2 state" \
     "score=45600"
 # 11 of 11: 1200 in kill points + the same 44500 + 10000 for the full
 # kill ratio. The 10000 is the whole point of the pair.
 assert_contains "intermission:full-kills-earn-the-ratio-bonus" \
-    "setlevel:0 setdifficulty:0 $KILL_ALL_E1M1 wait:60 endepisode wait:2 state" \
+    "setlevel:0 setdifficulty:0 $KILL_ALL_E1M1 wait:60 tabe wait:2 state" \
     "score=55700"
 # The percentage itself floors rather than rounds: 10 of 11 is 90%, not 91%.
 assert_contains "intermission:ratio-floors-the-percentage" \
-    "setlevel:0 setdifficulty:0 $KILL_ALL_BUT_ONE_E1M1 wait:60 endepisode wait:2 advance epstats" \
+    "setlevel:0 setdifficulty:0 $KILL_ALL_BUT_ONE_E1M1 wait:60 tabe wait:2 advance epstats" \
     "epslot 0: kr=90"
 assert_contains "intermission:full-ratio-reads-100" \
-    "setlevel:0 setdifficulty:0 $KILL_ALL_E1M1 wait:60 endepisode wait:2 advance epstats" \
+    "setlevel:0 setdifficulty:0 $KILL_ALL_E1M1 wait:60 tabe wait:2 advance epstats" \
     "epslot 0: kr=100"
 
 # Beating an episode on a floor-jump straight to its boss leaves no
@@ -642,7 +642,7 @@ assert_contains "intermission:victory-screen-survives-zero-recorded-floors" \
 # Advancing from the secret-floor intermission routes back via the
 # elevator_back_to table rather than into map 10 of the next episode.
 assert_contains "intermission:secret-floor-advances-back" \
-    "setlevel:29 endepisode wait:10 advance state" \
+    "setlevel:29 tabe wait:10 advance state" \
     "level=27"
 
 section "counters"
@@ -856,6 +856,12 @@ assert_regex "proj:schabbs-needle-damages-player" \
 # Giftmacher on E4M9 at (27,18) fires rockets at the player one tile south;
 # one rocket hit alone drops the player by 30-61 HP. Rocket damage is
 # distinctive enough that we check the value clearly fell below 70.
+# The rocket is a rotating sprite: one flying straight at the player shows
+# its nose-on view (rot=0 — the view relative to the one it would show from
+# directly behind).
+assert_contains "proj:rocket-flying-at-player-shows-nose" \
+    "setlevel:38 goto:27,19 wait:78 projectiles" \
+    "rocket pos(27.500,18.031) ang=4.712 frame=0 rot=0"
 assert_regex "proj:giftmacher-rocket-damages-player" \
     "setlevel:38 goto:27,19 wait:60 state" \
     "health=([0-6][0-9]|70) "
@@ -973,6 +979,31 @@ assert_contains "cheat:idkfa-locks-score-on-pickup" \
     "idkfa goto:6,14 wait:1 state" \
     "score=0"
 
+# TAB+E on a boss floor takes the original's odd route: the elevator path
+# pays the bonus-floor tally (flat 15000, no ratios) and the floor bump
+# lands on the secret floor.
+assert_contains "cheat:tab-e-on-boss-floor-pays-bonus-tally" \
+    "setlevel:8 tabe wait:2 phase state" \
+    "score=15000"
+assert_contains "cheat:tab-e-on-boss-floor-enters-intermission" \
+    "setlevel:8 tabe wait:2 phase" \
+    "phase=intermission"
+assert_contains "cheat:tab-e-on-boss-floor-lands-on-secret-floor" \
+    "setlevel:8 tabe wait:2 advance state" \
+    "level=9"
+# Damage flash: the points taken feed a tic counter that drains one per
+# tic — 25 points is a 25-tic flash, 15 left after five ticks — and god
+# mode takes the flash without the damage.
+assert_contains "flash:damage-feeds-the-counter" \
+    "hurt:25 state" \
+    "health=75 ammo=8 score=0 lives=3 level=0 weapon=1 best=1 flash=25"
+assert_contains "flash:counter-drains-one-per-tic" \
+    "hurt:25 wait:5 state" \
+    "flash=15"
+assert_contains "flash:god-mode-still-flashes" \
+    "iddqd hurt:25 state" \
+    "health=100 ammo=8 score=0 lives=3 level=0 weapon=1 best=1 flash=25"
+
 section "episode structure"
 # Episode jumping via setepisode.
 assert_contains "episode:setepisode-0-starts-e1m1" \
@@ -986,7 +1017,7 @@ assert_contains "episode:setepisode-2-starts-e3m1" \
 # `next_level` bounces straight back into the intermission on the new
 # map instead of landing in playing.
 assert_contains "episode:setlevel-clears-pending-transition" \
-    "endepisode setlevel:3 wait:2 phase" \
+    "tabe setlevel:3 wait:2 phase" \
     "phase=playing"
 # Level 8 (boss / finale) of an episode enters the BJ victory cutscene
 # instead of the regular intermission. `advance` skips straight to the
@@ -1021,7 +1052,7 @@ assert_contains "episode:high-scores-advance-returns-to-title" \
 # Level 9 (secret) advance routes back to elevator_back_to[ep]. For
 # ep=0 that's level 1 (E1M2).
 assert_contains "episode:secret-level-routes-back" \
-    "setlevel:9 endepisode wait:2 advance state" \
+    "setlevel:9 tabe wait:2 advance state" \
     "level=1"
 # Episode 6 end → endart → main menu. The OG WL6 has no special
 # all-six-cleared screen; episode 6 ends the same way every other
@@ -1099,7 +1130,7 @@ assert_contains "music:title-plays-nazi-nor"      "setphase:title music"      "a
 assert_contains "music:menu-plays-wonderin"       "setphase:menu music"       "audiot offset=14"
 assert_contains "music:gameplay-uses-songs-table" "music"                     "audiot offset=3"
 assert_contains "music:intermission-plays-endlevel" \
-    "setlevel:0 endepisode wait:2 music" \
+    "setlevel:0 tabe wait:2 music" \
     "audiot offset=16"
 # Boss-map intermission is replaced by the BJ victory cutscene, which
 # shares the episode-end URAHERO track.
@@ -1217,12 +1248,12 @@ assert_contains "save:load-marks-game-active" \
 # halves the average, and loading the slot must restore the one-level
 # figure rather than leaving the live session's.
 assert_contains "save:episode-totals-round-trip" \
-    "killenemy:0 killenemy:1 killenemy:2 wait:60 endepisode wait:2 advance save:0 setepisode:3 endepisode wait:2 advance load:0 epstats" \
+    "killenemy:0 killenemy:1 killenemy:2 wait:60 tabe wait:2 advance save:0 setepisode:3 tabe wait:2 advance load:0 epstats" \
     "epslot 0: kr=8 sr=0 tr=0 time=1"
 # The victory screen averages over a fixed eight floors, whatever was
 # played (the original's fixed-size table): one floor at 100% reads 12.
 assert_contains "intermission:averages-divide-by-eight" \
-    "setlevel:0 setdifficulty:0 $KILL_ALL_E1M1 wait:60 endepisode wait:2 advance epstats" \
+    "setlevel:0 setdifficulty:0 $KILL_ALL_E1M1 wait:60 tabe wait:2 advance epstats" \
     "epstats: levels=1 time=1 kr=12"
 
 section "config / preferences"

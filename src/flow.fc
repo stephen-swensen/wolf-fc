@@ -177,15 +177,13 @@ module flow =
         if g.next_level && g.phase == game_phase.playing
            && g.next_level_delay <= 0.0 then
             g.next_level = false
-            // Boss-map exits route through BJ victory; everything else goes
-            // through the regular intermission → advance flow. In normal
-            // play boss maps fire BJ via the exit-tile check in player.update
-            // (which doesn't set next_level), so this branch is reached only
-            // by the synthetic `endepisode` test command on a boss map.
-            if g.level_num % episode.levels_per == 8 then
-                bj_victory.enter(g, w.ac)
-            else
-                intermission.enter(g, w.ac)
+            // The level-done latch always means "left by the elevator":
+            // the intermission tally (a bonus-floor one on the secret
+            // floor — and on a boss floor, which only the TAB+E cheat
+            // can complete this way; the real boss exit is the exit
+            // tile in player.update, which starts the BJ victory run
+            // directly).
+            intermission.enter(g, w.ac)
         if g.phase == game_phase.dying && g.phase_timer >= player.death_anim_time then
             if g.lives > 0 then
                 g.lives = g.lives - 1
@@ -224,9 +222,9 @@ module flow =
     let tick = (w: world*, dt: f64) ->
         let g = w.g
         // Damage flash and respawn fade decay every frame regardless of phase.
-        if g.damage_flash_timer > 0.0 then
-            g.damage_flash_timer = g.damage_flash_timer - dt
-            if g.damage_flash_timer < 0.0 then g.damage_flash_timer = 0.0
+        if g.damage_count > 0.0 then
+            g.damage_count = g.damage_count - dt * 70.0
+            if g.damage_count < 0.0 then g.damage_count = 0.0
         if g.respawn_fade_timer > 0.0 then
             g.respawn_fade_timer = g.respawn_fade_timer - dt
             if g.respawn_fade_timer < 0.0 then g.respawn_fade_timer = 0.0
@@ -412,9 +410,13 @@ module flow =
         // during playing or dying. Damage flash is a brief uniform alpha
         // blend; the longer death + respawn transitions use a spatial-hash
         // stipple so the scene fills / clears as speckled grains of red.
-        let red_tint = 0x00C00000u32
-        let flash_a = if w.g.damage_flash_timer > 0.0 then
-            w.g.damage_flash_timer / player.damage_flash_time * 0.45
+        // The tint depth steps with how much damage is still draining:
+        // a glancing hit is a brief eighth-blend, a rocket several
+        // steps deeper and longer (the original's red palette shifts).
+        let red_tint = 0x00FF0000u32
+        let flash_a = if w.g.damage_count > 0.0 then
+            let step = math.min(math.floor(w.g.damage_count / 10.0) + 1.0, player.damage_flash_steps)
+            step * player.damage_flash_step_alpha
         else 0.0
         if flash_a > 0.0 then overlay.viewport_tint(w.rc, red_tint, flash_a)
         let stipple_progress = match w.g.phase with

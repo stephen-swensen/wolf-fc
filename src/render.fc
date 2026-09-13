@@ -752,7 +752,7 @@ module billboards =
             rc.billboards[n] = billboard {
                 x = p.x,
                 y = p.y,
-                shape_page = projectiles.sprite_page(sprite_start, p),
+                shape_page = projectiles.sprite_page(sprite_start, p, g.pos_x, g.pos_y),
                 depth = dx * g.dir_x + dy * g.dir_y,
                 alpha = 1.0
             }

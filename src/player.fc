@@ -67,7 +67,11 @@ module player =
 
     // Red-flash duration on any damage event (seconds). Short;
     // purely visual.
-    let damage_flash_time = 0.25
+    // Damage flash: the original blends the palette toward red in six
+    // steps of an eighth each, the step being count/10+1 while the
+    // counter (points taken) drains one per tic.
+    let damage_flash_steps = 6.0
+    let damage_flash_step_alpha = 1.0 / 8.0
 
     // Death-cam swing rate (radians/second). The original game's
     // 70 Hz tick advances the player's heading by 2 of 360 angle
@@ -112,7 +116,7 @@ module player =
         g.next_level = false
         g.next_level_delay = 0.0
         g.made_noise = false
-        g.damage_flash_timer = 0.0
+        g.damage_count = 0.0
         g.last_hit_needle = false
         g.killer_active = false
         g.respawn_fade_timer = 0.0
@@ -418,21 +422,13 @@ module player =
             else hud.show_message(g, "No clipping OFF")
             g.msg_timer = msg_time
 
-        // TAB+E — debug "level done" skip. On a regular floor (and on
-        // the secret floor) it arms the elevator-switch path so the
-        // intermission tally fires; on a boss floor (level % 10 == 8)
-        // we'd normally route through bj_victory, but BJ needs the
-        // map's path arrows to walk (set up only on the exit-tile
-        // approach after a real boss kill), so a debug-skip lands him
-        // on dir.nodir and the cutscene stalls forever. We skip that
-        // and call episode_end directly — TAB+E is a level-done
-        // shortcut, not a cinematic trigger.
+        // TAB+E is the level-done shortcut on every floor, the boss
+        // floor included: there the original's tally treats any floor
+        // past the eighth as a bonus floor (flat 15000, no ratios) and
+        // the floor bump lands on the secret floor — an accident of its
+        // control flow that we reproduce as is.
         let apply_tab_e = (g: game*) ->
-            if g.level_num % episode.levels_per == 8 then
-                // Straight to the victory screen, and like a real boss
-                // kill the floor contributes nothing to the averages.
-                episode_end.enter(g)
-            else if !g.next_level then
+            if !g.next_level then
                 g.next_level = true
                 g.next_level_delay = 0.0
 

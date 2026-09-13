@@ -70,6 +70,14 @@ module testmode =
             // player legally walked here through every open door."
             areas.update_player_area(w.lv, g)
             areas.connect(w.lv, g.area_number)
+        else if text.starts_with(arg, "hurt:") then
+            // Damage the player by N points through the real damage
+            // path (baby quartering, god mode, flash counter, death).
+            // Attributed to a bullet from the player's own position.
+            // Not a tick.
+            match text.parse_i32(arg[5..arg.len]) with
+            | ok(n) -> enemies.ai.damage_player(g, w.ac, n, enemies.damage_source.bullet, g.pos_x, g.pos_y)
+            | err(_) -> bad("integer damage")
         else if text.starts_with(arg, "sethp:") then
             match text.parse_i32(arg[6..arg.len]) with
             | ok(n) -> g.health = n
@@ -292,7 +300,7 @@ module testmode =
             | err(_) -> bad("integer frame count")
         else if arg == "state" then
             io.write("pos=(%8.4f{g.pos_x}, %8.4f{g.pos_y}) dir=(%8.4f{g.dir_x}, %8.4f{g.dir_y})\n", stdout)
-            io.write("health=%d{g.health} ammo=%d{g.ammo} score=%d{g.score} lives=%d{g.lives} level=%d{g.level_num} weapon=%d{(i32) g.weapon} best=%d{(i32) g.best_weapon}\n", stdout)
+            io.write("health=%d{g.health} ammo=%d{g.ammo} score=%d{g.score} lives=%d{g.lives} level=%d{g.level_num} weapon=%d{(i32) g.weapon} best=%d{(i32) g.best_weapon} flash=%d{(i32) g.damage_count}\n", stdout)
             let gk = if g.has_gold_key then 1 else 0
             let sk = if g.has_silver_key then 1 else 0
             let gm = if g.god_mode then 1 else 0
@@ -391,10 +399,7 @@ module testmode =
             // advance into one step so scripted tests don't need two hops.
             if g.phase == game_phase.intermission then
                 if g.inter_stage != inter_stage.done then intermission.finish_anim(g)
-                if g.level_num % episode.levels_per == 8 then
-                    episode_end.enter(g)
-                else
-                    flow.advance_next_level(w, w.ac.vs)
+                flow.advance_next_level(w, w.ac.vs)
             else if g.phase == game_phase.bj_victory then
                 // BJ cutscene collapses straight to the episode-end screen.
                 // Interactive mode auto-advances on its own after the final
@@ -503,9 +508,14 @@ module testmode =
                     if lbl_chars.len > 0 then io.write(lbl_chars, stdout)
                     ignore io.write("\n", stdout)
         else if arg == "endepisode" then
-            // Force the episode-end path: sets next_level on level 8 of the
-            // current episode so the intermission → episode-end flow runs.
-            g.next_level = true
+            // Force the episode-end path the way a real boss exit does:
+            // straight into the BJ victory run (the exit-tile route),
+            // from wherever the player stands. On a non-boss floor the
+            // victory screens still run, off the current floor's figures.
+            bj_victory.enter(g, w.ac)
+        else if arg == "tabe" then
+            // The TAB+E cheat: the level-done latch on any floor.
+            player.cheats.apply_tab_e(g)
         else if arg == "kill" then
             // Instant-kill the player (skips the pain sound, goes straight to
             // dying). Mostly used by the regression suite to exercise the
@@ -957,7 +967,8 @@ module testmode =
                 | fire   -> "fire"
                 | smoke  -> "smoke"
                 | boom   -> "boom"
-                io.write(alloca("  proj[%d{i}] %s{ks} pos(%6.3f{p.x},%6.3f{p.y}) ang=%5.3f{p.angle} frame=%d{p.anim_frame}\n"), stdout)
+                let rot = projectiles.sprite_page(0, p, g.pos_x, g.pos_y) - projectiles.sprite_page(0, p, p.x + math.cos(p.angle), p.y - math.sin(p.angle))
+                io.write(alloca("  proj[%d{i}] %s{ks} pos(%6.3f{p.x},%6.3f{p.y}) ang=%5.3f{p.angle} frame=%d{p.anim_frame} rot=%d{rot}\n"), stdout)
             ignore io.write("projectiles: alive=%d{alive}\n", stdout)
         else
             ignore io.write(alloca("Unknown test command: %s{arg}\n"), stdout)
