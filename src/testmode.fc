@@ -111,6 +111,15 @@ module testmode =
                 for _ in 0..n do flow.tick(w, dt)
                 g.key_fire = false
             | err(_) -> bad("integer tick count")
+        else if text.starts_with(arg, "setfire:") then
+            // Latch the fire key down (1) or up (0) without advancing
+            // time, so a following fwd:/turn:/wait: runs with the
+            // trigger held — the interactive "walk and shoot" case the
+            // one-tick `fire` and the stationary `hold_fire:` can't
+            // reproduce.
+            match text.parse_i32(arg[8..arg.len]) with
+            | ok(n) -> g.key_fire = n != 0
+            | err(_) -> bad("0 or 1")
         else if arg == "facetile" then
             // Mirror the use-key's cardinal quantization (dominant axis
             // wins) so this reports the actual door/elevator/push-wall

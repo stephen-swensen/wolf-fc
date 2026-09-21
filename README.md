@@ -232,6 +232,7 @@ Since `run.sh` rebuilds on every invocation, invoking the pre-built binary direc
 | `projectiles` | Dump every live enemy projectile: index, kind (needle/rocket/fire/boom/smoke), position, travel angle, animation frame, and `rot` — the rocket's eight-way view as seen from the player (0 = nose-on, relative to the view it would show from directly behind) |
 | `killenemy:N` | Overkill enemy at index N via `damage_enemy` (drops, score, kill counter all fire as if shot) |
 | `hold_fire:N` | Hold the fire key for N ticks (one press; the machine gun / chain gun keep cycling while held, pistol / knife fire once). A shot lands 12 tics (6 ticks) after the press. |
+| `setfire:0\|1` | Latch the fire key down (1) or up (0) without advancing time, so a following `fwd:` / `turn*:` / `wait:` runs with the trigger held — the "walk and shoot" case `fire` (one tick) and `hold_fire:` (stationary) can't reproduce. Not a tick. |
 | `hurtenemy:N,DMG` | Apply DMG damage to enemy N through the same path as a bullet: sneak-attack doubling, noise flag, wake-up + alert vocal, pain flinch. Not a tick. |
 | `kill` | Instant-kill the player; transitions straight to the dying phase. Leaves `killer_active` false, so the death-cam swing is a no-op. |
 | `killby:X,Y` | Like `kill`, but latches `(X, Y)` as the killer's world position so the dying-phase camera swing has a target to rotate toward. |

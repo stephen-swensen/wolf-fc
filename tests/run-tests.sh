@@ -466,6 +466,27 @@ section "weapons:auto-restore"
 assert_contains "weapon:ammo-pickup-restores-from-knife" \
     "goto:30,62 turnr:180 setammo:50 fire wait:15 fire wait:15 fire wait:15 setammo:0 setweapon:0 goto:29,62 wait:1 state" \
     "weapon=1"
+# The re-arm follows the original's gate: the attack *frame index*, which is
+# 0 both while idle and through a cycle's first entry. Dropping to the knife,
+# pressing fire, and walking onto the clip two ticks later grabs it inside
+# that first entry, so the gun comes back immediately (and the rest of the
+# cycle plays out on its frame table). `setfire:` holds the trigger across
+# the fwd: so this is the real walk-and-swing case.
+DRY_AT_DROP="goto:30,62 turnr:180 setammo:3 fire wait:15 fire wait:15 fire wait:15"
+assert_regex "weapon:ammo-pickup-rearms-on-first-attack-frame" \
+    "$DRY_AT_DROP fwd:4 setfire:1 fwd:2 state" \
+    "ammo=4 .*weapon=1"
+# Past that first entry the swap waits for the cycle's last frame — the same
+# deferral the original has for attack frames 1-3. Mid-swing the knife stays
+# out even though the clip is already in the belt.
+assert_regex "weapon:ammo-pickup-mid-swing-keeps-knife" \
+    "$DRY_AT_DROP setfire:1 fwd:6 state" \
+    "ammo=4 .*weapon=0"
+# ...and the cycle's last frame hands the gun back (24 tics = 12 ticks in).
+assert_regex "weapon:ammo-pickup-rearms-at-cycle-end" \
+    "$DRY_AT_DROP setfire:1 fwd:12 state" \
+    "ammo=4 .*weapon=1"
+
 # MG pickup also upgrades the player's best-weapon ceiling. We don't have
 # SS on E1M1 to drop one naturally, so exercise the pickup path using the
 # tile-50 machine-gun sprite in plane 1 — level 0 has none either; skip.

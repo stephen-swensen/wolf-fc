@@ -527,11 +527,17 @@ module pickups =
         | _ -> item_kind.decoration
 
     // Ammo coming in: if the player was dry (knife out), re-arm the
-    // weapon they had chosen — not necessarily the best one — unless
-    // an attack is in progress (the attack's last frame does the swap
-    // then). Matches the original's give-ammo routine.
+    // weapon they had chosen — not necessarily the best one. The
+    // original gates this on the attack *frame index*, not on "an
+    // attack is running": the index is 0 both while idle and through
+    // the cycle's first entry, so a clip grabbed in the first 6 tics
+    // of a knife swing re-arms at once and the rest of that cycle
+    // plays out on the new weapon's frame table (turning the swing
+    // into a shot). Only entries 1-3 defer the swap to the cycle's
+    // last frame. Gating on "attacking" instead would hold the knife
+    // for the whole swing.
     let give_ammo = (g: game*, amount: i32) ->
-        if g.ammo == 0 && !g.attacking then g.weapon = g.chosen_weapon
+        if g.ammo == 0 && g.attack_frame == 0 then g.weapon = g.chosen_weapon
         g.ammo = g.ammo + amount
         if g.ammo > 99 then g.ammo = 99
 
