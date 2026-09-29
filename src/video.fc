@@ -115,7 +115,7 @@ module video =
             vzbuf = if mode == ssaa_mode.off then zbuf else ssaa_zbuf,
             vbuf_w = ssaa_vbuf_w(mode, screen_w),
             vbuf_h = ssaa_vbuf_h(mode, view_render_h),
-            billboards = alloc(billboard[tilemap.max_sprites + enemies.max_enemies + projectiles.max_projectiles + 1] {})!,
+            billboards = alloc(billboard[tilemap.max_sprites + enemies.max_enemies + enemies.projectiles.max_projectiles + 1] {})!,
             num_billboards = 0,
             title_bg = pics.build_title_bg_cache(vg, pal, fb_w, fb_h),
             god_face = pics.build_god_face_cache(vg, pal),

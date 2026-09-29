@@ -52,7 +52,7 @@ struct level =
     // rockets + their boom sprites, fake-Hitler flames). Slot-allocated in a
     // fixed-size array; `alive = false` means free. No separate count — the
     // array is scanned on every update / billboards.build pass.
-    projectiles: projectiles.projectile[]
+    projectiles: enemies.projectiles.projectile[]
     // Area system (matches the original): per-tile area index (areas.no_area
     // for walls / other non-area tiles); a areas.num_areas² counter of how
     // many open doors connect each pair (>0 means connected); a per-area
@@ -1494,7 +1494,7 @@ module level =
             pushwall = default(pushwall.pushwall_state),
             enemies = alloc(enemies.enemy[enemies.max_enemies] {})!,
             num_enemies = 0,
-            projectiles = alloc(projectiles.projectile[projectiles.max_projectiles] {})!,
+            projectiles = alloc(enemies.projectiles.projectile[enemies.projectiles.max_projectiles] {})!,
             tile_areas = alloc(u8[map_size * map_size] {})!,
             vis_tiles = alloc(bool[map_size * map_size] {})!,
             area_connect = alloc(u8[areas.num_areas * areas.num_areas] {})!,

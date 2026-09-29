@@ -1547,15 +1547,13 @@ module enemies =
             if e.hp <= 0 then
                 score.add(g, score_for_kind(e.kind), ac)
                 g.kills = g.kills + 1
+                kill_enemy(lv, g, ac, e, sprite_start)
                 // Schabbs / Giftmacher / Fat / real Hitler end the
                 // episode via the death-cam cutscene (matches the
                 // original's death-cam triggers). All other kinds —
                 // including Hans and Gretel — just drop their gold key
                 // (or pickup) and leave the player to walk out.
-                if kind_has_death_cam(e.kind) then
-                    death_cam.enter(lv, g, ac, e, idx, sprite_start)
-                else
-                    kill_enemy(lv, g, ac, e, sprite_start)
+                if kind_has_death_cam(e.kind) then start_death_cam(g, idx)
                 // Hans / Gretel drop the key from kill_enemy via
                 // drop_for_kind. player.update checks the exit tile on
                 // every move and routes the BJ-runs cutscene from
@@ -1587,6 +1585,35 @@ module enemies =
                     e.anim_frame = if (e.hp & 1) != 0 then 0 else 1
                     e.anim_timer = pain_time
                 | _ -> void()
+
+        // Hand the game to the death-cam cutscene the moment a death-cam
+        // boss dies, as the original does from the boss's death action:
+        // leaving the playing phase at once means nothing else in this
+        // tick can hurt the player. Records the kill position (for the
+        // camera teleport later) and the corpse's index in lv.enemies,
+        // and clears held input so a chord from the kill shot doesn't
+        // eat the taunt-card acknowledge (as bj_victory.enter does). The
+        // cutscene itself runs in `death_cam`.
+        private let start_death_cam = (g: game*, boss_idx: i32) ->
+            g.phase = game_phase.death_cam
+            g.phase_timer = 0.0
+            g.dc_sub = dc_sub.pre_fade
+            g.dc_timer = 0.0                   // hold starts once the anim reaches enemy_state.dead
+            g.dc_fade = 0.0
+            g.dc_boss_idx = some(boss_idx)
+            g.dc_kill_x = g.pos_x
+            g.dc_kill_y = g.pos_y
+            g.next_level = false
+            g.next_level_delay = 0.0
+            g.key_up = false
+            g.key_down = false
+            g.key_left = false
+            g.key_right = false
+            g.key_fire = false
+            g.key_space = false
+            g.key_space_handled = true
+            g.key_ack = false
+            g.key_ack_handled = true
 
         // Per-kind reaction delay (seconds) between first detection
         // and actual wake. Matches the original's per-kind sight-delay
@@ -1677,6 +1704,29 @@ module enemies =
                     if kind_is_boss(e.kind) then sfx.trigger(sn, ac)
                     else sfx.trigger_at(sn, ac, g, e.x, e.y)
                 | none -> void()
+
+        // Dog melee bite — called from the jump-frame of `shoot` for dog.
+        // Damage is a flat ~0..16 roll inside melee range. The bark/snarl
+        // plays unconditionally at the top of the frame (matches the
+        // original) so the lunge is audible even when the dog misses.
+        private let bite_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemy*) ->
+            sfx.trigger_at(sfx.id.dog_attack, ac, g, e.x, e.y)
+            let dx = g.pos_x - e.x
+            let dy = g.pos_y - e.y
+            // Per-axis box matching the original's bite check: each axis
+            // must be within 2 tiles of the player center (|dx|-1 ≤ 1
+            // after the original's tile-unit subtraction). This is more
+            // permissive on diagonals than a euclidean check — a dog
+            // centered on the tile-corner opposite the player at (1.9, 1.9)
+            // still lands a bite.
+            if math.abs(dx) > 2.0 || math.abs(dy) > 2.0 then return
+            // No line-of-sight gate: inside that box the bite lands around
+            // a corner too, as in the original.
+            if rnd_byte(g) < 180 then
+                // Matches the original's bite roll: random byte >> 4
+                // → 0-15 (can graze for 0).
+                let dmg = rnd_byte(g) >> 4
+                damage_player(g, ac, dmg, damage_source.bite, e.x, e.y)
 
         // Enemy firing an attack at the player, called from the shoot
         // frames. Ports the original's distance-based hit chance and
@@ -1937,7 +1987,7 @@ module enemies =
                     let mask = shoot_fire_mask_for_kind(e.kind)
                     if (mask & (1 << e.anim_frame)) != 0 then
                         match e.kind with
-                        | dog -> projectiles.enemy_bite_player(lv, g, ac, e)
+                        | dog -> bite_player(lv, g, ac, e)
                         | schabbs | giftmacher | hitler_fake ->
                             projectiles.spawn(lv, ac, g, e, projectiles.kind_for_enemy(e.kind))
                         | fat ->
@@ -2051,313 +2101,292 @@ module enemies =
                     advance_die(g, ac, e, dt)
                 | _ -> void()
 
+    // ============================================================
+    // Enemy projectile attacks: visible dodgeable objects fired by
+    // Schabbs, Giftmacher, Fat, and fake Hitler. Matches the
+    // original's per-boss throw/launch spawn paths plus the shared
+    // per-tic projectile step. Nested under `enemies` because a
+    // projectile is an enemy-fired actor: the AI spawns it and it
+    // hurts the player through `ai.damage_player`.
+    // ============================================================
 
-// ============================================================
-// Enemy projectile attacks — visible dodgeable objects fired by Schabbs,
-// Giftmacher, Fat, and fake Hitler. Matches the original's per-boss
-// throw/launch spawn paths plus the shared per-tic projectile step.
-// ============================================================
+    module projectiles =
+        import math from std::
 
-module projectiles =
-    import math from std::
+        enum projectile_kind =
+            | needle    // Schabbs syringe: 4-frame flip-book, non-rotating
+            | rocket    // Giftmacher / Fat missile: 8 rotating angles, explodes
+            | fire      // Fake Hitler flamethrower: 2-frame animation, dissipates
+            | boom      // Short-lived explosion sprite spawned on rocket wall hit
+            | smoke     // Inert puff the rocket leaves behind every 3 tics (4 frames)
 
-    enum projectile_kind =
-        | needle    // Schabbs syringe: 4-frame flip-book, non-rotating
-        | rocket    // Giftmacher / Fat missile: 8 rotating angles, explodes
-        | fire      // Fake Hitler flamethrower: 2-frame animation, dissipates
-        | boom      // Short-lived explosion sprite spawned on rocket wall hit
-        | smoke     // Inert puff the rocket leaves behind every 3 tics (4 frames)
+        struct projectile =
+            kind: projectile_kind
+            x: f64
+            y: f64
+            angle: f64            // radians, direction of travel
+            alive: bool           // false = slot is free
+            anim_frame: i32       // cycling 0..3 for needle, 0..1 for fire, 0..2 for boom, 0..3 for smoke
+            anim_timer: f64       // seconds until next frame
+            smoke_timer: f64      // rocket only: seconds until the next puff
 
-    struct projectile =
-        kind: projectile_kind
-        x: f64
-        y: f64
-        angle: f64            // radians, direction of travel
-        alive: bool           // false = slot is free
-        anim_frame: i32       // cycling 0..3 for needle, 0..1 for fire, 0..2 for boom, 0..3 for smoke
-        anim_timer: f64       // seconds until next frame
-        smoke_timer: f64      // rocket only: seconds until the next puff
+        let max_projectiles = 32   // generous cap — the original shares actor slots; few projectiles actually fly at once
 
-    let max_projectiles = 32   // generous cap — the original shares actor slots; few projectiles actually fly at once
+        // Projectile speeds in tiles/sec, derived from the original's
+        // fixed-point 0x2000 (needle/rocket) and 0x1200 (flame) per-tic
+        // speeds at the 70Hz tic rate.
+        private let needle_speed = 8.75   // 0x2000 * 70 / 0x10000
+        private let rocket_speed = 8.75
+        let fire_speed   = 4.92   // 0x1200 * 70 / 0x10000
+        let hit_radius   = 0.75   // per-axis player hit box (tile units)
+        let wall_radius  = 0.125  // wall collision half-extent (tile units)
+        // Frame times from the original's projectile states: needle and
+        // flame 6 tics, explosion 6 tics, smoke 3 tics (the first puff
+        // frame shows for 6), a puff every 3 tics of rocket flight.
+        let anim_time    = 6.0 / 70.0
+        let boom_time    = 6.0 / 70.0
+        // A fresh flame is dealt a one-tic first frame, so its first
+        // step (and first hit test) comes almost at once; the six-tic
+        // cadence starts after that.
+        let fire_first   = 1.0 / 70.0
+        let smoke_time   = 3.0 / 70.0
+        let smoke_first  = 6.0 / 70.0
+        let smoke_period = 3.0 / 70.0
 
-    // Projectile speeds in tiles/sec, derived from the original's
-    // fixed-point 0x2000 (needle/rocket) and 0x1200 (flame) per-tic
-    // speeds at the 70Hz tic rate.
-    private let needle_speed = 8.75   // 0x2000 * 70 / 0x10000
-    private let rocket_speed = 8.75
-    let fire_speed   = 4.92   // 0x1200 * 70 / 0x10000
-    let hit_radius   = 0.75   // per-axis player hit box (tile units)
-    let wall_radius  = 0.125  // wall collision half-extent (tile units)
-    // Frame times from the original's projectile states: needle and
-    // flame 6 tics, explosion 6 tics, smoke 3 tics (the first puff
-    // frame shows for 6), a puff every 3 tics of rocket flight.
-    let anim_time    = 6.0 / 70.0
-    let boom_time    = 6.0 / 70.0
-    // A fresh flame is dealt a one-tic first frame, so its first
-    // step (and first hit test) comes almost at once; the six-tic
-    // cadence starts after that.
-    let fire_first   = 1.0 / 70.0
-    let smoke_time   = 3.0 / 70.0
-    let smoke_first  = 6.0 / 70.0
-    let smoke_period = 3.0 / 70.0
+        // Sprite-page offsets into VSWAP (relative to `sprite_start`).
+        // Derived from the original's sprite layout: needle at 317, fire
+        // at 326, rocket/smoke/boom block at 370/378/382.
+        let hypo_base   = 317
+        let fire_base   = 326
+        private let rocket_base = 370
+        private let smoke_base  = 378
+        let boom_base   = 382
 
-    // Sprite-page offsets into VSWAP (relative to `sprite_start`).
-    // Derived from the original's sprite layout: needle at 317, fire
-    // at 326, rocket/smoke/boom block at 370/378/382.
-    let hypo_base   = 317
-    let fire_base   = 326
-    private let rocket_base = 370
-    private let smoke_base  = 378
-    let boom_base   = 382
+        // Angle wrap helper. Keeps `a` in [0, 2π).
+        private let tau = 6.283185307179586
 
-    // Angle wrap helper. Keeps `a` in [0, 2π).
-    private let tau = 6.283185307179586
+        private let wrap_angle = (a: f64) ->
+            let mut r = a
+            loop
+                if r >= 0.0 then break
+                r = r + tau
+            loop
+                if r < tau then break
+                r = r - tau
+            r
 
-    private let wrap_angle = (a: f64) ->
-        let mut r = a
-        loop
-            if r >= 0.0 then break
-            r = r + tau
-        loop
-            if r < tau then break
-            r = r - tau
-        r
+        // VSWAP page for a projectile in its current state. The rocket is
+        // a rotating sprite like an actor: its eight views are picked from
+        // its heading relative to the line back to the viewer, so one
+        // flying at you shows its nose and one crossing your view its
+        // side (same rule as the enemies' eight-way sprites — the
+        // original approximates that line from the sprite's screen
+        // column, we use the exact vector). Needle/fire/boom/smoke use
+        // sequential frames from their base pages.
+        let sprite_page = (sprite_start: i32, p: projectile*, px: f64, py: f64) ->
+            match p.kind with
+            | needle -> sprite_start + hypo_base + (p.anim_frame & 3)
+            | rocket ->
+                let to_viewer = math.atan2(p.y - py, px - p.x)   // y-up, like p.angle
+                let rel = wrap_angle(to_viewer - p.angle + math.pi / 8.0)
+                let mut idx = (i32) (rel * 8.0 / tau)
+                if idx < 0 then idx = 0
+                if idx > 7 then idx = 7
+                sprite_start + rocket_base + idx
+            | fire -> sprite_start + fire_base + (p.anim_frame & 1)
+            | smoke -> sprite_start + smoke_base + (if p.anim_frame > 3 then 3 else p.anim_frame)
+            | boom ->
+                let f = if p.anim_frame > 2 then 2 else p.anim_frame
+                sprite_start + boom_base + f
 
-    // VSWAP page for a projectile in its current state. The rocket is
-    // a rotating sprite like an actor: its eight views are picked from
-    // its heading relative to the line back to the viewer, so one
-    // flying at you shows its nose and one crossing your view its
-    // side (same rule as the enemies' eight-way sprites — the
-    // original approximates that line from the sprite's screen
-    // column, we use the exact vector). Needle/fire/boom/smoke use
-    // sequential frames from their base pages.
-    let sprite_page = (sprite_start: i32, p: projectile*, px: f64, py: f64) ->
-        match p.kind with
-        | needle -> sprite_start + hypo_base + (p.anim_frame & 3)
-        | rocket ->
-            let to_viewer = math.atan2(p.y - py, px - p.x)   // y-up, like p.angle
-            let rel = wrap_angle(to_viewer - p.angle + math.pi / 8.0)
-            let mut idx = (i32) (rel * 8.0 / tau)
-            if idx < 0 then idx = 0
-            if idx > 7 then idx = 7
-            sprite_start + rocket_base + idx
-        | fire -> sprite_start + fire_base + (p.anim_frame & 1)
-        | smoke -> sprite_start + smoke_base + (if p.anim_frame > 3 then 3 else p.anim_frame)
-        | boom ->
-            let f = if p.anim_frame > 2 then 2 else p.anim_frame
-            sprite_start + boom_base + f
+        // Find a free projectile slot, or -1 if the array is saturated.
+        // Callers silently drop the spawn when full (matches the
+        // original's actor-cap guard).
+        private let alloc_slot = (lv: level*) ->
+            let mut slot = -1
+            for i in 0..max_projectiles do
+                if slot < 0 && !lv.projectiles[i].alive then slot = i
+            slot
 
-    // Find a free projectile slot, or -1 if the array is saturated.
-    // Callers silently drop the spawn when full (matches the
-    // original's actor-cap guard).
-    private let alloc_slot = (lv: level*) ->
-        let mut slot = -1
-        for i in 0..max_projectiles do
-            if slot < 0 && !lv.projectiles[i].alive then slot = i
-        slot
+        // Spawn a projectile at the enemy's current position, pointed at
+        // the player's current position. Angle is stored in standard-trig
+        // y-up convention so the rotating-rocket sprite picker can share
+        // the same convention as enemies.angle_sprite.
+        // An inert smoke puff at (x, y): four 3-tic frames (the first held
+        // for 6), no movement, no damage.
+        private let spawn_smoke = (lv: level*, x: f64, y: f64) ->
+            let slot = alloc_slot(lv)
+            if slot < 0 then return
+            lv.projectiles[slot] = projectile {
+                kind = projectile_kind.smoke,
+                x = x,
+                y = y,
+                angle = 0.0,
+                alive = true,
+                anim_frame = 0,
+                anim_timer = smoke_first,
+                smoke_timer = 0.0
+            }
 
-    // Spawn a projectile at the enemy's current position, pointed at
-    // the player's current position. Angle is stored in standard-trig
-    // y-up convention so the rotating-rocket sprite picker can share
-    // the same convention as enemies.angle_sprite.
-    // An inert smoke puff at (x, y): four 3-tic frames (the first held
-    // for 6), no movement, no damage.
-    private let spawn_smoke = (lv: level*, x: f64, y: f64) ->
-        let slot = alloc_slot(lv)
-        if slot < 0 then return
-        lv.projectiles[slot] = projectile {
-            kind = projectile_kind.smoke,
-            x = x,
-            y = y,
-            angle = 0.0,
-            alive = true,
-            anim_frame = 0,
-            anim_timer = smoke_first,
-            smoke_timer = 0.0
-        }
+        let spawn = (lv: level*, ac: audio_ctx*, g: game*, e: enemy*, k: projectile_kind) ->
+            let slot = alloc_slot(lv)
+            if slot < 0 then return
+            let dx = g.pos_x - e.x
+            let dy = e.y - g.pos_y     // flip to y-up so atan2 gives standard trig angle
+            let ang = math.atan2(dy, dx)
+            lv.projectiles[slot] = projectile {
+                kind = k,
+                x = e.x,
+                y = e.y,
+                angle = wrap_angle(ang),
+                alive = true,
+                anim_frame = 0,
+                anim_timer = if k == projectile_kind.fire then fire_first else anim_time,
+                smoke_timer = smoke_period
+            }
+            let snd = match k with
+            | needle -> some(sfx.id.schabbs_throw)
+            | rocket -> some(sfx.id.missile_fire)
+            | fire   -> some(sfx.id.flamethrower)
+            | boom | smoke -> none(sfx.id)
+            match snd with
+            | some(sn) -> sfx.trigger_at(sn, ac, g, e.x, e.y)
+            | none -> void()
 
-    let spawn = (lv: level*, ac: audio_ctx*, g: game*, e: enemies.enemy*, k: projectile_kind) ->
-        let slot = alloc_slot(lv)
-        if slot < 0 then return
-        let dx = g.pos_x - e.x
-        let dy = e.y - g.pos_y     // flip to y-up so atan2 gives standard trig angle
-        let ang = math.atan2(dy, dx)
-        lv.projectiles[slot] = projectile {
-            kind = k,
-            x = e.x,
-            y = e.y,
-            angle = wrap_angle(ang),
-            alive = true,
-            anim_frame = 0,
-            anim_timer = if k == projectile_kind.fire then fire_first else anim_time,
-            smoke_timer = smoke_period
-        }
-        let snd = match k with
-        | needle -> some(sfx.id.schabbs_throw)
-        | rocket -> some(sfx.id.missile_fire)
-        | fire   -> some(sfx.id.flamethrower)
-        | boom | smoke -> none(sfx.id)
-        match snd with
-        | some(sn) -> sfx.trigger_at(sn, ac, g, e.x, e.y)
-        | none -> void()
+        // Wall / closed-door collision for a projectile point at (x, y).
+        // Matches the original's 3x3 tile scan within the projectile
+        // radius. Returns true if any tile in the scanned range blocks —
+        // walls (1..63) and door tiles that aren't fully open.
+        private let hits_wall = (lv: level*, x: f64, y: f64) ->
+            let xl = (i32) math.floor(x - wall_radius)
+            let yl = (i32) math.floor(y - wall_radius)
+            let xh = (i32) math.floor(x + wall_radius)
+            let yh = (i32) math.floor(y + wall_radius)
+            let mut hit = false
+            for tx in xl..(xh + 1) do
+                for ty in yl..(yh + 1) do
+                    if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then
+                        hit = true
+                    else
+                        let t = (i32) lv.tilemap[(i64) tx * 64 + (i64) ty]
+                        if t >= 1 && t <= 63 then hit = true
+                        if t >= 128 then
+                            let door_idx = t - 128
+                            // A door is solid to a projectile unless it
+                            // stands fully open (the original's door tile
+                            // is only cleared at full open, and re-solid
+                            // the instant it starts closing).
+                            if door_idx >= 0 && door_idx < lv.num_doors
+                                && lv.doors[door_idx].state != doors.door_state.open then hit = true
+            hit
 
-    // Wall / closed-door collision for a projectile point at (x, y).
-    // Matches the original's 3x3 tile scan within the projectile
-    // radius. Returns true if any tile in the scanned range blocks —
-    // walls (1..63) and door tiles that aren't fully open.
-    private let hits_wall = (lv: level*, x: f64, y: f64) ->
-        let xl = (i32) math.floor(x - wall_radius)
-        let yl = (i32) math.floor(y - wall_radius)
-        let xh = (i32) math.floor(x + wall_radius)
-        let yh = (i32) math.floor(y + wall_radius)
-        let mut hit = false
-        for tx in xl..(xh + 1) do
-            for ty in yl..(yh + 1) do
-                if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then
-                    hit = true
+        // Damage per projectile kind — matches the original's per-class
+        // damage rolls.
+        private let damage_of = (k: projectile_kind, g: game*) ->
+            let roll = rnd_byte(g)
+            match k with
+            | needle -> (roll >> 3) + 20    // 20-51
+            | rocket -> (roll >> 3) + 30    // 30-61
+            | fire   -> roll >> 3           // 0-31
+            | boom | smoke -> 0
+
+        // Per-frame update for one projectile slot. Advances animation,
+        // steps the position, checks wall/player collision, mutates into
+        // a boom sprite on rocket wall-hit, or frees the slot on other
+        // terminal events.
+        let update = (lv: level*, g: game*, ac: audio_ctx*, p: projectile*, dt: f64) ->
+            if !p.alive then return
+            let frame_time = match p.kind with
+            | boom  -> boom_time
+            | smoke -> smoke_time
+            | _     -> anim_time
+            p.anim_timer = p.anim_timer - dt
+            let mut frame_rolled = false
+            if p.anim_timer <= 0.0 then
+                p.anim_frame = p.anim_frame + 1
+                p.anim_timer = p.anim_timer + frame_time
+                frame_rolled = true
+            match p.kind with
+            | boom ->
+                // Short 3-frame explosion, then free the slot.
+                if p.anim_frame >= 3 then p.alive = false
+            | smoke ->
+                if p.anim_frame >= 4 then p.alive = false
+            | _ ->
+                // The flame is the odd one out: its move hook is the
+                // end-of-frame action, not the per-frame think, so it
+                // only advances when a 6-tic frame rolls over — by one
+                // frame's worth of travel — and only tests for a hit
+                // then. That's the slow, dodgeable puff the original has,
+                // and it makes the flame's pace frame-rate dependent on
+                // DOS: a fast machine (one tic per frame) has it at 0.82
+                // tiles/s, a slow 386 nearer 3. We step it by the
+                // reference frame (`og_frame_dt`, one tic) whatever the
+                // real frame length, so it's the fast machine's pace on
+                // every display.
+                if p.kind == projectile_kind.fire && !frame_rolled then return
+                let speed = match p.kind with
+                | needle -> needle_speed
+                | rocket -> rocket_speed
+                | fire   -> fire_speed
+                | boom | smoke -> 0.0
+                let step_dt = if p.kind == projectile_kind.fire then og_frame_dt else dt
+                let step = speed * step_dt
+                if p.kind == projectile_kind.rocket then
+                    // Smoke trail: a puff at the rocket's position every
+                    // 3 tics of flight.
+                    p.smoke_timer = p.smoke_timer - dt
+                    if p.smoke_timer <= 0.0 then
+                        p.smoke_timer = p.smoke_timer + smoke_period
+                        spawn_smoke(lv, p.x, p.y)
+                // Y-up angle → y-down world motion: flip the sin term.
+                let nx = p.x + math.cos(p.angle) * step
+                let ny = p.y - math.sin(p.angle) * step
+                if hits_wall(lv, nx, ny) then
+                    match p.kind with
+                    | rocket ->
+                        // Mutate the slot into a short-lived explosion
+                        // sprite at the last pre-hit position, so the
+                        // fireball appears against the wall rather than
+                        // inside it.
+                        p.kind = projectile_kind.boom
+                        p.anim_frame = 0
+                        p.anim_timer = boom_time
+                        sfx.trigger_at(sfx.id.missile_hit, ac, g, p.x, p.y)
+                    | _ -> p.alive = false
                 else
-                    let t = (i32) lv.tilemap[(i64) tx * 64 + (i64) ty]
-                    if t >= 1 && t <= 63 then hit = true
-                    if t >= 128 then
-                        let door_idx = t - 128
-                        // A door is solid to a projectile unless it
-                        // stands fully open (the original's door tile
-                        // is only cleared at full open, and re-solid
-                        // the instant it starts closing).
-                        if door_idx >= 0 && door_idx < lv.num_doors
-                            && lv.doors[door_idx].state != doors.door_state.open then hit = true
-        hit
+                    p.x = nx
+                    p.y = ny
+                    if math.abs(p.x - g.pos_x) < hit_radius
+                        && math.abs(p.y - g.pos_y) < hit_radius then
+                        let src = match p.kind with
+                        | needle -> damage_source.needle
+                        | rocket -> damage_source.rocket
+                        | fire   -> damage_source.flame
+                        | boom | smoke -> damage_source.rocket   // unreachable — neither damages the player
+                        ai.damage_player(g, ac, damage_of(p.kind, g), src, p.x, p.y)
+                        p.alive = false
 
-    // Damage per projectile kind — matches the original's per-class
-    // damage rolls.
-    private let damage_of = (k: projectile_kind, g: game*) ->
-        let roll = enemies.rnd_byte(g)
-        match k with
-        | needle -> (roll >> 3) + 20    // 20-51
-        | rocket -> (roll >> 3) + 30    // 30-61
-        | fire   -> roll >> 3           // 0-31
-        | boom | smoke -> 0
+        let update_all = (lv: level*, g: game*, ac: audio_ctx*, dt: f64) ->
+            for i in 0..max_projectiles do
+                update(lv, g, ac, &lv.projectiles[i], dt)
 
-    // Per-frame update for one projectile slot. Advances animation,
-    // steps the position, checks wall/player collision, mutates into
-    // a boom sprite on rocket wall-hit, or frees the slot on other
-    // terminal events.
-    let update = (lv: level*, g: game*, ac: audio_ctx*, p: projectile*, dt: f64) ->
-        if !p.alive then return
-        let frame_time = match p.kind with
-        | boom  -> boom_time
-        | smoke -> smoke_time
-        | _     -> anim_time
-        p.anim_timer = p.anim_timer - dt
-        let mut frame_rolled = false
-        if p.anim_timer <= 0.0 then
-            p.anim_frame = p.anim_frame + 1
-            p.anim_timer = p.anim_timer + frame_time
-            frame_rolled = true
-        match p.kind with
-        | boom ->
-            // Short 3-frame explosion, then free the slot.
-            if p.anim_frame >= 3 then p.alive = false
-        | smoke ->
-            if p.anim_frame >= 4 then p.alive = false
-        | _ ->
-            // The flame is the odd one out: its move hook is the
-            // end-of-frame action, not the per-frame think, so it
-            // only advances when a 6-tic frame rolls over — by one
-            // frame's worth of travel — and only tests for a hit
-            // then. That's the slow, dodgeable puff the original has,
-            // and it makes the flame's pace frame-rate dependent on
-            // DOS: a fast machine (one tic per frame) has it at 0.82
-            // tiles/s, a slow 386 nearer 3. We step it by the
-            // reference frame (`og_frame_dt`, one tic) whatever the
-            // real frame length, so it's the fast machine's pace on
-            // every display.
-            if p.kind == projectile_kind.fire && !frame_rolled then return
-            let speed = match p.kind with
-            | needle -> needle_speed
-            | rocket -> rocket_speed
-            | fire   -> fire_speed
-            | boom | smoke -> 0.0
-            let step_dt = if p.kind == projectile_kind.fire then og_frame_dt else dt
-            let step = speed * step_dt
-            if p.kind == projectile_kind.rocket then
-                // Smoke trail: a puff at the rocket's position every
-                // 3 tics of flight.
-                p.smoke_timer = p.smoke_timer - dt
-                if p.smoke_timer <= 0.0 then
-                    p.smoke_timer = p.smoke_timer + smoke_period
-                    spawn_smoke(lv, p.x, p.y)
-            // Y-up angle → y-down world motion: flip the sin term.
-            let nx = p.x + math.cos(p.angle) * step
-            let ny = p.y - math.sin(p.angle) * step
-            if hits_wall(lv, nx, ny) then
-                match p.kind with
-                | rocket ->
-                    // Mutate the slot into a short-lived explosion
-                    // sprite at the last pre-hit position, so the
-                    // fireball appears against the wall rather than
-                    // inside it.
-                    p.kind = projectile_kind.boom
-                    p.anim_frame = 0
-                    p.anim_timer = boom_time
-                    sfx.trigger_at(sfx.id.missile_hit, ac, g, p.x, p.y)
-                | _ -> p.alive = false
-            else
-                p.x = nx
-                p.y = ny
-                if math.abs(p.x - g.pos_x) < hit_radius
-                    && math.abs(p.y - g.pos_y) < hit_radius then
-                    let src = match p.kind with
-                    | needle -> enemies.damage_source.needle
-                    | rocket -> enemies.damage_source.rocket
-                    | fire   -> enemies.damage_source.flame
-                    | boom | smoke -> enemies.damage_source.rocket   // unreachable — neither damages the player
-                    enemies.ai.damage_player(g, ac, damage_of(p.kind, g), src, p.x, p.y)
-                    p.alive = false
+        // True iff this enemy kind fires a visible, dodgeable projectile
+        // instead of using hitscan. Checked in the shoot dispatch.
+        private let kind_uses_projectile = (k: enemy_kind) ->
+            match k with
+            | schabbs | giftmacher | fat | hitler_fake -> true
+            | _ -> false
 
-    let update_all = (lv: level*, g: game*, ac: audio_ctx*, dt: f64) ->
-        for i in 0..max_projectiles do
-            update(lv, g, ac, &lv.projectiles[i], dt)
-
-    // True iff this enemy kind fires a visible, dodgeable projectile
-    // instead of using hitscan. Checked in the shoot dispatch.
-    private let kind_uses_projectile = (k: enemies.enemy_kind) ->
-        match k with
-        | schabbs | giftmacher | fat | hitler_fake -> true
-        | _ -> false
-
-    // The projectile kind this enemy fires. Call only when
-    // kind_uses_projectile is true.
-    let kind_for_enemy = (k: enemies.enemy_kind) ->
-        match k with
-        | schabbs      -> projectile_kind.needle
-        | giftmacher   -> projectile_kind.rocket
-        | fat          -> projectile_kind.rocket
-        | hitler_fake  -> projectile_kind.fire
-        | _            -> projectile_kind.needle  // unreachable
-
-    // Dog melee bite — called from the jump-frame of `shoot` for dog.
-    // Damage is a flat ~0..16 roll inside melee range. The bark/snarl
-    // plays unconditionally at the top of the frame (matches the
-    // original) so the lunge is audible even when the dog misses.
-    let enemy_bite_player = (lv: level*, g: game*, ac: audio_ctx*, e: enemies.enemy*) ->
-        sfx.trigger_at(sfx.id.dog_attack, ac, g, e.x, e.y)
-        let dx = g.pos_x - e.x
-        let dy = g.pos_y - e.y
-        // Per-axis box matching the original's bite check: each axis
-        // must be within 2 tiles of the player center (|dx|-1 ≤ 1
-        // after the original's tile-unit subtraction). This is more
-        // permissive on diagonals than a euclidean check — a dog
-        // centered on the tile-corner opposite the player at (1.9, 1.9)
-        // still lands a bite.
-        if math.abs(dx) > 2.0 || math.abs(dy) > 2.0 then return
-        // No line-of-sight gate: inside that box the bite lands around
-        // a corner too, as in the original.
-        if enemies.rnd_byte(g) < 180 then
-            // Matches the original's bite roll: random byte >> 4
-            // → 0-15 (can graze for 0).
-            let dmg = enemies.rnd_byte(g) >> 4
-            enemies.ai.damage_player(g, ac, dmg, enemies.damage_source.bite, e.x, e.y)
+        // The projectile kind this enemy fires. Call only when
+        // kind_uses_projectile is true.
+        let kind_for_enemy = (k: enemy_kind) ->
+            match k with
+            | schabbs      -> projectile_kind.needle
+            | giftmacher   -> projectile_kind.rocket
+            | fat          -> projectile_kind.rocket
+            | hitler_fake  -> projectile_kind.fire
+            | _            -> projectile_kind.needle  // unreachable
 
 
 // ============================================================

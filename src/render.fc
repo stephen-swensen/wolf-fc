@@ -744,7 +744,7 @@ module billboards =
                 alpha = alpha
             }
             n = n + 1
-        for i in 0..projectiles.max_projectiles do
+        for i in 0..enemies.projectiles.max_projectiles do
             let p = &lv.projectiles[i]
             if !p.alive then continue
             let dx = p.x - g.pos_x
@@ -752,7 +752,7 @@ module billboards =
             rc.billboards[n] = billboard {
                 x = p.x,
                 y = p.y,
-                shape_page = projectiles.sprite_page(sprite_start, p, g.pos_x, g.pos_y),
+                shape_page = enemies.projectiles.sprite_page(sprite_start, p, g.pos_x, g.pos_y),
                 depth = dx * g.dir_x + dy * g.dir_y,
                 alpha = 1.0
             }

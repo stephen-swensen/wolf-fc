@@ -283,7 +283,7 @@ module flow =
                 player.update(w.lv, g, dt, w.ac)
                 player.update_weapon(w, dt)
                 enemies.ai.update_enemies(w, dt)
-                projectiles.update_all(w.lv, g, w.ac, dt)
+                enemies.projectiles.update_all(w.lv, g, w.ac, dt)
                 pickups.check(w.lv, g, w.ac)
                 hud.update_face(g, dt)
         | _ ->

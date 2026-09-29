@@ -174,7 +174,8 @@ module bj_victory =
 // acknowledge, teleport the camera to frame the corpse, dissolve
 // back in, replay the death animation, and hand off to the regular
 // intermission → episode-end flow. The HUD (status bar) stays
-// visible throughout — only the 3D viewport dissolves.
+// visible throughout — only the 3D viewport dissolves. The cutscene is
+// started by `enemies.ai.start_death_cam` when a death-cam boss dies.
 //
 // The fade itself reuses `overlay.dissolve_stipple`, which takes a 0..1
 // progress and paints a deterministic spatial-hash pattern of pixels
@@ -221,42 +222,6 @@ module death_cam =
         match s with
         | fade_in | pre_replay | replay_anim | replay_hold | fade_to_black -> true
         | pre_fade | fade_out | taunt | done -> false
-
-    // Begin the death-cam cutscene. Records the kill position (for
-    // the camera teleport later), the corpse's enemy-array index,
-    // starts the death anim, and clears held input. Called from
-    // enemies.ai.damage_enemy for death-cam bosses instead of the
-    // regular enemies.ai.kill_enemy path.
-    let enter = (lv: level*, g: game*, ac: audio_ctx*, e: enemies.enemy*,
-                 boss_idx: i32, sprite_start: i32) ->
-        // Drive the boss into its death animation.
-        // enemies.ai.kill_enemy plays the per-kind death scream but —
-        // because enemies.drop_for_kind returns decoration for death-
-        // cam kinds — skips the key drop, matching the original
-        // (Schabbs/Gift/Fat/Hitler don't drop a gold key).
-        enemies.ai.kill_enemy(lv, g, ac, e, sprite_start)
-        g.phase = game_phase.death_cam
-        g.phase_timer = 0.0
-        g.dc_sub = dc_sub.pre_fade
-        g.dc_timer = 0.0                   // hold starts once the anim reaches enemies.enemy_state.dead
-        g.dc_fade = 0.0
-        g.dc_boss_idx = some(boss_idx)
-        g.dc_kill_x = g.pos_x
-        g.dc_kill_y = g.pos_y
-        // Freeze held inputs so a chord from the kill shot doesn't
-        // eat the taunt-card acknowledge. Mirrors
-        // bj_victory.enter's input reset.
-        g.next_level = false
-        g.next_level_delay = 0.0
-        g.key_up = false
-        g.key_down = false
-        g.key_left = false
-        g.key_right = false
-        g.key_fire = false
-        g.key_space = false
-        g.key_space_handled = true
-        g.key_ack = false
-        g.key_ack_handled = true
 
     // Place the camera so it's looking at the boss corpse from the
     // same side the player killed it from. Matches the original's

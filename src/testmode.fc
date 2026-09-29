@@ -988,7 +988,7 @@ module testmode =
             // tests to verify Schabbs / Giftmacher / fake-Hitler actually
             // spawn visible projectiles instead of hitscanning.
             let mut alive = 0
-            for i in 0..projectiles.max_projectiles do
+            for i in 0..enemies.projectiles.max_projectiles do
                 let p = &w.lv.projectiles[i]
                 if !p.alive then continue
                 alive = alive + 1
@@ -998,7 +998,7 @@ module testmode =
                 | fire   -> "fire"
                 | smoke  -> "smoke"
                 | boom   -> "boom"
-                let rot = projectiles.sprite_page(0, p, g.pos_x, g.pos_y) - projectiles.sprite_page(0, p, p.x + math.cos(p.angle), p.y - math.sin(p.angle))
+                let rot = enemies.projectiles.sprite_page(0, p, g.pos_x, g.pos_y) - enemies.projectiles.sprite_page(0, p, p.x + math.cos(p.angle), p.y - math.sin(p.angle))
                 io.write(alloca("  proj[%d{i}] %s{ks} pos(%6.3f{p.x},%6.3f{p.y}) ang=%5.3f{p.angle} frame=%d{p.anim_frame} rot=%d{rot}\n"), stdout)
             ignore io.write("projectiles: alive=%d{alive}\n", stdout)
         else
