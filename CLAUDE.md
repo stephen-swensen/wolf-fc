@@ -30,6 +30,7 @@ The project also serves as an end-to-end demo of FC: stdlib usage, modules, gene
 - **`make`** — Build `./build/<os>/wolf-fc[.exe]`. Incremental. Needs `fcc` on `PATH` and `libsdl2-dev`.
 - **`make check`** — Build then run `tests/run-tests.sh`. Always runs against a fresh binary.
 - **`make dev`** — `-O0` + debug symbols for gdb.
+- **`NATIVE=1`** (`make native`, `./run.sh --native`, `make check NATIVE=1`) — build with `fcc --native` instead of C: sub-second builds, unoptimized code, Linux x86-64 only. Binary is `build/<os>/wolf-fc-native`, beside the C build.
 - **`make install` / `make uninstall`** — `$(PREFIX)/bin` + `$(PREFIX)/share/wolf-fc/data/`. Standard `PREFIX` / `DESTDIR`.
 - **`./run.sh [args]`** — `make -s` then exec the binary.
 - **`./run.sh --test <cmd>...`** — Headless scripted-play mode (see below).

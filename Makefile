@@ -75,7 +75,18 @@ else
     BAKED_DATA_DIR := $(INSTALL_DATA_DIR)
 endif
 
-BIN    := $(BUILD_DIR)/wolf-fc$(EXE)
+# NATIVE=1 builds with fcc's native backend (`fcc --native`, experimental,
+# Linux x86-64 only): fcc writes x86-64 machine code as an object file and cc
+# only links it, so a build takes a fraction of a second instead of the C
+# compile. The code is unoptimized, about as fast as `make dev`. The binary is
+# build/<os>/wolf-fc-native, beside the C build, never replacing it; since
+# print-bin follows NATIVE, `./run.sh --native` and `make check NATIVE=1` use it.
+ifeq ($(NATIVE),1)
+    BIN := $(BUILD_DIR)/wolf-fc-native$(EXE)
+else
+    BIN := $(BUILD_DIR)/wolf-fc$(EXE)
+endif
+NATIVE_O := $(BUILD_DIR)/wolf-fc-native.o
 GEN_C  := $(BUILD_DIR)/wolf-fc.c
 GEN_FC := $(BUILD_DIR)/install_path.fc
 ifneq ($(IS_WINDOWS),)
@@ -101,7 +112,7 @@ else
 endif
 SRCS_STDLIB := $(addprefix $(STDLIB_DIR)/,io.fc text.fc sys.fc math.fc random.fc)
 
-.PHONY: all dev clean install uninstall check help print-bin print-version icon icon-check-deps installer
+.PHONY: all dev native clean install uninstall check help print-bin print-version icon icon-check-deps installer
 
 all: $(BIN)
 
@@ -142,8 +153,13 @@ endif
 print-version:
 	@echo $(VERSION)
 
+ifeq ($(NATIVE),1)
+$(BIN): $(NATIVE_O)
+	$(CC) -o $@ $(NATIVE_O) $(LIBS)
+else
 $(BIN): $(GEN_C) $(WIN_RES)
 	$(CC) $(CFLAGS) -o $@ $(GEN_C) $(WIN_RES) $(LIBS)
+endif
 
 ifneq ($(IS_WINDOWS),)
 # windres's default preprocessor (gcc -E) is spawned via cmd.exe, which
@@ -180,7 +196,8 @@ $(GEN_VER): FORCE | $(BUILD_DIR)
 	@if cmp -s $@.tmp $@ 2>/dev/null; then rm $@.tmp; else mv $@.tmp $@; fi
 endif
 
-$(GEN_C): $(SRCS_FC) $(GEN_FC) | $(BUILD_DIR)
+# Both fcc recipes first check that fcc and its stdlib are there.
+define CHECK_FCC
 	@command -v fcc >/dev/null 2>&1 || { \
 		echo "error: 'fcc' not found on PATH." >&2; \
 		echo "Install from ../fc-lang/ with 'make && sudo make install'" >&2; \
@@ -192,7 +209,15 @@ $(GEN_C): $(SRCS_FC) $(GEN_FC) | $(BUILD_DIR)
 		echo "Reinstall fcc, or set FCC_STDLIB to the directory holding io.fc/text.fc/etc." >&2; \
 		exit 1; \
 	}
+endef
+
+$(GEN_C): $(SRCS_FC) $(GEN_FC) | $(BUILD_DIR)
+	$(CHECK_FCC)
 	fcc $(SRCS_FC) $(GEN_FC) $(SRCS_STDLIB) -o $@
+
+$(NATIVE_O): $(SRCS_FC) $(GEN_FC) | $(BUILD_DIR)
+	$(CHECK_FCC)
+	fcc --native $(SRCS_FC) $(GEN_FC) $(SRCS_STDLIB) -o $@
 
 # Bake the resolved install data dir into a generated FC module so the
 # binary can fall back to it at run time. Depends on FORCE so the recipe
@@ -218,6 +243,10 @@ $(BUILD_DIR):
 dev:
 	@$(MAKE) clean
 	@$(MAKE) OPT=-O0
+
+# `make native` is `make NATIVE=1` (see NATIVE above).
+native:
+	@$(MAKE) --no-print-directory NATIVE=1
 
 clean:
 	rm -rf build
@@ -374,6 +403,7 @@ help:
 	@echo "Targets:"
 	@echo "  all (default) - build the binary at $(BIN)"
 	@echo "  dev           - clean rebuild at -O0 with debug symbols"
+	@echo "  native        - fast unoptimized build with fcc --native at build/<os>/wolf-fc-native (Linux x86-64)"
 	@echo "  clean         - remove build/ (every OS subdirectory)"
 	@echo "  install       - install binary to \$$(PREFIX)/bin and (if present) data/*.WL6 to \$$(PREFIX)/share/wolf-fc/data/"
 	@echo "  uninstall     - remove the installed binary and data tree"
@@ -387,5 +417,6 @@ help:
 	@echo "  PREFIX        install root (default: /usr/local)"
 	@echo "  DESTDIR       staging root for package builds (default: empty)"
 	@echo "  OPT           optimization flags (default: -O3; 'make dev' uses -O0)"
+	@echo "  NATIVE        1 = build, run and test the fcc --native binary instead ('make native', './run.sh --native')"
 	@echo "  CC            C compiler (default: cc)"
 	@echo "  FCC_STDLIB    override the FC stdlib directory (default: derived from \$$(fcc) install prefix)"
