@@ -97,7 +97,7 @@ make help               # list every target and variable
 
 Build artifacts land in `./build/<os>/` (e.g. `build/linux/`, `build/windows/`) so a single source tree shared across two OSes — for example WSL Linux and MSYS2 on the same Windows box accessing the WSL filesystem via `\\wsl.localhost\...` — can hold both binaries without one stomping the other. `./run.sh` and `make check` use `make print-bin` to find the right binary for whichever OS they're running on.
 
-For a fast edit-build-run loop on Linux x86-64, `NATIVE=1` (or `make native`, or `./run.sh --native`) builds with fcc's experimental native backend: fcc writes machine code directly and `cc` only links it, so a rebuild takes a fraction of a second instead of a full C compile. The code is unoptimized, about as fast as `make dev`. The binary is `build/<os>/wolf-fc-native`, next to the regular build rather than replacing it, and `make check NATIVE=1` runs the regression suite against it.
+For a fast edit-build-run loop on Linux x86-64, `NATIVE=1` (or `make native`, or `./run.sh --native`) builds with fcc's experimental native backend: fcc writes machine code directly and links the executable itself, so a rebuild takes a fraction of a second instead of a full C compile. The code is unoptimized, about as fast as `make dev`. The binary is `build/<os>/wolf-fc-native`, next to the regular build rather than replacing it, and `make check NATIVE=1` runs the regression suite against it.
 
 ### Installing system-wide
 

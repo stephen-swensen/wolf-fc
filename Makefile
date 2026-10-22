@@ -76,17 +76,17 @@ else
 endif
 
 # NATIVE=1 builds with fcc's native backend (`fcc --native`, experimental,
-# Linux x86-64 only): fcc writes x86-64 machine code as an object file and cc
-# only links it, so a build takes a fraction of a second instead of the C
-# compile. The code is unoptimized, about as fast as `make dev`. The binary is
-# build/<os>/wolf-fc-native, beside the C build, never replacing it; since
-# print-bin follows NATIVE, `./run.sh --native` and `make check NATIVE=1` use it.
+# Linux x86-64 only): fcc writes x86-64 machine code and links the executable
+# itself, with no C compiler, assembler or linker, so a build takes a fraction
+# of a second instead of the C compile. The code is unoptimized, about as fast
+# as `make dev`. The binary is build/<os>/wolf-fc-native, beside the C build,
+# never replacing it; since print-bin follows NATIVE, `./run.sh --native` and
+# `make check NATIVE=1` use it.
 ifeq ($(NATIVE),1)
     BIN := $(BUILD_DIR)/wolf-fc-native$(EXE)
 else
     BIN := $(BUILD_DIR)/wolf-fc$(EXE)
 endif
-NATIVE_O := $(BUILD_DIR)/wolf-fc-native.o
 GEN_C  := $(BUILD_DIR)/wolf-fc.c
 GEN_FC := $(BUILD_DIR)/install_path.fc
 ifneq ($(IS_WINDOWS),)
@@ -154,8 +154,9 @@ print-version:
 	@echo $(VERSION)
 
 ifeq ($(NATIVE),1)
-$(BIN): $(NATIVE_O)
-	$(CC) -o $@ $(NATIVE_O) $(LIBS)
+$(BIN): $(SRCS_FC) $(GEN_FC) | $(BUILD_DIR)
+	$(CHECK_FCC)
+	fcc --native $(SRCS_FC) $(GEN_FC) $(SRCS_STDLIB) -o $@ $(LIBS)
 else
 $(BIN): $(GEN_C) $(WIN_RES)
 	$(CC) $(CFLAGS) -o $@ $(GEN_C) $(WIN_RES) $(LIBS)
@@ -214,10 +215,6 @@ endef
 $(GEN_C): $(SRCS_FC) $(GEN_FC) | $(BUILD_DIR)
 	$(CHECK_FCC)
 	fcc $(SRCS_FC) $(GEN_FC) $(SRCS_STDLIB) -o $@
-
-$(NATIVE_O): $(SRCS_FC) $(GEN_FC) | $(BUILD_DIR)
-	$(CHECK_FCC)
-	fcc --native $(SRCS_FC) $(GEN_FC) $(SRCS_STDLIB) -o $@
 
 # Bake the resolved install data dir into a generated FC module so the
 # binary can fall back to it at run time. Depends on FORCE so the recipe
