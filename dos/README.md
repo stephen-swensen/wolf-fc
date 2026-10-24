@@ -1,8 +1,9 @@
 # wolf-fc / DOS (DJGPP)
 
 Wolf-FC running as a 32-bit protected-mode DOS program, **playable in DOSBox** —
-without touching the FC source or the generated C. The whole port is this
-directory, linked against the exact `build/linux/wolf-fc.c` the Linux build uses:
+without touching the FC source. The whole port is this directory, linked
+against the C of the same program the Linux build compiles, generated with
+32-bit slice lengths (`make dos-c`, which `build-dos.sh` runs):
 
 - `SDL2/SDL.h` — stub header declaring the SDL2 surface wolf-fc binds
   (struct layouts match `src/sdl2.fc`; this header *is* the ABI here).

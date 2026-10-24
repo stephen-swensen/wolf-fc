@@ -89,6 +89,15 @@ else
 endif
 GEN_C  := $(BUILD_DIR)/wolf-fc.c
 GEN_FC := $(BUILD_DIR)/install_path.fc
+
+# LEN_REPR=16|32 passes fcc --len-repr, the stored width of slice lengths
+# (default 64). The language is the same at every width; a narrow one makes
+# slices smaller and bounds checks cheaper on 16- and 32-bit targets, and
+# caps a slice at 32767 or 2^31-1 elements. The DOS build always uses 32
+# (DOS_C below); `make native LEN_REPR=32` is a Linux build with the same
+# limits. (16 is too small for the game: its data files are over 32 KB.)
+FCC_FLAGS := $(if $(LEN_REPR),--len-repr $(LEN_REPR))
+FCC_FLAGS_STAMP := $(BUILD_DIR)/fcc-flags
 ifneq ($(IS_WINDOWS),)
     WIN_RES := $(BUILD_DIR)/wolf-fc-res.o
     # Generated header that feeds the version to wolf-fc.rc's VERSIONINFO.
@@ -112,7 +121,7 @@ else
 endif
 SRCS_STDLIB := $(addprefix $(STDLIB_DIR)/,io.fc text.fc sys.fc math.fc random.fc)
 
-.PHONY: all dev native clean install uninstall check help print-bin print-version icon icon-check-deps installer
+.PHONY: all dev native dos-c clean install uninstall check help print-bin print-version icon icon-check-deps installer
 
 all: $(BIN)
 
@@ -154,9 +163,9 @@ print-version:
 	@echo $(VERSION)
 
 ifeq ($(NATIVE),1)
-$(BIN): $(SRCS_FC) $(GEN_FC) | $(BUILD_DIR)
+$(BIN): $(SRCS_FC) $(GEN_FC) $(FCC_FLAGS_STAMP) | $(BUILD_DIR)
 	$(CHECK_FCC)
-	fcc --native $(SRCS_FC) $(GEN_FC) $(SRCS_STDLIB) -o $@ $(LIBS)
+	fcc --native $(FCC_FLAGS) $(SRCS_FC) $(GEN_FC) $(SRCS_STDLIB) -o $@ $(LIBS)
 else
 $(BIN): $(GEN_C) $(WIN_RES)
 	$(CC) $(CFLAGS) -o $@ $(GEN_C) $(WIN_RES) $(LIBS)
@@ -212,9 +221,18 @@ define CHECK_FCC
 	}
 endef
 
-$(GEN_C): $(SRCS_FC) $(GEN_FC) | $(BUILD_DIR)
+$(GEN_C): $(SRCS_FC) $(GEN_FC) $(FCC_FLAGS_STAMP) | $(BUILD_DIR)
 	$(CHECK_FCC)
-	fcc $(SRCS_FC) $(GEN_FC) $(SRCS_STDLIB) -o $@
+	fcc $(FCC_FLAGS) $(SRCS_FC) $(GEN_FC) $(SRCS_STDLIB) -o $@
+
+# The C the DOS build compiles (`make dos-c`, run by dos/build-dos.sh):
+# the same program with 32-bit slice lengths, DJGPP's native width.
+DOS_C := build/dos/wolf-fc.c
+$(DOS_C): $(SRCS_FC) $(GEN_FC)
+	$(CHECK_FCC)
+	@mkdir -p $(dir $@)
+	fcc --len-repr 32 $(SRCS_FC) $(GEN_FC) $(SRCS_STDLIB) -o $@
+dos-c: $(DOS_C)
 
 # Bake the resolved install data dir into a generated FC module so the
 # binary can fall back to it at run time. Depends on FORCE so the recipe
@@ -227,6 +245,12 @@ FORCE:
 $(GEN_FC): FORCE | $(BUILD_DIR)
 	@printf 'module install_path =\n    let data_dir = "%s"\n' \
 		"$(BAKED_DATA_DIR)" > $@.tmp
+	@if cmp -s $@.tmp $@ 2>/dev/null; then rm $@.tmp; else mv $@.tmp $@; fi
+
+# The fcc flags (LEN_REPR), recorded the same way so that changing them
+# regenerates the C and relinks the native binary.
+$(FCC_FLAGS_STAMP): FORCE | $(BUILD_DIR)
+	@printf '%s\n' "$(FCC_FLAGS)" > $@.tmp
 	@if cmp -s $@.tmp $@ 2>/dev/null; then rm $@.tmp; else mv $@.tmp $@; fi
 
 $(BUILD_DIR):
@@ -401,6 +425,7 @@ help:
 	@echo "  all (default) - build the binary at $(BIN)"
 	@echo "  dev           - clean rebuild at -O0 with debug symbols"
 	@echo "  native        - fast unoptimized build with fcc --native at build/<os>/wolf-fc-native (Linux x86-64)"
+	@echo "  dos-c         - the C for the DOS build at build/dos/wolf-fc.c (32-bit slice lengths; dos/build-dos.sh runs it)"
 	@echo "  clean         - remove build/ (every OS subdirectory)"
 	@echo "  install       - install binary to \$$(PREFIX)/bin and (if present) data/*.WL6 to \$$(PREFIX)/share/wolf-fc/data/"
 	@echo "  uninstall     - remove the installed binary and data tree"
@@ -415,5 +440,6 @@ help:
 	@echo "  DESTDIR       staging root for package builds (default: empty)"
 	@echo "  OPT           optimization flags (default: -O3; 'make dev' uses -O0)"
 	@echo "  NATIVE        1 = build, run and test the fcc --native binary instead ('make native', './run.sh --native')"
+	@echo "  LEN_REPR      16 or 32 = fcc --len-repr, the stored width of slice lengths (default 64)"
 	@echo "  CC            C compiler (default: cc)"
 	@echo "  FCC_STDLIB    override the FC stdlib directory (default: derived from \$$(fcc) install prefix)"
