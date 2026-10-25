@@ -42,7 +42,7 @@ module sdl2 from "SDL2/SDL.h" =
     extern SDL_INIT_AUDIO as init_audio: u32
 
     // --- Window flags ---
-    extern SDL_WINDOW_SHOWN as window_shown: u32
+    extern SDL_WINDOW_HIDDEN as window_hidden: u32
     extern SDL_WINDOW_FULLSCREEN_DESKTOP as window_fullscreen_desktop: u32
     extern SDL_WINDOW_ALLOW_HIGHDPI as window_allow_highdpi: u32
     extern SDL_WINDOW_BORDERLESS as window_borderless: u32
@@ -163,6 +163,10 @@ module sdl2 from "SDL2/SDL.h" =
     extern SDL_SetWindowResizable as set_resizable: (any*, i32) -> void
     extern SDL_MaximizeWindow as maximize_window: (any*) -> void
     extern SDL_RestoreWindow as restore_window: (any*) -> void
+    extern SDL_ShowWindow as show_window: (any*) -> void
+    // 0.0 (invisible) .. 1.0 (opaque). On X11 this is the compositor's
+    // _NET_WM_WINDOW_OPACITY property — ignored when nothing composites.
+    extern SDL_SetWindowOpacity as set_window_opacity: (any*, f32) -> i32
     extern SDL_ShowCursor as show_cursor: (i32) -> i32
 
     // --- Renderer ---

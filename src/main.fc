@@ -513,8 +513,8 @@ let main = (args: str[]) ->
     // the chip constructors needed the detected device rate.)
 
     // Window: fullscreen-desktop everywhere except WSL, where we
-    // create a normal resizable window and call maximize_window
-    // immediately. On native Linux the fullscreen window stays
+    // create a normal resizable window and maximize it once shown.
+    // On native Linux the fullscreen window stays
     // compositor-managed (see the bypass-compositor hint above) so the
     // compositor's vsync prevents tearing.
     // Display geometry. The framebuffer is fb_w × fb_h (set above
@@ -524,21 +524,24 @@ let main = (args: str[]) ->
     // the renderer is alive (see below). The logical-size scale-out
     // target applies the VGA 1.2 pixel aspect so the texture stretches
     // to (screen_w × fb_h × 1.2 × scale) on screen, then SDL letterboxes
-    // that into the actual drawable. Open the window first at a
-    // safe initial size — fullscreen-desktop ignores it, and on WSL
-    // we maximize immediately, so this only affects the brief window
-    // creation moment.
+    // that into the actual drawable. The initial size is only the
+    // windowed size SDL starts from before fullscreen / maximize take
+    // over (see the veil below).
+    //
+    // Created hidden and shown only once the renderer exists: SDL's GL
+    // renderer needs an OpenGL window, so on Linux create_renderer
+    // destroys and re-creates ours. Done to a visible window that was a
+    // second open → fullscreen → shrink → vanish cycle on screen.
     let initial_screen_w = w.rc.screen_w
     let initial_actual_h = (w.rc.fb_h * 12 / 10) * w.rc.scale
     let fullscreen_flag = if on_wsl then 0u32 else sdl2.window_fullscreen_desktop
-    let flags = sdl2.window_shown | sdl2.window_resizable
+    let flags = sdl2.window_hidden | sdl2.window_resizable
         | sdl2.window_allow_highdpi | fullscreen_flag
     let win = sdl2.create_window(c"Wolf-FC",
         sdl2.pos_centered, sdl2.pos_centered, initial_screen_w, initial_actual_h, flags)
     if win == default(any*) then
         io.write(alloca("fatal: SDL_CreateWindow failed: %s{(const str) sdl2.get_error()}\n"), stderr)
         return 1
-    if on_wsl then sdl2.maximize_window(win)
 
     // Prefer Direct3D 11 over the default Direct3D 9 backend on Windows.
     // D3D9 in windowed / borderless-fullscreen uses a BitBlt-model swap
@@ -567,32 +570,52 @@ let main = (args: str[]) ->
     // Nearest-neighbor scaling — must be set BEFORE creating the texture.
     sdl2.set_hint(c"SDL_RENDER_SCALE_QUALITY", c"nearest")
 
+    // Show the window. SDL2 on X11 maps it as an ordinary decorated
+    // window at its windowed size and only then asks the WM for
+    // fullscreen, so a small window popped up at screen centre and
+    // (with the WM's window effects on) animated out to fill the
+    // screen. The veil keeps the window fully transparent until its
+    // drawable reaches the final size, so the first thing on screen
+    // is the finished fullscreen window. X11 only: a compositing WM
+    // honors the opacity, and without one it's ignored and the window
+    // shows as before. Windows' opacity makes the window layered, which
+    // is untested against the D3D11 flip-model swap chain, and on WSL
+    // we maximize rather than go fullscreen.
+    let { pre_w, pre_h } = video.renderer_output_size(ren)
+    let veil = !on_wsl && (const str) sdl2.current_video_driver() == "x11"
+    if veil then ignore sdl2.set_window_opacity(win, 0.0f32)
+    sdl2.show_window(win)
+    if on_wsl then sdl2.maximize_window(win)
+
     // Now that the renderer exists we can ask it for the actual
     // pixel drawable area (DPI-correct, unlike SDL_GetDisplayBounds
     // which reports OS-scaled coords) and pick the supersample
     // factor accordingly.
     //
-    // On WSLg (and other Wayland-ish stacks) SDL_MaximizeWindow is
-    // async — the surface isn't resized until the compositor
-    // acknowledges the request. Polling output_size right after
-    // would catch the pre-maximize size and lock us at scale=2.
-    // Pump events + small delay + retry until the size settles or
-    // we hit a 250ms ceiling. On native fullscreen-desktop the
-    // first query already returns the final size, so this is a
-    // no-op in the common case.
-    let { init_w, init_h } = video.renderer_output_size(ren)
-    let mut out_w = init_w
-    let mut out_h = init_h
-    let mut wait_ms = 0u32
+    // Both ways out of the windowed size are async on X11: the WM
+    // applies fullscreen a few frames after the map, and on WSLg the
+    // surface isn't maximized until the compositor acknowledges it.
+    // Reading output_size right away would catch the windowed size and
+    // lock us at scale=2, so pump events and retry until the size has
+    // moved off the pre-show size and held for a frame, or 250 ms pass
+    // (a WM that never resizes us). Each retry presents black, which
+    // paces the loop on vsync and gives the window defined contents
+    // when the veil lifts. A later move is the SIZE_CHANGED handler's
+    // job (input.handle_events).
+    let mut out_w = pre_w
+    let mut out_h = pre_h
+    let settle_start = sdl2.get_ticks()
     loop
-        if wait_ms >= 250u32 then break
+        if sdl2.get_ticks() - settle_start >= 250u32 then break
         sdl2.pump_events()
+        sdl2.clear(ren)
+        sdl2.present(ren)
         let { next_w, next_h } = video.renderer_output_size(ren)
-        if next_w == out_w && next_h == out_h && wait_ms > 0u32 then break
+        let moved = next_w != pre_w || next_h != pre_h
+        if moved && next_w == out_w && next_h == out_h then break
         out_w = next_w
         out_h = next_h
-        sdl2.delay(20u32)
-        wait_ms = wait_ms + 20u32
+    if veil then ignore sdl2.set_window_opacity(win, 1.0f32)
     let optimal_scale = video.pick_scale_factor(out_w, out_h, w.rc.fb_w, w.rc.fb_h, max_scale, g.scale_factor)
     if g.scale_factor != 0 then
         io.write("Renderer output %d{out_w}x%d{out_h} -> super-sample %d{optimal_scale}x (manual)\n", stdout)
@@ -919,9 +942,12 @@ let main = (args: str[]) ->
     // still open — a live callback could read a player mid-free.
     //
     // We DO tear down the window/renderer/texture: that's video, never blocked
-    // by an audio wedge, and it closes the window cleanly.
+    // by an audio wedge, and it closes the window cleanly. A veiled window goes
+    // transparent first: SDL drops a fullscreen window back to its windowed
+    // size before destroying it, which flashed the small window on the way out.
     diag.mark(diag_file, diag_start, "EXIT: process exit, audio thread + device left for the OS to reap")
     diag.close(diag_file)
+    if veil then ignore sdl2.set_window_opacity(win, 0.0f32)
     sdl2.destroy_texture(vid.tex)
     sdl2.destroy_renderer(ren)
     sdl2.destroy_window(win)
