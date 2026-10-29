@@ -76,7 +76,7 @@ module video =
                             fb_w: i32, fb_h: i32, scale: i32, mode: ssaa_mode) ->
         let screen_w = fb_w * scale
         let view_render_h = view_h * scale
-        let dbuf = alloc(u32[screen_w * (fb_h * scale)] {})!
+        let dbuf = alloc(u32[] { len = screen_w * (fb_h * scale) })!
         // At scale 1, fb and dbuf have identical dimensions, so fb
         // ALIASES dbuf (same pattern as vbuf/vzbuf below): UI code
         // draws straight into the output buffer and the whole
@@ -85,10 +85,10 @@ module video =
         // exists only to bridge resolutions. resize_render_ctx
         // maintains the invariant "fb aliases dbuf iff scale == 1"
         // across every transition.
-        let fb = if scale == 1 then dbuf else alloc(u32[fb_w * fb_h] {})!
-        let zbuf = alloc(f64[screen_w] {})!
-        let ssaa_buf = alloc(u32[ssaa_buf_len(mode, screen_w, view_render_h)] {})!
-        let ssaa_zbuf = alloc(f64[ssaa_zbuf_len(mode, screen_w)] {})!
+        let fb = if scale == 1 then dbuf else alloc(u32[] { len = fb_w * fb_h })!
+        let zbuf = alloc(f64[] { len = screen_w })!
+        let ssaa_buf = alloc(u32[] { len = ssaa_buf_len(mode, screen_w, view_render_h) })!
+        let ssaa_zbuf = alloc(f64[] { len = ssaa_zbuf_len(mode, screen_w) })!
         let rc = alloc(render_ctx {
             fb_w = fb_w,
             fb_h = fb_h,
@@ -115,11 +115,11 @@ module video =
             vzbuf = if mode == ssaa_mode.off then zbuf else ssaa_zbuf,
             vbuf_w = ssaa_vbuf_w(mode, screen_w),
             vbuf_h = ssaa_vbuf_h(mode, view_render_h),
-            billboards = alloc(billboard[tilemap.max_sprites + enemies.max_enemies + enemies.projectiles.max_projectiles + 1] {})!,
+            billboards = alloc(billboard[] { len = tilemap.max_sprites + enemies.max_enemies + enemies.projectiles.max_projectiles + 1 })!,
             num_billboards = 0,
             title_bg = pics.build_title_bg_cache(vg, pal, fb_w, fb_h),
             god_face = pics.build_god_face_cache(vg, pal),
-            pic_cache = alloc(u32[][vg.num_chunks] {})!,
+            pic_cache = alloc(u32[][] { len = vg.num_chunks })!,
             screenshot_slot = 0,
             frame_counter = 0u64,
             force_redraw = true,
@@ -242,15 +242,15 @@ module video =
             rc.ui_offset_x = (new_fb_w - 320) / 2
             if fb_w_changed then
                 rc.title_bg = pics.build_title_bg_cache(vg, pal, new_fb_w, rc.fb_h)
-            rc.dbuf = alloc(u32[rc.screen_w * rc.screen_h] {})!
+            rc.dbuf = alloc(u32[] { len = rc.screen_w * rc.screen_h })!
             if will_alias then
                 rc.fb = rc.dbuf
             else if was_aliased || fb_w_changed then
-                rc.fb = alloc(u32[new_fb_w * rc.fb_h] {})!
-            rc.zbuf = alloc(f64[rc.screen_w] {})!
+                rc.fb = alloc(u32[] { len = new_fb_w * rc.fb_h })!
+            rc.zbuf = alloc(f64[] { len = rc.screen_w })!
             if rc.ssaa_mode != ssaa_mode.off then
-                rc.ssaa_buf = alloc(u32[ssaa_buf_len(rc.ssaa_mode, rc.screen_w, rc.view_render_h)] {})!
-                rc.ssaa_zbuf = alloc(f64[ssaa_zbuf_len(rc.ssaa_mode, rc.screen_w)] {})!
+                rc.ssaa_buf = alloc(u32[] { len = ssaa_buf_len(rc.ssaa_mode, rc.screen_w, rc.view_render_h) })!
+                rc.ssaa_zbuf = alloc(f64[] { len = ssaa_zbuf_len(rc.ssaa_mode, rc.screen_w) })!
             rebind_vbuf(rc)
             // Newly-allocated dbuf is zero-initialized — the HUD strip would
             // be black for one frame under the frame-skip optimization
@@ -315,8 +315,8 @@ module video =
                 free(rc.ssaa_zbuf)
             rc.ssaa_mode = new_mode
             w.g.ssaa_mode = new_mode
-            rc.ssaa_buf = alloc(u32[ssaa_buf_len(new_mode, rc.screen_w, rc.view_render_h)] {})!
-            rc.ssaa_zbuf = alloc(f64[ssaa_zbuf_len(new_mode, rc.screen_w)] {})!
+            rc.ssaa_buf = alloc(u32[] { len = ssaa_buf_len(new_mode, rc.screen_w, rc.view_render_h) })!
+            rc.ssaa_zbuf = alloc(f64[] { len = ssaa_zbuf_len(new_mode, rc.screen_w) })!
             rebind_vbuf(rc)
             overlay.debug_reset(rc)
             true

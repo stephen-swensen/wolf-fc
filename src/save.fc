@@ -500,10 +500,10 @@ module save =
     // process (only one save/load menu can be open at a time).
     let build_menu_ctx = () ->
         let sm = alloc(save_menu_ctx {
-            slots = alloc(slot_info[num_slots] {})!,
-            label_scratch = alloc(u8[32] {})!,
-            hex_scratch = alloc(u8[1] {})!,
-            edit_buf = alloc(u8[32] {})!,
+            slots = alloc(slot_info[] { len = num_slots })!,
+            label_scratch = alloc(u8[] { len = 32 })!,
+            hex_scratch = alloc(u8[] { len = 1 })!,
+            edit_buf = alloc(u8[] { len = 32 })!,
             edit_len = 0
         })!
         sm
@@ -528,7 +528,7 @@ module save =
                 if i >= s.len then break
                 if s[i] == 0x20u8 then break
                 i = i + 1
-        let out = alloc(str[count] {})!
+        let out = alloc(str[] { len = count })!
         let mut ti = 0
         let mut j = 0i64
         loop
@@ -544,7 +544,7 @@ module save =
             let n = j - start
             // Copy into a heap slice so entries outlive any caller
             // reuse.
-            let buf = alloc(u8[n] {})!
+            let buf = alloc(u8[] { len = n })!
             for k in 0..n do
                 buf[k] = s[start + k]
             out[ti] = buf
@@ -1069,7 +1069,7 @@ module save =
                             let lbl = match label_src with
                             | some(s) ->
                                 let n = s.len
-                                let buf = alloc(u8[n] {})!
+                                let buf = alloc(u8[] { len = n })!
                                 for k in 0..n do
                                     buf[k] = s[k]
                                 buf
@@ -1147,14 +1147,14 @@ module highscore =
     // process — the screen / death flow / menu all reach for it via
     // `world.hs`.
     let build_ctx = () ->
-        let scores = alloc(entry[max_scores] {})!
+        let scores = alloc(entry[] { len = max_scores })!
         reset_to_defaults(scores)
         load(scores)
         alloc(highscore_ctx {
             scores       = scores,
             edit_index   = none(i32),
             edit_active  = false,
-            edit_buf     = alloc(u8[max_name_len + 1] {})!,
+            edit_buf     = alloc(u8[] { len = max_name_len + 1 })!,
             edit_len     = 0,
             pending_save = false
         })!
@@ -1286,7 +1286,7 @@ module highscore =
                     // (instead of a closure) because FC closures can't
                     // capture mutable bindings.
                     let mut p = 6i64       // past "score "
-                    let nums = i32[3] {}
+                    let nums = i32[] { len = 3 }
                     for ti in 0..3 do
                         let start = p
                         loop

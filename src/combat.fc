@@ -24,13 +24,13 @@ enum dir =
 // (an ungated nodir index would abort on the bounds check).
 module dir =
     // Unit-vector lookup (wolf-fc game coords: +x east, +y south).
-    let vx = f64[8] { 1.0,  0.7071068,  0.0, -0.7071068, -1.0, -0.7071068,  0.0,  0.7071068 }
-    let vy = f64[8] { 0.0, -0.7071068, -1.0, -0.7071068,  0.0,  0.7071068,  1.0,  0.7071068 }
+    let vx = f64[] { 1.0,  0.7071068,  0.0, -0.7071068, -1.0, -0.7071068,  0.0,  0.7071068 }
+    let vy = f64[] { 0.0, -0.7071068, -1.0, -0.7071068,  0.0,  0.7071068,  1.0,  0.7071068 }
     // Integer tile-step lookup (for grid-aligned moves).
-    let dx = i32[8]   { 1,  1,  0, -1, -1, -1,  0,  1 }
-    let dy = i32[8]   { 0, -1, -1, -1,  0,  1,  1,  1 }
+    let dx = i32[]   { 1,  1,  0, -1, -1, -1,  0,  1 }
+    let dy = i32[]   { 0, -1, -1, -1,  0,  1,  1,  1 }
     // Opposite direction (for "don't turn straight around first").
-    let opposite = dir[8] { dir.west, dir.southwest, dir.south, dir.southeast,
+    let opposite = dir[] { len = 8, dir.west, dir.southwest, dir.south, dir.southeast,
                             dir.east, dir.northeast, dir.north, dir.northwest }
 
 
@@ -434,11 +434,11 @@ module enemies =
     private let sprites_guard = sprite_table {
         stand_base = 50, walk_base = 58,
         pain1 = 90, pain2 = 94,
-        die_frames = i32[8] { 91, 92, 93, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frames = i32[] { 91, 92, 93, 0, 0, 0, 0, 0 }, num_die_frames = 3,
         die_frame_time = 15.0 / 70.0, die_hold_time = 0.0, scream_delay = 15.0 / 70.0,
         dead_frame = 95,
-        shoot_frames = i32[9] { 96, 97, 98, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = f64[9] { 20.0/70.0, 20.0/70.0, 20.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[] { 96, 97, 98, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[] { 20.0/70.0, 20.0/70.0, 20.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 3
     }
     // Dog jump-bite: JUMP1 → JUMP2 (bite) → JUMP3 → JUMP1 → idle.
@@ -446,11 +446,11 @@ module enemies =
     private let sprites_dog = sprite_table {
         stand_base = 99, walk_base = 99,
         pain1 = 99, pain2 = 99,  // dogs don't show pain
-        die_frames = i32[8] { 131, 132, 133, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frames = i32[] { 131, 132, 133, 0, 0, 0, 0, 0 }, num_die_frames = 3,
         die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 15.0 / 70.0,
         dead_frame = 134,
-        shoot_frames = i32[9] { 135, 136, 137, 135, 99, 0, 0, 0, 0 },
-        shoot_times  = f64[9] { 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[] { 135, 136, 137, 135, 99, 0, 0, 0, 0 },
+        shoot_times  = f64[] { 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 5
     }
     // SS bounces between SHOOT2/SHOOT3 four times after the initial
@@ -459,11 +459,11 @@ module enemies =
     private let sprites_ss = sprite_table {
         stand_base = 138, walk_base = 146,
         pain1 = 178, pain2 = 182,
-        die_frames = i32[8] { 179, 180, 181, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frames = i32[] { 179, 180, 181, 0, 0, 0, 0, 0 }, num_die_frames = 3,
         die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 15.0 / 70.0,
         dead_frame = 183,
-        shoot_frames = i32[9] { 184, 185, 186, 185, 186, 185, 186, 185, 186 },
-        shoot_times  = f64[9] { 20.0/70.0, 20.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0 },
+        shoot_frames = i32[] { 184, 185, 186, 185, 186, 185, 186, 185, 186 },
+        shoot_times  = f64[] { 20.0/70.0, 20.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0 },
         num_shoot_frames = 9
     }
     // Mutant fires twice per cycle with no real windup — SHOOT1 (6t)
@@ -472,11 +472,11 @@ module enemies =
     private let sprites_mut = sprite_table {
         stand_base = 187, walk_base = 195,
         pain1 = 227, pain2 = 231,
-        die_frames = i32[8] { 228, 229, 230, 232, 0, 0, 0, 0 }, num_die_frames = 4,
+        die_frames = i32[] { 228, 229, 230, 232, 0, 0, 0, 0 }, num_die_frames = 4,
         die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 0.0 / 70.0,
         dead_frame = 233,
-        shoot_frames = i32[9] { 234, 235, 236, 237, 0, 0, 0, 0, 0 },
-        shoot_times  = f64[9] { 6.0/70.0, 20.0/70.0, 10.0/70.0, 20.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[] { 234, 235, 236, 237, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[] { 6.0/70.0, 20.0/70.0, 10.0/70.0, 20.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 4
     }
     // Officer: short SHOOT1 (6t) windup, long SHOOT2 (20t) fire frame,
@@ -484,11 +484,11 @@ module enemies =
     private let sprites_ofc = sprite_table {
         stand_base = 238, walk_base = 246,
         pain1 = 278, pain2 = 282,
-        die_frames = i32[8] { 279, 280, 281, 283, 0, 0, 0, 0 }, num_die_frames = 4,
+        die_frames = i32[] { 279, 280, 281, 283, 0, 0, 0, 0 }, num_die_frames = 4,
         die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 0.0 / 70.0,
         dead_frame = 284,
-        shoot_frames = i32[9] { 285, 286, 287, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = f64[9] { 6.0/70.0, 20.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[] { 285, 286, 287, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[] { 6.0/70.0, 20.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 3
     }
     // Hans Grosse — chain-gun boss. SHOOT1 windup (30t) then six
@@ -497,22 +497,22 @@ module enemies =
     private let sprites_hans = sprite_table {
         stand_base = 296, walk_base = 296,
         pain1 = 300, pain2 = 300,
-        die_frames = i32[8] { 304, 305, 306, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frames = i32[] { 304, 305, 306, 0, 0, 0, 0, 0 }, num_die_frames = 3,
         die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 15.0 / 70.0,
         dead_frame = 303,
-        shoot_frames = i32[9] { 300, 301, 302, 301, 302, 301, 302, 300, 0 },
-        shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0 },
+        shoot_frames = i32[] { 300, 301, 302, 301, 302, 301, 302, 300, 0 },
+        shoot_times  = f64[] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0 },
         num_shoot_frames = 8
     }
     // Schabbs: 30t windup, 10t throw — single needle per cycle.
     private let sprites_schabbs = sprite_table {
         stand_base = 307, walk_base = 307,
         pain1 = 311, pain2 = 311,
-        die_frames = i32[8] { 313, 314, 315, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frames = i32[] { 313, 314, 315, 0, 0, 0, 0, 0 }, num_die_frames = 3,
         die_frame_time = 10.0 / 70.0, die_hold_time = 150.0 / 70.0, scream_delay = 10.0 / 70.0,
         dead_frame = 316,
-        shoot_frames = i32[9] { 311, 312, 0, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[] { 311, 312, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[] { 30.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 2
     }
     // Fake Hitler: only one SHOOT pose (325); FIRE1/FIRE2 are projectile
@@ -522,11 +522,11 @@ module enemies =
     private let sprites_hitler_fake = sprite_table {
         stand_base = 321, walk_base = 321,
         pain1 = 325, pain2 = 325,
-        die_frames = i32[8] { 328, 329, 330, 331, 332, 0, 0, 0 }, num_die_frames = 5,
+        die_frames = i32[] { 328, 329, 330, 331, 332, 0, 0, 0 }, num_die_frames = 5,
         die_frame_time = 10.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 10.0 / 70.0,
         dead_frame = 333,
-        shoot_frames = i32[9] { 325, 325, 325, 325, 325, 325, 325, 325, 325 },
-        shoot_times  = f64[9] { 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0 },
+        shoot_frames = i32[] { 325, 325, 325, 325, 325, 325, 325, 325, 325 },
+        shoot_times  = f64[] { 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0, 8.0/70.0 },
         num_shoot_frames = 9
     }
     // Mecha Hitler — the armored mech suit. SHOOT1 (30t windup) then
@@ -536,11 +536,11 @@ module enemies =
     private let sprites_mecha_hitler = sprite_table {
         stand_base = 334, walk_base = 334,
         pain1 = 338, pain2 = 338,
-        die_frames = i32[8] { 342, 343, 344, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frames = i32[] { 342, 343, 344, 0, 0, 0, 0, 0 }, num_die_frames = 3,
         die_frame_time = 10.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 10.0 / 70.0,
         dead_frame = 341,
-        shoot_frames = i32[9] { 338, 339, 340, 339, 340, 339, 0, 0, 0 },
-        shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[] { 338, 339, 340, 339, 340, 339, 0, 0, 0 },
+        shoot_times  = f64[] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 6
     }
     // Real Hitler — same shoot cadence as Mecha (30/10×5); seven die
@@ -548,22 +548,22 @@ module enemies =
     private let sprites_hitler = sprite_table {
         stand_base = 345, walk_base = 345,
         pain1 = 349, pain2 = 349,
-        die_frames = i32[8] { 353, 354, 355, 356, 357, 358, 359, 0 }, num_die_frames = 7,
+        die_frames = i32[] { 353, 354, 355, 356, 357, 358, 359, 0 }, num_die_frames = 7,
         die_frame_time = 10.0 / 70.0, die_hold_time = 141.0 / 70.0, scream_delay = 1.0 / 70.0,
         dead_frame = 352,
-        shoot_frames = i32[9] { 349, 350, 351, 350, 351, 350, 0, 0, 0 },
-        shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[] { 349, 350, 351, 350, 351, 350, 0, 0, 0 },
+        shoot_times  = f64[] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 6
     }
     // Giftmacher: 30t windup, 10t rocket throw — single rocket per cycle.
     private let sprites_giftmacher = sprite_table {
         stand_base = 360, walk_base = 360,
         pain1 = 364, pain2 = 364,
-        die_frames = i32[8] { 366, 367, 368, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frames = i32[] { 366, 367, 368, 0, 0, 0, 0, 0 }, num_die_frames = 3,
         die_frame_time = 10.0 / 70.0, die_hold_time = 141.0 / 70.0, scream_delay = 1.0 / 70.0,
         dead_frame = 369,
-        shoot_frames = i32[9] { 364, 365, 0, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[] { 364, 365, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[] { 30.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 2
     }
     // Gretel: same chain-gun cadence as Hans. Sprite block is placed
@@ -571,11 +571,11 @@ module enemies =
     private let sprites_gretel = sprite_table {
         stand_base = 385, walk_base = 385,
         pain1 = 389, pain2 = 389,
-        die_frames = i32[8] { 393, 394, 395, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frames = i32[] { 393, 394, 395, 0, 0, 0, 0, 0 }, num_die_frames = 3,
         die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 15.0 / 70.0,
         dead_frame = 392,
-        shoot_frames = i32[9] { 389, 390, 391, 390, 391, 390, 391, 389, 0 },
-        shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0 },
+        shoot_frames = i32[] { 389, 390, 391, 390, 391, 390, 391, 389, 0 },
+        shoot_times  = f64[] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0 },
         num_shoot_frames = 8
     }
     // Fat Face (E6 boss): 4 walk, 4 shoot, 3 die, 1 dead at 396..407.
@@ -586,11 +586,11 @@ module enemies =
     private let sprites_fat = sprite_table {
         stand_base = 396, walk_base = 396,
         pain1 = 400, pain2 = 400,
-        die_frames = i32[8] { 404, 405, 406, 0, 0, 0, 0, 0 }, num_die_frames = 3,
+        die_frames = i32[] { 404, 405, 406, 0, 0, 0, 0, 0 }, num_die_frames = 3,
         die_frame_time = 10.0 / 70.0, die_hold_time = 141.0 / 70.0, scream_delay = 1.0 / 70.0,
         dead_frame = 407,
-        shoot_frames = i32[9] { 400, 401, 402, 403, 402, 403, 0, 0, 0 },
-        shoot_times  = f64[9] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[] { 400, 401, 402, 403, 402, 403, 0, 0, 0 },
+        shoot_times  = f64[] { 30.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 10.0/70.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 6
     }
     // Pacman ghosts: 288..295, 2 walk frames each, no other states.
@@ -599,41 +599,41 @@ module enemies =
     private let sprites_blinky = sprite_table {
         stand_base = 288, walk_base = 288,
         pain1 = 288, pain2 = 289,
-        die_frames = i32[8] { 288, 289, 0, 0, 0, 0, 0, 0 }, num_die_frames = 2,
+        die_frames = i32[] { 288, 289, 0, 0, 0, 0, 0, 0 }, num_die_frames = 2,
         die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 0.0 / 70.0,
         dead_frame = 289,
-        shoot_frames = i32[9] { 288, 0, 0, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = f64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[] { 288, 0, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 1
     }
     private let sprites_pinky = sprite_table {
         stand_base = 290, walk_base = 290,
         pain1 = 290, pain2 = 291,
-        die_frames = i32[8] { 290, 291, 0, 0, 0, 0, 0, 0 }, num_die_frames = 2,
+        die_frames = i32[] { 290, 291, 0, 0, 0, 0, 0, 0 }, num_die_frames = 2,
         die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 0.0 / 70.0,
         dead_frame = 291,
-        shoot_frames = i32[9] { 290, 0, 0, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = f64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[] { 290, 0, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 1
     }
     private let sprites_clyde = sprite_table {
         stand_base = 292, walk_base = 292,
         pain1 = 292, pain2 = 293,
-        die_frames = i32[8] { 292, 293, 0, 0, 0, 0, 0, 0 }, num_die_frames = 2,
+        die_frames = i32[] { 292, 293, 0, 0, 0, 0, 0, 0 }, num_die_frames = 2,
         die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 0.0 / 70.0,
         dead_frame = 293,
-        shoot_frames = i32[9] { 292, 0, 0, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = f64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[] { 292, 0, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 1
     }
     private let sprites_inky = sprite_table {
         stand_base = 294, walk_base = 294,
         pain1 = 294, pain2 = 295,
-        die_frames = i32[8] { 294, 295, 0, 0, 0, 0, 0, 0 }, num_die_frames = 2,
+        die_frames = i32[] { 294, 295, 0, 0, 0, 0, 0, 0 }, num_die_frames = 2,
         die_frame_time = 15.0 / 70.0, die_hold_time = 0.0 / 70.0, scream_delay = 0.0 / 70.0,
         dead_frame = 295,
-        shoot_frames = i32[9] { 294, 0, 0, 0, 0, 0, 0, 0, 0 },
-        shoot_times  = f64[9] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
+        shoot_frames = i32[] { 294, 0, 0, 0, 0, 0, 0, 0, 0 },
+        shoot_times  = f64[] { 0.143, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 },
         num_shoot_frames = 1
     }
 
@@ -986,7 +986,7 @@ module enemies =
             if old_dir != dir.nodir && old_dir != turnaround then
                 e.dir = old_dir
                 if try_enemy_walk(lv, g, self_idx, old_dir) then return
-            let scan = dir[3] { dir.north, dir.northwest, dir.west }
+            let scan = dir[] { dir.north, dir.northwest, dir.west }
             let reversed = rnd_byte(g) <= 128
             for k in 0..3 do
                 let d = scan[if reversed then 2 - k else k]
@@ -1028,7 +1028,7 @@ module enemies =
             let ady = if dyi < 0 then -dyi else dyi
             // Slots: 1 = closing x, 2 = closing y, 3 = retreating x,
             // 4 = retreating y; slot 0 is the closing diagonal.
-            let cand = dir[5] { dir.nodir, dir.nodir, dir.nodir, dir.nodir, dir.nodir }
+            let cand = dir[] { dir.nodir, dir.nodir, dir.nodir, dir.nodir, dir.nodir }
             if dxi > 0 then
                 cand[1] = dir.east
                 cand[3] = dir.west
@@ -1090,7 +1090,7 @@ module enemies =
             if try_enemy_walk(lv, g, self_idx, d1) then return
             e.dir = d2
             if try_enemy_walk(lv, g, self_idx, d2) then return
-            let scan = dir[4] { dir.north, dir.northwest, dir.west, dir.southwest }
+            let scan = dir[] { dir.north, dir.northwest, dir.west, dir.southwest }
             let forward = rnd_byte(g) > 128
             for k in 0..4 do
                 let d = scan[if forward then k else 3 - k]
@@ -1365,7 +1365,7 @@ module enemies =
         // Pool of guard death screams. The original picks one of eight
         // at random for guard-class enemies so repeated kills don't
         // sound identical.
-        private let guard_death_sounds = sfx.id[8] {
+        private let guard_death_sounds = sfx.id[] { len = 8,
             sfx.id.death_1, sfx.id.death_2, sfx.id.death_3, sfx.id.death_4,
             sfx.id.death_5, sfx.id.death_7, sfx.id.death_8, sfx.id.death_9
             // death_1..9 without #6 — the original reserves #6 for

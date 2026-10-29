@@ -50,7 +50,7 @@ module music =
     // Per-level music: songs[episode * 10 + level] = music track id.
     // Indexed by the running `g->level_num` (0..59). Used by
     // font.music_chunk_for_phase to pick the gameplay-phase track.
-    let songs = i32[60] {
+    let songs = i32[] { len = 60,
         getthem,  searchn,  pow,      suspense, getthem,  searchn,  pow,      suspense, warmarch, corner,
         nazi_omi, pregnant, goingaft, headache, nazi_omi, pregnant, headache, goingaft, warmarch, dungeon,
         introcw3, nazi_rap, twelfth,  zerohour, introcw3, nazi_rap, twelfth,  zerohour, ultimate, pacman,
@@ -243,7 +243,7 @@ module pics =
             if pic.len == 0 then return
             let { w, h } = vgagraph.pic_dims_at(vg, chunk)
             if w <= 0 || h <= 0 then return
-            let buf = alloc(u32[w * h] {})!
+            let buf = alloc(u32[] { len = w * h })!
             for i in 0..(w * h) do
                 buf[(i64) i] = pal[(i32) pic[(i64) i]]
             rc.pic_cache[chunk] = buf
@@ -322,7 +322,7 @@ module pics =
     // must hold for the process lifetime.
     let build_title_bg_cache = (vg: const vgagraph.vgagraph_file*, pal: const u32[],
                                 fb_w: i32, fb_h: i32) ->
-        let buf = alloc(u32[fb_w * fb_h] {})!
+        let buf = alloc(u32[] { len = fb_w * fb_h })!
         // Black side panels (in 4:3 the pic covers everything anyway).
         for i in 0..(fb_w * fb_h) do
             buf[(i64) i] = 0xFF000000u32
@@ -355,7 +355,7 @@ module pics =
         defer free(pic)
         let { w, h } = vgagraph.pic_dims_at(vg, chunk)
         let n = if w > 0 && h > 0 then w * h else 0
-        let buf = alloc(u32[n] {})!
+        let buf = alloc(u32[] { len = n })!
         if pic.len == 0 || n == 0 then return buf
         let gold = 0xFFFFD700u32
         for i in 0..n do
@@ -402,7 +402,7 @@ module pics =
             if pic.len == 0 then return
             let { w, h } = vgagraph.pic_dims_at(vg, chunk)
             if w <= 0 || h <= 0 then return
-            let buf = alloc(u32[w * h] {})!
+            let buf = alloc(u32[] { len = w * h })!
             for i in 0..(w * h) do
                 buf[(i64) i] = pal[(i32) pic[(i64) i]]
             rc.pic_cache[chunk] = buf
@@ -471,13 +471,13 @@ module font =
         let raw = vgagraph.decompress_chunk(vg, chunk)
         if raw.len < 4 then return alloc(info {
             height = 8,
-            location = i32[256] {},
-            width = i32[256] {},
+            location = i32[] { len = 256 },
+            width = i32[] { len = 256 },
             pixels = raw
         })!
         let h = (i32) bytes.u16(raw, 0i64)
-        let loc = i32[256] {}
-        let wdt = i32[256] {}
+        let loc = i32[] { len = 256 }
+        let wdt = i32[] { len = 256 }
         for i in 0..256 do
             // location[] is 256 u16 entries starting at offset 2.
             loc[i] = (i32) bytes.u16(raw, 2i64 + (i64) i * 2)
@@ -643,7 +643,7 @@ module hud =
     private let draw_vg_number = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const u32[],
                           px: i32, py: i32, digits: i32, num: i32) ->
         let mut n = if num < 0 then 0 else num
-        let out_digits = i32[16] {}
+        let out_digits = i32[] { len = 16 }
         let mut count = 0
         if n == 0 then
             out_digits[0] = 0

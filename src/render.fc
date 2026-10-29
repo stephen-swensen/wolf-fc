@@ -173,7 +173,7 @@ module raycaster =
     // Per-level ceiling palette indices (6 episodes × 10 levels = 60).
     // Floor is always the same (0x19); ceiling picks out each episode's
     // mood palette. Index into by g->level_num.
-    private let ceil_table = i32[60] {
+    private let ceil_table = i32[] { len = 60,
         0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0x1D,0xBF,
         0x4E,0x4E,0x4E,0x1D,0x8D,0x4E,0x1D,0x2D,0x1D,0x8D,
         0x1D,0x1D,0x1D,0x1D,0x1D,0x2D,0xDD,0x1D,0x1D,0x98,
@@ -239,7 +239,7 @@ module raycaster =
         // 0.75 is reachable — Shadow Depth 25% — and would otherwise
         // index an unfilled, all-black table for distant walls.)
         let fixed_shade = shadow_floor >= 1.0
-        let pal_dim = u32[256] {}
+        let pal_dim = u32[] { len = 256 }
         if fixed_shade then
             for i in 0..256 do
                 pal_dim[i] = shade_color(pal[i], 0.75)
@@ -348,12 +348,12 @@ module raycaster =
         //     bottom-edge case.
         // Per-pixel store traffic is one cache line of dwords per
         // row, so the whole block writes a contiguous Nx16 stripe.
-        let bd_skip = u8[16] {}
-        let bd_draw_start = i32[16] {}
-        let bd_draw_end = i32[16] {}
-        let bd_step_v = f64[16] {}
-        let bd_tex_pos = f64[16] {}
-        let bd_col_lut = u32[1024] {}
+        let bd_skip = u8[] { len = 16 }
+        let bd_draw_start = i32[] { len = 16 }
+        let bd_draw_end = i32[] { len = 16 }
+        let bd_step_v = f64[] { len = 16 }
+        let bd_tex_pos = f64[] { len = 16 }
+        let bd_col_lut = u32[] { len = 1024 }
         let num_blocks = (rc.vbuf_w + 15) / 16
         for blk in 0..num_blocks do
             let block_col = blk * 16
@@ -758,8 +758,8 @@ module billboards =
             }
             n = n + 1
         if g.phase == game_phase.bj_victory then
-            let walk_pages = i32[4] { 408, 409, 410, 411 }
-            let jump_pages = i32[4] { 412, 413, 414, 415 }
+            let walk_pages = i32[] { 408, 409, 410, 411 }
+            let jump_pages = i32[] { 412, 413, 414, 415 }
             let idx = if g.bj_anim_frame < 0 then 0
                       else if g.bj_anim_frame > 3 then 3
                       else g.bj_anim_frame
@@ -1301,7 +1301,7 @@ module overlay =
         // Every line carries an interpolation so each element is `str`
         // (a pure literal would be `const str` and break the array's
         // inferred element type).
-        let lines = str[4] {
+        let lines = str[] { len = 4,
             "FPS %d{fps_i}  %d{work_i}/%d{budget_i} ms",
             "drops %d{rc.dbg_drops}  jit %3.1f{rc.dbg_jitter_ms} ms",
             "%d{rc.fb_w}x%d{rc.fb_h} x%d{rc.scale}",
@@ -1490,7 +1490,7 @@ module overlay =
         defer free(raw_path)
         png.write(raw_path, w.rc.dbuf, w.rc.screen_w, w.rc.screen_h, meta)?
         let disp_h = display_h(w.rc)
-        let disp = alloc(u32[(i64) w.rc.screen_w * (i64) disp_h] {})!
+        let disp = alloc(u32[] { len = (i64) w.rc.screen_w * (i64) disp_h })!
         defer free(disp)
         render_display_buffer(w.rc, disp)
         let disp_path = derive_path(path, "-display")

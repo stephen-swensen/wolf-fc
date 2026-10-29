@@ -325,7 +325,7 @@ module player =
                 hud.show_message(g, "God mode OFF")
 
         // The IDDQD key sequence (I-D-D-Q-D).
-        private let iddqd_sequence = i32[5] {
+        private let iddqd_sequence = i32[] { len = 5,
             sdl2.key_i, sdl2.key_d, sdl2.key_d, sdl2.key_q, sdl2.key_d
         }
 
@@ -360,7 +360,7 @@ module player =
                 hud.show_message(g, "IDKFA mode OFF")
 
         // The IDKFA key sequence (I-D-K-F-A).
-        private let idkfa_sequence = i32[5] {
+        private let idkfa_sequence = i32[] { len = 5,
             sdl2.key_i, sdl2.key_d, sdl2.key_k, sdl2.key_f, sdl2.key_a
         }
 
@@ -634,21 +634,21 @@ module player =
     // the pistol and knife are one attack per press, the machine gun
     // fires every 12 tics while held and the chain gun every 6.
     private let atk_entry_time = 6.0 / 70.0
-    private let atk_action = i32[16] {
+    private let atk_action = i32[] { len = 16,
         0, 2, 0, -1,      // knife
         0, 1, 0, -1,      // pistol
         0, 1, 3, -1,      // machine gun
         0, 1, 4, -1 }     // chain gun
 
     // Per-weapon firing sound.
-    private let weapon_fire_snd = sfx.id[weapon.count] {
+    private let weapon_fire_snd = sfx.id[] { len = weapon.count,
         sfx.id.atk_knife, sfx.id.atk_pistol, sfx.id.atk_mg, sfx.id.atk_gat }
 
     // Base sprite index in VSWAP for each weapon's "ready" pose. The
     // 4 attack frames follow sequentially (ready, atk1..atk4).
     // Derived from the original's per-weapon attack-frame layout:
     // knife ready at 416, pistol at 421, MG at 426, chain at 431.
-    private let weapon_sprite_base = i32[weapon.count] { 416, 421, 426, 431 }
+    private let weapon_sprite_base = i32[] { len = weapon.count, 416, 421, 426, 431 }
 
     // One gun shot: the weapon's report, the hitscan, and a round
     // spent (the original's gun attack + the ammo decrement that

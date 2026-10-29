@@ -164,4 +164,4 @@ Anything general about FC syntax/semantics: **read `../fc-lang/spec/examples.fc`
 - `i32` literals auto-widen to `i64` in slice indices, comparisons, and call args. Only use the `i64` suffix when a binding's *type* needs to be i64 from the start (e.g. `let mut x = 0i64` used in later i64 arithmetic).
 - `%f` interpolation requires an explicit width: `"%8.2f{expr}"`.
 - `from` is a reserved word; don't use as a variable name.
-- Module-level `let`s are limited to constant expressions. `alloc(...)!` is *not* a constant expression — keep buffers/caches on context structs, allocate in their factories. Array literals at module scope require literal lengths and matching element-type suffixes (e.g. `u8[n] { 0u8, 1u8, ... }`); when in doubt use `i32[n]` with plain int literals.
+- Module-level `let`s are limited to constant expressions. `alloc(...)!` is *not* a constant expression — keep buffers/caches on context structs, allocate in their factories. Slice literals at module scope require constant elements with matching element-type suffixes (e.g. `u8[] { 0u8, 1u8, ... }`); when in doubt use `i32[] { ... }` with plain int literals.

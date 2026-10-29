@@ -314,8 +314,8 @@ let main = (args: str[]) ->
         bj_phase = bj_phase.running, bj_yelled = false,
         dc_sub = dc_sub.pre_fade, dc_timer = 0.0, dc_boss_idx = none(i32),
         dc_kill_x = 0.0, dc_kill_y = 0.0, dc_fade = 0.0,
-        endart_data = alloc(u8[0] {})!,
-        endart_page_offsets = alloc(i32[0] {})!,
+        endart_data = alloc(u8[] { })!,
+        endart_page_offsets = alloc(i32[] { })!,
         endart_total_pages = 0, endart_page = 0,
         hs_source = hs_source.death,
         ep_recorded_current = false,
@@ -357,7 +357,7 @@ let main = (args: str[]) ->
         quit_prompt_idx = 0,
         quit_prompts_override = quit_prompts.load_override(),
         has_active_game = false,
-        msg_buf = alloc(u8[256] {})!,
+        msg_buf = alloc(u8[] { len = 256 })!,
         msg_len = 0, msg_timer = 0.0,
         rng_enemy = random.pcg_random.make_with_channel(rng_seed, enemies.rng_channel),
         rng_face = random.pcg_random.make_with_channel(rng_seed, hud.rng_channel)
@@ -386,7 +386,7 @@ let main = (args: str[]) ->
             // Sized for the largest plausible SDL callback request (stereo
             // i32, audio_cb_max_frames per call); the device asks for
             // 1024 frames, so this never fills.
-            mix_buf = alloc(i32[audio_cb_max_frames * 2] {})!,
+            mix_buf = alloc(i32[] { len = audio_cb_max_frames * 2 })!,
             sfx_on = cfg.sfx_on,
             digi_on = cfg.digi_on,
             music_on = cfg.music_on,

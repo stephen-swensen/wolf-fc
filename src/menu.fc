@@ -825,7 +825,7 @@ module quit_prompts =
     // can be torn down line-by-line in `free_override`.
     private let dup_str = (s: const str) ->
         let n = s.len
-        let buf = alloc(u8[n] {})!
+        let buf = alloc(u8[] { len = n })!
         for i, c in s do
             buf[i] = c
         (str) buf
@@ -835,13 +835,13 @@ module quit_prompts =
     // or contains zero non-blank lines — caller falls back to built-ins.
     let load_override = () ->
         match paths.wolf_data_dir() with
-        | none -> alloc(str[0] {})!
+        | none -> alloc(str[] { })!
         | some(dir) ->
             defer free(dir)
             let path = alloc("%s{dir}/quit-prompts")!
             defer free(path)
             match io.read_all(path) with
-            | err(_) -> alloc(str[0] {})!
+            | err(_) -> alloc(str[] { })!
             | ok(contents) ->
                 defer free(contents)
                 let lines = text.split(contents, "\n")
@@ -851,9 +851,9 @@ module quit_prompts =
                 for ln in lines do
                     if text.trim(ln).len > 0i64 then
                         n = n + 1i64
-                if n == 0i64 then alloc(str[0] {})!
+                if n == 0i64 then alloc(str[] { })!
                 else
-                    let out = alloc(str[n] {})!
+                    let out = alloc(str[] { len = n })!
                     let mut k = 0i64
                     for ln in lines do
                         let t = text.trim(ln)

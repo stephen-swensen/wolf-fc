@@ -662,7 +662,7 @@ struct world =
 module episode =
     let levels_per = 10
     let count      = 6
-    let back_to    = i32[6] { 1, 1, 7, 3, 5, 3 }
+    let back_to    = i32[] { 1, 1, 7, 3, 5, 3 }
 
     // Human-readable episode titles (used by the episode-picker menu
     // and the per-episode victory screen).

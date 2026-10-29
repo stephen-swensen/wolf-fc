@@ -198,7 +198,7 @@ module sfx =
     // table. Verified entry-by-entry 2026-04-20: every row here
     // matches the original's WL6 digi-map; missing enum entries
     // resolve to -1 too (the sound system then falls back to AdLib).
-    private let digi_slot = i32[76] {
+    private let digi_slot = i32[] { len = 76,
          3,   // open_door
          2,   // close_door
          5,   // atk_pistol
@@ -281,7 +281,7 @@ module sfx =
     // AdLib fallback: AUDIOT chunk index relative to the AdLib block
     // base (chunk = 87 + this). -1 to disable. Values match the
     // original's WL6 audio enum.
-    private let adlib_chunk = i32[76] {
+    private let adlib_chunk = i32[] { len = 76,
         18,   // open_door
         19,   // close_door
         24,   // atk_pistol
@@ -371,7 +371,7 @@ module sfx =
     // cross→chalice) restart audibly. The "do nothing" hold-rhythm is
     // handled at the call site (see player.fc's use-key handler), not
     // here.
-    private let priority = i32[76] {
+    private let priority = i32[] { len = 76,
         1,  // open_door
         1,  // close_door
         1,  // atk_pistol

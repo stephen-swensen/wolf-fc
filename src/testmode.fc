@@ -242,7 +242,7 @@ module testmode =
                 let frames_per_batch = 1024i32
                 let total_frames = n * sample_rate
                 let batches = total_frames / frames_per_batch
-                let mix_buf = i32[2048] {}
+                let mix_buf = i32[] { len = 2048 }
                 let t0 = sys.time()
                 for j in 0..batches do
                     for k in 0..2048 do
@@ -956,8 +956,8 @@ module testmode =
         else if arg == "enemies" then
             // Summary: counts by kind and by state, for regression checks.
             // Buckets: 0=guard, 1=officer, 2=ss, 3=dog, 4=mutant, 5=boss, 6=ghost.
-            let by_kind = i32[7] { 0, 0, 0, 0, 0, 0, 0 }
-            let by_state = i32[7] { 0, 0, 0, 0, 0, 0, 0 }
+            let by_kind = i32[] { 0, 0, 0, 0, 0, 0, 0 }
+            let by_state = i32[] { 0, 0, 0, 0, 0, 0, 0 }
             for i in 0..w.lv.num_enemies do
                 let e = w.lv.enemies[i]
                 let ki = match e.kind with

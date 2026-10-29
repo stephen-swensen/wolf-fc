@@ -435,7 +435,7 @@ module digi =
     let init = (vs: const vswap.vswap_file*) ->
         let info_page = vs.num_chunks - 1
         let count = (i64) vswap.page_length(vs, info_page) / 4
-        let cache = alloc(cached_sound[count] {})!
+        let cache = alloc(cached_sound[] { len = count })!
         for i in 0..count do
             cache[i] = cached_sound { data = load_sound(vs, (i32) i) }
         let p = alloc(player { cache = cache })!
@@ -453,8 +453,8 @@ module digi =
         let info_off = vswap.page_offset(vs, info_page)
         let start_pg = (i32) bytes.u16(vs.raw, info_off + (i64) sound_num * 4)
         let snd_len = (i32) bytes.u16(vs.raw, info_off + (i64) sound_num * 4 + 2)
-        if snd_len == 0 then return alloc(u8[0] {})!
-        let buf = alloc(u8[(i64) snd_len] {})!
+        if snd_len == 0 then return alloc(u8[] { })!
+        let buf = alloc(u8[] { len = (i64) snd_len })!
         let mut written = 0i64
         let mut pg = vs.sound_start + start_pg
         loop

@@ -1081,7 +1081,7 @@ module spawn =
         // (camera plane x,y). Preference order south/north first, then
         // 1-tile, then east/west — gives a clean "stand in front of"
         // view rather than spawning on top of or behind the target.
-        let cands = {{i32,i32},{f64,f64},{f64,f64}}[8] {
+        let cands = {{i32,i32},{f64,f64},{f64,f64}}[] { len = 8,
             { { 0,  2}, { 0.0, -1.0}, {     pf,      0.0} },
             { { 0,  1}, { 0.0, -1.0}, {     pf,      0.0} },
             { { 0, -2}, { 0.0,  1.0}, {0.0 - pf,      0.0} },
@@ -1482,23 +1482,23 @@ module level =
         let difficulty = g.difficulty
         let mommy_mode = g.mommy_mode
         let lv = alloc(level {
-            tilemap = alloc(u8[map_size * map_size] {})!,
-            pushwall_tiles = alloc(bool[map_size * map_size] {})!,
-            exit_tiles = alloc(bool[map_size * map_size] {})!,
-            path_arrows = alloc(u8[map_size * map_size] {})!,
-            sprites = alloc(tilemap.sprite_obj[tilemap.max_sprites] {})!,
+            tilemap = alloc(u8[] { len = map_size * map_size })!,
+            pushwall_tiles = alloc(bool[] { len = map_size * map_size })!,
+            exit_tiles = alloc(bool[] { len = map_size * map_size })!,
+            path_arrows = alloc(u8[] { len = map_size * map_size })!,
+            sprites = alloc(tilemap.sprite_obj[] { len = tilemap.max_sprites })!,
             num_sprites = 0,
-            doors = alloc(doors.door_obj[doors.max_doors] {})!,
-            door_pos = alloc(f64[doors.max_doors] {})!,
+            doors = alloc(doors.door_obj[] { len = doors.max_doors })!,
+            door_pos = alloc(f64[] { len = doors.max_doors })!,
             num_doors = 0,
             pushwall = default(pushwall.pushwall_state),
-            enemies = alloc(enemies.enemy[enemies.max_enemies] {})!,
+            enemies = alloc(enemies.enemy[] { len = enemies.max_enemies })!,
             num_enemies = 0,
-            projectiles = alloc(enemies.projectiles.projectile[enemies.projectiles.max_projectiles] {})!,
-            tile_areas = alloc(u8[map_size * map_size] {})!,
-            vis_tiles = alloc(bool[map_size * map_size] {})!,
-            area_connect = alloc(u8[areas.num_areas * areas.num_areas] {})!,
-            area_by_player = alloc(bool[areas.num_areas] {})!,
+            projectiles = alloc(enemies.projectiles.projectile[] { len = enemies.projectiles.max_projectiles })!,
+            tile_areas = alloc(u8[] { len = map_size * map_size })!,
+            vis_tiles = alloc(bool[] { len = map_size * map_size })!,
+            area_connect = alloc(u8[] { len = areas.num_areas * areas.num_areas })!,
+            area_by_player = alloc(bool[] { len = areas.num_areas })!,
             total_enemies = 0,
             total_pushwalls = 0,
             total_treasures = 0

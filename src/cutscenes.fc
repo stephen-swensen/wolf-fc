@@ -489,7 +489,7 @@ module intermission =
     //
     // Reproduced data table — see README (the same status as the VGA
     // palette, ceil_table, and songs[]).
-    let par_times = i32[60] {
+    let par_times = i32[] { len = 60,
          90, 120, 120, 210, 180, 180, 150, 150,   0,   0,
          90, 210, 180, 120, 240, 360,  60, 180,   0,   0,
          90,  90, 150, 150, 210, 150, 120, 360,   0,   0,
@@ -749,7 +749,7 @@ module intermission =
     let write_lpic_number = (rc: render_ctx*, vg: const vgagraph.vgagraph_file*, pal: const u32[],
                              x: i32, y: i32, num: i32, align_right: bool) ->
         let mut n = if num < 0 then 0 else num
-        let digits = i32[12] {}
+        let digits = i32[] { len = 12 }
         let mut count = 0
         if n == 0 then
             digits[0] = 0
@@ -1071,7 +1071,7 @@ module endart_screen =
         let data = vgagraph.decompress_chunk(vg, chunk)
         let total = count_pages(data)
         let cap = if total > max_pages then max_pages else total
-        let offs = alloc(i32[cap] {})!
+        let offs = alloc(i32[] { len = cap })!
         let _filled = collect_page_offsets(data, offs)
         g.endart_data = data
         g.endart_page_offsets = offs
@@ -1166,8 +1166,8 @@ module endart_screen =
         if page >= g.endart_total_pages then page = g.endart_total_pages - 1
         let start = g.endart_page_offsets[(i64) page]
         // Per-row margin arrays — ^G updates the rows it overlaps.
-        let lefts  = i32[18] {}
-        let rights = i32[18] {}
+        let lefts  = i32[] { len = 18 }
+        let rights = i32[] { len = 18 }
         for i in 0..text_rows do
             lefts[i]  = left_margin
             rights[i] = rc.fb_w - right_margin
@@ -1184,7 +1184,7 @@ module endart_screen =
         let data = g.endart_data
         let dn = (i32) data.len
         // Single-word scratch buffer (OG's WORDLIMIT = 80).
-        let word_buf = u8[80] {}
+        let word_buf = u8[] { len = 80 }
         loop
             if st.done then break
             if st.cursor >= dn then break

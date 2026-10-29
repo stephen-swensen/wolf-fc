@@ -83,7 +83,7 @@ module palette =
     let init = () ->
         // Raw 6-bit VGA palette from Wolf3D (id's original 6-bit VGA palette).
         // 256 entries x 3 channels = 768 values, range 0-63.
-        let raw = i32[768] {
+        let raw = i32[] { len = 768,
             0,0,0, 0,0,42, 0,42,0, 0,42,42, 42,0,0,
             42,0,42, 42,21,0, 42,42,42, 21,21,21, 21,21,63,
             21,63,21, 21,63,63, 63,21,21, 63,21,63, 63,63,21,
@@ -137,7 +137,7 @@ module palette =
             0,31,31, 0,30,30, 0,29,29, 0,28,28, 0,27,27,
             38,0,34
         }
-        let pal = alloc(u32[256] {})!
+        let pal = alloc(u32[] { len = 256 })!
         for i in 0..256 do
             let ri = (i64) i * 3
             let rv = (u32) raw[ri] * 255u32 / 63u32
@@ -186,7 +186,7 @@ module vswap =
         io.seek(f, 0i64, io.seek_end)!
         let size = io.tell(f)!
         io.seek(f, 0i64, io.seek_set)!
-        let raw = alloc(u8[size] {})!
+        let raw = alloc(u8[] { len = size })!
         io.read(raw, size, f)
         io.close(f)!
         let nc = (i32) bytes.u16(raw, 0i64)
@@ -196,18 +196,18 @@ module vswap =
         // look up base / left / right / col_offset directly instead of
         // re-reading from raw bytes every frame.
         let n_sprites = snd - ss
-        let headers = alloc(sprite_header[(i64) n_sprites] {})!
+        let headers = alloc(sprite_header[] { len = (i64) n_sprites })!
         for i in 0..n_sprites do
             let page = ss + i
             let base = (i64) bytes.u32(raw, 6i64 + (i64) page * 4)
             if base == 0 then
                 headers[i] = sprite_header { valid = false, base = 0,
                     left_pix = 0, right_pix = 0,
-                    col_offsets = u16[64] {} }
+                    col_offsets = u16[] { len = 64 } }
             else
                 let lp = (i32) bytes.u16(raw, base)
                 let rp = (i32) bytes.u16(raw, base + 2)
-                let col_off = u16[64] {}
+                let col_off = u16[] { len = 64 }
                 let count = rp - lp + 1
                 for c in 0..count do
                     col_off[lp + c] = bytes.u16(raw, base + 4 + (i64) c * 2)
@@ -258,7 +258,7 @@ module maps =
         io.seek(f, 0i64, io.seek_end)!
         let size = io.tell(f)!
         io.seek(f, 0i64, io.seek_set)!
-        let buf = alloc(u8[size] {})!
+        let buf = alloc(u8[] { len = size })!
         io.read(buf, size, f)
         io.close(f)!
         buf
@@ -353,18 +353,18 @@ module maps =
 
         // Decompress plane 0 (walls).
         let exp0 = (i32) bytes.u16(gm, p0_off)
-        let carm0 = alloc(u16[(i64) exp0 / 2 + 1] {})!
+        let carm0 = alloc(u16[] { len = (i64) exp0 / 2 + 1 })!
         defer free(carm0)
         carmack_expand(gm, p0_off + 2, carm0, exp0)
-        let walls = alloc(u16[area] {})!
+        let walls = alloc(u16[] { len = area })!
         rlew_expand(carm0, 1i64, walls, rlew_tag)
 
         // Decompress plane 1 (objects / spawns).
         let exp1 = (i32) bytes.u16(gm, p1_off)
-        let carm1 = alloc(u16[(i64) exp1 / 2 + 1] {})!
+        let carm1 = alloc(u16[] { len = (i64) exp1 / 2 + 1 })!
         defer free(carm1)
         carmack_expand(gm, p1_off + 2, carm1, exp1)
-        let objects = alloc(u16[area] {})!
+        let objects = alloc(u16[] { len = area })!
         rlew_expand(carm1, 1i64, objects, rlew_tag)
 
         alloc(level { walls = walls, objects = objects,
@@ -448,16 +448,16 @@ module vgagraph =
     // a heap-allocated u8[] that the caller owns (empty slice if the
     // chunk is sparse / offset < 0).
     let decompress_at = (raw: const u8[], dict: const huffnode[], offset: i64) ->
-        if offset < 0 then return alloc(u8[0] {})!
+        if offset < 0 then return alloc(u8[] { })!
         let expanded_len = (i64) bytes.u32(raw, offset)
-        let dest = alloc(u8[expanded_len] {})!
+        let dest = alloc(u8[] { len = expanded_len })!
         huff_expand(raw, offset + 4, dest, expanded_len, dict)
         dest
 
     // Decompress chunk `chunk` by number. Returns empty slice on out-of-
     // range or sparse chunks.
     let decompress_chunk = (vg: const vgagraph_file*, chunk: i32) ->
-        if chunk < 0 || chunk >= vg.num_chunks then alloc(u8[0] {})!
+        if chunk < 0 || chunk >= vg.num_chunks then alloc(u8[] { })!
         else decompress_at(vg.raw, vg.dict, vg.offsets[chunk])
 
     // Load VGADICT + VGAHEAD + VGAGRAPH and decode STRUCTPIC (the picture
@@ -469,10 +469,10 @@ module vgagraph =
         io.seek(df, 0i64, io.seek_end)!
         let dsize = io.tell(df)!
         io.seek(df, 0i64, io.seek_set)!
-        let dict_raw = alloc(u8[dsize] {})!
+        let dict_raw = alloc(u8[] { len = dsize })!
         io.read(dict_raw, dsize, df)
         io.close(df)!
-        let dict = alloc(huffnode[255] {})!
+        let dict = alloc(huffnode[] { len = 255 })!
         for i in 0..255 do
             let o = (i64) i * 4
             dict[i] = huffnode {
@@ -486,11 +486,11 @@ module vgagraph =
         io.seek(hf, 0i64, io.seek_end)!
         let hsize = io.tell(hf)!
         io.seek(hf, 0i64, io.seek_set)!
-        let head_raw = alloc(u8[hsize] {})!
+        let head_raw = alloc(u8[] { len = hsize })!
         io.read(head_raw, hsize, hf)
         io.close(hf)!
         let nc = (i32) (hsize / 3)
-        let offsets = alloc(i64[nc] {})!
+        let offsets = alloc(i64[] { len = nc })!
         for i in 0..nc do
             let o = (i64) i * 3
             let v = (i32) head_raw[o]
@@ -504,14 +504,14 @@ module vgagraph =
         io.seek(gf, 0i64, io.seek_end)!
         let gsize = io.tell(gf)!
         io.seek(gf, 0i64, io.seek_set)!
-        let raw = alloc(u8[gsize] {})!
+        let raw = alloc(u8[] { len = gsize })!
         io.read(raw, gsize, gf)
         io.close(gf)!
 
         // Decode STRUCTPIC (chunk 0) — array of (u16 width, u16 height).
         let pic_table = decompress_at(raw, dict, offsets[0])
         let num_pics = (i32) (pic_table.len / 4)
-        let pic_dims = alloc(pic_dim[num_pics] {})!
+        let pic_dims = alloc(pic_dim[] { len = num_pics })!
         for i in 0..num_pics do
             pic_dims[i] = pic_dim {
                 width  = (i32) bytes.u16(pic_table, (i64) i * 4),
@@ -540,7 +540,7 @@ module vgagraph =
     let unplane = (planar: const u8[], width: i32, height: i32) ->
         let w4 = width / 4
         let size = (i64) width * (i64) height
-        let linear = alloc(u8[size] {})!
+        let linear = alloc(u8[] { len = size })!
         for plane in 0..4 do
             let plane_off = (i64) plane * (i64) w4 * (i64) height
             for y in 0..height do
@@ -555,7 +555,7 @@ module vgagraph =
     // Returned slice is width * height bytes; caller owns it.
     let load_pic = (vg: const vgagraph_file*, chunk: i32) ->
         let { w, h } = pic_dims_at(vg, chunk)
-        if w <= 0 || h <= 0 then return alloc(u8[0] {})!
+        if w <= 0 || h <= 0 then return alloc(u8[] { })!
         let planar = decompress_chunk(vg, chunk)
         defer free(planar)
         unplane(planar, w, h)
@@ -577,14 +577,14 @@ module audio =
         io.seek(hf, 0i64, io.seek_end)!
         let hed_size = io.tell(hf)!
         io.seek(hf, 0i64, io.seek_set)!
-        let hed = alloc(u8[hed_size] {})!
+        let hed = alloc(u8[] { len = hed_size })!
         io.read(hed, hed_size, hf)
         io.close(hf)!
         let df = io.open(dat_path, "rb")!
         io.seek(df, 0i64, io.seek_end)!
         let dat_size = io.tell(df)!
         io.seek(df, 0i64, io.seek_set)!
-        let dat = alloc(u8[dat_size] {})!
+        let dat = alloc(u8[] { len = dat_size })!
         io.read(dat, dat_size, df)
         io.close(df)!
         let nc = (i32) (hed_size / 4)

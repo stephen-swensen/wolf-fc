@@ -67,13 +67,13 @@ module png =
     // `"Wolf-FC"`. Pass `""` to skip metadata.
     let write = (path: const str, fb: const u32[], w: i32, h: i32,
                  metadata: const str) ->
-        let crc_tab = u32[256] {}
+        let crc_tab = u32[] { len = 256 }
         crc32_fill_table(crc_tab)
         let row_bytes = 1i64 + (i64) w * 3
         let raw_size = (i64) h * row_bytes
 
         // Build raw scanline data: 1 filter byte (0 = None) + RGB per pixel.
-        let raw = alloc(u8[raw_size] {})!
+        let raw = alloc(u8[] { len = raw_size })!
         defer free(raw)
         for y in 0..h do
             raw[(i64) y * row_bytes] = 0u8
@@ -105,7 +105,7 @@ module png =
                        + (12 + idat_data_size)        // IDAT
                        + 12                           // IEND
 
-        let out = alloc(u8[total_size] {})!
+        let out = alloc(u8[] { len = total_size })!
         defer free(out)
         let mut pos = 0i64
 
