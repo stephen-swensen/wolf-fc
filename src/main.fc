@@ -130,7 +130,7 @@ let main = (args: str[]) ->
     // direction (down to 1 = force native-resolution rendering).
     let mut max_scale = 6
     for i in 1..(i32) args.len do
-        let a = args[(i64) i]
+        let a = args[i]
         if a == "--mommy-mode" then arg_mommy_mode = some(mommy_mode.both)
         if text.starts_with(a, "--mommy-mode=") then
             let v = a[13..a.len]
@@ -267,7 +267,7 @@ let main = (args: str[]) ->
         else
             io.write(alloca("Audio driver: none (%s{(const str) sdl2.get_error()}) — running silent\n"), stdout)
         fb_w = video.compute_fb_w_for_view_mode(cfg.view_mode)
-        plane_factor = fov_factor * (f64) fb_w / 320.0
+        plane_factor = fov_factor * fb_w / 320.0
         io.write(alloca("View mode %s{config.view_mode_label(cfg.view_mode)} -> fb %d{fb_w}x200\n"), stdout)
 
     // Assemble the `world` — the handle that groups game state, level data,
@@ -469,16 +469,16 @@ let main = (args: str[]) ->
     // reported as "Unknown test command".
     let mut test_idx = -1
     for i in 1..(i32) args.len do
-        if test_idx < 0 && args[(i64) i] == "--test" then test_idx = i
+        if test_idx < 0 && args[i] == "--test" then test_idx = i
     if test_mode then
         g.phase = game_phase.playing
         g.has_active_game = true
         let test_dt = 1.0 / 35.0
         for ti in (test_idx + 1)..(i32) args.len do
-            if args[(i64) ti] == "--mommy-mode" then continue
-            if text.starts_with(args[(i64) ti], "--mommy-mode=") then continue
-            if args[(i64) ti] == "--cheat" then continue
-            testmode.run_cmd(w, args[(i64) ti], pal, test_dt)
+            if args[ti] == "--mommy-mode" then continue
+            if text.starts_with(args[ti], "--mommy-mode=") then continue
+            if args[ti] == "--cheat" then continue
+            testmode.run_cmd(w, args[ti], pal, test_dt)
         return 0
 
     // (DPI awareness was already declared before the first VIDEO
@@ -676,8 +676,8 @@ let main = (args: str[]) ->
     let mut obtained = default(sdl2.audio_spec)
     let audio_dev = sdl2.open_audio(default(any*), 0, &spec, &obtained, 0)
     if audio_dev > 0u32 then
-        let buf_ms = (f64) obtained.samples * 1000.0 / (f64) obtained.freq
-        io.write("Audio: %d{obtained.freq} Hz, %d{(i32) obtained.channels} ch, %d{(i32) obtained.samples}-frame buffer (~%4.1f{buf_ms} ms callback latency)\n", stdout)
+        let buf_ms = obtained.samples * 1000.0 / obtained.freq
+        io.write("Audio: %d{obtained.freq} Hz, %d{obtained.channels} ch, %d{obtained.samples}-frame buffer (~%4.1f{buf_ms} ms callback latency)\n", stdout)
     else
         io.write(alloca("Audio: device open failed (%s{(const str) sdl2.get_error()}) — running silent\n"), stdout)
     // First-frame music = whatever fits the initial phase (title →
@@ -690,13 +690,13 @@ let main = (args: str[]) ->
         let adrv = sdl2.get_current_audio_driver()
         let drv = if adrv != default(const cstr) then (const str) adrv else "?"
         diag.mark(diag_file, diag_start,
-            alloca("audio: device opened (driver=%s{drv}, %d{obtained.freq} Hz, %d{(i32) obtained.samples}-frame buffer)"))
+            alloca("audio: device opened (driver=%s{drv}, %d{obtained.freq} Hz, %d{obtained.samples}-frame buffer)"))
     else
         diag.mark(diag_file, diag_start, "audio: device FAILED — silent")
     if audio_dev > 0u32 then
         let init_chunk = font.music_chunk_for_phase(g.phase, g.level_num)
         if init_chunk < ad.num_chunks then
-            w.ac.music = some(font.music_load(ad, init_chunk, (f64) w.ac.sample_rate))
+            w.ac.music = some(font.music_load(ad, init_chunk, w.ac.sample_rate))
             w.ac.music_chunk = init_chunk
         sdl2.pause_audio(audio_dev, 0)
         diag.mark(diag_file, diag_start, "audio: unpaused (callback live)")
@@ -732,7 +732,7 @@ let main = (args: str[]) ->
 
         // Delta time
         let now = sdl2.get_ticks()
-        let mut dt = (f64) (now - last_ticks) / 1000.0
+        let mut dt = (now - last_ticks) / 1000.0
         last_ticks = now
         if dt > 10.0 / 70.0 then dt = 10.0 / 70.0    // clamp large spikes (the original's ten-tic cap)
         // Frame-pacing: under vsync the real time between displayed frames is
@@ -752,7 +752,7 @@ let main = (args: str[]) ->
             let interval_s = w.rc.refresh_interval_ms / 1000.0
             let n = (i32) (dt / interval_s + 0.5)
             if n >= 1 then
-                let snapped = (f64) n * interval_s
+                let snapped = n * interval_s
                 let drift = math.abs(dt - snapped)
                 let snap_tol = interval_s * 0.2
                 if drift <= snap_tol then dt = snapped
@@ -844,7 +844,7 @@ let main = (args: str[]) ->
         // race-free.
         let want_chunk = font.music_chunk_for_phase(g.phase, g.level_num)
         if want_chunk != w.ac.music_chunk && audio_dev > 0u32 && want_chunk < ad.num_chunks then
-            let np = font.music_load(ad, want_chunk, (f64) w.ac.sample_rate)
+            let np = font.music_load(ad, want_chunk, w.ac.sample_rate)
             let posted = spsc.enqueue(&w.ac.cmd_ring, audio_q.cmd {
                 kind = audio_q.op.set_music, sfx_id = 0,
                 pan = 0.0, gain = 0.0, player = some(np) })
@@ -905,8 +905,8 @@ let main = (args: str[]) ->
         // letterbox bars need to be black; but when logical aspect
         // matches drawable aspect, render_copy paints every drawable
         // pixel and the clear is wasted bandwidth (~33 MB/frame at 4K).
-        let needs_clear = ((i64) vid.screen_w * (i64) w.rc.drawable_h)
-            != ((i64) vid.actual_h * (i64) w.rc.drawable_w)
+        let needs_clear = ((i64) vid.screen_w * w.rc.drawable_h)
+            != ((i64) vid.actual_h * w.rc.drawable_w)
         if needs_clear then sdl2.clear(ren)
         sdl2.render_copy(ren, vid.tex, default(any*), default(any*))
 

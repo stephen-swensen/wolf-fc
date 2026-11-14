@@ -575,7 +575,7 @@ module input =
                                 // entirely).
                                 let n = w.sm.edit_len
                                 let label = if n > 0 then
-                                    (const str) w.sm.edit_buf[0..(i64) n]
+                                    (const str) w.sm.edit_buf[0..n]
                                 else "EMPTY"
                                 save.to_slot(w, g.menu_sel, label)
                                 save.refresh_slots(w.sm)
@@ -591,7 +591,7 @@ module input =
                             else if k == sdl2.key_backspace then
                                 if w.sm.edit_len > 0 then
                                     w.sm.edit_len = w.sm.edit_len - 1
-                                    w.sm.edit_buf[(i64) w.sm.edit_len] = 0u8
+                                    w.sm.edit_buf[w.sm.edit_len] = 0u8
                             else
                                 // Printable-ASCII char → append. Same
                                 // shift-aware mapping as the high-
@@ -602,9 +602,9 @@ module input =
                                 if w.sm.edit_len < cap then
                                     let ch = keysym_to_ascii(k, event.key.keysym.mod)
                                     if ch != 0u8 then
-                                        w.sm.edit_buf[(i64) w.sm.edit_len] = ch
+                                        w.sm.edit_buf[w.sm.edit_len] = ch
                                         w.sm.edit_len = w.sm.edit_len + 1
-                                        w.sm.edit_buf[(i64) w.sm.edit_len] = 0u8
+                                        w.sm.edit_buf[w.sm.edit_len] = 0u8
                         else if k == sdl2.key_up then
                             g.menu_sel = (g.menu_sel + save.num_slots - 1) % save.num_slots
                         else if k == sdl2.key_down then
@@ -618,8 +618,8 @@ module input =
                                 else (i32) s.label.len
                             if n > 31 then n = 31
                             for i in 0..n do
-                                w.sm.edit_buf[(i64) i] = s.label[(i64) i]
-                            w.sm.edit_buf[(i64) n] = 0u8
+                                w.sm.edit_buf[i] = s.label[i]
+                            w.sm.edit_buf[n] = 0u8
                             w.sm.edit_len = n
                             g.save_edit_active = true
                         else if k == sdl2.key_escape then

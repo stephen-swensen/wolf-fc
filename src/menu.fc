@@ -195,7 +195,7 @@ module menu =
             if yy >= 0 && yy < game_h then
                 for xx in x0..x1 do
                     if xx >= 0 && xx < rc.fb_w then
-                        rc.fb[(i64) yy * (i64) rc.fb_w + (i64) xx] = c
+                        rc.fb[(i64) yy * rc.fb_w + xx] = c
 
     // Menu window: solid fill plus a two-tone outline (top + left
     // in `c_top`, bottom + right in `c_bot`) — gives the box the
@@ -695,7 +695,7 @@ module menu =
                     for j in 0..limit do
                         sm.label_scratch[j] = s.label[j]
                     sm.label_scratch[limit] = 0u8
-                    let slab = (const str) sm.label_scratch[0..(i64) limit]
+                    let slab = (const str) sm.label_scratch[0..limit]
                     font.draw_text(rc, f, text_x, text_y, slab, color)
                 else
                     let ep = s.level_num / episode.levels_per + 1
@@ -828,7 +828,7 @@ module quit_prompts =
         let buf = alloc(u8[] { len = n })!
         for i, c in s do
             buf[i] = c
-        (str) buf
+        buf
 
     // Read newline-delimited override pool. Lines are trimmed; blanks
     // dropped. Returns an empty slice if the file is missing, unreadable,
@@ -873,7 +873,7 @@ module quit_prompts =
     // a valid index.
     let at = (override_pool: const str[], i: i32) ->
         if override_pool.len > 0i64 then
-            (const str) override_pool[(i64) i % override_pool.len]
+            override_pool[i % override_pool.len]
         else builtin_at(i)
 
     let count = (override_pool: const str[]) ->

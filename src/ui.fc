@@ -245,7 +245,7 @@ module pics =
             if w <= 0 || h <= 0 then return
             let buf = alloc(u32[] { len = w * h })!
             for i in 0..(w * h) do
-                buf[(i64) i] = pal[(i32) pic[(i64) i]]
+                buf[i] = pal[pic[i]]
             rc.pic_cache[chunk] = buf
         let buf = rc.pic_cache[chunk]
         let { w, h } = vgagraph.pic_dims_at(vg, chunk)
@@ -256,7 +256,7 @@ module pics =
             for x in 0..w do
                 let dx = dst_x + x
                 if dx < 0 || dx >= rc.fb_w then continue
-                rc.fb[(i64) dy * (i64) rc.fb_w + (i64) dx] = buf[(i64) y * (i64) w + (i64) x]
+                rc.fb[(i64) dy * rc.fb_w + dx] = buf[(i64) y * w + x]
 
     // "GET PSYCHED!" level-load overlay. Matches the original's
     // preload-graphics screen: fill the 3D view area with the
@@ -303,9 +303,9 @@ module pics =
         // Filled portion: 0 → 100% as timer_remaining goes from total → 0.
         let elapsed = timer_total - timer_remaining
         let frac = if timer_total <= 0.0 then 1.0 else elapsed / timer_total
-        let fill_w_f = frac * (f64) bar_full_w
+        let fill_w_f = frac * bar_full_w
         let fill_w = if fill_w_f < 0.0 then 0
-            else if fill_w_f > (f64) bar_full_w then bar_full_w
+            else if fill_w_f > bar_full_w then bar_full_w
             else (i32) fill_w_f
         for by in 0..2 do
             let row = (bar_y + by) * rc.fb_w
@@ -325,7 +325,7 @@ module pics =
         let buf = alloc(u32[] { len = fb_w * fb_h })!
         // Black side panels (in 4:3 the pic covers everything anyway).
         for i in 0..(fb_w * fb_h) do
-            buf[(i64) i] = 0xFF000000u32
+            buf[i] = 0xFF000000u32
         let pic = vgagraph.load_pic(vg, id.title)
         defer free(pic)
         if pic.len == 0 then return buf
@@ -337,11 +337,11 @@ module pics =
         let off_x = (fb_w - dst_w) / 2
         let off_y = (fb_h - dst_h) / 2
         for py in 0..dst_h do
-            let sy = (i64) py * (i64) h / (i64) dst_h
+            let sy = (i64) py * h / dst_h
             for px in 0..dst_w do
-                let sx = (i64) px * (i64) w / (i64) dst_w
-                let pix = pic[sy * (i64) w + sx]
-                buf[(i64) (off_y + py) * (i64) fb_w + (i64) (off_x + px)] = pal[(i32) pix]
+                let sx = (i64) px * w / dst_w
+                let pix = pic[sy * w + sx]
+                buf[(i64) (off_y + py) * fb_w + (off_x + px)] = pal[pix]
         buf
 
     // Pre-render the god-mode BJ face: decode FACE1A (full-health,
@@ -359,11 +359,11 @@ module pics =
         if pic.len == 0 || n == 0 then return buf
         let gold = 0xFFFFD700u32
         for i in 0..n do
-            let pix = pal[(i32) pic[(i64) i]]
+            let pix = pal[pic[i]]
             let r  = (pix >> 16) & 0xFFu32
             let gc = (pix >> 8)  & 0xFFu32
             let b  =  pix        & 0xFFu32
-            buf[(i64) i] = if b > 100u32 && r < 50u32 && gc < 50u32 then gold else pix
+            buf[i] = if b > 100u32 && r < 50u32 && gc < 50u32 then gold else pix
         buf
 
     // Blit the pre-built god-mode face (see build_god_face_cache)
@@ -382,7 +382,7 @@ module pics =
             for x in 0..w do
                 let dx = dst_x + x
                 if dx < 0 || dx >= rc.fb_w then continue
-                rc.fb[(i64) dy * (i64) rc.fb_w + (i64) dx] = buf[(i64) y * (i64) w + (i64) x]
+                rc.fb[(i64) dy * rc.fb_w + dx] = buf[(i64) y * w + x]
 
     // Draw a pic with horizontal stretch (nearest-neighbor) to a
     // target width; vertical scale is 1:1. Used for widescreen
@@ -404,7 +404,7 @@ module pics =
             if w <= 0 || h <= 0 then return
             let buf = alloc(u32[] { len = w * h })!
             for i in 0..(w * h) do
-                buf[(i64) i] = pal[(i32) pic[(i64) i]]
+                buf[i] = pal[pic[i]]
             rc.pic_cache[chunk] = buf
         let buf = rc.pic_cache[chunk]
         let { src_w, src_h } = vgagraph.pic_dims_at(vg, chunk)
@@ -412,13 +412,13 @@ module pics =
         for y in 0..src_h do
             let dy = dst_y + y
             if dy < 0 || dy >= rc.fb_h then continue
-            let src_row = (i64) y * (i64) src_w
-            let dst_row = (i64) dy * (i64) rc.fb_w
+            let src_row = (i64) y * src_w
+            let dst_row = (i64) dy * rc.fb_w
             for x in 0..dst_w do
-                let sx = (i64) x * (i64) src_w / (i64) dst_w
+                let sx = (i64) x * src_w / dst_w
                 let dx = dst_x + x
                 if dx < 0 || dx >= rc.fb_w then continue
-                rc.fb[dst_row + (i64) dx] = buf[src_row + sx]
+                rc.fb[dst_row + dx] = buf[src_row + sx]
 
     // Four-piece help-window border, stretched to fill the
     // framebuffer in widescreen. Top + bottom strips scale to fb_w;
@@ -480,10 +480,10 @@ module font =
         let wdt = i32[] { len = 256 }
         for i in 0..256 do
             // location[] is 256 u16 entries starting at offset 2.
-            loc[i] = (i32) bytes.u16(raw, 2i64 + (i64) i * 2)
+            loc[i] = bytes.u16(raw, 2i64 + (i64) i * 2)
             // width[] is 256 u8 entries starting after the location
             // array (offset 2 + 512 = 514).
-            wdt[i] = (i32) raw[514i64 + (i64) i]
+            wdt[i] = raw[514i64 + i]
         alloc(info {
             height = h,
             location = loc,
@@ -503,19 +503,19 @@ module font =
         let src_off = (i64) f.location[ch]
         for row in 0..ch_h do
             for col in 0..cw do
-                let px = f.pixels[src_off + (i64) row * (i64) cw + (i64) col]
+                let px = f.pixels[src_off + (i64) row * cw + col]
                 if px != 0u8 then
                     let dx = x + col
                     let dy = y + row
                     if dx >= 0 && dx < rc.fb_w && dy >= 0 && dy < game_h then
-                        rc.fb[(i64) dy * (i64) rc.fb_w + (i64) dx] = color
+                        rc.fb[(i64) dy * rc.fb_w + dx] = color
         cw
 
     let draw_text = (rc: render_ctx*, f: const info*,
                      x: i32, y: i32, s: const str, color: u32) ->
         let mut cx = x
         for b in s do
-            let advance = draw_char(rc, f, cx, y, (i32) b, color)
+            let advance = draw_char(rc, f, cx, y, b, color)
             cx = cx + advance
 
     // Measure a string's rendered pixel width (for centering).
@@ -538,7 +538,7 @@ module font =
     let music_load = (ad: audio.audio_data*, chunk: i32, sample_rate: f64) ->
         let off = (i64) audio.chunk_offset(ad, chunk)
         let len = (i64) audio.chunk_length(ad, chunk)
-        imf.init_from_chunk(ad.raw, off, (i64) len, sample_rate)
+        imf.init_from_chunk(ad.raw, off, len, sample_rate)
 
     // Pick the AUDIOT chunk number that should be playing for the
     // current phase. The intro song plays continuously through the
@@ -628,7 +628,7 @@ module hud =
         let old_count = g.face_count
         g.face_count = g.face_count + dt * 70.0
         if (i64) g.face_count > (i64) old_count then
-            if g.face_count > (f64) face_rnd_byte(g) then
+            if g.face_count > face_rnd_byte(g) then
                 let roll = face_rnd_byte(g) / 64       // 0..3
                 let frame = if roll == 3 then 1 else roll
                 g.face_frame = frame
@@ -677,9 +677,9 @@ module hud =
             for y in bar_top..rc.fb_h do
                 let row = y * rc.fb_w
                 for x in 0..ox do
-                    rc.fb[(i64) (row + x)] = fill
+                    rc.fb[row + x] = fill
                 for x in (ox + 320)..rc.fb_w do
-                    rc.fb[(i64) (row + x)] = fill
+                    rc.fb[row + x] = fill
         // Full Wolf3D status-bar graphic: all the cell outlines +
         // labels are pre-rendered into a single 320x40 image. We
         // paint it, then stamp digits / face / keys / weapon-icon
@@ -781,7 +781,7 @@ module hud =
                     if ch >= 0 && ch < 256 then w = w + f.width[ch]
                 let mut cx = (rc.fb_w - w) / 2
                 for j in line_start..i do
-                    cx = cx + font.draw_char(rc, f, cx, y, (i32) g.msg_buf[j], color)
+                    cx = cx + font.draw_char(rc, f, cx, y, g.msg_buf[j], color)
                 y = y + line_h
                 line_start = i + 1
                 if at_end then break

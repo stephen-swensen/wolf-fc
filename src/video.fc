@@ -144,7 +144,7 @@ module video =
             sdl2.get_display_bounds(0, &db)
             if db.w <= 0 || db.h <= 0 then 320
             else
-                let display_aspect = (f64) db.w / (f64) db.h
+                let display_aspect = (f64) db.w / db.h
                 let aspect_scale = display_aspect / (4.0 / 3.0)
                 let mut x = (i32) (320.0 * aspect_scale)
                 if x < 320 then x = 320
@@ -201,7 +201,7 @@ module video =
         let disp = sdl2.window_display_index(win)
         let mut mode = default(sdl_display_mode)
         if disp >= 0 && sdl2.current_display_mode(disp, (any*) &mode) == 0 && mode.refresh_rate > 0 then
-            1000.0 / (f64) mode.refresh_rate
+            1000.0 / mode.refresh_rate
         else 0.0
 
     // Free + realloc the size-dependent buffers (fb if fb_w changed,
@@ -269,7 +269,7 @@ module video =
     let apply_view_mode = (w: world*, vg: const vgagraph.vgagraph_file*,
                            pal: const u32[], mode: view_mode) ->
         let new_fb_w = compute_fb_w_for_view_mode(mode)
-        let new_plane_factor = fov_factor * (f64) new_fb_w / 320.0
+        let new_plane_factor = fov_factor * new_fb_w / 320.0
         let g = w.g
         let rc = w.rc
         let fb_w_was = rc.fb_w

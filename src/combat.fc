@@ -66,9 +66,9 @@ module enemies =
         let byte = (i32) (r & 0xFFu32)
         let whole = math.floor(chance)
         let frac = chance - whole
-        if (f64) byte < whole then true
-        else if (f64) byte > whole then false
-        else (f64) (r >> 8u32) / 16777216.0 < frac
+        if byte < whole then true
+        else if byte > whole then false
+        else (r >> 8u32) / 16777216.0 < frac
 
     enum enemy_kind =
         | guard
@@ -225,7 +225,7 @@ module enemies =
     // across active scenarios) — the closest the slider gets to a
     // pure difficulty knob without an AI rework.
     private let enemy_speed_factor = (g: game*) ->
-        (f64) g.enemy_speed_pct / 100.0
+        g.enemy_speed_pct / 100.0
 
     // Per-kind sprite-page offsets relative to VSWAP sprite_start. Derived
     // from the original's enemy sprite blocks: guard at 50, dog at 99 (no
@@ -774,8 +774,8 @@ module enemies =
             let xdist = if xt2 > xt1 then xt2 - xt1 else xt1 - xt2
             if xdist > 0 then
                 let xstep = if xt2 > xt1 then 1 else -1
-                let partial_x = if xt2 > xt1 then 1.0 - (x1 - (f64) xt1)
-                                             else x1 - (f64) xt1
+                let partial_x = if xt2 > xt1 then 1.0 - (x1 - xt1)
+                                             else x1 - xt1
                 let dx_abs = math.abs(x2 - x1)
                 let ystep = (y2 - y1) / dx_abs
                 let mut yfrac = y1 + ystep * partial_x
@@ -788,7 +788,7 @@ module enemies =
                     if x < 0 || x >= map_size || y < 0 || y >= map_size then
                         clear = false
                         break
-                    let t = (i32) lv.tilemap[(i64) x * 64 + (i64) y]
+                    let t = (i32) lv.tilemap[x * 64 + y]
                     x = x + xstep
                     if t >= 1 && t <= 63 then
                         clear = false
@@ -805,8 +805,8 @@ module enemies =
             let ydist = if yt2 > yt1 then yt2 - yt1 else yt1 - yt2
             if ydist > 0 then
                 let ystep_dir = if yt2 > yt1 then 1 else -1
-                let partial_y = if yt2 > yt1 then 1.0 - (y1 - (f64) yt1)
-                                             else y1 - (f64) yt1
+                let partial_y = if yt2 > yt1 then 1.0 - (y1 - yt1)
+                                             else y1 - yt1
                 let dy_abs = math.abs(y2 - y1)
                 let xstep = (x2 - x1) / dy_abs
                 let mut xfrac = x1 + xstep * partial_y
@@ -819,7 +819,7 @@ module enemies =
                     if x < 0 || x >= map_size || y < 0 || y >= map_size then
                         clear = false
                         break
-                    let t = (i32) lv.tilemap[(i64) x * 64 + (i64) y]
+                    let t = (i32) lv.tilemap[x * 64 + y]
                     y = y + ystep_dir
                     if t >= 1 && t <= 63 then
                         clear = false
@@ -883,7 +883,7 @@ module enemies =
         private let tile_passable = (lv: level*, g: game*, self_idx: i32, tx: i32, ty: i32, diagonal: bool) ->
             if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
             else
-                let t = (i32) lv.tilemap[(i64) tx * 64 + (i64) ty]
+                let t = (i32) lv.tilemap[tx * 64 + ty]
                 let e = &lv.enemies[self_idx]
                 if t >= 1 && t <= 63 then false
                 // Door tiles block kinds that can't open doors unless
@@ -1105,7 +1105,7 @@ module enemies =
         // fallback. Matches the original's patrol direction logic.
         let select_path_dir = (lv: level*, g: game*, self_idx: i32) ->
             let e = &lv.enemies[self_idx]
-            let arrow = (i32) lv.path_arrows[(i64) e.tile_x * 64 + (i64) e.tile_y]
+            let arrow = (i32) lv.path_arrows[e.tile_x * 64 + e.tile_y]
             match enum_of(dir, arrow) with
             | some(a) -> if a != dir.nodir then e.dir = a else void()
             | none -> void()
@@ -1117,7 +1117,7 @@ module enemies =
         // the center along a committed heading and are snapped back
         // on arrival / door-wait, so exact comparison is right.
         private let at_tile_center = (e: const enemy*) ->
-            e.x == (f64) e.tile_x + 0.5 && e.y == (f64) e.tile_y + 0.5
+            e.x == e.tile_x + 0.5 && e.y == e.tile_y + 0.5
 
         // The tile this actor is heading for: the next tile along its
         // heading while a step is in progress, otherwise the one it
@@ -1138,8 +1138,8 @@ module enemies =
         // picked from a parked position has a whole tile to go.
         let step_remaining = (e: const enemy*) ->
             if e.dir == dir.nodir || at_tile_center(e) then 0.0
-            else if dir.dx[e.dir] != 0 then math.abs((f64) (e.tile_x + dir.dx[e.dir]) + 0.5 - e.x)
-            else math.abs((f64) (e.tile_y + dir.dy[e.dir]) + 0.5 - e.y)
+            else if dir.dx[e.dir] != 0 then math.abs((e.tile_x + dir.dx[e.dir]) + 0.5 - e.x)
+            else math.abs((e.tile_y + dir.dy[e.dir]) + 0.5 - e.y)
 
         // Advance this enemy along its current direction by
         // `speed * dt` tiles. The budget is spent PER AXIS: a cardinal
@@ -1161,7 +1161,7 @@ module enemies =
         // the player? Only counts while its room is connected to the
         // player's, as in the original.
         private let inside_player_box = (lv: level*, g: game*, e: enemy*, nx: f64, ny: f64) ->
-            let area = (i32) lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
+            let area = (i32) lv.tile_areas[e.tile_x * 64 + e.tile_y]
             if area >= areas.num_areas || !lv.area_by_player[area] then false
             else
                 let dx = nx - g.pos_x
@@ -1195,35 +1195,35 @@ module enemies =
                 let ntx = e.tile_x + dir.dx[e.dir]
                 let nty = e.tile_y + dir.dy[e.dir]
                 if ntx >= 0 && ntx < map_size && nty >= 0 && nty < map_size then
-                    let nt = (i32) lv.tilemap[(i64) ntx * 64 + (i64) nty]
+                    let nt = (i32) lv.tilemap[ntx * 64 + nty]
                     if nt >= 128 && lv.doors[nt - 128].state != doors.door_state.open then
                         if kind_opens_doors(e.kind) then
                             doors.actor_open(lv, nt - 128, g, ac)
-                            e.x = (f64) e.tile_x + 0.5
-                            e.y = (f64) e.tile_y + 0.5
+                            e.x = e.tile_x + 0.5
+                            e.y = e.tile_y + 0.5
                             e.waiting_door = nt - 128
                             break
                         else
                             // Door is a solid wall to this kind — abort
                             // the step and force a new direction choice
                             // from the current tile.
-                            e.x = (f64) e.tile_x + 0.5
-                            e.y = (f64) e.tile_y + 0.5
+                            e.x = e.tile_x + 0.5
+                            e.y = e.tile_y + 0.5
                             e.dir = dir.nodir
                             break
                 // Per-axis distance to the next center — a full tile
                 // when the heading was just picked from a parked
                 // position (NOT step_remaining, which reads 0 there).
-                let remaining = if dir.dx[e.dir] != 0 then math.abs((f64) ntx + 0.5 - e.x)
-                                else math.abs((f64) nty + 0.5 - e.y)
+                let remaining = if dir.dx[e.dir] != 0 then math.abs(ntx + 0.5 - e.x)
+                                else math.abs(nty + 0.5 - e.y)
                 if step < remaining then
                     // The stand-off: a step that would land inside the
                     // one-tile box around the player (per axis, and
                     // only while the rooms are connected) is backed
                     // out — the actor marks time against you, and a
                     // ghost drains two points per tic while it does.
-                    let nx = e.x + (f64) dir.dx[e.dir] * step
-                    let ny = e.y + (f64) dir.dy[e.dir] * step
+                    let nx = e.x + dir.dx[e.dir] * step
+                    let ny = e.y + dir.dy[e.dir] * step
                     if inside_player_box(lv, g, e, nx, ny) then
                         if kind_is_ghost(e.kind) then
                             // Two points per tic. The original deals
@@ -1233,15 +1233,15 @@ module enemies =
                             e.ghost_drain = e.ghost_drain + dt * 70.0 * 2.0
                             let whole = (i32) math.floor(e.ghost_drain)
                             if whole > 0 then
-                                e.ghost_drain = e.ghost_drain - (f64) whole
+                                e.ghost_drain = e.ghost_drain - whole
                                 damage_player(g, ac, whole, damage_source.ghost, e.x, e.y)
                     else
                         e.x = nx
                         e.y = ny
                     step = 0.0
                 else
-                    e.x = (f64) ntx + 0.5
-                    e.y = (f64) nty + 0.5
+                    e.x = ntx + 0.5
+                    e.y = nty + 0.5
                     e.tile_x = ntx
                     e.tile_y = nty
                     step = step - remaining
@@ -1306,7 +1306,7 @@ module enemies =
             // health but still takes the flash and the face grimace:
             // the hit registers, it just doesn't hurt.
             if g.god_mode then
-                g.damage_count = g.damage_count + (f64) dmg
+                g.damage_count = g.damage_count + dmg
                 g.face_count = 256.0
                 return
             // After the baby shift a 1-3 point hit rounds to 0, same as
@@ -1323,7 +1323,7 @@ module enemies =
             | needle -> true
             | _      -> false
             g.health = g.health - dmg
-            g.damage_count = g.damage_count + (f64) dmg
+            g.damage_count = g.damage_count + dmg
             // Force the next face roll to fire on the next
             // hud.update_face tick so the new health row is visible
             // immediately (the original forces a face refresh in its
@@ -1630,7 +1630,7 @@ module enemies =
             | hans | schabbs | gretel | giftmacher
             | fat | hitler_fake | mecha_hitler | hitler -> 1
             | blinky | pinky | clyde | inky -> 1
-            (f64) tics / 70.0
+            tics / 70.0
 
         // True iff a stand / path enemy has detected the player this
         // frame. Mirrors the first-detection half of the original's
@@ -1647,7 +1647,7 @@ module enemies =
         // once spotted by an ambusher, repeat detections behave like
         // a normal guard (sound or sight).
         private let should_wake = (lv: level*, g: game*, e: enemy*) ->
-            let area = (i32) lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
+            let area = (i32) lv.tile_areas[e.tile_x * 64 + e.tile_y]
             if area >= areas.num_areas then false
             else if !lv.area_by_player[area] then false
             else if e.ambush then
@@ -1753,7 +1753,7 @@ module enemies =
             // An actor whose room isn't connected to the player's, or
             // whose line is blocked, doesn't shoot at all — no report
             // either (the original bails before its sound switch).
-            let area = (i32) lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
+            let area = (i32) lv.tile_areas[e.tile_x * 64 + e.tile_y]
             if area >= areas.num_areas || !lv.area_by_player[area] then return
             if !check_line_clear(lv, e.x, e.y, g.pos_x, g.pos_y) then return
             sfx.trigger_at(snd, ac, g, e.x, e.y)
@@ -1909,7 +1909,7 @@ module enemies =
                 match e.kind with
                 | mecha_hitler ->
                     if !prev_pause && e.walk_pause then
-                        let area = (i32) lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
+                        let area = (i32) lv.tile_areas[e.tile_x * 64 + e.tile_y]
                         if area < areas.num_areas && lv.area_by_player[area] then
                             sfx.trigger_at(sfx.id.mech_step, ac, g, e.x, e.y)
                 | _ -> void()
@@ -2025,9 +2025,9 @@ module enemies =
             let in_map = (x: i32, y: i32) ->
                 x >= 0 && x < map_size && y >= 0 && y < map_size
             let spotted = (x: i32, y: i32) ->
-                in_map(x, y) && lv.vis_tiles[(i64) x * 64 + (i64) y]
+                in_map(x, y) && lv.vis_tiles[x * 64 + y]
             let open_floor = (x: i32, y: i32) ->
-                in_map(x, y) && lv.tilemap[(i64) x * 64 + (i64) y] == 0u8
+                in_map(x, y) && lv.tilemap[x * 64 + y] == 0u8
             if spotted(tx, ty) then true
             else
                 let mut hit = false
@@ -2054,7 +2054,7 @@ module enemies =
                 // so this only ever bites standing spawns (and bosses).
                 let e = &lv.enemies[i]
                 if !e.active then
-                    let area = (i32) lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
+                    let area = (i32) lv.tile_areas[e.tile_x * 64 + e.tile_y]
                     if area >= areas.num_areas || !lv.area_by_player[area] then continue
                 update_enemy(lv, w.g, w.ac, i, dt, sprite_start)
             // Refresh the two "drawn" flags for the next tick. Mirrors
@@ -2268,7 +2268,7 @@ module enemies =
                     if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then
                         hit = true
                     else
-                        let t = (i32) lv.tilemap[(i64) tx * 64 + (i64) ty]
+                        let t = (i32) lv.tilemap[tx * 64 + ty]
                         if t >= 1 && t <= 63 then hit = true
                         if t >= 128 then
                             let door_idx = t - 128

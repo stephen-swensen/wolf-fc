@@ -42,11 +42,11 @@ module testmode =
             | err(_) -> bad("integer tick count")
         else if text.starts_with(arg, "turnr:") then
             match text.parse_i32(arg[6..arg.len]) with
-            | ok(deg) -> player.rotate_camera(g, 0.0 - (f64) deg * 3.14159265 / 180.0)
+            | ok(deg) -> player.rotate_camera(g, 0.0 - deg * 3.14159265 / 180.0)
             | err(_) -> bad("integer degrees")
         else if text.starts_with(arg, "turnl:") then
             match text.parse_i32(arg[6..arg.len]) with
-            | ok(deg) -> player.rotate_camera(g, (f64) deg * 3.14159265 / 180.0)
+            | ok(deg) -> player.rotate_camera(g, deg * 3.14159265 / 180.0)
             | err(_) -> bad("integer degrees")
         else if arg == "run" then
             g.key_shift = !g.key_shift
@@ -57,8 +57,8 @@ module testmode =
                 | ok(tx) ->
                     match text.parse_i32(coords[1]) with
                     | ok(ty) ->
-                        g.pos_x = (f64) tx + 0.5
-                        g.pos_y = (f64) ty + 0.5
+                        g.pos_x = tx + 0.5
+                        g.pos_y = ty + 0.5
                     | err(_) -> bad("integer Y coordinate")
                 | err(_) -> bad("integer X coordinate")
             else bad("X,Y coordinate pair")
@@ -130,7 +130,7 @@ module testmode =
             let fx = (i32) g.pos_x + cdx
             let fy = (i32) g.pos_y + cdy
             let ft = if fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
-                (i32) w.lv.tilemap[(i64) fx * 64 + (i64) fy]
+                (i32) w.lv.tilemap[fx * 64 + fy]
             else -1
             let nl = if g.next_level then 1 else 0
             // A door tile also reports its state, so use-key tests can
@@ -222,8 +222,8 @@ module testmode =
                     flow.render_frame(w, w.ac.vs, pal)
                 let total_ns = sys.monotonic_ns() - t0
                 let total_ms = total_ns / 1000000
-                let per_frame = if n > 0 then (f64) total_ns / 1000000.0 / (f64) n else 0.0
-                let fps = if total_ns > 0 then (f64) n * 1000000000.0 / (f64) total_ns else 0.0
+                let per_frame = if n > 0 then (f64) total_ns / 1000000.0 / n else 0.0
+                let fps = if total_ns > 0 then n * 1000000000.0 / (f64) total_ns else 0.0
                 ignore io.write("bench scale=%d{w.rc.scale} screen=%d{w.rc.screen_w}x%d{w.rc.screen_h} frames=%d{n} total=%d{total_ms}ms per_frame=%6.3f{per_frame}ms fps=%6.1f{fps}\n", stdout)
             | err(_) -> bad("integer frame count")
         else if text.starts_with(arg, "audiobench:") then
@@ -238,7 +238,7 @@ module testmode =
                 // numbers stay comparable across machines.
                 let chunk = 261 + 14
                 let sample_rate = 44100i32
-                let ms = font.music_load(w.ac.ad, chunk, (f64) sample_rate)
+                let ms = font.music_load(w.ac.ad, chunk, sample_rate)
                 let frames_per_batch = 1024i32
                 let total_frames = n * sample_rate
                 let batches = total_frames / frames_per_batch
@@ -252,10 +252,10 @@ module testmode =
                 let total_ms = total_ns / 1000000
                 let total_samples = batches * frames_per_batch
                 let ns_per_sample = if total_samples > 0
-                    then (f64) total_ns / (f64) total_samples
+                    then (f64) total_ns / total_samples
                     else 0.0
                 let realtime_x = if total_ns > 0
-                    then (f64) n * 1000000000.0 / (f64) total_ns
+                    then n * 1000000000.0 / (f64) total_ns
                     else 0.0
                 io.write("audiobench n=%d{n}s samples=%d{total_samples} total=%d{total_ms}ms ns/sample=%6.1f{ns_per_sample} realtime=%6.1f{realtime_x}x\n", stdout)
                 imf.destroy(ms)
@@ -296,7 +296,7 @@ module testmode =
                     overlay.composite_hud(w.rc)
                 let t8 = sys.monotonic_ns()
                 // Nanoseconds over n frames, reported as ms per frame.
-                let nf = (f64) n * 1000000.0
+                let nf = n * 1000000.0
                 io.write("benchparts scale=%d{w.rc.scale} ssaa=%d{(i32) w.rc.ssaa_mode} frames=%d{n}\n", stdout)
                 io.write("  clear_view_sentinel : %7.3f{(f64) (t1 - t0) / nf}ms\n", stdout)
                 io.write("  raycaster.walls     : %7.3f{(f64) (t2 - t1) / nf}ms\n", stdout)
@@ -690,11 +690,11 @@ module testmode =
             if w.hs.edit_active then
                 let nm = arg[8..arg.len]
                 for k in 0..(i32) w.hs.edit_buf.len do
-                    w.hs.edit_buf[(i64) k] = 0u8
+                    w.hs.edit_buf[k] = 0u8
                 let mut n = (i32) nm.len
                 if n > highscore.max_name_len then n = highscore.max_name_len
                 for k in 0..n do
-                    w.hs.edit_buf[(i64) k] = nm[(i64) k]
+                    w.hs.edit_buf[k] = nm[k]
                 w.hs.edit_len = n
         else if arg == "hs_state" then
             // Dump every row of the high-scores table + the current edit
@@ -706,7 +706,7 @@ module testmode =
                 | none -> -1
             io.write("hs edit=%d{edit} index=%d{idx_disp}", stdout)
             if w.hs.edit_active then
-                let typed = (const str) w.hs.edit_buf[0..(i64) w.hs.edit_len]
+                let typed = (const str) w.hs.edit_buf[0..w.hs.edit_len]
                 io.write(" typed='", stdout)
                 if typed.len > 0 then io.write(typed, stdout)
                 io.write("'", stdout)
@@ -780,7 +780,7 @@ module testmode =
             io.write("probe pos=(%7.3f{px}, %7.3f{py}) bbox_tiles: x[%d{xl}..%d{xr}] y[%d{yl}..%d{yh}]\n", stdout)
             for tx in xl..(xr + 1) do
                 for ty in yl..(yh + 1) do
-                    let ti = (i32) w.lv.tilemap[(i64) tx * 64 + (i64) ty]
+                    let ti = (i32) w.lv.tilemap[tx * 64 + ty]
                     let dstate = if ti < 128 then "open"
                         else match w.lv.doors[ti - 128].state with
                         | closed  -> "DOOR:closed"
@@ -832,7 +832,7 @@ module testmode =
             // that enemies.ai.select_path_dir applies the override.
             for y in 0..map_size do
                 for x in 0..map_size do
-                    let v = (i32) w.lv.path_arrows[(i64) x * 64 + (i64) y]
+                    let v = (i32) w.lv.path_arrows[x * 64 + y]
                     if v != (i32) dir.nodir then
                         io.write("arrow (%d{x},%d{y}) dir=%d{v}\n", stdout)
         else if arg == "mapdump" then
@@ -843,7 +843,7 @@ module testmode =
             // scripted approach reaches an actor.
             for y in 0..map_size do
                 for x in 0..map_size do
-                    let t = (i32) w.lv.tilemap[(i64) x * 64 + (i64) y]
+                    let t = (i32) w.lv.tilemap[x * 64 + y]
                     let mut c = if t == 0 then "." else if t >= 128 then "D" else "#"
                     for i in 0..w.lv.num_enemies do
                         let e = w.lv.enemies[i]
@@ -888,7 +888,7 @@ module testmode =
                 | pain  -> "pain"
                 | die   -> "die"
                 | dead  -> "dead"
-                let area = (i32) w.lv.tile_areas[(i64) e.tile_x * 64 + (i64) e.tile_y]
+                let area = (i32) w.lv.tile_areas[e.tile_x * 64 + e.tile_y]
                 io.write(alloca("[%d{i}] (%d{e.tile_x},%d{e.tile_y}) kind=%s{ks} state=%s{ss} dir=%d{(i32) e.dir} hp=%d{e.hp} area=%d{area} vis=%d{(i32) e.last_visible} act=%d{(i32) e.active}\n"), stdout)
         else if arg == "pickups" then
             // Per-level pickup inventory: dumps every live sprite whose
@@ -950,7 +950,7 @@ module testmode =
             let mut count = 0
             for y in 0..map_size do
                 for x in 0..map_size do
-                    if w.lv.exit_tiles[(i64) x * 64 + (i64) y] then
+                    if w.lv.exit_tiles[x * 64 + y] then
                         io.write("exit: %d{x},%d{y}\n", stdout)
                         count = count + 1
             ignore io.write("exittiles: count=%d{count}\n", stdout)

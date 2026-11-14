@@ -64,10 +64,10 @@ module data_path =
 
 module bytes =
     let u16 = (buf: const u8[], off: i64) ->
-        (u16) buf[off] | ((u16) buf[off + 1] << 8)
+        buf[off] | ((u16) buf[off + 1] << 8)
 
     let u32 = (buf: const u8[], off: i64) ->
-        (u32) buf[off] | ((u32) buf[off + 1] << 8) |
+        buf[off] | ((u32) buf[off + 1] << 8) |
             ((u32) buf[off + 2] << 16) | ((u32) buf[off + 3] << 24)
 
     let i32 = (buf: const u8[], off: i64) ->
@@ -196,7 +196,7 @@ module vswap =
         // look up base / left / right / col_offset directly instead of
         // re-reading from raw bytes every frame.
         let n_sprites = snd - ss
-        let headers = alloc(sprite_header[] { len = (i64) n_sprites })!
+        let headers = alloc(sprite_header[] { len = n_sprites })!
         for i in 0..n_sprites do
             let page = ss + i
             let base = (i64) bytes.u32(raw, 6i64 + (i64) page * 4)
@@ -237,7 +237,7 @@ module vswap =
     // Wall texture pixel (column-major 64x64). Returns palette index.
     let wall_pixel = (vs: const vswap_file*, tex_page: i32, col: i32, row: i32) ->
         let off = page_offset(vs, tex_page)
-        vs.raw[off + (i64) col * 64 + (i64) row]
+        vs.raw[off + col * 64 + row]
 
 // ============================================================
 // Map loading — MAPHEAD + GAMEMAPS, Carmack + RLEW decompression
@@ -280,7 +280,7 @@ module maps =
             if hi == near_tag then
                 let count = (i64) lo
                 if count == 0 then
-                    dest[d] = (u16) src[s] | ((u16) near_tag << 8)
+                    dest[d] = src[s] | ((u16) near_tag << 8)
                     s = s + 1
                     d = d + 1
                     remaining = remaining - 1
@@ -295,7 +295,7 @@ module maps =
             else if hi == far_tag then
                 let count = (i64) lo
                 if count == 0 then
-                    dest[d] = (u16) src[s] | ((u16) far_tag << 8)
+                    dest[d] = src[s] | ((u16) far_tag << 8)
                     s = s + 1
                     d = d + 1
                     remaining = remaining - 1
@@ -307,7 +307,7 @@ module maps =
                     d = d + count
                     remaining = remaining - count
             else
-                dest[d] = (u16) lo | ((u16) hi << 8)
+                dest[d] = lo | ((u16) hi << 8)
                 d = d + 1
                 remaining = remaining - 1
 
@@ -349,7 +349,7 @@ module maps =
         let p1_off = (i64) bytes.i32(gm, map_off + 4)
         let w = (i32) bytes.u16(gm, map_off + 18)
         let h = (i32) bytes.u16(gm, map_off + 20)
-        let area = (i64) w * (i64) h
+        let area = (i64) w * h
 
         // Decompress plane 0 (walls).
         let exp0 = (i32) bytes.u16(gm, p0_off)
@@ -430,7 +430,7 @@ module vgagraph =
             let node = dict[node_idx]
             let nodeval = if (val & mask) == 0u8 then node.bit0 else node.bit1
             if mask == 0x80u8 then
-                val = if si < (i64) src.len then src[si] else 0u8
+                val = if si < src.len then src[si] else 0u8
                 si = si + 1
                 mask = 1u8
             else
@@ -441,7 +441,7 @@ module vgagraph =
                 if di >= dest_len then break
                 node_idx = head_idx
             else
-                node_idx = (i32) (nodeval - 256u16)
+                node_idx = (nodeval - 256u16)
 
     // Decompress a chunk by file offset. The 4 bytes at offset are the
     // expanded length (u32 LE); the compressed data follows. Returns
@@ -493,7 +493,7 @@ module vgagraph =
         let offsets = alloc(i64[] { len = nc })!
         for i in 0..nc do
             let o = (i64) i * 3
-            let v = (i32) head_raw[o]
+            let v = head_raw[o]
                   | ((i32) head_raw[o + 1] << 8)
                   | ((i32) head_raw[o + 2] << 16)
             offsets[i] = if v == 0xFFFFFF then -1i64 else (i64) v
@@ -514,8 +514,8 @@ module vgagraph =
         let pic_dims = alloc(pic_dim[] { len = num_pics })!
         for i in 0..num_pics do
             pic_dims[i] = pic_dim {
-                width  = (i32) bytes.u16(pic_table, (i64) i * 4),
-                height = (i32) bytes.u16(pic_table, (i64) i * 4 + 2)
+                width  = bytes.u16(pic_table, (i64) i * 4),
+                height = bytes.u16(pic_table, (i64) i * 4 + 2)
             }
         free(pic_table)
 
@@ -539,16 +539,16 @@ module vgagraph =
     // planar[plane*w/4*h + y*w/4 + n]. Width must be a multiple of 4.
     let unplane = (planar: const u8[], width: i32, height: i32) ->
         let w4 = width / 4
-        let size = (i64) width * (i64) height
+        let size = (i64) width * height
         let linear = alloc(u8[] { len = size })!
         for plane in 0..4 do
-            let plane_off = (i64) plane * (i64) w4 * (i64) height
+            let plane_off = (i64) plane * w4 * height
             for y in 0..height do
-                let row_off = plane_off + (i64) y * (i64) w4
+                let row_off = plane_off + (i64) y * w4
                 for x in 0..w4 do
-                    let dst = (i64) y * (i64) width
-                            + (i64) x * 4 + (i64) plane
-                    linear[dst] = planar[row_off + (i64) x]
+                    let dst = (i64) y * width
+                            + (i64) x * 4 + plane
+                    linear[dst] = planar[row_off + x]
         linear
 
     // Load a picture chunk and produce a linear 8-bit palette buffer.
@@ -599,5 +599,5 @@ module audio =
         let off = (i64) chunk_offset(ad, chunk)
         let next_off = if chunk + 1 < ad.num_chunks then
             (i64) chunk_offset(ad, chunk + 1)
-        else (i64) ad.raw.len
+        else ad.raw.len
         (i32) (next_off - off)

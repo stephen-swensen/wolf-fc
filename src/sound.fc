@@ -56,7 +56,7 @@ module imf =
     // header; we detect that by checking if the first word is non-zero.
     let init_from_chunk = (bytes: const u8[], offset: i64, length: i64,
                            sample_rate: f64) ->
-        let first_word = (i64) bytes[offset] |
+        let first_word = bytes[offset] |
                          ((i64) bytes[offset + 1] << 8)
         let mut d_off = offset
         let mut d_len = length
@@ -87,7 +87,7 @@ module imf =
             if p.hack_time > p.time_count then break
             let reg = (i32) p.data[p.pos]
             let val = (i32) p.data[p.pos + 1]
-            let delay = (i32) p.data[p.pos + 2] |
+            let delay = p.data[p.pos + 2] |
                         ((i32) p.data[p.pos + 3] << 8)
             opl2.write(p.chip, reg, val)
             p.pos = p.pos + 4
@@ -107,17 +107,17 @@ module imf =
     // key-on-vs-sustaining-voice mid-fade-in.
     let fill = (p: player*, buf: i32[], count: i32, sample_rate: i32,
                 user_gain: f64) ->
-        let samples_per_tick = (f64) sample_rate / (f64) tick_rate
+        let samples_per_tick = (f64) sample_rate / tick_rate
         let scale = if user_gain < 0.0 then 0.0 else user_gain
         let fade_len_f = (f64) fade_samples
         for i in 0..count do
             let s = opl2.sample(p.chip)
             let fade_scalar = if p.fade_out > 0 then
-                (f64) p.fade_out / fade_len_f
+                p.fade_out / fade_len_f
             else if p.fade_in > 0 then
-                (fade_len_f - (f64) p.fade_in) / fade_len_f
+                (fade_len_f - p.fade_in) / fade_len_f
             else 1.0
-            let scaled = (i32) ((f64) s * scale * fade_scalar)
+            let scaled = (i32) (s * scale * fade_scalar)
             let li = (i64) i * 2
             let ri = li + 1
             buf[li] = buf[li] + scaled
@@ -159,8 +159,8 @@ module imf =
         let mut rem = remaining
         for i in 0..count do
             let s = opl2.sample(p.chip)
-            let ramp = if rem > 0 then (f64) rem / total_f else 0.0
-            let scaled = (i32) ((f64) s * scale * ramp)
+            let ramp = if rem > 0 then rem / total_f else 0.0
+            let scaled = (i32) (s * scale * ramp)
             let li = (i64) i * 2
             let ri = li + 1
             buf[li] = buf[li] + scaled
@@ -248,7 +248,7 @@ module adlib =
 
     // Parse an AdLibSound chunk starting at `offset` in `bytes`.
     let parse = (bytes: const u8[], offset: i64) ->
-        let len = (i64) ((u32) bytes[offset] |
+        let len = (i64) (bytes[offset] |
                            ((u32) bytes[offset + 1] << 8) |
                            ((u32) bytes[offset + 2] << 16) |
                            ((u32) bytes[offset + 3] << 24))
@@ -256,18 +256,18 @@ module adlib =
             bytes = bytes,
             data_off = offset + 23,
             data_len = len,
-            m_char  = (i32) bytes[offset + 6],
-            c_char  = (i32) bytes[offset + 7],
-            m_scale = (i32) bytes[offset + 8],
-            c_scale = (i32) bytes[offset + 9],
-            m_atk   = (i32) bytes[offset + 10],
-            c_atk   = (i32) bytes[offset + 11],
-            m_sus   = (i32) bytes[offset + 12],
-            c_sus   = (i32) bytes[offset + 13],
-            m_wave  = (i32) bytes[offset + 14],
-            c_wave  = (i32) bytes[offset + 15],
-            n_conn  = (i32) bytes[offset + 16],
-            block   = (i32) bytes[offset + 22]
+            m_char  = bytes[offset + 6],
+            c_char  = bytes[offset + 7],
+            m_scale = bytes[offset + 8],
+            c_scale = bytes[offset + 9],
+            m_atk   = bytes[offset + 10],
+            c_atk   = bytes[offset + 11],
+            m_sus   = bytes[offset + 12],
+            c_sus   = bytes[offset + 13],
+            m_wave  = bytes[offset + 14],
+            c_wave  = bytes[offset + 15],
+            n_conn  = bytes[offset + 16],
+            block   = bytes[offset + 22]
         }
 
     // Per-sound playback state. Owns a dedicated OPL2 chip so effects
@@ -454,14 +454,14 @@ module digi =
         let start_pg = (i32) bytes.u16(vs.raw, info_off + (i64) sound_num * 4)
         let snd_len = (i32) bytes.u16(vs.raw, info_off + (i64) sound_num * 4 + 2)
         if snd_len == 0 then return alloc(u8[] { })!
-        let buf = alloc(u8[] { len = (i64) snd_len })!
+        let buf = alloc(u8[] { len = snd_len })!
         let mut written = 0i64
         let mut pg = vs.sound_start + start_pg
         loop
-            if written >= (i64) snd_len then break
+            if written >= snd_len then break
             let pg_off = vswap.page_offset(vs, pg)
             let pg_len = (i64) vswap.page_length(vs, pg)
-            let remain = (i64) snd_len - written
+            let remain = snd_len - written
             let copy_len = if pg_len < remain then pg_len else remain
             for j in 0..copy_len do
                 buf[written + j] = vs.raw[pg_off + j]
@@ -538,10 +538,10 @@ module digi =
     // soft-clips the final mix at the end of the pipeline.
     let fill = (p: player*, buf: i32[], count: i32, sample_rate: i32,
                 user_gain: f64) ->
-        let resample_ratio = src_rate / (f64) sample_rate
+        let resample_ratio = src_rate / sample_rate
         // Hoist the per-frame scale outside the inner loop. `user_gain`
         // is the Sound submenu's Gain slider (1.0 = default mix).
-        let pcm_scale_f = (f64) pcm_scale * user_gain
+        let pcm_scale_f = pcm_scale * user_gain
         for i in 0..count do
             let li = (i64) i * 2
             let ri = li + 1
@@ -555,8 +555,8 @@ module digi =
                         // to match the OPL2 driver's peak output so digi and
                         // AdLib SFX sit at roughly equal loudness (default
                         // mix from the original game's SB hardware mixer).
-                        let raw = (i32) p.slots[s].data[(i64) src_pos] - 128
-                        let raw_f = (f64) raw * pcm_scale_f
+                        let raw = p.slots[s].data[src_pos] - 128
+                        let raw_f = raw * pcm_scale_f
                         sl = sl + (i32) (raw_f * p.slots[s].gain_l)
                         sr = sr + (i32) (raw_f * p.slots[s].gain_r)
                         p.slots[s].pos = p.slots[s].pos + resample_ratio
@@ -611,7 +611,7 @@ module mixer =
             // The divided result is bounded by `range` (8767), so it
             // fits i32 trivially — only the intermediate multiply
             // needs the wider type.
-            let num = (i64) over * (i64) range
+            let num = (i64) over * range
             let den = (i64) (range + over)
             let mag = knee + (i32) (num / den)
             if s < 0 then 0 - mag else mag
@@ -621,7 +621,7 @@ module mixer =
     // count (stereo frames × 2), matching the buffer lengths.
     let soft_clip_to_i16 = (src: i32[], dst: i16[], count: i32) ->
         for i in 0..count do
-            dst[i] = (i16) soft_clip_sample(src[(i64) i])
+            dst[i] = (i16) soft_clip_sample(src[i])
 
     // One audio-fill cycle: clear the i32 mix buffer, add each active
     // source, and soft-clip into the i16 output buffer. `frames` is the

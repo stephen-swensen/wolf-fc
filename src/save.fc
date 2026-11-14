@@ -651,7 +651,7 @@ module save =
                 let pw = &lv.pushwall
                 let pw_active = if pw.active then 1 else 0
                 io.write(
-                    "pushwall %d{pw_active} %d{pw.tile_x} %d{pw.tile_y} %d{pw.dir_x} %d{pw.dir_y} %14.6f{pw.progress} %d{(i32) pw.orig_tile}\n", f)
+                    "pushwall %d{pw_active} %d{pw.tile_x} %d{pw.tile_y} %d{pw.dir_x} %d{pw.dir_y} %14.6f{pw.progress} %d{pw.orig_tile}\n", f)
                 // Sprite alive flags: compact hex bitmask, one char
                 // per 4 sprites.
                 io.write("sprites %d{lv.num_sprites} ", f)
@@ -905,8 +905,8 @@ module save =
                                 let bits = toks[2]
                                 let bytes_needed = (ns + 3) / 4
                                 for b in 0..bytes_needed do
-                                    if (i64) b >= bits.len then break
-                                    let ch = (i32) bits[(i64) b]
+                                    if b >= bits.len then break
+                                    let ch = (i32) bits[b]
                                     let nibble = if ch >= 48 && ch <= 57 then ch - 48
                                                  else if ch >= 97 && ch <= 102 then ch - 87
                                                  else 0
@@ -1166,7 +1166,7 @@ module highscore =
         let mut n = (i32) src.len
         if n > max_name_len then n = max_name_len
         for i in 0..n do
-            e.name[i] = src[(i64) i]
+            e.name[i] = src[i]
         for i in n..29 do
             e.name[i] = 0u8
         e.name_len = n
@@ -1192,7 +1192,7 @@ module highscore =
     // bytes. Result references the caller-owned buffer so it stays
     // valid as long as `e` does.
     let name_str = (e: const entry*) ->
-        (const str) e.name[0..(i64) e.name_len]
+        e.name[0..e.name_len]
 
     // Returns the insert index (0..max_scores-1) if (score, completed)
     // qualifies; -1 otherwise. Mirrors the original's `score >` /

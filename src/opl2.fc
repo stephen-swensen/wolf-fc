@@ -319,7 +319,7 @@ module opl2 =
     private let rate_step_per_sample = (sample_rate: f64, bias: i32) ->
         if sample_rate <= 0.0 then 1.0
         else
-            let r = (native_rate / sample_rate) / math.pow(2.0, (f64) bias / 4.0)
+            let r = (native_rate / sample_rate) / math.pow(2.0, bias / 4.0)
             if r < 0.0625 then 0.0625 else if r > 16.0 then 16.0 else r
 
     // Allocate and initialize a chip for the given output sample rate (Hz).
@@ -771,7 +771,7 @@ module opl2 =
     // index. `ch` supplies fnum and block, because an operator's frequency is
     // its channel's times its own MULT.
     private let step_op = (c: chip*, op: i32, ch: i32, vib_mul: f64) ->
-        let base_freq = (f64) c.ch_fnum[ch] * opl2_tables.block_scale[c.ch_block[ch]]
+        let base_freq = c.ch_fnum[ch] * opl2_tables.block_scale[c.ch_block[ch]]
             * 49716.0 / 524288.0
         let v = if c.op_vib[op] then vib_mul else 1.0
         let f = base_freq * mult_val[c.op_mult[op]] * v
@@ -858,7 +858,7 @@ module opl2 =
         // `off` operator anyway, paid here without the call.
         c.env_accum = c.env_accum + c.env_step
         let env_ticks = (i32) c.env_accum
-        c.env_accum = c.env_accum - (f64) env_ticks
+        c.env_accum = c.env_accum - env_ticks
         for t in 0..env_ticks do
             c.counter = c.counter + 1u64
             for op in 0..18 do
@@ -912,7 +912,7 @@ module opl2 =
             let fnum = c.ch_fnum[ch]
             let block = c.ch_block[ch]
             // YM3812 frequency formula: f = fnum * 2^(block-1) * 49716 / 2^19.
-            let base_freq = (f64) fnum * opl2_tables.block_scale[block]
+            let base_freq = fnum * opl2_tables.block_scale[block]
                 * 49716.0 / 524288.0
             // Modulator phase advance (with vibrato if enabled).
             // floor wrap (not a single subtract) so per-sample advances
@@ -940,7 +940,7 @@ module opl2 =
             let mut fb_phase_offset = 0.0
             if fb > 0 then
                 let sum_int = c.ch_prev0[ch] + c.ch_prev1[ch]
-                fb_phase_offset = (f64) sum_int
+                fb_phase_offset = sum_int
                     / opl2_tables.fb_div[fb]
                     / 1024.0
             let mout = wave_sample(c, c.op_phase[mi] + fb_phase_offset,
@@ -968,7 +968,7 @@ module opl2 =
                 // index, giving peak FM shift of 4096/1024 = ±4
                 // wavelengths (β = 8π rad). In our normalized phase
                 // (1.0 = 1 cycle), that's mout / 1024.
-                let fm_offset = (f64) mout / 1024.0
+                let fm_offset = mout / 1024.0
                 let cout = wave_sample(c, c.op_phase[ci] + fm_offset,
                     c.op_wf[ci], c_total_atten)
                 sum = sum + cout
@@ -981,7 +981,7 @@ module opl2 =
         // in the whole pipeline. Clamping here would crush every
         // multi-channel passage to a flat top before the mix buffer
         // ever saw the dynamics — see the output_scale comment.
-        (i32) ((f64) sum * output_scale)
+        (i32) (sum * output_scale)
 
     // ============================================================
     // Higher-level helpers for AdLib-style sound programming
@@ -1188,11 +1188,11 @@ module opl2 =
                            tick_accum: f64*,
                            advance: () -> void,
                            gain: f64) ->
-        let samples_per_tick = (f64) sample_rate / (f64) tick_rate
+        let samples_per_tick = (f64) sample_rate / tick_rate
         let scale = if gain < 0.0 then 0.0 else gain
         for i in 0..count do
             let s = sample(c)
-            let scaled = (i32) ((f64) s * scale)
+            let scaled = (i32) (s * scale)
             let li = (i64) i * 2
             let ri = li + 1
             buf[li] = buf[li] + scaled

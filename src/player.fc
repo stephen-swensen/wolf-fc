@@ -467,7 +467,7 @@ module player =
     let update = (lv: level*, g: game*, dt: f64, ac: audio_ctx*) ->
         // BJ Speed slider — scales every player movement (forward /
         // back / strafe / turn). 100 = OG-faithful.
-        let bj_mult = (f64) g.bj_speed_pct / 100.0
+        let bj_mult = g.bj_speed_pct / 100.0
         let spd = move_speed * dt * bj_mult * (if g.key_shift then run_mult else 1.0)
         let rot = turn_speed * dt * bj_mult * (if g.key_shift then run_mult else 1.0)
 
@@ -566,14 +566,14 @@ module player =
             // press during the elevator-wait window doesn't restack
             // the level-done cue.
             if edge && fx >= 0 && fx < map_size && fy >= 0 && fy < map_size then
-                let face_tile = (i32) lv.tilemap[(i64) fx * 64 + (i64) fy]
+                let face_tile = (i32) lv.tilemap[fx * 64 + fy]
                 // The elevator switch only answers a press from its
                 // east or west face (the original's use test), and
                 // the wall flips to the thrown-switch texture.
                 if face_tile == 21 && face_horiz && !g.next_level then
-                    lv.tilemap[(i64) fx * 64 + (i64) fy] = 22u8
+                    lv.tilemap[fx * 64 + fy] = 22u8
                     let stand_area = (i32) lv.tile_areas[
-                        (i64) ((i32) g.pos_x) * 64 + (i64) ((i32) g.pos_y)]
+                        (i64) ((i32) g.pos_x) * 64 + ((i32) g.pos_y)]
                     if stand_area == 0 then g.went_secret = true
                     g.next_level = true
                     g.next_level_delay = elevator_wait_time
@@ -610,7 +610,7 @@ module player =
             let ptx = (i32) g.pos_x
             let pty = (i32) g.pos_y
             if ptx >= 0 && ptx < map_size && pty >= 0 && pty < map_size then
-                if lv.exit_tiles[(i64) ptx * 64 + (i64) pty] then
+                if lv.exit_tiles[ptx * 64 + pty] then
                     bj_victory.enter(g, ac)
 
     // ============================================================
@@ -679,7 +679,7 @@ module player =
             // tick boundary (6 tics = three 2-tic test ticks) doesn't
             // slip a tick on float round-off.
             if g.attack_count > 1e-9 then break
-            let action = atk_action[(i64) g.weapon * 4 + (i64) g.attack_frame]
+            let action = atk_action[(i64) g.weapon * 4 + g.attack_frame]
             let mut ended = false
             match action with
             | -1 ->
@@ -747,8 +747,8 @@ module player =
                 let row_start = starty_raw / 2
                 let row_end = endy_raw / 2
                 for row in row_start..row_end do
-                    let pix = vs.raw[base + newstart + (i64) row]
-                    let color = pal[(i32) pix]
+                    let pix = vs.raw[base + newstart + row]
+                    let color = pal[pix]
                     let sy0 = dst_y + row * dst_h / 64
                     let sy1 = dst_y + (row + 1) * dst_h / 64
                     let y0 = if sy0 < 0 then 0 else sy0
@@ -756,7 +756,7 @@ module player =
                     for sx in sx0..sx1 do
                         if sx < 0 || sx >= rc.vbuf_w then continue
                         for sy in y0..y1 do
-                            rc.vbuf[(i64) sy * sw + (i64) sx] = color
+                            rc.vbuf[sy * sw + sx] = color
 
     // Draw the currently-held weapon sprite centered at the bottom
     // of the 3D viewport. Sprite page =

@@ -33,7 +33,7 @@ module bj_victory =
     private let tile_passable = (lv: level*, tx: i32, ty: i32) ->
         if tx < 0 || tx >= map_size || ty < 0 || ty >= map_size then false
         else
-            let t = (i32) lv.tilemap[(i64) tx * 64 + (i64) ty]
+            let t = (i32) lv.tilemap[tx * 64 + ty]
             if t >= 1 && t <= 63 then false
             else if t >= 128 then lv.doors[t - 128].state == doors.door_state.open
             else true
@@ -44,7 +44,7 @@ module bj_victory =
     // direction pick. Distance is reset to 1 tile so the running
     // loop advances one tile before consulting the arrow table again.
     private let select_path_dir = (lv: level*, g: game*) ->
-        let arrow = (i32) lv.path_arrows[(i64) g.bj_tile_x * 64 + (i64) g.bj_tile_y]
+        let arrow = (i32) lv.path_arrows[g.bj_tile_x * 64 + g.bj_tile_y]
         match enum_of(dir, arrow) with
         | some(a) -> if a != dir.nodir then g.bj_dir = a else void()
         | none -> void()
@@ -119,8 +119,8 @@ module bj_victory =
                     g.bj_y = g.bj_y + dir.vy[g.bj_dir] * move
                     g.bj_distance = g.bj_distance - move
                     break
-                g.bj_x = (f64) g.bj_tile_x + 0.5
-                g.bj_y = (f64) g.bj_tile_y + 0.5
+                g.bj_x = g.bj_tile_x + 0.5
+                g.bj_y = g.bj_tile_y + 0.5
                 move = move - g.bj_distance
                 g.bj_distance = 0.0
                 select_path_dir(lv, g)
@@ -777,7 +777,7 @@ module intermission =
         let bg = pal[0x7F]
         for y in 0..view_h do
             for x in 0..rc.fb_w do
-                rc.fb[(i64) y * (i64) rc.fb_w + (i64) x] = bg
+                rc.fb[(i64) y * rc.fb_w + x] = bg
 
         let breathe = ((i32) (g.inter_breathe_timer * 2.0)) % 2
         let guy_pic = if breathe == 0 then pics.id.l_guy else pics.id.l_guy2
@@ -990,9 +990,9 @@ module endart_screen =
 
     // Hex digit -> 0..15, or -1 for non-hex.
     private let hex_val = (b: u8) ->
-        if b >= 0x30u8 && b <= 0x39u8 then (i32) b - 0x30
-        else if b >= 0x41u8 && b <= 0x46u8 then (i32) b - 0x41 + 10
-        else if b >= 0x61u8 && b <= 0x66u8 then (i32) b - 0x61 + 10
+        if b >= 0x30u8 && b <= 0x39u8 then b - 0x30
+        else if b >= 0x41u8 && b <= 0x46u8 then b - 0x41 + 10
+        else if b >= 0x61u8 && b <= 0x66u8 then b - 0x61 + 10
         else -1
 
     // Read a base-10 number starting at offset `i`, skipping any
@@ -1003,13 +1003,13 @@ module endart_screen =
         let mut j = i
         loop
             if j >= (i32) data.len then break
-            if is_digit(data[(i64) j]) then break
+            if is_digit(data[j]) then break
             j = j + 1
         let mut val = 0
         loop
             if j >= (i32) data.len then break
-            if !is_digit(data[(i64) j]) then break
-            val = val * 10 + (i32) data[(i64) j] - 0x30
+            if !is_digit(data[j]) then break
+            val = val * 10 + data[j] - 0x30
             j = j + 1
         { val, j }
 
@@ -1018,7 +1018,7 @@ module endart_screen =
         let mut j = i
         loop
             if j >= (i32) data.len then break
-            let b = data[(i64) j]
+            let b = data[j]
             j = j + 1
             if b == 10u8 then break
         j
@@ -1029,7 +1029,7 @@ module endart_screen =
         let mut j = 0
         loop
             if j >= (i32) data.len - 1 then break
-            if is_caret(data[(i64) j]) then
+            if is_caret(data[j]) then
                 let c = data[(i64) j + 1]
                 if is_e(c) then break
                 if is_p(c) then count = count + 1
@@ -1046,11 +1046,11 @@ module endart_screen =
         loop
             if j >= (i32) data.len - 1 then break
             if idx >= (i32) out.len then break
-            if is_caret(data[(i64) j]) then
+            if is_caret(data[j]) then
                 let c = data[(i64) j + 1]
                 if is_e(c) then break
                 if is_p(c) then
-                    out[(i64) idx] = j
+                    out[idx] = j
                     idx = idx + 1
                 j = j + 2
             else
@@ -1118,7 +1118,7 @@ module endart_screen =
         if st.rowon >= text_rows then
             st.done = true
             return
-        st.px = lefts[(i64) st.rowon]
+        st.px = lefts[st.rowon]
         st.py = st.py + font_height
 
     // Try to draw `word` (length n) at (px, py) in the current font
@@ -1129,17 +1129,17 @@ module endart_screen =
                                 word: u8[], n: i32) ->
         let mut wwidth = 0
         for k in 0..n do
-            let ch = (i32) word[(i64) k]
+            let ch = (i32) word[k]
             if ch >= 0 && ch < 256 then wwidth = wwidth + f.width[ch]
         loop
             if st.done then break
-            if st.px + wwidth <= rights[(i64) st.rowon] then break
+            if st.px + wwidth <= rights[st.rowon] then break
             newline(st, lefts)
         if st.done then return
         let color = pal[st.fontcolor]
         let mut cx = st.px
         for k in 0..n do
-            let ch = (i32) word[(i64) k]
+            let ch = (i32) word[k]
             cx = cx + font.draw_char(rc, f, cx, st.py, ch, color)
         st.px = cx
 
@@ -1164,7 +1164,7 @@ module endart_screen =
         if g.endart_total_pages == 0 || g.endart_data.len == 0 then return
         let mut page = g.endart_page
         if page >= g.endart_total_pages then page = g.endart_total_pages - 1
-        let start = g.endart_page_offsets[(i64) page]
+        let start = g.endart_page_offsets[page]
         // Per-row margin arrays — ^G updates the rows it overlaps.
         let lefts  = i32[] { len = 18 }
         let rights = i32[] { len = 18 }
@@ -1188,7 +1188,7 @@ module endart_screen =
         loop
             if st.done then break
             if st.cursor >= dn then break
-            let b = data[(i64) st.cursor]
+            let b = data[st.cursor]
             // ^X command.
             if is_caret(b) then
                 if st.cursor + 1 >= dn then break
@@ -1211,14 +1211,14 @@ module endart_screen =
                         for xx in 0..pw do
                             let dx = px + xx
                             if dx < 0 || dx >= rc.fb_w then continue
-                            rc.fb[(i64) dy * (i64) rc.fb_w + (i64) dx] = bcol
+                            rc.fb[(i64) dy * rc.fb_w + dx] = bcol
                 else if cmd == 0x3Bu8 then
                     // ^; comment: skip to end of line.
                     st.cursor = skip_to_eol(data, st.cursor)
                 else if cmd == 0x43u8 || cmd == 0x63u8 then
                     // ^Cnn — two hex digits set the font colour.
                     if st.cursor + 1 < dn then
-                        let h1 = hex_val(data[(i64) st.cursor])
+                        let h1 = hex_val(data[st.cursor])
                         let h2 = hex_val(data[(i64) st.cursor + 1])
                         if h1 >= 0 && h2 >= 0 then
                             st.fontcolor = (h1 * 16 + h2) & 0xFF
@@ -1279,8 +1279,8 @@ module endart_screen =
                                 lefts[r] = new_margin
                         // If the current line's px is now left of the
                         // new left-margin, snap it forward.
-                        if st.px < lefts[(i64) st.rowon] then
-                            st.px = lefts[(i64) st.rowon]
+                        if st.px < lefts[st.rowon] then
+                            st.px = lefts[st.rowon]
                 else
                     // Unknown command — eat one char so we don't loop.
                     void()
@@ -1303,11 +1303,11 @@ module endart_screen =
             let mut wlen = 0
             loop
                 if st.cursor >= dn then break
-                let bb = data[(i64) st.cursor]
+                let bb = data[st.cursor]
                 if bb <= 32u8 then break
                 if is_caret(bb) then break
                 if wlen >= (i32) word_buf.len then break
-                word_buf[(i64) wlen] = bb
+                word_buf[wlen] = bb
                 wlen = wlen + 1
                 st.cursor = st.cursor + 1
             render_word(rc, pal, f, &st, lefts, rights, word_buf, wlen)
@@ -1315,7 +1315,7 @@ module endart_screen =
             // multi-space layouts (alignment via spaces) survive.
             loop
                 if st.cursor >= dn then break
-                if data[(i64) st.cursor] != 32u8 then break
+                if data[st.cursor] != 32u8 then break
                 st.px = st.px + space_width
                 st.cursor = st.cursor + 1
         draw_page_number(rc, pal, f, page, g.endart_total_pages)
@@ -1366,7 +1366,7 @@ module title_screen =
             // cleanly. `pics.draw` clips silently if the fb is wider
             // than the 320x200 pic.
             for i in 0..(rc.fb_w * rc.fb_h) do
-                rc.fb[(i64) i] = 0xFF000000u32
+                rc.fb[i] = 0xFF000000u32
             pics.draw(rc, vg, pal, pics.id.credits, rc.ui_offset_x, 0)
             apply_fade(rc, time - title_hold, credits_hold)
         else
@@ -1440,7 +1440,7 @@ module high_scores_screen =
     let commit_name = (hs: highscore_ctx*) ->
         match hs.edit_index with
         | some(i) ->
-            let nm = (const str) hs.edit_buf[0..(i64) hs.edit_len]
+            let nm = (const str) hs.edit_buf[0..hs.edit_len]
             highscore.set_name_at(hs.scores, i, nm)
             hs.edit_active = false
             hs.pending_save = true
@@ -1450,7 +1450,7 @@ module high_scores_screen =
     // before any keystrokes land.
     private let clear_edit_buf = (hs: highscore_ctx*) ->
         for i in 0..(i32) hs.edit_buf.len do
-            hs.edit_buf[(i64) i] = 0u8
+            hs.edit_buf[i] = 0u8
         hs.edit_len = 0
 
     // Append a single byte to the edit buffer if there's room.
@@ -1458,15 +1458,15 @@ module high_scores_screen =
         let cap = (i32) hs.edit_buf.len - 1
         if hs.edit_len >= cap then return
         if hs.edit_len >= highscore.max_name_len then return
-        hs.edit_buf[(i64) hs.edit_len] = ch
+        hs.edit_buf[hs.edit_len] = ch
         hs.edit_len = hs.edit_len + 1
-        hs.edit_buf[(i64) hs.edit_len] = 0u8
+        hs.edit_buf[hs.edit_len] = 0u8
 
     // Pop the trailing byte (Backspace).
     let edit_backspace = (hs: highscore_ctx*) ->
         if hs.edit_len <= 0 then return
         hs.edit_len = hs.edit_len - 1
-        hs.edit_buf[(i64) hs.edit_len] = 0u8
+        hs.edit_buf[hs.edit_len] = 0u8
 
     // Leave the high-scores screen. Persists any pending name edit
     // first, then routes back to the source's natural exit target —
@@ -1553,7 +1553,7 @@ module high_scores_screen =
             // buffer instead while editing this row.
             let name_x = ox + 4 * 8
             if hs.edit_active && hs.edit_index == some(i) then
-                let typed = (const str) hs.edit_buf[0..(i64) hs.edit_len]
+                let typed = (const str) hs.edit_buf[0..hs.edit_len]
                 font.draw_text(rc, f, name_x, row_y, typed, text_color)
                 if cursor_on(time) then
                     let tw = font.text_width(f, typed)

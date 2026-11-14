@@ -648,14 +648,14 @@ module audio_thread =
         let mut frames = len / 4
         let cap = (i32) ac.mix_buf.len / 2
         if frames > cap then frames = cap     // safety net; never trips at 1024
-        let out = i16[] { ptr = (i16*) stream, len = (i64) (frames * 2) }
+        let out = i16[] { ptr = (i16*) stream, len = (frames * 2) }
         let xfade_before = ac.music_xfade
         ac.music_xfade = mixer.fill_frame(ac.mix_buf, out,
             ac.music, ac.music_prev, atomic_load_acquire(&ac.music_on),
-            (f64) atomic_load_acquire(&ac.music_gain_pct) / 100.0,
+            atomic_load_acquire(&ac.music_gain_pct) / 100.0,
             ac.music_xfade, music_xfade_samples,
-            ac.sfx,  (f64) atomic_load_acquire(&ac.sfx_gain_pct)  / 100.0,
-            ac.digi, (f64) atomic_load_acquire(&ac.digi_gain_pct) / 100.0,
+            ac.sfx,  atomic_load_acquire(&ac.sfx_gain_pct)  / 100.0,
+            ac.digi, atomic_load_acquire(&ac.digi_gain_pct) / 100.0,
             frames, ac.sample_rate)
         // A crossfade that just finished means music_prev is silent and untouched
         // from here on — hand it back to the main thread to free.
