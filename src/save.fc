@@ -96,7 +96,7 @@ module diag =
         match file with
         | none -> void()
         | some(f) ->
-            io.write(alloca("%d{sys.time() - start_ms} %s{label}\n"), f)
+            io.write(alloca("%d{sys.monotonic_ms() - start_ms} %s{label}\n"), f)
             sync_line(f)
 
     // Per-frame heartbeat: frame counter, phase + menu_level ints (to spot
@@ -107,7 +107,7 @@ module diag =
         match file with
         | none -> void()
         | some(f) ->
-            io.write("%d{sys.time() - start_ms} frame=%d{frame} phase=%d{phase} menu=%d{menu} cb=%d{cb}\n", f)
+            io.write("%d{sys.monotonic_ms() - start_ms} frame=%d{frame} phase=%d{phase} menu=%d{menu} cb=%d{cb}\n", f)
             sync_line(f)
 
     // A keypress, with the state it landed in — pinpoints which key at which
@@ -117,7 +117,7 @@ module diag =
         match file with
         | none -> void()
         | some(f) ->
-            io.write("%d{sys.time() - start_ms} KEY sym=%d{sym} phase=%d{phase} menu=%d{menu} cb=%d{cb}\n", f)
+            io.write("%d{sys.monotonic_ms() - start_ms} KEY sym=%d{sym} phase=%d{phase} menu=%d{menu} cb=%d{cb}\n", f)
             sync_line(f)
 
     let close = (file: any*?) ->

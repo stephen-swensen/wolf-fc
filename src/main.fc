@@ -162,10 +162,10 @@ let main = (args: str[]) ->
             | err(_)    -> void()
 
     // PRNG seed: deterministic 0 in --test mode so scripted scenarios
-    // reproduce bit-identically; wall-clock milliseconds otherwise. A single
+    // reproduce bit-identically; wall-clock nanoseconds otherwise. A single
     // seed fans out to two pcg_random channels (enemy AI, face animation)
     // when the game struct is initialised below.
-    let rng_seed = if test_mode then 0u64 else (u64) sys.time()
+    let rng_seed = if test_mode then 0u64 else (u64) sys.time_ns()
 
     // Resolve the WL6 data directory before loading anything: env override,
     // then ./data, then the compile-time install location. The resulting
@@ -656,7 +656,7 @@ let main = (args: str[]) ->
     // before audio setup, so it captures an audio device that "doesn't even
     // start". A `none` handle (env unset) makes every diag call a no-op.
     let diag_file = diag.open()
-    let diag_start = sys.time()
+    let diag_start = sys.monotonic_ms()
     diag.mark(diag_file, diag_start, "startup: window/renderer/texture ready, opening audio")
 
     // Set up audio device and start music. Output is stereo (2 channels

@@ -211,24 +211,24 @@ module testmode =
                 ignore video.apply_ssaa_mode(w, config.ssaa_mode_of_i32(m))
             | err(_) -> bad("0, 1, or 2")
         else if text.starts_with(arg, "bench:") then
-            // Render `n` full frames and report total/per-frame wall time.
+            // Render `n` full frames and report total/per-frame elapsed time.
             // Drives the raycaster + billboards + overlay pipeline at the
             // current scale. Use after `setscale:N` and a position-setting
             // sequence (e.g. fwd:35) to measure a representative scene.
             match text.parse_i32(arg[6..arg.len]) with
             | ok(n) ->
-                let t0 = sys.time()
+                let t0 = sys.monotonic_ns()
                 for j in 0..n do
                     flow.render_frame(w, w.ac.vs, pal)
-                let t1 = sys.time()
-                let total_ms = t1 - t0
-                let per_frame = if n > 0 then (f64) total_ms / (f64) n else 0.0
-                let fps = if total_ms > 0 then (f64) n * 1000.0 / (f64) total_ms else 0.0
+                let total_ns = sys.monotonic_ns() - t0
+                let total_ms = total_ns / 1000000
+                let per_frame = if n > 0 then (f64) total_ns / 1000000.0 / (f64) n else 0.0
+                let fps = if total_ns > 0 then (f64) n * 1000000000.0 / (f64) total_ns else 0.0
                 ignore io.write("bench scale=%d{w.rc.scale} screen=%d{w.rc.screen_w}x%d{w.rc.screen_h} frames=%d{n} total=%d{total_ms}ms per_frame=%6.3f{per_frame}ms fps=%6.1f{fps}\n", stdout)
             | err(_) -> bad("integer frame count")
         else if text.starts_with(arg, "audiobench:") then
             // Render `n` seconds of WONDERIN through the OPL2 music chip
-            // and report total / per-sample wall time. Used to compare OPL2
+            // and report total / per-sample elapsed time. Used to compare OPL2
             // emulator perf across implementations (e.g. float vs integer
             // gain pipeline).
             match text.parse_i32(arg[11..arg.len]) with
@@ -243,19 +243,19 @@ module testmode =
                 let total_frames = n * sample_rate
                 let batches = total_frames / frames_per_batch
                 let mix_buf = i32[] { len = 2048 }
-                let t0 = sys.time()
+                let t0 = sys.monotonic_ns()
                 for j in 0..batches do
                     for k in 0..2048 do
                         mix_buf[k] = 0i32
                     imf.fill(ms, mix_buf, frames_per_batch, sample_rate, 1.0)
-                let t1 = sys.time()
-                let total_ms = t1 - t0
+                let total_ns = sys.monotonic_ns() - t0
+                let total_ms = total_ns / 1000000
                 let total_samples = batches * frames_per_batch
                 let ns_per_sample = if total_samples > 0
-                    then (f64) total_ms * 1000000.0 / (f64) total_samples
+                    then (f64) total_ns / (f64) total_samples
                     else 0.0
-                let realtime_x = if total_ms > 0
-                    then (f64) n * 1000.0 / (f64) total_ms
+                let realtime_x = if total_ns > 0
+                    then (f64) n * 1000000000.0 / (f64) total_ns
                     else 0.0
                 io.write("audiobench n=%d{n}s samples=%d{total_samples} total=%d{total_ms}ms ns/sample=%6.1f{ns_per_sample} realtime=%6.1f{realtime_x}x\n", stdout)
                 imf.destroy(ms)
@@ -268,34 +268,35 @@ module testmode =
             // (small drift from the omitted phase-match overhead).
             match text.parse_i32(arg[11..arg.len]) with
             | ok(n) ->
-                let t0 = sys.time()
+                let t0 = sys.monotonic_ns()
                 for j in 0..n do
                     overlay.clear_view_sentinel(w.rc)
-                let t1 = sys.time()
+                let t1 = sys.monotonic_ns()
                 for j in 0..n do
                     raycaster.render_walls(w.lv, w.rc, w.g, w.ac.vs, pal)
-                let t2 = sys.time()
+                let t2 = sys.monotonic_ns()
                 for j in 0..n do
                     billboards.build(w.lv, w.rc, w.g, w.ac.vs.sprite_start)
                     billboards.render(w.rc, w.g, w.ac.vs, pal)
-                let t3 = sys.time()
+                let t3 = sys.monotonic_ns()
                 for j in 0..n do
                     player.render_weapon(w.rc, w.ac.vs, pal, w.g)
-                let t4 = sys.time()
+                let t4 = sys.monotonic_ns()
                 for j in 0..n do
                     overlay.ssaa_downsample(w.rc)
-                let t5 = sys.time()
+                let t5 = sys.monotonic_ns()
                 for j in 0..n do
                     hud.render(w.rc, w.vg, pal, w.g)
                     hud.render_message(w.rc, w.font, w.g)
-                let t6 = sys.time()
+                let t6 = sys.monotonic_ns()
                 for j in 0..n do
                     overlay.composite_view_overlay(w.rc)
-                let t7 = sys.time()
+                let t7 = sys.monotonic_ns()
                 for j in 0..n do
                     overlay.composite_hud(w.rc)
-                let t8 = sys.time()
-                let nf = (f64) n
+                let t8 = sys.monotonic_ns()
+                // Nanoseconds over n frames, reported as ms per frame.
+                let nf = (f64) n * 1000000.0
                 io.write("benchparts scale=%d{w.rc.scale} ssaa=%d{(i32) w.rc.ssaa_mode} frames=%d{n}\n", stdout)
                 io.write("  clear_view_sentinel : %7.3f{(f64) (t1 - t0) / nf}ms\n", stdout)
                 io.write("  raycaster.walls     : %7.3f{(f64) (t2 - t1) / nf}ms\n", stdout)

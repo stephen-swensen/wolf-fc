@@ -618,7 +618,7 @@ struct game =
     // enemy AI rolls (sight, hit chance, damage) and BJ face idle animation.
     // Keeping face on its own channel means rendering the HUD doesn't perturb
     // the enemy sequence that scripted tests depend on. Seed is 0 in --test
-    // for reproducibility, sys.time() otherwise — set in main.
+    // for reproducibility, sys.time_ns() otherwise — set in main.
     rng_enemy: random.pcg_random
     rng_face: random.pcg_random
 

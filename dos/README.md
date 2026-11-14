@@ -27,7 +27,8 @@ against the C of the same program the Linux build compiles, generated with
 - `sdl_stub.c` — inert no-op backend (`STUB=1 ./build-dos.sh`) for headless
   `--test` work; this is the backend the byte-identical determinism proof used.
 - `dos_shim.h` — the complete DJGPP 2.05 libc-gap list for wolf-fc + stdlib:
-  `struct timespec`/`timespec_get`/`nanosleep`, `fmin`/`fmax`, `__errno_location`.
+  `struct timespec`/`timespec_get`/`clock_gettime`/`nanosleep`, `fmin`/`fmax`,
+  `__errno_location`.
 - `build-dos.sh` — build + run instructions, with the hard-won notes
   (`-std=gnu11` not `c11`; DJGPP's `int32_t` is `long int`; CWSDPMI required).
 

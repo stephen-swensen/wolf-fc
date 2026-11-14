@@ -525,6 +525,10 @@ void SDL_SetWindowBordered(void *w, int32_t b) { (void)w; (void)b; }
 void SDL_SetWindowResizable(void *w, int32_t b) { (void)w; (void)b; }
 void SDL_MaximizeWindow(void *w) { (void)w; }
 void SDL_RestoreWindow(void *w) { (void)w; }
+/* Mode 13h is on screen from SDL_CreateWindow, so showing is a no-op, and
+ * there's no opacity to set (main.fc only asks under X11). */
+void SDL_ShowWindow(void *w) { (void)w; }
+int32_t SDL_SetWindowOpacity(void *w, float opacity) { (void)w; (void)opacity; return -1; }
 int32_t SDL_ShowCursor(int32_t s) { (void)s; return 0; }
 
 void *SDL_CreateRenderer(void *w, int32_t i, uint32_t f) {

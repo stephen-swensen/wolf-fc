@@ -30,6 +30,7 @@ typedef union SDL_Event { uint32_t type; SDL_KeyboardEvent key; SDL_WindowEvent 
 #define SDL_INIT_VIDEO 0x20u
 #define SDL_INIT_AUDIO 0x10u
 #define SDL_WINDOW_SHOWN 0x4u
+#define SDL_WINDOW_HIDDEN 0x8u
 #define SDL_WINDOW_FULLSCREEN_DESKTOP 0x1001u
 #define SDL_WINDOW_ALLOW_HIGHDPI 0x2000u
 #define SDL_WINDOW_BORDERLESS 0x10u
@@ -123,6 +124,8 @@ void SDL_SetWindowBordered(void *w, int32_t b);
 void SDL_SetWindowResizable(void *w, int32_t b);
 void SDL_MaximizeWindow(void *w);
 void SDL_RestoreWindow(void *w);
+void SDL_ShowWindow(void *w);
+int32_t SDL_SetWindowOpacity(void *w, float opacity);
 int32_t SDL_ShowCursor(int32_t s);
 void *SDL_CreateRenderer(void *w, int32_t i, uint32_t f);
 void SDL_DestroyRenderer(void *r);

@@ -25,7 +25,8 @@
 #  - DJGPP's int32_t is `long int`; the SDL stub types its prototypes with
 #    int32_t (not int) so the FC extern decls match without warnings.
 #  - dos_shim.h fills DJGPP 2.05's gaps: struct timespec + timespec_get +
-#    nanosleep, C99 fmin/fmax, glibc's __errno_location.
+#    clock_gettime(CLOCK_MONOTONIC) + nanosleep, C99 fmin/fmax, glibc's
+#    __errno_location.
 #  - determinism check must run the reference with HOME pointing at an
 #    empty dir, or your ~/.wolf-fc config (e.g. shadow depth) skews it.
 set -e

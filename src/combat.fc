@@ -51,7 +51,7 @@ module enemies =
 
     // Shared byte roll for all enemy behaviour. The RNG state lives
     // on the game struct so scripted tests can pin the seed to 0 and
-    // interactive runs can seed from sys.time() — see main() for
+    // interactive runs can seed from sys.time_ns() — see main() for
     // the seed selection.
     let rnd_byte = (g: game*) ->
         (i32) (random.pcg_random.next_u32(&g.rng_enemy) & 0xFFu32)
