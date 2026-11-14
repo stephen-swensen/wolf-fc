@@ -937,14 +937,12 @@ module enemies =
         // `b` (one east/west, one north/south, either order). Any other
         // pairing has no diagonal and yields nodir.
         private let diagonal_of = (a: dir, b: dir) ->
-            let combine = (ew: dir, ns: dir) ->
-                if ew == dir.east then
-                    (if ns == dir.north then dir.northeast else if ns == dir.south then dir.southeast else dir.nodir)
-                else if ew == dir.west then
-                    (if ns == dir.north then dir.northwest else if ns == dir.south then dir.southwest else dir.nodir)
-                else dir.nodir
-            if a == dir.east || a == dir.west then combine(a, b)
-            else combine(b, a)
+            match { a, b } with
+            | { east, north } | { north, east } -> dir.northeast
+            | { east, south } | { south, east } -> dir.southeast
+            | { west, north } | { north, west } -> dir.northwest
+            | { west, south } | { south, west } -> dir.southwest
+            | _ -> dir.nodir
 
         // Chase direction selector — the straight-line pursuit pick.
         // Up to two preferred directions toward the player (the larger
